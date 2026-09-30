@@ -1,0 +1,11 @@
+pnpm-lock.yaml
+# Kurucunun yazdığı içerik; Prettier biçimlendirmez (kartlardaki [a, b] listeleri korunur).
+docs/
+agents/
+skills/
+**/dist
+**/coverage
+**/.vite
+**/.vitest
+supabase/.temp
+supabase/.branches
