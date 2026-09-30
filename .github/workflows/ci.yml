@@ -37,6 +37,12 @@ jobs:
       - name: Node ile içe aktarma denemesi (tsc ve Vitest'in yakalamadığı .js uzantısı hataları)
         run: pnpm run smoke
       - run: pnpm --filter @agent-office/web run build
+      - name: Panel paketinde sunucu anahtarı yok (CLAUDE.md kural 1)
+        run: |
+          if grep -rEn 'sb_secret_|sk-ant-|service_role|SUPABASE_[A-Z_]*KEY|ANTHROPIC_API_KEY|DATABASE_URL|postgres(ql)?://' apps/web/dist; then
+            echo "Panelin derlenmiş dosyalarında sunucuya ait anahtar ya da değişken adı bulundu." >&2
+            exit 1
+          fi
 
   secrets:
     name: Gizli anahtar taraması (gitleaks)

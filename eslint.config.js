@@ -28,10 +28,66 @@ const sharedRestrictedSyntax = [
   { selector: `ImportExpression${RELATIVE_JS}`, message: JS_EXTENSION_MESSAGE },
 ];
 
+// Kural 1: tarayıcıya giden kod (apps/web ve packages/shared) sunucuya özel modüle ulaşamaz.
+// Paket adıyla, göreli yolla ve dinamik içe aktarmayla gelen yolların hepsi kapatılır.
 const SERVER_ONLY_MESSAGE =
-  'apps/web sunucuya özel modül içe aktaramaz (CLAUDE.md kural 1). Veriyi API üzerinden alın.';
-const SERVER_ONLY_DYNAMIC =
-  'ImportExpression[source.value=/^(@supabase\\/|@anthropic-ai\\/|@agent-office\\/db(\\/|$)|pg(-boss)?(\\/|$)|postgres(\\/|$)|node:)/]';
+  'Tarayıcıya giden kod sunucuya özel modül içe aktaramaz (CLAUDE.md kural 1). Veriyi API üzerinden alın.';
+const SERVER_ONLY_PACKAGES = [
+  '@supabase/*',
+  '@anthropic-ai/*',
+  '@agent-office/db',
+  '@agent-office/db/*',
+  'pg',
+  'pg/*',
+  'pg-boss',
+  'pg-boss/*',
+  'postgres',
+  'postgres/*',
+  'node:*',
+];
+// Göreli yolla api, worker, db ya da ortam şeması kaynağına inmek.
+const SERVER_ONLY_RELATIVE = '(^|/)(apps/)?(api|worker)/src/|(^|/)packages/(db/|shared/src/env)';
+const SERVER_ONLY_SPECIFIER =
+  '^(@supabase\\/|@anthropic-ai\\/|@agent-office\\/(db|shared\\/env)(\\/|$)|pg(-boss)?(\\/|$)|postgres(\\/|$)|node:)';
+
+/**
+ * @param {boolean} webBlock
+ * @returns {import('eslint').Linter.RulesRecord}
+ */
+function serverOnlyRules(webBlock) {
+  return {
+    'no-restricted-syntax': [
+      'error',
+      ...sharedRestrictedSyntax,
+      {
+        selector: `ImportExpression[source.value=/${SERVER_ONLY_SPECIFIER}/]`,
+        message: SERVER_ONLY_MESSAGE,
+      },
+      {
+        selector: `ImportExpression[source.value=/${SERVER_ONLY_RELATIVE.replaceAll('/', '\\/')}/]`,
+        message: SERVER_ONLY_MESSAGE,
+      },
+      {
+        selector: "ImportExpression[source.type!='Literal']",
+        message: 'Dinamik içe aktarma sabit bir dizeyle yazılır; aksi hâlde kural 1 denetlenemez.',
+      },
+    ],
+    'no-restricted-imports': [
+      'error',
+      {
+        patterns: [
+          {
+            group: webBlock
+              ? [...SERVER_ONLY_PACKAGES, '@agent-office/shared/env']
+              : SERVER_ONLY_PACKAGES,
+            message: SERVER_ONLY_MESSAGE,
+          },
+          { regex: SERVER_ONLY_RELATIVE, message: SERVER_ONLY_MESSAGE },
+        ],
+      },
+    ],
+  };
+}
 
 export default defineConfig([
   globalIgnores([
@@ -88,37 +144,14 @@ export default defineConfig([
     files: ['apps/web/src/**/*.{ts,tsx}'],
     extends: [reactHooks.configs.flat.recommended, reactRefresh.configs.vite],
     languageOptions: { globals: globals.browser },
-    rules: {
-      'no-restricted-syntax': [
-        'error',
-        ...sharedRestrictedSyntax,
-        { selector: SERVER_ONLY_DYNAMIC, message: SERVER_ONLY_MESSAGE },
-      ],
-      'no-restricted-imports': [
-        'error',
-        {
-          patterns: [
-            {
-              group: [
-                '@supabase/*',
-                '@anthropic-ai/*',
-                '@agent-office/db',
-                '@agent-office/db/*',
-                '@agent-office/shared/env',
-                'pg',
-                'pg/*',
-                'pg-boss',
-                'pg-boss/*',
-                'postgres',
-                'postgres/*',
-                'node:*',
-              ],
-              message: SERVER_ONLY_MESSAGE,
-            },
-          ],
-        },
-      ],
-    },
+    rules: serverOnlyRules(true),
+  },
+
+  {
+    // shared hem sunucuda hem tarayıcıda derlenir; ortam şeması ./env alt yolunda ayrı durur.
+    name: 'agent-office/shared-browser-safe',
+    files: ['packages/shared/src/**/*.ts'],
+    rules: serverOnlyRules(false),
   },
 
   {
