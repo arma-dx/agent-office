@@ -1,0 +1,17 @@
+# Bağımlılıklar ve derleme çıktıları
+node_modules/
+dist/
+coverage/
+.vitest/
+*.tsbuildinfo
+
+# Gizli anahtarlar: .env dosyaları depoya girmez (CLAUDE.md kural 6)
+.env
+.env.*
+!.env.example
+
+# Yerel dosyalar
+*.log
+*.local
+.DS_Store
+.claude/settings.local.json

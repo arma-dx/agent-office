@@ -1,0 +1,117 @@
+# Araç kataloğu (pilot)
+# sinif: okuma | ic_yazma | dis_etki
+# dis_etki sınıfındaki her çağrı Onay Masası'na düşer.
+# ic_yazma araçlarından onay isteyen durumlar "onay" alanında yazılıdır.
+# Bütün araçlar çağıran ajanın şirketiyle ve kartındaki izinle sınırlıdır.
+
+araclar:
+  - ad: gorev_ara
+    sinif: okuma
+    aciklama: Görev kaydında şirket, durum, atanan ve son tarihe göre arama
+  - ad: gorev_oku
+    sinif: okuma
+    aciklama: Tek görevin ayrıntısı, yorumları ve çalışma geçmişi
+  - ad: gorev_ac
+    sinif: ic_yazma
+    aciklama: Yeni görev ya da alt görev açar, insana ya da ajana atar
+  - ad: gorev_guncelle
+    sinif: ic_yazma
+    aciklama: Görevin durumunu değiştirir, yorum ve etiket ekler
+    onay: Görevin sahibi ya da son tarihi değişiyorsa
+  - ad: ajan_listele
+    sinif: okuma
+    aciklama: Şirkette açık ajanların kodu, birimi, durumu ve kart özeti
+  - ad: kullanici_listele
+    sinif: okuma
+    aciklama: Şirketteki kullanıcılar ve rolleri
+  - ad: bildirim_gonder
+    sinif: ic_yazma
+    aciklama: Ekip üyesine panel içi bildirim ve şirket içi e-posta; dış adreslere gönderemez
+  - ad: onaya_gonder
+    sinif: ic_yazma
+    aciklama: Çıktıyı gerekçe, kaynaklar ve değişiklik farkıyla Onay Masası'na koyar
+  - ad: onay_kuyrugu_oku
+    sinif: okuma
+    aciklama: Bekleyen onaylar ve ayrıntıları
+  - ad: onay_ozeti_yaz
+    sinif: ic_yazma
+    aciklama: Onay kaydına özet, risk notu ve öncelik yazar; kararı değiştiremez
+  - ad: not_ara
+    sinif: okuma
+    aciklama: Notlarda tam metin, etiket ve özellik araması; soranın erişimiyle sınırlı
+  - ad: not_oku
+    sinif: okuma
+    aciklama: Notun gövdesi, özellikleri, bağlantıları ve geri bağlantıları
+  - ad: not_yaz
+    sinif: ic_yazma
+    aciklama: Yeni not ya da taslak not oluşturur
+  - ad: not_guncelle
+    sinif: ic_yazma
+    aciklama: Mevcut notu değiştirir
+    onay: Not "tek doğru kaynak" olarak işaretliyse ya da not siliniyorsa
+  - ad: not_bagla
+    sinif: ic_yazma
+    aciklama: Notlar arasına bağlantı ve etiket ekler
+  - ad: drive_listele
+    sinif: okuma
+    aciklama: İzin verilen Google Drive klasörlerindeki dosyaları listeler
+  - ad: drive_oku
+    sinif: okuma
+    aciklama: Drive dosyasının metnini okur
+  - ad: belge_ice_aktar
+    sinif: ic_yazma
+    aciklama: Drive belgesini kaynak notu olarak içe aktarır ve belgeler tablosuna bağlar
+  - ad: musteri_oku
+    sinif: okuma
+    aciklama: Müşteri ve fırsat kaydı
+  - ad: musteri_guncelle
+    sinif: ic_yazma
+    aciklama: Fırsat aşaması, sonraki adım ve not ekler
+  - ad: proje_oku
+    sinif: okuma
+    aciklama: Proje, kilometre taşları ve bütçe
+  - ad: maliyet_oku
+    sinif: okuma
+    aciklama: Proje ya da ajan bazında çalışma maliyetleri
+  - ad: github_oku
+    sinif: okuma
+    aciklama: Projeye bağlı depolarda commit, değişiklik isteği ve iş kayıtları
+  - ad: pdf_uret
+    sinif: ic_yazma
+    aciklama: HTML şablondan PDF üretir ve dosya olarak saklar
+  - ad: eposta_taslak
+    sinif: ic_yazma
+    aciklama: Gmail'de taslak oluşturur, göndermez (Sprint 3)
+  - ad: eposta_gonder
+    sinif: dis_etki
+    aciklama: Dış alıcıya e-posta gönderir; her çağrı onay ister (pilotta kapalı)
+  - ad: gmail_ara
+    sinif: okuma
+    aciklama: Yetki verilen posta kutusunda arama (Sprint 3)
+  - ad: gmail_oku
+    sinif: okuma
+    aciklama: E-postanın ve eklerinin metnini okur (Sprint 3)
+  - ad: takvim_oku
+    sinif: okuma
+    aciklama: Takvim etkinlikleri, katılımcılar ve toplantı bağlantıları (Sprint 3)
+  - ad: toplanti_dokumu_oku
+    sinif: okuma
+    aciklama: Meet'in Drive'a kaydettiği transkripti ya da kaydın yazıya dökülmüş hâlini okur (Sprint 3)
+  - ad: web_getir
+    sinif: okuma
+    aciklama: İzin listesindeki kaynaklardan herkese açık sayfa ya da veri dosyası çeker; giriş gerektiren sayfalara giremez
+  - ad: istasyon_oku
+    sinif: okuma
+    aciklama: Pillika'nın mevcut istasyon kayıtlarını ve aday kayıtları okur
+  - ad: istasyon_aday_yaz
+    sinif: ic_yazma
+    aciklama: Toplanan istasyon verisini aday tablosuna yazar; canlı uygulamaya aktarmaz
+  - ad: figma_oku
+    sinif: okuma
+    aciklama: Figma dosyası, bileşenler ve tasarım değişkenleri (Sprint 4)
+  - ad: figma_yaz
+    sinif: ic_yazma
+    aciklama: Ajana ayrılan Figma çalışma sayfasında çerçeve ve bileşen oluşturur; ana tasarım dosyasına yazamaz (Sprint 4)
+  - ad: gorsel_uret
+    sinif: ic_yazma
+    aciklama: Onaylı şablondan kanal ölçülerinde görsel üretir (HTML ya da SVG'den PNG)
