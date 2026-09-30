@@ -91,13 +91,13 @@ Arma DX ve Pillika için şirket içi agentik ofis web paneli. Ekip panelden iş
 
 ## Komutlar
 
-Gerekenler: Node 24 (`.nvmrc`) ve pnpm 12.8.1 (`packageManager`).
+Gerekenler: Node 24.15 ya da üstü bir 24.x sürümü (`engines`: `^24.15.0`; `.nvmrc` en güncel 24'ü seçer) ve pnpm 12.8.1 (`packageManager`).
 
 - `pnpm install`: bağımlılıkları kurar
-- `pnpm dev`: bütün uygulamaları yerelde çalıştırır; panel `http://localhost:5173`, API `http://127.0.0.1:3000`. Panel `/api/` isteklerini API'ye aktarır. Ortam değişkenleri kökteki `.env` dosyasından okunur (`.env.example`'dan kopyala).
+- `pnpm dev`: bütün uygulamaları yerelde çalıştırır; panel `http://localhost:5173`, API `http://127.0.0.1:3000` (`.env`'deki `PORT`). Panel `/api/` isteklerini API'ye aktarır. Ortam değişkenleri kökteki `.env` dosyasından okunur (`.env.example`'dan kopyala).
 - `pnpm test`: bütün paketlerin testleri (Vitest)
 - `pnpm lint`, `pnpm typecheck`, `pnpm format:check` (`pnpm format` düzeltir)
-- `pnpm smoke`: api ve worker'ı Node ile doğrudan içe aktarır; tsc ve Vitest'in kaçırdığı içe aktarma hatalarını yakalar
+- `pnpm smoke`: api modüllerini (dinlemeye başlayan `main.ts` hariç) ve worker'ın giriş dosyasını Node ile doğrudan yükler; tsc ve Vitest'in kaçırdığı içe aktarma hatalarını yakalar
 - `pnpm peers check`: paketlerin birbirine uyumunu denetler
 - `pnpm --filter @agent-office/web build`: panelin derlenmiş dosyaları
 - `supabase start`: yerel veritabanı; `supabase db reset`: göçleri baştan uygular (veri modeli görevinde kurulacak)

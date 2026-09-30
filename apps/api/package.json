@@ -7,7 +7,7 @@
     "dev": "node --watch --env-file-if-exists=../../.env src/main.ts",
     "start": "node src/main.ts",
     "typecheck": "tsc -p tsconfig.json",
-    "smoke": "node --input-type=module -e \"await import('./src/server.ts')\""
+    "smoke": "node --input-type=module -e \"await import('./src/env.ts'); await import('./src/server.ts')\""
   },
   "dependencies": {
     "@agent-office/shared": "workspace:*",
