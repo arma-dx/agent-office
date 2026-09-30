@@ -29,7 +29,7 @@ ciktilar:
 
 skills: [istasyon-verisi]
 
-araclar: [web_getir, istasyon_oku, istasyon_aday_yaz, not_oku, gorev_ac]
+araclar: [web_getir, istasyon_oku, istasyon_aday_yaz, not_oku, gorev_ac, onaya_gonder]
 
 bilgi_kaynaklari:
   - Kaynak listesi notu (tek doğru kaynak)

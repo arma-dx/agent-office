@@ -1,7 +1,7 @@
 kod: KOR-4
 ad: Yönetici Asistanı
 birim: KOR
-sirketler: [armadx, pillika]
+sirketler: [kurucu_alani]   # kurucuya özel alan; e-posta özetleri ve taslaklar burada kalır
 surum: "0.1"
 durum: taslak
 sorumlu: kurucu
@@ -26,17 +26,17 @@ girdiler:
 
 ciktilar:
   - Önceliğe göre sıralanmış e-posta listesi: yanıt bekleyen, bilgi, gereksiz
-  - Gmail'de yanıt taslakları
+  - Panelde yanıt taslakları (Gmail'e yazılmaz; kurucu kopyalar ya da Gmail'de açıp kendisi gönderir)
   - Toplantı brifi: katılımcılar, geçmiş yazışmalar, açık konular
   - Günlük özet
-  - E-postalardan çıkan işler için görevler
+  - E-postalardan çıkan şirket işleri için görev önerileri (kurucu tek dokunuşla ilgili şirkette açar)
 
 skills: [eposta-onceliklendirme, toplanti-brifi]
 
-araclar: [gmail_ara, gmail_oku, takvim_oku, eposta_taslak, not_ara, not_oku, musteri_oku, gorev_ac, bildirim_gonder]
+araclar: [gmail_ara, gmail_oku, takvim_oku, eposta_taslak, not_ara, not_oku, musteri_oku, gorev_oner, bildirim_gonder]
 
 bilgi_kaynaklari:
-  - Öncelikli göndericiler listesi (kurucu belirleyecek)
+  - Öncelikli göndericiler listesi (kurucu belirleyecek; sirket_ajanlari ayarlarında)
   - Müşteri ve proje notları
 
 yetki:
@@ -44,7 +44,7 @@ yetki:
   hedef: Y2   # yalnızca şirket içi yazışmalarda
 
 onay_noktalari:
-  - Her yanıtı kurucu gönderir; ajan yalnızca taslak bırakır
+  - Her yanıtı kurucu kendisi gönderir; ajan yalnızca panelde taslak bırakır
 
 eskalasyon:
   - Hukuki, mali ya da acil görünen e-postayı günlük özeti beklemeden bildirir

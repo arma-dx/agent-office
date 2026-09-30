@@ -20,8 +20,8 @@ Kapsam dışı: dış müşterilere kurulum, WhatsApp ve Uyumsoft entegrasyonlar
 | Arayüz | Telefona uyumlu web uygulaması (PWA); onaylar telefondan verilir |
 | Barındırma | AWS'de tek sunucu, Docker Compose: Caddy (HTTPS ve yönlendirme), panel dosyaları, API ve çalıştırıcı; iş kuyruğu PostgreSQL üzerinde (pg-boss); Cloudflare önde DNS ve koruma |
 | Alan adları | office.armadx.com (panel ve /api, iki şirket için tek giriş), office-test.armadx.com (test), hooks.armadx.com (dış bildirimler) |
-| Veritabanı | Supabase PostgreSQL; yalnızca API sunucusu bağlanır; RLS ile şirket ayrımı; dosyalar Supabase depolamasında |
-| Kimlik | Google Workspace ile giriş, API üzerinden sunucu tarafında; iki adımlı doğrulama zorunlu |
+| Veritabanı | Supabase PostgreSQL; veritabanına yalnızca sunucu tarafı (API ve worker) bağlanır, tarayıcı hiçbir zaman; API ve worker `BYPASSRLS` yetkisi olmayan kısıtlı bir rolle bağlanır, her istek ve çalışma `SET LOCAL` ile şirket, kullanıcı ve proje bağlamını kurar; RLS ile şirket ve proje ayrımı; dosyalar Supabase depolamasında |
+| Kimlik | Google ile davetli giriş (giriş istemcisi: External; `openid`, `email`, `profile`), API üzerinden sunucu tarafında; yalnızca `uyelikler` tablosunda kaydı olan e-posta girer; iki adımlı doğrulama zorunlu. Ajanların Workspace erişimi ayrı bağlantı istemcisiyle (Internal; `gmail.readonly`, `calendar.readonly`, `drive.readonly`), bağlantıyı kuran kişinin kimliğiyle |
 | Model | Claude API, araç kullanımı ile ajan döngüsü; model adı görev kartından; tekrar eden talimatlarda istem önbelleği |
 | Skill'ler | `skills/` altında SKILL.md klasörleri; çalıştırıcı okuyup çağrıya ekler, API'ye yüklenmez |
 | Not sistemi | Kurumsal hafıza Obsidian gibi markdown notlar: YAML özellikler, `[[bağlantı]]`, geri bağlantılar, etiketler; kaynak veritabanı |
@@ -43,24 +43,26 @@ Pilotta panel internete açık; ileride yalnızca ofis ağından, dışarıdan V
 
 ## Veri modeli
 
-Her tabloda `sirket_id` zorunlu, RLS açık.
+Şirket verisi tutan her tabloda `sirket_id` zorunlu ve RLS açık; kart tanımı ve araç kataloğu gibi global yapılandırma tabloları hariç (uygulama rolü bunları yalnızca okur). `gorevler`, `calismalar`, `onaylar`, `notlar`, `belgeler` ve `iz_kaydi` tablolarında boş bırakılabilir `proje_id` var; doluysa satırı yalnızca proje üyeleri ve kurucu görür. Çalışma kayıtlarının görünürlüğü bağlı olduğu görevden ya da projeden gelir.
 
 | Tablo | İçerik |
 | --- | --- |
-| sirketler | Kiracılar: Arma DX, Pillika |
-| kullanicilar, uyelikler | Kişi, üyesi olduğu şirketler, rol |
-| ajanlar, kart_surumleri | Görev kartı: amaç, talimat, skill'ler, araç izinleri, yetki seviyesi, onay noktaları, model, sınırlar, sürüm geçmişi |
+| sirketler | Kiracılar ve özel alanlar. `tur`: `sirket` (Arma DX, Pillika) ya da `ozel_alan` (yalnızca kurucunun üye olduğu Kurucu alanı, `kurucu_alani`) |
+| kullanicilar, uyelikler | Kişi, üyesi olduğu şirketler, rol; giriş yalnızca `uyelikler` tablosunda kaydı olan e-postayla |
+| ajan_tanimlari, kart_surumleri | Global, `sirket_id` yok. Görev kartı: amaç, talimat, skill'ler, araç izinleri, yetki seviyesi, onay noktaları, model, sınırlar, sürüm geçmişi; depodaki YAML'dan her yayında git commit kimliğiyle senkronize edilir |
+| sirket_ajanlari | Şirkete özel ajan satırı: `sirket_id`, `ajan_kod`, durum (durdurma düğmesi), ayarlar (Drive klasörleri, öncelikli göndericiler, Figma çalışma dosyası, bütçe) |
 | gorevler | Talep, şirket, proje, atanan (insan ya da ajan), durum, öncelik, son tarih, yorumlar |
-| calismalar | Ajan çalışması: girdi, çıktı, araç çağrıları, model, token, maliyet, süre, iç iş ya da proje etiketi |
+| calismalar | Ajan çalışması: girdi, çıktı, araç çağrıları, model, kart sürümü, token, maliyet, süre, iç iş ya da proje etiketi |
 | onaylar | Onay bekleyen çıktı, özet, risk notu, fark, durum, gerekçe, onaylayan, zaman |
 | iz_kaydi | Değiştirilemeyen olay kaydı: kim, ne yaptı, hangi veriye baktı, ne zaman |
 | notlar, not_surumleri | Markdown not: klasör yolu, başlık, YAML özellikler, gövde, sürüm, arama dizini; kararlar ve tutanaklar da not türü |
 | not_baglantilari | Notlardaki `[[...]]` bağlantıları; geri bağlantılar ve grafik görünümü buradan |
 | belgeler | Drive'dan gelen kaynak dosyalar; her biri bir kaynak notuna bağlı |
-| istasyon_adaylari | Pillika için toplanan istasyon verisi: kaynak, konum, operatör, soket tipleri, güç, doğrulama durumu, eşleşen kayıt |
+| istasyon_adaylari | Pillika için toplanan istasyon verisi: kaynak, konum, operatör, soket tipleri, güç, erişim, tarih, doğrulama durumu, eşleşen kayıt |
 | musteriler, firsatlar | Basit müşteri listesi: kurum, kişi, fırsat, aşama, değer, sonraki adım |
 | projeler | Proje, müşteri, bütçe, kilometre taşları |
-| entegrasyonlar | Bağlantı ayarları ve yetkileri, şirket bazında |
+| proje_uyeleri | Projenin üyeleri; proje kapsamlı satırları yalnızca üyeler ve kurucu görür |
+| entegrasyonlar | Bağlantı ayarları ve yetkileri, şirket bazında; Google bağlantı token'ları şifreli, yalnızca worker kullanır |
 
 ## Durumlar ve roller
 
@@ -71,13 +73,13 @@ Onaylandı. Arayüzde Türkçe adlar, veritabanında parantez içindeki değerle
 
 | Rol | Yetki |
 | --- | --- |
-| Kurucu (`kurucu`) | Bütün şirketleri görür, bütün onayları verir, kullanıcı ve ajan ayarlarını yönetir |
-| Çalışan (`calisan`) | Üyesi olduğu şirketin görev ve notlarıyla çalışır; onay yetkisi kurucu verirse açılır |
-| Dış kişi (`dis_kisi`) | Mali müşavir ve avukat gibi; yalnızca kendisine açılan görev ve notları görür |
+| Kurucu (`kurucu`) | Bütün şirketleri görür, bütün onayları verir, kullanıcı ve ajan ayarlarını yönetir; iki şirketi birlikte yalnızca holding görünümünde (salt okunur) görür; Kurucu özel alanının tek üyesidir |
+| Çalışan (`calisan`) | Üyesi olduğu şirketin görev ve notlarıyla çalışır; proje kapsamlı kayıtları yalnızca üyesi olduğu projelerde görür; onay yetkisi kurucu verirse açılır |
+| Dış kişi (`dis_kisi`) | Mali müşavir ve avukat gibi; kendi Google hesabıyla davetle girer; yalnızca kendisine açılan görev ve notları görür |
 
 ## Ekranlar
 
-Günlük iş listeler, pano ve Onay Masası üzerinden yürür. Üst çubukta şirket seçici var: Arma DX, Pillika ve kurucu için holding görünümü. Telefonda alt menü: Bugün, Onaylar, Görevler, Notlar, Ofis. Tasarım dili CLAUDE.md içinde.
+Günlük iş listeler, pano ve Onay Masası üzerinden yürür. Üst çubukta şirket seçici var: Arma DX, Pillika; kurucu için ayrıca holding görünümü (iki şirketin API'de salt okunur birleştirmesi) ve Kurucu özel alanı. Telefonda alt menü: Bugün, Onaylar, Görevler, Notlar, Ofis. Tasarım dili CLAUDE.md içinde.
 
 | Ekran | Ne gösterir | Sprint |
 | --- | --- | --- |
@@ -86,8 +88,8 @@ Günlük iş listeler, pano ve Onay Masası üzerinden yürür. Üst çubukta ş
 | Onay Masası | Önceliğe göre kuyruk; özet, risk notu, değişiklik farkı; onay, düzeltme, ret | 0 |
 | Görevler | Pano ve liste; şirket, birim, ajan ve durum filtresi | 0 |
 | Görev ayrıntısı | Talep, ajanın adımları ve araç çağrıları, çıktılar, yorumlar, maliyet | 1 |
-| Ajanlar | Birimlere göre ajanlar, durumları, yetki seviyeleri, durdurma düğmesi | 1 |
-| Görev kartı | Kart ve skill'ler, sürüm geçmişi, test sonuçları | 1 |
+| Ajanlar | Birimlere göre ajanlar, durumları, yetki seviyeleri, şirket başına durdurma düğmesi ve "her yerde durdur" | 1 |
+| Görev kartı | Kart ve skill'ler salt okunur (değişiklik depoda PR ile), sürüm geçmişi, test sonuçları | 1 |
 | Notlar | Klasör ağacı, editör, geri bağlantılar, etiketler, arama | 1 |
 | Müşteriler | Müşteri ve fırsat listesi | 2 |
 | İz kaydı | Kim, ne yaptı, ne zaman; filtreler | 2 |
@@ -100,18 +102,18 @@ Günlük iş listeler, pano ve Onay Masası üzerinden yürür. Üst çubukta ş
 
 | Kod | Modül | İçerik | Sprint |
 | --- | --- | --- | --- |
-| M1 | Kimlik ve kiracı | Google ile giriş, şirket seçimi, roller, RLS | 0 |
+| M1 | Kimlik ve kiracı | Google ile davetli giriş, şirket seçimi, roller, RLS ve proje kapsamı, Kurucu özel alanı | 0 |
 | M2 | Görev kaydı | Talep, atama, durum, son tarih; pano ve liste | 0 |
 | M3 | Onay Masası | Kuyruk, özet, fark, onay, ret, düzeltme, gerekçe; telefonda tek dokunuş | 0 |
 | M4 | İz kaydı ve maliyet | Çalışma ve onay kaydı; token ve maliyet; iç iş ve proje ayrımı | 0 |
 | M5 | Ajan çalıştırıcı | Kart ve skill yükleme, Claude ile araç döngüsü, kuyruk, zamanlayıcı, olay tetikleyici, yeniden deneme, zaman aşımı, durdurma | 1 |
-| M6 | Görev kartı yönetimi | Kart düzenleme, sürümleme, test setini çalıştırma ve karşılaştırma | 1 |
+| M6 | Görev kartı yönetimi | Kart görüntüleme, sürüm geçmişi, test setini çalıştırma; düzenleme depoda PR ile. | 1 |
 | M7 | Not sistemi | Markdown editörü, `[[` ile not önerisi, geri bağlantılar, etiket ve özellik filtresi, arama, kaynak gösterme; Drive'dan içeri aktarma | 1 |
 | M8 | Ofis Koordinatörü | Talebi sınıflandırır, şirketi ve birimi belirler, alt görevlere böler | 1 |
 | M9 | Bildirimler | Günlük onay özeti, tarayıcı ve e-posta bildirimi | 2 |
 | M10 | Müşteri ve fırsat listesi | Basit CRM | 2 |
 | M11 | PDF ve şablonlar | Teklif ve rapor şablonları | 2 |
-| M12 | Google Workspace bağlantısı | Drive (Sprint 1); Gmail, Takvim, Meet kayıtları (Sprint 3) | 1 ve 3 |
+| M12 | Google Workspace bağlantısı | Bağlantı istemcisi, salt okunur kapsamlar, şifreli token; Drive (Sprint 1); Gmail, Takvim, Meet kayıtları (Sprint 3) | 1 ve 3 |
 | M13 | Ölçüm panosu | Onay oranı, onay bekleme süresi, maliyet, kazanılan saat | 4 |
 | M14 | Not sistemi ek özellikleri | Grafik görünümü, günlük notlar, şablonlar, Obsidian uyumlu dışa aktarma, MCP sunucusu | 4 |
 | M15 | Ofis görünümü | İzometrik ofis haritası: birimler oda, ajanlar masalarında, durumlar renk ve hareketle | Kasım |
@@ -130,7 +132,7 @@ Yetki: Y1 taslak hazırlar, onaysız dışarı çıkmaz; Y2 tanımlı sınır i�
 | A-TEK-2 | Teklif | İş kırılımı, ücret kartına göre fiyat, PDF teklif ve zaman çizelgesi; fiyat onayı kurucuda | Y1 | 2 |
 | A-PRJ-2 | Proje Takip | Görev kaydı, GitHub ve toplantılardan haftalık durum raporu; müşteriye giden rapor onaydan geçer | Y2 iç, Y1 müşteri | 2 |
 | SOS-2 | Sosyal İçerik Yazım | Verilen kaynak bilgiden seçenekli gönderi metinleri ve video senaryoları | Y1 | 2 |
-| KOR-4 | Yönetici Asistanı | Gmail ve Takvim üzerinden e-posta önceliklendirme, toplantı brifingi, günlük özet | Y1 | 3 |
+| KOR-4 | Yönetici Asistanı | Gmail ve Takvim üzerinden e-posta önceliklendirme, toplantı brifingi, günlük özet; Kurucu özel alanında çalışır | Y1 | 3 |
 | KOR-5 | Toplantı | Meet kaydını yazıya döker; aksiyonları görev kaydına, tutanağı ilgili notlara bağlı not olarak işler | Y2 | 3 |
 | A-KES-2 | Süreç Analizi | Görüşme kayıtlarından süreç haritası ve sorun listesi | Y1 | 3 |
 | P-IST-1 | İstasyon Veri Toplama | Kaynaklardan istasyon verisini toplar, tek biçime çevirir, tekrarları birleştirir | Y2 | 4 |
@@ -164,7 +166,7 @@ Skill içeriği kurucunun verdiği gerçek dokümanlardan yazılır; bilgi uydur
 ### Sprint 1 · 4-6 Ekim
 
 - [ ] Ajan çalıştırıcı: kart ve skill yükleme, araç çağrıları, kuyruk, yeniden deneme, durdurma (M5)
-- [ ] Görev kartı editörü ve sürümleme (M6)
+- [ ] Görev kartı görüntüleme, sürüm geçmişi ve kart senkronizasyonu (M6)
 - [ ] Not sistemi: editör, not bağlantıları, geri bağlantılar, arama; Drive'dan içeri aktarma (M7, M12)
 - [ ] Bilgi tabanının ilk yüklemesi: şirket profilleri, ürün bilgileri, ücret kartı ve teklif kuralları, şablonlar
 - [ ] KOR-1, KOR-2, KOR-3, HAF-1, HAF-2 için görev kartı, skill ve test seti; devreye alma (M8)
@@ -202,6 +204,7 @@ Skill içeriği kurucunun verdiği gerçek dokümanlardan yazılır; bilgi uydur
 ## Pilot açılış kontrolleri
 
 - [ ] İki şirketin verisi birbirine görünmüyor; testle doğrulandı
+- [ ] API ve worker `BYPASSRLS` yetkisi olmayan rolle bağlanıyor; yetkili rol istek ve çalışma yolunda kullanılmıyor
 - [ ] Onay telefondan tek dokunuşla veriliyor
 - [ ] Dışarı giden her iş onaydan geçiyor; onaysız çıkış yolu yok
 - [ ] Her ajan çalışmasının kaydı ve maliyeti panelde görünüyor
@@ -215,7 +218,7 @@ Skill içeriği kurucunun verdiği gerçek dokümanlardan yazılır; bilgi uydur
 | Test | Ne kontrol eder | Ne zaman |
 | --- | --- | --- |
 | Ajan test seti | Çıktının kabul ölçütlerini karşılaması | Görev kartı her değiştiğinde |
-| Şirket ayrımı | Bir şirketin kullanıcısının ve ajanının diğer şirketin verisini görememesi | Her yayında |
+| Şirket ayrımı | Bir şirketin kullanıcısının ve ajanının diğer şirketin verisini görememesi; kısıtlı rolle: bağlam Pillika iken Arma DX satırı okunamaz, bağlam yokken hiçbir satır okunamaz, proje kapsamlı satır proje dışından okunamaz | Her yayında |
 | Onay akışı | Dışa etkili hiçbir işin onaysız çıkamaması | Her yayında |
 | İstem enjeksiyonu | E-posta ve dokümana gizlenmiş talimatların uygulanmaması | Haftalık ve her yeni bağlantıda |
 | Maliyet | Çalışma başına maliyetin beklenen aralıkta kalması | Haftalık |

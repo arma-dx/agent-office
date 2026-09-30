@@ -5,7 +5,7 @@ sirketler: [armadx]
 surum: "0.1"
 durum: taslak
 sorumlu: kurucu   # projeye danışman atanınca ona geçer
-erisim: Yalnızca atandığı müşteri projesinin notları; diğer müşterilerin alanları kapalı
+proje_baglami: zorunlu   # yalnızca atandığı müşteri projesinin notları; diğer müşterilerin alanları kapalı
 
 amac: >
   Müşteri görüşmelerinden mevcut süreçleri çıkarır ve iyileştirme fırsatlarını kanıtıyla işaretler.

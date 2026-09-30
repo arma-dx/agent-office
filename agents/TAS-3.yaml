@@ -24,7 +24,7 @@ girdiler:
 
 ciktilar:
   - Kullanıcı akışı ve tel kafesler
-  - Figma'da ekran tasarımları (ajanın çalışma sayfasında)
+  - Figma'da ekran tasarımları (ajana ayrılmış ayrı Figma dosyasında)
   - Tasarım gerekçesi ve erişilebilirlik kontrolü
   - Geliştirici için teslim notları
 
@@ -49,7 +49,7 @@ eskalasyon:
   - Gereksinim eksik ya da çelişkiliyse varsayım yerine soru listesi çıkarır
 
 yasaklar:
-  - Ana tasarım dosyasına yazmaz, yalnızca kendi çalışma sayfasında çalışır
+  - Ana tasarım dosyasına yazmaz, yalnızca kendisine ayrılmış ayrı Figma dosyasında çalışır; tasarımı ana dosyaya insan taşır
   - Başka bir ürünün ekranını kopyalamaz
   - Lisansı belirsiz yazı tipi, ikon ya da görsel kullanmaz
   - Tasarım sistemi dışında renk ve bileşen kullanmaz; gerekiyorsa önerir

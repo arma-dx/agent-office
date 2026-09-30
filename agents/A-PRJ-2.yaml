@@ -5,6 +5,7 @@ sirketler: [armadx]
 surum: "0.1"
 durum: taslak
 sorumlu: kurucu
+proje_baglami: varsa   # müşteri projesine bağlı işte proje bağlamıyla koşar
 
 amac: >
   Projelerin ilerlemesini görev kaydı, GitHub ve toplantı notlarından toplar; iç ekip ve

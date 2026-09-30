@@ -23,7 +23,7 @@ girdiler:
 
 ciktilar:
   - Kişiye özel hatırlatmalar
-  - Kurucuya günlük gecikme özeti
+  - Kurucuya şirket başına günlük gecikme özeti
   - Durumu yanlış görünen görevler için düzeltme önerisi
 
 skills: [gorev-takibi]
@@ -38,7 +38,7 @@ yetki:
   hedef: Y3
 
 onay_noktalari:
-  - Görevin sahibini ya da son tarihini değiştirmek (yalnızca öneri olarak gönderir)
+  - Görevin atananını ya da son tarihini değiştirmek (yalnızca öneri olarak gönderir)
 
 eskalasyon:
   - Aynı kişiye aynı iş için üçüncü hatırlatmadan sonra kurucuya bildirir
