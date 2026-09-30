@@ -86,14 +86,21 @@ Arma DX ve Pillika için şirket içi agentik ofis web paneli. Ekip panelden iş
 - Veritabanı tabloları ve alanları `docs/PLAN.md` içindeki Türkçe ASCII adlarla yazılır (`gorevler`, `onaylar`). Genel teknik kod İngilizce olabilir.
 - Arayüz metinleri Türkçe ve yazım kurallarına uygun. Uzun tire (—) kullanılmaz.
 - Bütün girişler zod ile doğrulanır. Tip kontrolü, ESLint ve Prettier temiz olmadan iş bitmiş sayılmaz.
+- Node TypeScript'i derlemeden çalıştırır: göreli içe aktarmalar `.ts` uzantısıyla yazılır; `enum`, parametre özellikleri ve `namespace` kullanılmaz (`erasableSyntaxOnly`).
+- Yeni bağımlılık `pnpm-workspace.yaml` kataloğuna tam sürümle eklenir, `package.json` içinde `catalog:` yazılır. 24 saatten yeni sürüm kurulmaz; kurulum betiği isteyen paket yalnızca `allowBuilds` ile onaylanır.
 
 ## Komutlar
 
-İskelet kurulunca bu bölümü gerçek komutlarla güncelle:
+Gerekenler: Node 24 (`.nvmrc`) ve pnpm 12.8.1 (`packageManager`).
 
-- `pnpm dev`: bütün uygulamaları yerelde çalıştırır
-- `pnpm test`, `pnpm lint`, `pnpm typecheck`
-- `supabase start`: yerel veritabanı; `supabase db reset`: göçleri baştan uygular
+- `pnpm install`: bağımlılıkları kurar
+- `pnpm dev`: bütün uygulamaları yerelde çalıştırır; panel `http://localhost:5173`, API `http://127.0.0.1:3000`. Panel `/api/` isteklerini API'ye aktarır. Ortam değişkenleri kökteki `.env` dosyasından okunur (`.env.example`'dan kopyala).
+- `pnpm test`: bütün paketlerin testleri (Vitest)
+- `pnpm lint`, `pnpm typecheck`, `pnpm format:check` (`pnpm format` düzeltir)
+- `pnpm smoke`: api ve worker'ı Node ile doğrudan içe aktarır; tsc ve Vitest'in kaçırdığı içe aktarma hatalarını yakalar
+- `pnpm peers check`: paketlerin birbirine uyumunu denetler
+- `pnpm --filter @agent-office/web build`: panelin derlenmiş dosyaları
+- `supabase start`: yerel veritabanı; `supabase db reset`: göçleri baştan uygular (veri modeli görevinde kurulacak)
 
 ## Çalışma şekli
 
