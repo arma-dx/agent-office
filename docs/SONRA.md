@@ -99,3 +99,21 @@ Görev kartları CLAUDE.md ve PLAN.md ile karşılaştırıldı; kurucu kararlar
 - M51: Kart ölçütlerinin çoğu (KOR-1 doğru birim, HAF-2 kullanıcı geri bildirimi, SOS-2 etkileşim, P-IST-1 doğrulama sonucu, TAS-3 kullanılabilirlik testi, A-TEK-2 kapsam sapması) için veri kaydı yok ve bugünkü iş süresi yalnızca üç iş için ölçülüyor. Kasım yetki kararı yalnızca dört ortak ölçüte mi dayanacak, kart ölçütleri de toplanacak mı, süre ölçümü 14 ajana genişletilecek mi?
 - X1-8: Model değişikliği karar 4 gereği yeni kart sürümü olur ve çalışma kaydında görünür; ama Kasım ölçümü sırasında model değişikliği dondurulacak mı, ve claude-haiku-4-5-20251001 için kullanımdan kaldırma duyurusu gelirse KOR-1, KOR-2 ve P-IST-1 hangi modele geçecek?
 - X2-6 (HAF-1, HAF-2, A-KES-2): M14'teki not sistemi MCP sunucusu ve Obsidian uyumlu dışa aktarma kimlere, hangi kapsamla açılacak, her erişim iz kaydına yazılacak mı, yoksa pilottan çıkarılacak mı? Karar 2'ye göre bu yol da yetkili rolü kullanamaz, kısıtlı rol ve kullanıcı bağlamıyla çalışmalı.
+
+## Altyapı ve araçlar (monorepo iskeletinden)
+
+- vitest 5.0.3 ve jsdom 30.1.1'e birlikte geçilir (vitest 5.0.3, 24 saat kuralı nedeniyle 1 Ekim 2026 14.31'den önce kurulamıyordu). İkisi ayrı ayrı yükseltilmez: vitest 5.0.2 ile jsdom 30.1.1 birlikte Blob gövdeli istekleri bozuyor; `apps/web/src/test-ortami.test.ts` bu eşleşmeyi denetler.
+- TypeScript 7'ye geçiş: typescript-eslint TypeScript 7'yi (yerel derleyici) desteklediğinde. Şimdilik bütün çalışma alanı 6.0.3; tsconfig dosyaları TS 7'de değişmeden geçiyor. CI'daki `pnpm peers check` yanlışlıkla 7'ye geçilmesini yakalar.
+- Node 26 LTS'e geçiş: Node 26, 28 Ekim 2026'da LTS oluyor; Node 24 20 Ekim'de bakım dönemine giriyor. `.nvmrc`, `engines`, `@types/node` ve CI birlikte güncellenir.
+- Docker adımı: Node, `node_modules` altındaki TypeScript dosyalarını çalıştırmıyor. `pnpm deploy` kullanılırsa api ve worker tek dosyada paketlenmeli (esbuild ya da tsdown); ya da bütün çalışma alanı kopyalanır. Konteynerde `HOST=0.0.0.0` verilir.
+- Dependabot yalnızca GitHub Actions için açık; araştırmada pnpm 12 kilit dosyasını desteklemediği görüldü. npm bağımlılıkları katalogdan elle güncellenir; destek gelince yeniden bakılır.
+- pnpm 12 yeni bir sürüm; ciddi bir sorun çıkarsa 11.28.2'ye dönülebilir.
+
+## Arayüz temeli (giriş ekranından önce)
+
+- TanStack Router ve Query, shadcn/ui, Tailwind 4 ve react-hook-form iskeletin sürümleriyle uyumlu olarak denendi; kurulum giriş ekranından (M1) önce ayrı bir dalda yapılır.
+- PWA: vite-plugin-pwa tedarik zinciri ayarına takılıyor (workbox-build, sürüm kaynağı doğrulanamayan bir alt pakete bağlı). Öneri: elle yazılmış manifest; bildirimler için M9'da yalnızca push işleyen küçük bir service worker; önbellekleme gerekirse Serwist.
+- IBM Plex Sans kendi sunucumuzdan verilir (`@fontsource-variable/ibm-plex-sans`; latin ve latin-ext alt kümeleri Türkçeyi kapsıyor), dış yazı tipi servisi kullanılmaz.
+- shadcn bileşenleri kendi değişken adlarını (`--popover`, `--secondary`, `--sidebar-*` gibi) doğrudan kullanıyor; CLAUDE.md'deki renk değişkenleri bu adlara eşlenmeli.
+- Renk kontrastı: vurgu `#13807D`, zemin `#F6F7F9` üzerinde 4.44:1 (normal metin için WCAG AA 4.5:1'in altında; beyaz üzerinde 4.76:1). Çizgi `#DDE1E8` beyaz üzerinde 1.31:1; bir form alanını yalnızca kenarlık belirtiyorsa 3:1 gereği karşılanmaz. Soru: vurgu bir ton koyulaştırılsın mı, form alanları için ayrı bir kenarlık rengi mi tanımlansın?
+- Karanlık temanın renk değerleri tanımlı değil. Soru: değerleri kurucu mu verecek, yoksa öneri hazırlanıp onaya mı sunulsun?
