@@ -1,25 +1,6 @@
 import Fastify, { LogController, type FastifyInstance } from 'fastify';
 import type { HealthResponse } from '@agent-office/shared';
-
-// Kural 6: gizli değerler loglara girmez. Joker yalnızca bir düzeyi kapsar; ortam nesnesi hiç loglanmaz.
-export const REDACT_PATHS = [
-  'req.headers.authorization',
-  'req.headers.cookie',
-  'req.headers["x-api-key"]',
-  'res.headers["set-cookie"]',
-  'headers.authorization',
-  'headers.cookie',
-  'headers["x-api-key"]',
-  'headers["set-cookie"]',
-  '*.headers.authorization',
-  '*.headers.cookie',
-  '*.headers["x-api-key"]',
-  '*.password',
-  '*.token',
-  '*.*.token',
-  '*.secret',
-  '*.apiKey',
-];
+import { MASKE, REDACT_PATHS, gizle, sorgusuzYol } from './log.ts';
 
 export interface BuildServerOptions {
   logger?: false;
@@ -31,13 +12,22 @@ export function buildServer(opts: BuildServerOptions = {}): FastifyInstance {
   const app = Fastify({
     logger: opts.logger ?? {
       level: opts.logLevel ?? 'info',
-      redact: { paths: REDACT_PATHS, censor: '[REDACTED]' },
+      redact: { paths: REDACT_PATHS, censor: MASKE },
+      serializers: {
+        req: (req) => ({ method: req.method, url: sorgusuzYol(req.url), reqId: req.id }),
+      },
+      formatters: { log: gizle },
       ...(opts.logStream ? { stream: opts.logStream } : {}),
     },
     logController: new LogController({
-      disableRequestLogging: (req) => req.url === '/api/health',
+      disableRequestLogging: (req) => sorgusuzYol(req.url) === '/api/health',
     }),
   });
+
+  // Varsayılan 404 işleyicisi ham adresi, sorgu dizesiyle birlikte loga yazar.
+  app.setNotFoundHandler((_req, reply) =>
+    reply.code(404).send({ statusCode: 404, error: 'Not Found', message: 'Bulunamadı' }),
+  );
 
   app.get('/api/health', (): HealthResponse => ({ status: 'ok', service: 'api' }));
 
