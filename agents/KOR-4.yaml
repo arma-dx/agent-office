@@ -33,7 +33,7 @@ ciktilar:
 
 skills: [eposta-onceliklendirme, toplanti-brifi]
 
-araclar: [gmail_ara, gmail_oku, takvim_oku, eposta_taslak, not_ara, not_oku, musteri_oku, gorev_oner, bildirim_gonder]
+araclar: [gmail_ara, gmail_oku, takvim_oku, eposta_taslak, not_ara, not_oku, musteri_oku, gorev_oner]
 
 bilgi_kaynaklari:
   - Öncelikli göndericiler listesi (kurucu belirleyecek; sirket_ajanlari ayarlarında)
@@ -47,7 +47,7 @@ onay_noktalari:
   - Her yanıtı kurucu kendisi gönderir; ajan yalnızca panelde taslak bırakır
 
 eskalasyon:
-  - Hukuki, mali ya da acil görünen e-postayı günlük özeti beklemeden bildirir
+  - Hukuki, mali ya da acil görünen e-postayı günlük özeti beklemeden bildirir (insana sor yoluyla)
 
 yasaklar:
   - E-posta göndermez, silmez, arşivlemez

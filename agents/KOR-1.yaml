@@ -26,13 +26,13 @@ girdiler:
 
 ciktilar:
   - Sınıflandırma: şirket, birim, öncelik
-  - Görev ya da alt görevler ve atamaları; iki şirketi kapsayan talepte şirket başına ayrı görevler
+  - Görev ya da alt görevler ve atamaları; iki şirketi kapsayan talepte açıldığı şirkette yürütür, diğer şirket için kurucuya görev önerisi bırakır
   - Talep sahibine kısa durum mesajı
   - Alt görevler bitince birleşik sonuç
 
 skills: [yonlendirme]
 
-araclar: [gorev_ara, gorev_oku, gorev_ac, gorev_guncelle, ajan_listele, kullanici_listele, not_ara, bildirim_gonder]
+araclar: [gorev_ara, gorev_oku, gorev_ac, gorev_oner, gorev_guncelle, ajan_listele, kullanici_listele, not_ara, bildirim_gonder]
 
 bilgi_kaynaklari:
   - Görev kartları ve birim tanımları
