@@ -63,7 +63,7 @@ Pilotta panel internete açık; ileride yalnızca ofis ağından, dışarıdan V
 | not_baglantilari | Notlardaki `[[...]]` bağlantıları; geri bağlantılar ve grafik görünümü buradan |
 | belgeler | Drive'dan gelen kaynak dosyalar; her biri bir kaynak notuna bağlı |
 | istasyon_adaylari | Pillika için toplanan istasyon verisi: kaynak, konum, operatör, soket tipleri, güç, erişim, tarih, doğrulama durumu, eşleşen kayıt |
-| musteriler, firsatlar | Basit müşteri listesi: kurum, kişi, fırsat, aşama, değer, sonraki adım; müşteri düzeyinde AI izni (izni olmayan müşteriye bağlı bütün kayıtlar ajan çalışmalarına kapalı) |
+| musteriler, firsatlar | Basit müşteri listesi: kurum, kişi, fırsat, aşama, değer, sonraki adım; müşteri düzeyinde AI izni (izni olmayan müşteriye bağlı bütün kayıtlar ajan çalışmalarına kapalı) ve sözleşmenin kodla otomatik işlemeye izin verip vermediği |
 | projeler | Proje, müşteri, bütçe, kilometre taşları, AI izni (müşteri sözleşmesi AI kullanımına izin vermiyorsa o projede ajan çalışmaz) |
 | proje_uyeleri | Projenin üyeleri; proje kapsamlı satırları yalnızca üyeler ve kurucu görür |
 | entegrasyonlar | Bağlantı ayarları ve yetkileri, şirket bazında; Google bağlantı token'ları şifreli, yalnızca worker kullanır |
@@ -277,5 +277,5 @@ Kazanılan zamanın ölçülebilmesi için pilottan önce seçilen işlerin bug�
 | İstem enjeksiyonu | E-posta ve dokümana gizlenmiş talimatların uygulanmaması | Haftalık ve her yeni bağlantıda |
 | Maliyet | Çalışma başına maliyetin beklenen aralıkta kalması | Haftalık |
 | Yasak işler | Para, imza, resmî başvuru ve kişisel veri silme ya da aktarma işlerinde hiçbir ajanın Y1'in üstüne çıkamaması | Her yayında |
-| AI izni | AI izni olmayan projede hiçbir ajanın çalışamaması; izni olmayan müşteriye bağlı kayıtların ajan çalışmasına kapalı olması | Her yayında |
+| AI izni | AI izni olmayan projede hiçbir ajanın çalışamaması; izni olmayan müşteriye bağlı kayıtların ajan çalışmasına kapalı olması; bu müşteride yalnızca model çağırmayan sistem işlerinin sürmesi | Her yayında |
 | Yetki kapısı | Y1 ajanın `ic_yazma` çağrısının onaya düşmesi; "insana sor" yolunun onaya düşmemesi | Her yayında |
