@@ -5,6 +5,7 @@ sirketler: [armadx, pillika]
 surum: "0.1"
 durum: taslak
 sorumlu: kurucu
+proje_baglami: proje_basina   # zamanlanmış çalışma her proje için ayrı ve proje dışı kayıtlar için bir kez koşar; özetleri kod birleştirir
 
 amac: >
   Onay bekleyen işleri kurucunun hızlı ve doğru karar verebileceği biçimde sunar:
@@ -25,7 +26,7 @@ ciktilar:
   - En fazla üç cümlelik özet
   - Risk notu (neden dikkat gerektiği)
   - Değişiklik farkı ve öncelik
-  - Şirket başına günlük onay turu paketi
+  - Şirket başına günlük onay turu paketi; kurucuya şirket başına tek paket (proje çalışmalarının paketlerini kod birleştirir)
   - Ret ve düzeltme gerekçelerinin sınıflandırılması
 
 skills: [onay-ozeti]
