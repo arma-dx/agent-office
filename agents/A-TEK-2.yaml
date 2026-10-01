@@ -5,6 +5,7 @@ sirketler: [armadx]
 surum: "0.1"
 durum: taslak
 sorumlu: kurucu
+proje_baglami: varsa   # müşteri projesine bağlı işte proje bağlamıyla koşar
 
 amac: >
   Bir proje talebinden fizibilite, iş kırılımı, ücret kartına göre fiyat, zaman çizelgesi

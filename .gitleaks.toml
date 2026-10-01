@@ -1,0 +1,25 @@
+title = "agent-office"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "supabase-secret-key"
+description = "Supabase secret API key"
+regex = '''\bsb_secret_[A-Za-z0-9_-]{20,}'''
+keywords = ["sb_secret_"]
+
+[[rules]]
+id = "postgres-connection-string"
+description = "Parola içeren Postgres bağlantı adresi"
+regex = '''(?i)postgres(?:ql)?://[^:/@\s]+:([^@\s]{6,})@'''
+secretGroup = 1
+keywords = ["postgres"]
+
+[[rules.allowlists]]
+description = "Yer tutucular ve yerel Supabase varsayılanı"
+regexTarget = "line"
+regexes = [
+  '''(?i)postgres(?:ql)?://postgres:postgres@(127\.0\.0\.1|localhost)''',
+  '''://[^:/@\s]+:(password|changeme|parola|<[^>]+>|\$\{[^}]+\})@''',
+]

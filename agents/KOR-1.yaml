@@ -26,7 +26,7 @@ girdiler:
 
 ciktilar:
   - Sınıflandırma: şirket, birim, öncelik
-  - Görev ya da alt görevler ve atamaları
+  - Görev ya da alt görevler ve atamaları; iki şirketi kapsayan talepte şirket başına ayrı görevler
   - Talep sahibine kısa durum mesajı
   - Alt görevler bitince birleşik sonuç
 

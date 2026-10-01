@@ -34,7 +34,7 @@ skills: [not-yazimi, karar-notu]
 araclar: [drive_listele, drive_oku, belge_ice_aktar, not_ara, not_oku, not_yaz, not_guncelle, not_bagla, gorev_ac]
 
 bilgi_kaynaklari:
-  - İzin verilen Drive klasörleri (kurucu belirleyecek)
+  - İzin verilen Drive klasörleri (kurucu belirleyecek; şirket başına sirket_ajanlari ayarlarında)
   - Not sistemi
 
 yetki:

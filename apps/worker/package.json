@@ -1,0 +1,19 @@
+{
+  "name": "@agent-office/worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch --env-file-if-exists=../../.env src/main.ts",
+    "start": "node src/main.ts",
+    "typecheck": "tsc -p tsconfig.json",
+    "smoke": "node --input-type=module -e \"await import('./src/main.ts')\""
+  },
+  "dependencies": {
+    "@agent-office/db": "workspace:*",
+    "@agent-office/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:"
+  }
+}

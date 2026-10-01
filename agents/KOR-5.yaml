@@ -12,7 +12,7 @@ amac: >
 
 tetikleyiciler:
   - tur: olay
-    aciklama: Toplantı dökümü Drive'a düştüğünde
+    aciklama: Toplantı dökümü izinli Drive klasörüne düştüğünde
   - tur: talep
     aciklama: Kurucunun yüklediği kayıt ya da toplantı notu
 
@@ -25,7 +25,7 @@ ciktilar:
   - Tutanak notu: katılımcılar, konular, kararlar, aksiyonlar, açık sorular
   - Karar notları
   - Sorumlusu ve tarihi belli aksiyonlar için görevler
-  - Dış katılımcılara gidecek tutanak için e-posta taslağı
+  - Dış katılımcılara gidecek tutanak için panelde e-posta taslağı
 
 skills: [toplanti-tutanagi]
 

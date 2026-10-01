@@ -25,12 +25,12 @@ ciktilar:
   - En fazla üç cümlelik özet
   - Risk notu (neden dikkat gerektiği)
   - Değişiklik farkı ve öncelik
-  - Günlük onay turu paketi
+  - Şirket başına günlük onay turu paketi
   - Ret ve düzeltme gerekçelerinin sınıflandırılması
 
 skills: [onay-ozeti]
 
-araclar: [onay_kuyrugu_oku, onay_ozeti_yaz, gorev_oku, not_ara, bildirim_gonder]
+araclar: [onay_kuyrugu_oku, onay_ozeti_yaz, gorev_oku, ajan_listele, not_ara, not_oku, bildirim_gonder]
 
 bilgi_kaynaklari:
   - Ajanların görev kartları
