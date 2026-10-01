@@ -1,14 +1,21 @@
 # Araç kataloğu (pilot)
-# sinif: okuma | ic_yazma | dis_etki
+# sinif: okuma | taslak | ic_yazma | dis_etki
+# taslak: ajana teknik olarak ayrılmış korumalı alana yazar (ayrı Figma dosyası, panel içi taslak, aday tablosu); kural 4'e göre iç yazmadır.
+# ic_yazma: paylaşılan kayda yazar (görev, bildirim, paylaşılan not, müşteri kaydı).
 # dis_etki sınıfındaki her çağrı Onay Masası'na düşer.
-# Ajana teknik olarak ayrılmış korumalı alana (ayrı Figma dosyası, panel içi taslak, aday tablosu) yazmak ic_yazma sayılır.
+# Y1 kartların ic_yazma çağrıları onaya düşer. İstisnalar: kendi görevinin durum geçişlerini çalıştırıcı yapar;
+# Y1'in not_yaz çağrısı notu taslak durumunda açar, not onaydan sonra paylaşılır. Görev açma Y1'de gorev_oner ile öneri olarak gelir.
+# Ajanın soruları ve eskalasyonları katalogdaki bir araçla değil, çalıştırıcının "insana sor" yoluyla gider; bu yol onaya düşmez.
 # ic_yazma araçlarından onay isteyen durumlar "onay" alanında yazılıdır.
-# Her çalışma tek bir şirket adına koşar. Bütün araçlar çalışmanın bağlamıyla (şirket, kullanıcı ve varsa proje) ve kartındaki izinle sınırlıdır.
+# Her çalışma tek bir şirket adına koşar. Bütün araçlar çalışmanın bağlamıyla (şirket, kullanıcı, ajan ve varsa proje) ve kartındaki izinle sınırlıdır.
+# Proje bağlamı olmayan ajan çalışması proje kapsamlı satır görmez; AI izni olmayan müşteriye bağlı kayıtlar ajan çalışmalarına kapalıdır.
 # Google araçları (Gmail, Takvim, Drive, Meet dökümü) bağlantı istemcisiyle ve bağlantıyı kuran kişinin (pilotta kurucu)
 # kimliğiyle çalışır; kapsamlar yalnızca gmail.readonly, calendar.readonly ve drive.readonly (gmail.send ileride yalnızca
 # eposta_gonder için). Token'lar şifreli saklanır, yalnızca worker kullanır. Pilotta servis hesabı ve alan genelinde yetki devri kullanılmaz.
 # Drive'dan okuyan araçlar (drive_listele, drive_oku, belge_ice_aktar, toplanti_dokumu_oku) yalnızca sirket_ajanlari
 # ayarlarındaki izinli klasörlere erişir; izin listesi kodla denetlenir.
+# Avukatın görüşü gelene kadar kişisel veri içeren kaynaklar bağlanmaz (Gmail, Takvim, Meet dökümleri, müşteri görüşme kayıtları,
+# kişisel veri içeren Drive klasörleri); izin listesine yalnızca kişisel veri içermeyen şirket belgeleri girer.
 
 araclar:
   - ad: gorev_ara
@@ -21,8 +28,8 @@ araclar:
     sinif: ic_yazma
     aciklama: Yeni görev ya da alt görev açar, insana ya da ajana atar
   - ad: gorev_oner
-    sinif: ic_yazma
-    aciklama: Kurucu özel alanındaki bir işten şirket görevi önerisi hazırlar; görevi kendisi açmaz, kurucu tek dokunuşla ilgili şirkette açar
+    sinif: taslak
+    aciklama: Görev önerisi hazırlar; görevi kendisi açmaz, ilgili kişi (pilotta kurucu) tek dokunuşla açar. KOR-4'te önerinin açılacağı şirketi, KOR-1'de iki şirketli talebin diğer şirketini kurucu seçer
   - ad: gorev_guncelle
     sinif: ic_yazma
     aciklama: Görevin durumunu değiştirir, yorum ve etiket ekler
@@ -37,7 +44,7 @@ araclar:
     sinif: ic_yazma
     aciklama: Ekip üyesine panel içi bildirim ve şirket içi e-posta; dış adreslere gönderemez; telefon bildirimi hassas bilgi taşımaz
   - ad: onaya_gonder
-    sinif: ic_yazma
+    sinif: taslak
     aciklama: Çıktıyı gerekçe, kaynaklar ve değişiklik farkıyla Onay Masası'na koyar
   - ad: onay_kuyrugu_oku
     sinif: okuma
@@ -53,7 +60,7 @@ araclar:
     aciklama: Notun gövdesi, özellikleri, bağlantıları ve geri bağlantıları; geri bağlantılar da çalışmanın bağlamıyla süzülür, görülemeyen notun başlığı dönmez
   - ad: not_yaz
     sinif: ic_yazma
-    aciklama: Yeni not ya da taslak not oluşturur
+    aciklama: Yeni not ya da taslak not oluşturur; Y1 ajanın notu taslak durumunda açılır, onaydan sonra paylaşılır
   - ad: not_guncelle
     sinif: ic_yazma
     aciklama: Mevcut notu değiştirir
@@ -88,10 +95,10 @@ araclar:
     sinif: okuma
     aciklama: Projeye bağlı depolarda commit, değişiklik isteği ve iş kayıtları
   - ad: pdf_uret
-    sinif: ic_yazma
+    sinif: taslak
     aciklama: HTML şablondan PDF üretir ve dosya olarak saklar
   - ad: eposta_taslak
-    sinif: ic_yazma
+    sinif: taslak
     aciklama: E-posta taslağını panelde saklar; Gmail'e yazmaz ve göndermez, kullanıcı taslağı kopyalar ya da "Gmail'de aç" bağlantısıyla kendisi gönderir (Sprint 3)
   - ad: eposta_gonder
     sinif: dis_etki
@@ -115,15 +122,15 @@ araclar:
     sinif: okuma
     aciklama: Pillika'nın mevcut istasyon kayıtlarını ve aday kayıtları okur
   - ad: istasyon_aday_yaz
-    sinif: ic_yazma
+    sinif: taslak
     aciklama: Toplanan istasyon verisini aday tablosuna yazar; canlı uygulamaya aktarmaz
     onay: Mevcut bir istasyon kapalı olarak işaretleniyorsa
   - ad: figma_oku
     sinif: okuma
     aciklama: Figma dosyası, bileşenler ve tasarım değişkenleri (Sprint 4)
   - ad: figma_yaz
-    sinif: ic_yazma
+    sinif: taslak
     aciklama: Yalnızca ajana ayrılmış ayrı Figma dosyasında çerçeve ve bileşen oluşturur; dosya kimliği sirket_ajanlari ayarlarındaki izin listesinden okunur, ana tasarım dosyası bu listede yer almaz (Sprint 4)
   - ad: gorsel_uret
-    sinif: ic_yazma
+    sinif: taslak
     aciklama: Onaylı şablondan kanal ölçülerinde görsel üretir (HTML ya da SVG'den PNG)

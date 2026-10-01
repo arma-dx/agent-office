@@ -25,11 +25,11 @@ ciktilar:
   - Kanal başına iki ya da üç seçenekli metin
   - Gerekirse video senaryosu
   - Etiket seti
-  - Görsel için kısa brif (Sosyal Medya Görsel Ajanına)
+  - Görsel için kısa brif (Sosyal Medya Görsel Ajanına görev önerisi olarak)
 
 skills: [sosyal-icerik, marka-dili]
 
-araclar: [not_ara, not_oku, not_yaz, onaya_gonder, gorev_ac]
+araclar: [not_ara, not_oku, not_yaz, onaya_gonder, gorev_oner]
 
 bilgi_kaynaklari:
   - Arma DX ve Pillika marka dili notları
