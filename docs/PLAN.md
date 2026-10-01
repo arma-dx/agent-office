@@ -22,8 +22,8 @@ Kapsam dışı: dış müşterilere kurulum (Ürünleşme), WhatsApp ve Uyumsoft
 | Arayüz | Telefona uyumlu web uygulaması (PWA); onaylar telefondan verilir |
 | Barındırma | AWS'de tek sunucu, Docker Compose: Caddy (HTTPS ve yönlendirme), panel dosyaları, API ve çalıştırıcı; iş kuyruğu PostgreSQL üzerinde (pg-boss); Cloudflare önde DNS ve koruma |
 | Alan adları | office.armadx.com (panel ve /api, iki şirket için tek giriş), office-test.armadx.com (test), hooks.armadx.com (dış bildirimler) |
-| Veritabanı | Supabase PostgreSQL; veritabanına yalnızca sunucu tarafı (API ve worker) bağlanır, tarayıcı hiçbir zaman; API ve worker `BYPASSRLS` yetkisi olmayan kısıtlı bir rolle bağlanır, her istek ve çalışma `SET LOCAL` ile şirket, kullanıcı ve proje bağlamını kurar; RLS ile şirket ve proje ayrımı; dosyalar Supabase depolamasında |
-| Kimlik | Google ile davetli giriş (giriş istemcisi: External; `openid`, `email`, `profile`), API üzerinden sunucu tarafında; yalnızca `uyelikler` tablosunda kaydı olan e-posta girer; iki adımlı doğrulama zorunlu ve girişte kimlik belirtecinin `amr` alanıyla denetlenir (giriş görevinde önce denenir); kısa oturum süresi; önemli onaylarda yeniden doğrulama panelde passkey ile. Ajanların Workspace erişimi ayrı bağlantı istemcisiyle (Internal; `gmail.readonly`, `calendar.readonly`, `drive.readonly`), bağlantıyı kuran kişinin kimliğiyle |
+| Veritabanı | Supabase PostgreSQL; veritabanına yalnızca sunucu tarafı (API ve worker) bağlanır, tarayıcı hiçbir zaman; API ve worker `BYPASSRLS` yetkisi olmayan kısıtlı bir rolle bağlanır, her API isteği tek bir transaction'dır ve `SET LOCAL` ile `app.sirket_id`, `app.kullanici_id`, `app.proje_id` ve girişte doğrulanmış `app.eposta` bağlamını kurar; ajan çalışmasında bağlama `app.ajan_kod` eklenir, her veritabanı adımı kendi kısa transaction'ında yürür ve bağlamı her adımda yeniden kurar; RLS ile şirket ve proje ayrımı; dosyalar Supabase depolamasında |
+| Kimlik | Google ile davetli giriş (giriş istemcisi: External; `openid`, `email`, `profile`), API üzerinden sunucu tarafında; yalnızca `uyelikler` tablosunda kaydı olan e-posta girer; iki adımlı doğrulama zorunlu; giriş görevinde önce kimlik belirtecinin `amr` alanının dış kişilerin hesaplarında da geldiği denenir, geliyorsa girişte bu alanla kodla denetlenir (gelmezse yol `docs/SONRA.md` G1'de); kısa oturum süresi; önemli onaylarda yeniden doğrulama panelde passkey ile. Ajanların Workspace erişimi ayrı bağlantı istemcisiyle (Internal; `gmail.readonly`, `calendar.readonly`, `drive.readonly`), bağlantıyı kuran kişinin kimliğiyle |
 | Model | Claude API, araç kullanımı ile ajan döngüsü; model adı görev kartından; rutin işte hızlı, zor işte güçlü model; tekrar eden talimatlarda istem önbelleği. Model katmanı değiştirilebilir tasarlanır, kartlar modelden bağımsız yazılır |
 | Dil | Ana dil Türkçe; ajan çıktıları İngilizce ve Arapça da istenebilir. Pilotta arayüz yalnızca Türkçe |
 | Maliyet | Model kullanımı ilk günden iş başına ölçülür; iç işler ve projeler ayrı izlenir, proje işlerinin maliyeti o projenin bütçesine yazılır. Gündelik iç işlerde ayrı üst sınır yok; ajan bazında bütçe uyarısı var |
@@ -63,7 +63,7 @@ Pilotta panel internete açık; ileride yalnızca ofis ağından, dışarıdan V
 | not_baglantilari | Notlardaki `[[...]]` bağlantıları; geri bağlantılar ve grafik görünümü buradan |
 | belgeler | Drive'dan gelen kaynak dosyalar; her biri bir kaynak notuna bağlı |
 | istasyon_adaylari | Pillika için toplanan istasyon verisi: kaynak, konum, operatör, soket tipleri, güç, erişim, tarih, doğrulama durumu, eşleşen kayıt |
-| musteriler, firsatlar | Basit müşteri listesi: kurum, kişi, fırsat, aşama, değer, sonraki adım; müşteri düzeyinde AI izni (izni olmayan müşteriye bağlı kayıtlar ajan çalışmalarına kapalı) |
+| musteriler, firsatlar | Basit müşteri listesi: kurum, kişi, fırsat, aşama, değer, sonraki adım; müşteri düzeyinde AI izni (izni olmayan müşteriye bağlı kayıtların ajan çalışmalarına kapalı olması kurucu onayı bekliyor, SONRA N2) |
 | projeler | Proje, müşteri, bütçe, kilometre taşları, AI izni (müşteri sözleşmesi AI kullanımına izin vermiyorsa o projede ajan çalışmaz) |
 | proje_uyeleri | Projenin üyeleri; proje kapsamlı satırları yalnızca üyeler ve kurucu görür |
 | entegrasyonlar | Bağlantı ayarları ve yetkileri, şirket bazında; Google bağlantı token'ları şifreli, yalnızca worker kullanır |
@@ -94,7 +94,7 @@ Rapordaki dört seviye. Ajanların çoğu Y1 ile başlar; "Y1, hedef Y2" yazan a
 
 - Yükseltme: ajan en az 50 işte ilk seferde yüzde 95 onay oranına ulaşır ve son 30 günde kritik hata yapmazsa bir üst seviyeye önerilir; kararı birim sorumlusu, başlangıçta kurucu verir. Kritik hata ajanı hemen bir seviye düşürür ve vaka incelenir. Eşikler pilotta gerçek veriyle ayarlanır.
 - Hiçbir koşulda ajana bırakılmayan işler (ajan bu işlerde en fazla Y1): para transferi, imza ve taahhüt, resmî kurumlara başvuru ve beyan, kişisel verinin silinmesi ya da üçüncü kişiye aktarılması.
-- Pilotta Y1 kapısı kodla uygulanır (1 Ekim ikinci tur, karar 4): Y1 ajan yalnızca korumalı alana (taslaklar) ve kendi görevinin durumuna yazar; paylaşılan kayda yazması (bildirim, paylaşılan not, başka bir görevi güncelleme) onaya düşer; görev açma öneri olarak gelir. Ajanın soruları ve eskalasyonları "insana sor" yoluyla sorumluya ya da talep sahibine gider, onaya düşmez. Y2 ve Y3 kapıları karar bekliyor (`docs/SONRA.md`, M19).
+- Pilotta Y1 kapısı kodla uygulanır (1 Ekim ikinci tur, karar 4): Y1 ajan yalnızca korumalı alana (taslaklar) ve kendi görevinin durumuna yazar; paylaşılan kayda yazması (bildirim, paylaşılan not, başka bir görevi güncelleme) onaya düşer; görev açma öneri olarak gelir. Ajanın soruları "insana sor" yoluyla ajanın sorumlusuna (kartta `sorumlu`) ya da talep sahibine gider, onaya düşmez; eskalasyonların da bu yoldan gitmesi uygulama yorumudur, kurucu onayı bekliyor (M32). Y2 ve Y3 kapıları karar bekliyor (`docs/SONRA.md`, M19).
 - Her ajanın bir insan sorumlusu var; sorumlu ajanı her an durdurabilir ya da işi devralabilir. Pilotta bütün ajanların sorumlusu ve bütün onaylar kurucuda; onay yetkisi zamanla ekibe devredilir.
 
 ## Ekranlar
@@ -122,11 +122,11 @@ Günlük iş listeler, pano ve Onay Masası üzerinden yürür. Üst çubukta ş
 
 | Kod | Modül | İçerik | Sprint |
 | --- | --- | --- | --- |
-| M1 | Kimlik ve kiracı | Google ile davetli giriş, şirket seçimi, roller, RLS ve proje kapsamı, Kurucu özel alanı | 0 |
+| M1 | Kimlik ve kiracı | Google ile davetli giriş, şirket seçimi, roller, RLS ve proje kapsamı, Kurucu özel alanı; iki adımlı doğrulama (önce `amr` denemesi), passkey kaydı | 0 |
 | M2 | Görev kaydı | Talep, atama, durum, son tarih; pano ve liste | 0 |
 | M3 | Onay Masası | Kuyruk, özet, fark, onay, ret, düzeltme, gerekçe; telefonda tek dokunuş | 0 |
 | M4 | İz kaydı ve maliyet | Çalışma ve onay kaydı; token ve maliyet; iç iş ve proje ayrımı | 0 |
-| M5 | Ajan çalıştırıcı | Kart ve skill yükleme, Claude ile araç döngüsü, kuyruk, zamanlayıcı, olay tetikleyici, yeniden deneme, zaman aşımı, durdurma | 1 |
+| M5 | Ajan çalıştırıcı | Kart ve skill yükleme, Claude ile araç döngüsü, kuyruk, zamanlayıcı, olay tetikleyici, yeniden deneme, zaman aşımı, durdurma; Y1 kapısı, "insana sor" yolu | 1 |
 | M6 | Görev kartı yönetimi | Kart görüntüleme, sürüm geçmişi, test setini çalıştırma; düzenleme depoda PR ile. | 1 |
 | M7 | Not sistemi | Markdown editörü, `[[` ile not önerisi, geri bağlantılar, etiket ve özellik filtresi, arama, kaynak gösterme; Drive'dan içeri aktarma | 1 |
 | M8 | Ofis Koordinatörü | Talebi sınıflandırır, şirketi ve birimi belirler, alt görevlere böler; yönlendirme kararları kayıtlı ve düzeltilebilir; koordinatör devre dışıyken birimlere doğrudan erişim yolu (yedek yol) | 1 |
@@ -144,7 +144,7 @@ Rapordaki pilot seti. "Ne yapar" sütunu raporun tanımıdır; görev kartları 
 
 | Kod | Ajan | Ne yapar | Yetki | Sprint |
 | --- | --- | --- | --- | --- |
-| KOR-1 | Ofis Koordinatörü | Talebi alır, şirketini ve birimini belirler, alt görevlere böler, ajanlara dağıtır, sonucu döner | Y2 | 1 |
+| KOR-1 | Ofis Koordinatörü | Talebi alır, şirketini ve birimini belirler, alt görevlere böler, ajanlara dağıtır, sonucu döner; pilotta iki şirketi kapsayan talebi açıldığı şirkette yürütür, diğer şirket için kurucuya görev önerisi bırakır | Y2 | 1 |
 | KOR-2 | Görev Takip | Görev kaydını tutar; son tarihleri, bekleyen onayları ve tıkanan işleri izler, hatırlatır, geciken işi sorumlusuna bildirir | Y2, hedef Y3 | 1 |
 | KOR-3 | Onay Masası | Onay kuyruğunu özet, risk notu ve farkla sunar, önceliklendirir, günlük onay turunu hazırlar | Y2 | 1 |
 | HAF-1 | Bilgi Tabanı | Dokümanları nota aktarır, etiketler ve bağlar; eskimiş, çelişen ve kopuk notları işaretler; tek doğru kaynak sayfalarını güncel tutar; kararları karar notu olarak bağlar | Y2 | 1 |
