@@ -33,7 +33,7 @@ Kapsam dışı: dış müşterilere kurulum (Ürünleşme), WhatsApp ve Uyumsoft
 | Entegrasyonlar | Pilotta Google Workspace (Gmail, Takvim, Drive, Meet kayıtları) ve GitHub; Ekim sonunda Figma. Rapordaki ilke: her dış sistem için bir bağlayıcı, ajana yalnızca kartındaki bağlayıcılar açılır. Pilotta bu, `agents/araclar.yaml` kataloğu ve kart izinleriyle karşılanır |
 | PDF | HTML şablondan PDF |
 | Gizli anahtarlar | Barındırma sağlayıcısının kasası; ajana anahtar verilmez |
-| Kod ve yayın | GitHub, otomatik test ve yayın hattı; test ve canlı ortam ayrı |
+| Kod ve yayın | GitHub, otomatik test ve yayın hattı; test ve canlı ortam ayrı. Yalnızca iki dal: `development` test ortamına (office-test.armadx.com), `main` canlı ortama (office.armadx.com) yayınlanır; başka dal açılmaz |
 
 ## Ağ ve erişim kuralları
 

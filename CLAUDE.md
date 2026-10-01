@@ -117,6 +117,7 @@ Gerekenler: Node 24.15 ya da üstü bir 24.x sürümü (`engines`: `^24.15.0`; `
 ## Çalışma şekli
 
 - Her görevde önce kısa bir plan yaz ve onay bekle; onaydan sonra uygula.
-- Bir modül testleri geçmeden bitmiş sayılmaz. Küçük commit'ler at; her modül ayrı dalda ilerler.
-- `docs/PLAN.md` sırasının dışına çıkma. Kapsam dışı fikirleri `docs/SONRA.md` dosyasına yaz.
+- Bir modül testleri geçmeden bitmiş sayılmaz. Küçük commit'ler at.
+- Depoda yalnızca iki dal var: `development` (geliştirme, test ortamı) ve `main` (canlı ortam). Başka dal açılmaz; bu kural çok önemli. İş `development` dalında ilerler; `main`'e geçiş `development`'tan PR ile olur.
+- İşler `docs/KALAN-ISLER.md` sırasıyla yapılır; biten iş orada işaretlenir. `docs/PLAN.md` sırasının dışına çıkma. Kapsam dışı fikirleri `docs/SONRA.md` dosyasına yaz.
 - Bir iş kuralını bilmiyorsan uydurma, sor.

@@ -144,12 +144,12 @@ Kapsam dışı fikirler ve karar bekleyen açık sorular burada tutulur. Bir mad
 - TypeScript 7'ye geçiş: typescript-eslint TypeScript 7'yi (yerel derleyici) desteklediğinde. Şimdilik bütün çalışma alanı 6.0.3; tsconfig dosyaları TS 7'de değişmeden geçiyor. CI'daki `pnpm peers check` yanlışlıkla 7'ye geçilmesini yakalar.
 - Node 26 LTS'e geçiş: Node 26, 28 Ekim 2026'da LTS oluyor; Node 24 20 Ekim'de bakım dönemine giriyor. `.nvmrc`, `engines`, `@types/node` ve CI birlikte güncellenir.
 - Docker adımı: Node, `node_modules` altındaki TypeScript dosyalarını çalıştırmıyor. `pnpm deploy` kullanılırsa api ve worker tek dosyada paketlenmeli (esbuild ya da tsdown); ya da bütün çalışma alanı kopyalanır. Konteynerde `HOST=0.0.0.0` verilir.
-- Dependabot yalnızca GitHub Actions için açık; araştırmada pnpm 12 kilit dosyasını desteklemediği görüldü. npm bağımlılıkları katalogdan elle güncellenir; destek gelince yeniden bakılır.
+- Dependabot kaldırıldı: güncelleme önerilerini kendi açtığı dallarda getiriyordu, depoda yalnızca `development` ve `main` dalı olacak. GitHub Actions ve npm bağımlılıkları elle güncellenir. Soru: bunun için ayda bir gözden geçirme görevi açılsın mı?
 - pnpm 12 yeni bir sürüm; ciddi bir sorun çıkarsa 11.28.2'ye dönülebilir.
 
 ## Arayüz temeli (giriş ekranından önce)
 
-- TanStack Router ve Query, shadcn/ui, Tailwind 4 ve react-hook-form iskeletin sürümleriyle uyumlu olarak denendi; kurulum giriş ekranından (modül M1) önce ayrı bir dalda yapılır.
+- TanStack Router ve Query, shadcn/ui, Tailwind 4 ve react-hook-form iskeletin sürümleriyle uyumlu olarak denendi; kurulum giriş ekranından (modül M1) önce yapılır.
 - PWA: vite-plugin-pwa tedarik zinciri ayarına takılıyor (workbox-build, sürüm kaynağı doğrulanamayan bir alt pakete bağlı). Öneri: elle yazılmış manifest; bildirimler için modül M9'da yalnızca push işleyen küçük bir service worker; önbellekleme gerekirse Serwist.
 - IBM Plex Sans kendi sunucumuzdan verilir (`@fontsource-variable/ibm-plex-sans`; latin ve latin-ext alt kümeleri Türkçeyi kapsıyor), dış yazı tipi servisi kullanılmaz.
 - shadcn bileşenleri kendi değişken adlarını (`--popover`, `--secondary`, `--sidebar-*` gibi) doğrudan kullanıyor; CLAUDE.md'deki renk değişkenleri bu adlara eşlenmeli.
