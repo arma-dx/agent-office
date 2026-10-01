@@ -5,6 +5,7 @@ sirketler: [armadx, pillika]
 surum: "0.1"
 durum: taslak
 sorumlu: kurucu
+proje_baglami: proje_basina   # zamanlanmış çalışma her proje için ayrı ve proje dışı kayıtlar için bir kez koşar; özetleri kod birleştirir
 
 amac: >
   Görev kaydındaki işlerin zamanında ilerlemesini sağlar; son tarihleri, bekleyen onayları
@@ -23,7 +24,7 @@ girdiler:
 
 ciktilar:
   - Kişiye özel hatırlatmalar
-  - Kurucuya şirket başına günlük gecikme özeti
+  - Kurucuya şirket başına tek günlük gecikme özeti (şirketin proje çalışmalarının özetlerini kod birleştirir)
   - Durumu yanlış görünen görevler için düzeltme önerisi
 
 skills: [gorev-takibi]

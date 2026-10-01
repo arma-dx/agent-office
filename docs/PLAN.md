@@ -63,7 +63,7 @@ Pilotta panel internete açık; ileride yalnızca ofis ağından, dışarıdan V
 | not_baglantilari | Notlardaki `[[...]]` bağlantıları; geri bağlantılar ve grafik görünümü buradan |
 | belgeler | Drive'dan gelen kaynak dosyalar; her biri bir kaynak notuna bağlı |
 | istasyon_adaylari | Pillika için toplanan istasyon verisi: kaynak, konum, operatör, soket tipleri, güç, erişim, tarih, doğrulama durumu, eşleşen kayıt |
-| musteriler, firsatlar | Basit müşteri listesi: kurum, kişi, fırsat, aşama, değer, sonraki adım; müşteri düzeyinde AI izni (izni olmayan müşteriye bağlı kayıtların ajan çalışmalarına kapalı olması kurucu onayı bekliyor, SONRA N2) |
+| musteriler, firsatlar | Basit müşteri listesi: kurum, kişi, fırsat, aşama, değer, sonraki adım; müşteri düzeyinde AI izni (izni olmayan müşteriye bağlı bütün kayıtlar ajan çalışmalarına kapalı) |
 | projeler | Proje, müşteri, bütçe, kilometre taşları, AI izni (müşteri sözleşmesi AI kullanımına izin vermiyorsa o projede ajan çalışmaz) |
 | proje_uyeleri | Projenin üyeleri; proje kapsamlı satırları yalnızca üyeler ve kurucu görür |
 | entegrasyonlar | Bağlantı ayarları ve yetkileri, şirket bazında; Google bağlantı token'ları şifreli, yalnızca worker kullanır |
@@ -94,7 +94,7 @@ Rapordaki dört seviye. Ajanların çoğu Y1 ile başlar; "Y1, hedef Y2" yazan a
 
 - Yükseltme: ajan en az 50 işte ilk seferde yüzde 95 onay oranına ulaşır ve son 30 günde kritik hata yapmazsa bir üst seviyeye önerilir; kararı birim sorumlusu, başlangıçta kurucu verir. Kritik hata ajanı hemen bir seviye düşürür ve vaka incelenir. Eşikler pilotta gerçek veriyle ayarlanır.
 - Hiçbir koşulda ajana bırakılmayan işler (ajan bu işlerde en fazla Y1): para transferi, imza ve taahhüt, resmî kurumlara başvuru ve beyan, kişisel verinin silinmesi ya da üçüncü kişiye aktarılması.
-- Pilotta Y1 kapısı kodla uygulanır (1 Ekim ikinci tur, karar 4): Y1 ajan yalnızca korumalı alana (taslaklar) ve kendi görevinin durumuna yazar; paylaşılan kayda yazması (bildirim, paylaşılan not, başka bir görevi güncelleme) onaya düşer; görev açma öneri olarak gelir. Ajanın soruları "insana sor" yoluyla ajanın sorumlusuna (kartta `sorumlu`) ya da talep sahibine gider, onaya düşmez; eskalasyonların da bu yoldan gitmesi uygulama yorumudur, kurucu onayı bekliyor (M32). Y2 ve Y3 kapıları karar bekliyor (`docs/SONRA.md`, M19).
+- Pilotta Y1 kapısı kodla uygulanır (1 Ekim ikinci tur, karar 4): Y1 ajan yalnızca korumalı alana (taslaklar) ve kendi görevinin durumuna yazar; paylaşılan kayda yazması (bildirim, paylaşılan not, başka bir görevi güncelleme) onaya düşer; görev açma öneri olarak gelir. Ajanın soruları ve eskalasyonları "insana sor" yoluyla ajanın sorumlusuna (kartta `sorumlu`) ya da talep sahibine gider, onaya düşmez (2 Ekim, karar 1). Y2 ve Y3 kapıları karar bekliyor (`docs/SONRA.md`, M19).
 - Her ajanın bir insan sorumlusu var; sorumlu ajanı her an durdurabilir ya da işi devralabilir. Pilotta bütün ajanların sorumlusu ve bütün onaylar kurucuda; onay yetkisi zamanla ekibe devredilir.
 
 ## Ekranlar
@@ -110,7 +110,7 @@ Günlük iş listeler, pano ve Onay Masası üzerinden yürür. Üst çubukta ş
 | Görev ayrıntısı | Talep, ajanın adımları ve araç çağrıları, çıktılar, yorumlar, maliyet; işi ajandan devralma; KOR-1'in yönlendirmesini düzeltme | 1 |
 | Ajanlar | Birimlere göre ajanlar, durumları, yetki seviyeleri, şirket başına durdurma düğmesi ve "her yerde durdur" | 1 |
 | Görev kartı | Kart ve skill'ler salt okunur (değişiklik depoda PR ile), sürüm geçmişi, test sonuçları | 1 |
-| Notlar | Klasör ağacı, editör, geri bağlantılar, etiketler, arama | 1 |
+| Notlar | Klasör ağacı, editör, geri bağlantılar, etiketler, arama; HAF-2'ye soru (proje sayfasından o projede; genel ekranda proje seçilerek) | 1 |
 | Müşteriler | Müşteri ve fırsat listesi | 2 |
 | İz kaydı | Kim, ne yaptı, ne zaman; filtreler | 2 |
 | Ayarlar | Kullanıcılar ve roller, şirketler, entegrasyonlar (Drive bağlantısı ve klasör izin listesi Sprint 1, Gmail ve Takvim Sprint 3) | 0, 1 ve 3 |
@@ -126,7 +126,7 @@ Günlük iş listeler, pano ve Onay Masası üzerinden yürür. Üst çubukta ş
 | M2 | Görev kaydı | Talep, atama, durum, son tarih; pano ve liste | 0 |
 | M3 | Onay Masası | Kuyruk, özet, fark, onay, ret, düzeltme, gerekçe; telefonda tek dokunuş | 0 |
 | M4 | İz kaydı ve maliyet | Çalışma ve onay kaydı; token ve maliyet; iç iş ve proje ayrımı | 0 |
-| M5 | Ajan çalıştırıcı | Kart ve skill yükleme, Claude ile araç döngüsü, kuyruk, zamanlayıcı, olay tetikleyici, yeniden deneme, zaman aşımı, durdurma; Y1 kapısı, "insana sor" yolu | 1 |
+| M5 | Ajan çalıştırıcı | Kart ve skill yükleme, Claude ile araç döngüsü, kuyruk, zamanlayıcı, olay tetikleyici, yeniden deneme, zaman aşımı, durdurma; Y1 kapısı, "insana sor" yolu; `proje_baglami` (proje başına zamanlanmış çalışma) ve proje özetlerinin kodla birleştirilmesi | 1 |
 | M6 | Görev kartı yönetimi | Kart görüntüleme, sürüm geçmişi, test setini çalıştırma; düzenleme depoda PR ile. | 1 |
 | M7 | Not sistemi | Markdown editörü, `[[` ile not önerisi, geri bağlantılar, etiket ve özellik filtresi, arama, kaynak gösterme; Drive'dan içeri aktarma | 1 |
 | M8 | Ofis Koordinatörü | Talebi sınıflandırır, şirketi ve birimi belirler, alt görevlere böler; yönlendirme kararları kayıtlı ve düzeltilebilir; koordinatör devre dışıyken birimlere doğrudan erişim yolu (yedek yol) | 1 |

@@ -5,6 +5,7 @@ sirketler: [armadx, pillika]
 surum: "0.1"
 durum: taslak
 sorumlu: kurucu
+proje_baglami: proje_basina   # zamanlanmış çalışma her proje için ayrı ve proje dışı kayıtlar için bir kez koşar; özetleri kod birleştirir
 
 amac: >
   Kurumsal hafızayı doğru, güncel ve birbirine bağlı tutar: dokümanları nota aktarır,
@@ -27,7 +28,7 @@ girdiler:
 ciktilar:
   - Kaynak notları ve karar notları
   - Etiketler ve not bağlantıları
-  - Haftalık hafıza raporu: eskimiş, çelişen ve hiçbir yere bağlı olmayan notlar
+  - Haftalık hafıza raporu: eskimiş, çelişen ve hiçbir yere bağlı olmayan notlar; kurucuya şirket başına tek rapor (proje çalışmalarının raporlarını kod birleştirir)
 
 skills: [not-yazimi, karar-notu]
 

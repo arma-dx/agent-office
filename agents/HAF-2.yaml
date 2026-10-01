@@ -5,6 +5,7 @@ sirketler: [armadx, pillika]
 surum: "0.1"
 durum: taslak
 sorumlu: kurucu
+proje_baglami: varsa   # proje sayfasından sorulan soru o projede aranır; genel ekranda soruyu soran kişi proje seçebilir
 
 amac: >
   Çalışanların ve diğer ajanların sorularını not sisteminden, her bilgi için kaynak göstererek yanıtlar.

@@ -5,12 +5,10 @@
 # dis_etki sınıfındaki her çağrı Onay Masası'na düşer.
 # Y1 kartların ic_yazma çağrıları onaya düşer. İstisnalar: kendi görevinin durum geçişlerini çalıştırıcı yapar;
 # Y1'in not_yaz çağrısı notu taslak durumunda açar, not onaydan sonra paylaşılır. Görev açma Y1'de gorev_oner ile öneri olarak gelir.
-# Ajanın soruları katalogdaki bir araçla değil, çalıştırıcının "insana sor" yoluyla gider; bu yol onaya düşmez.
-# Eskalasyonların da bu yoldan gitmesi uygulama yorumu, kurucu onayı bekliyor (SONRA M32).
+# Ajanın soruları ve "kurucuya bildirir" türündeki eskalasyonları katalogdaki bir araçla değil, çalıştırıcının "insana sor" yoluyla gider; bu yol onaya düşmez.
 # Araçlardan onay isteyen durumlar, sınıfı ne olursa olsun (ör. taslak sınıfındaki istasyon_aday_yaz), "onay" alanında yazılıdır.
 # Her çalışma tek bir şirket adına koşar. Bütün araçlar çalışmanın bağlamıyla (şirket, kullanıcı, ajan ve varsa proje) ve kartındaki izinle sınırlıdır.
-# Proje bağlamı olmayan ajan çalışması proje kapsamlı satır görmez. AI izni olmayan müşteriye bağlı kayıtların ajan çalışmalarına
-# kapalı olması uygulama yorumu, kurucu onayı bekliyor (SONRA N2).
+# Proje bağlamı olmayan ajan çalışması proje kapsamlı satır görmez. AI izni olmayan müşteriye bağlı bütün kayıtlar ajan çalışmalarına kapalıdır.
 # Google araçları (Gmail, Takvim, Drive, Meet dökümü) bağlantı istemcisiyle ve bağlantıyı kuran kişinin (pilotta kurucu)
 # kimliğiyle çalışır; kapsamlar yalnızca gmail.readonly, calendar.readonly ve drive.readonly (gmail.send ileride yalnızca
 # eposta_gonder için). Token'lar şifreli saklanır, yalnızca worker kullanır. Pilotta servis hesabı ve alan genelinde yetki devri kullanılmaz.
