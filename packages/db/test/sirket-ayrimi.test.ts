@@ -660,6 +660,17 @@ describe.skipIf(veritabaniYok)('şirket ayrımı', () => {
            and (rolbypassrls or rolsuper or rolcanlogin)`,
       );
       expect(yetkili).toEqual([]);
+      // API ve worker'ın giriş rolleri: kısıtlı, uygulama rolünün yetkilerini devralır.
+      const girisRolleri = await d.satirlar(
+        `select r.rolname as ad, r.rolcanlogin as giris, r.rolsuper or r.rolbypassrls as yetkili,
+                r.rolcreaterole or r.rolcreatedb as yonetici,
+                pg_has_role(r.rolname, 'ofis_uygulama', 'usage') as devralir
+         from pg_roles r where r.rolname in ('ofis_api', 'ofis_worker') order by 1`,
+      );
+      expect(girisRolleri).toEqual([
+        { ad: 'ofis_api', giris: true, yetkili: false, yonetici: false, devralir: true },
+        { ad: 'ofis_worker', giris: true, yetkili: false, yonetici: false, devralir: true },
+      ]);
     });
   });
 });
