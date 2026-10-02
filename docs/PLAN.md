@@ -72,7 +72,7 @@ Pilotta panel internete açık; ileride yalnızca ofis ağından, dışarıdan V
 
 Onaylandı. Arayüzde Türkçe adlar, veritabanında parantez içindeki değerler kullanılır.
 
-- Görev durumu: Açık (`acik`), Sürüyor (`suruyor`), Onay bekliyor (`onay_bekliyor`), Tamamlandı (`tamamlandi`), İptal (`iptal`)
+- Görev durumu: Açık (`acik`), Sürüyor (`suruyor`), Onay bekliyor (`onay_bekliyor`), Yanıt bekliyor (`yanit_bekliyor`, 2 Ekim), Tamamlandı (`tamamlandi`), İptal (`iptal`)
 - Onay durumu: Bekliyor (`bekliyor`), Onaylandı (`onaylandi`), Düzeltme istendi (`duzeltme_istendi`), Reddedildi (`reddedildi`)
 
 | Rol | Yetki |
