@@ -67,6 +67,7 @@ begin
   insert into ofis.kullanici_epostalari (eposta, kullanici_id) values
     ('omer@armadx.com', kurucu),
     ('omer.kadioglu@armadx.com', kurucu),
+    ('omer@pillika.com', kurucu),
     ('omer.kadioglu@pillika.com', kurucu);
   insert into ofis.uyelikler (sirket_id, kullanici_id, rol, onay_yetkisi)
     select s.id, kurucu, 'kurucu', true
