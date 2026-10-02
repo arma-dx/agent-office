@@ -515,7 +515,7 @@ describe.skipIf(veritabaniYok)('not kuralları', () => {
       const hedefler = async () =>
         (
           await d.satirlar<{ hedef_ad: string }>(
-            'select hedef_ad from ofis.not_baglantilari where kaynak_not_id = $1 order by 1',
+            'select hedef_ad from ofis.not_baglantilari where kaynak_not_id = $1 order by hedef_ad collate "C"',
             [K.notA],
           )
         ).map((s) => s.hedef_ad);
