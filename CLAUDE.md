@@ -48,7 +48,7 @@ Rapor neyin ve neden yapılacağını, PLAN ve bu dosya nasıl yapılacağını 
 
 ## Durumlar ve roller
 
-- Görev durumları: `acik`, `suruyor`, `onay_bekliyor`, `tamamlandi`, `iptal`
+- Görev durumları: `acik`, `suruyor`, `onay_bekliyor`, `yanit_bekliyor`, `tamamlandi`, `iptal`
 - Onay durumları: `bekliyor`, `onaylandi`, `duzeltme_istendi`, `reddedildi`
 - Roller: `kurucu`, `calisan`, `dis_kisi`; yetkileri `docs/PLAN.md` içinde
 
@@ -108,12 +108,12 @@ Gerekenler: Node 24.15 ya da üstü bir 24.x sürümü (`engines`: `^24.15.0`; `
 
 - `pnpm install`: bağımlılıkları kurar
 - `pnpm dev`: bütün uygulamaları yerelde çalıştırır; panel `http://localhost:5173`, API `http://127.0.0.1:3000` (`.env`'deki `PORT`). Panel `/api/` isteklerini API'ye aktarır. Ortam değişkenleri kökteki `.env` dosyasından okunur (`.env.example`'dan kopyala).
-- `pnpm test`: bütün paketlerin testleri (Vitest)
+- `pnpm test`: bütün paketlerin testleri (Vitest). Veritabanı testleri `TEST_DATABASE_URL` ister (yerel PostgreSQL 17'nin yetkili adresi): `TEST_DATABASE_URL=postgresql://... pnpm test`. Testler o sunucuda kendi veritabanını açar, `supabase/migrations` göçlerini uygular ve kısıtlı uygulama rolüyle bağlanır. Adres yoksa yerelde veritabanı testleri atlanır; CI'da zorunludur
 - `pnpm lint`, `pnpm typecheck`, `pnpm format:check` (`pnpm format` düzeltir)
 - `pnpm smoke`: api modüllerini (dinlemeye başlayan `main.ts` hariç) ve worker'ın giriş dosyasını Node ile doğrudan yükler; tsc ve Vitest'in kaçırdığı içe aktarma hatalarını yakalar
 - `pnpm peers check`: paketlerin birbirine uyumunu denetler
 - `pnpm --filter @agent-office/web build`: panelin derlenmiş dosyaları
-- `supabase start`: yerel veritabanı; `supabase db reset`: göçleri baştan uygular (veri modeli görevinde kurulacak)
+- `supabase start`: yerel veritabanı (Docker gerekir); `supabase db reset`: göçleri ve `supabase/seed.sql` başlangıç verisini baştan uygular
 
 ## Çalışma şekli
 

@@ -18,6 +18,22 @@ jobs:
     name: Biçim, lint, tip, test
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    # Şirket ayrımı ve veritabanı kuralı testleri için geçici PostgreSQL (yalnızca bu iş boyunca).
+    # Testler her koşuda kendi veritabanını açar, göçleri uygular ve kısıtlı rolle bağlanır.
+    services:
+      postgres:
+        image: postgres:17.10@sha256:7958605b474b3d264a969cb3a123d6aa00ad1e1fe9da8a69984dabb704d93317
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      TEST_DATABASE_URL: postgresql://postgres@localhost:5432/postgres
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

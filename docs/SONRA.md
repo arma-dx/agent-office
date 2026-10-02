@@ -152,3 +152,14 @@ Arayüz temeli kuruldu (KALAN-ISLER 0.1). Kurucunun 2 Ekim kararıyla arayüz ge
 
 - PWA: vite-plugin-pwa tedarik zinciri ayarına takılıyor (workbox-build, sürüm kaynağı doğrulanamayan bir alt pakete bağlı). Manifest elle yazıldı; bildirimler için modül M9'da yalnızca push işleyen küçük bir service worker; önbellekleme gerekirse Serwist.
 - Panelin ana JavaScript paketi 484 KB (sıkıştırılmış 155 KB). Arayüz baştan ele alınırken küçültülebilir.
+
+## Veri modeli (KALAN-ISLER 0.2)
+
+- Taslak notun görünürlüğü: PLAN'a göre Y1 ajanın notu taslak açılır, onaydan sonra paylaşılır. Satır kuralları şu an taslak notu da şirket içinde (proje notuysa proje üyelerine) gösteriyor. Soru: taslak notu onaya kadar yalnızca kurucu ve onay yetkilileri mi görsün?
+- Ekip listesi: kural 9 gereği çalışan, aynı şirketteki başka kişilerin üyelik ve kullanıcı kaydını göremiyor (yalnızca kurucu görüyor). Görev atama ve yorumlarda kişi adı göstermek için şirketin üye adlarını döndüren dar bir işlev gerekecek (modül M2).
+- Silme: görev silinmiyor (iptal ediliyor), görev yorumu, çalışma, onay ve iz kaydı değiştirilmiyor ve silinmiyor. Kişisel veri silme talebinde (N36) bu kayıtların nasıl temizleneceği avukatın görüşüyle birlikte kararlaştırılacak.
+- Proje taşıma: görevin, notun ve belgenin projesi sonradan değiştirilemiyor; yorumlar, çalışmalar, onaylar ve dosyalar kapsamı açılışta görevden aldığı için taşınan kayıt bunları geride bırakırdı. Taşıma gerekirse bağlı kayıtlarla birlikte taşıyan bir işlev yazılır.
+- Dış kişiye görev: görevi dış kişiye atamak görevi ona açmıyor; açmayı kurucu paylaşımla yapıyor (dışa etkili). Ajan ve çalışan dış kişiye görev açamıyor.
+- Ajan çalışması, adına koştuğu kişinin erişimini aşamıyor: çalışanın isteğiyle koşan çalışma, çalışanın üyesi olmadığı projenin satırlarını göremiyor.
+- Supabase'de göç rolü (postgres) süper kullanıcı değil. Göçler rol açma, rol üyeliği ve işlev sahipliği devri yapıyor; düz PostgreSQL 17'de ve CI'da deneniyor, Supabase projesi açılınca orada da denenecek.
+- pg-boss yükseltmesi: kuyruk şeması göçle kuruluyor ve worker şemayı değiştirmiyor. pg-boss sürümü yükseltilince `getMigrationPlans` çıktısı yeni bir göç olarak eklenir.

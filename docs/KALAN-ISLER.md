@@ -48,94 +48,95 @@ Giriş ekranından önce. Arayüz geçici (2 Ekim); ileride baştan ele alınaca
 
 ### 0.2 Veri modeli ve şirket ayrımı
 
-Sıradaki iş.
+Sürüyor. Göçler `supabase/migrations`, testler `packages/db/test` (kısıtlı rolle; yeni tablo şirket ayrımı testine kendiliğinden girer).
 
 Altyapı:
 
 - [ ] Supabase hesabı ve iki proje: test ve canlı (Senden: hesap erişimi)
-- [ ] Veri bölgesinin seçimi (Karar: X1-3)
-- [ ] Yerel veritabanı: `supabase start` ve `supabase db reset` çalışır durumda
-- [ ] Yetkili göç rolü ile kısıtlı uygulama rolünün ayrılması; uygulama rolünde `BYPASSRLS` yok
-- [ ] `packages/db` içinde bağlam kuran yardımcı: `app.sirket_id`, `app.kullanici_id`, `app.proje_id`, `app.eposta`, `app.ajan_kod`
-- [ ] API isteği başına tek transaction; ajan çalışmasında adım başına kısa transaction
-- [ ] pg-boss kurulumu, ayrı şemada; işlere yalnızca kimlik konması
+- [x] Veri bölgesinin seçimi: AB, Frankfurt (2 Ekim, karar 14)
+- [ ] Yerel veritabanı: `supabase start` ve `supabase db reset` çalışır durumda (Senden: Docker Desktop açık olmalı, Supabase CLI kurulacak. Göçler şimdilik düz PostgreSQL 17'de ve CI'da deneniyor)
+- [x] Yetkili göç rolü ile kısıtlı uygulama rolünün ayrılması; uygulama rolünde `BYPASSRLS` yok
+- [x] `packages/db` içinde bağlam kuran yardımcı: `app.sirket_id`, `app.kullanici_id`, `app.proje_id`, `app.eposta`, `app.ajan_kod`
+- [ ] API isteği başına tek transaction; ajan çalışmasında adım başına kısa transaction (yardımcılar hazır: `baglamliIslem`, `ajanAdimi`; API'ye ilk veri isteğiyle 0.3'te bağlanır)
+- [x] pg-boss kurulumu, ayrı şemada; işlere yalnızca kimlik konması
 
 Tablolar:
 
-- [ ] `sirketler`: `tur` (`sirket`, `ozel_alan`) ve kısa kod (Karar: M8, teknik)
-- [ ] `kullanicilar`
-- [ ] `uyelikler`: kullanıcı, şirket, rol
-- [ ] `ajan_tanimlari` ve `kart_surumleri` (global, salt okunur)
-- [ ] `sirket_ajanlari`: durum, ayarlar (Drive klasörleri, öncelikli göndericiler, Figma dosyası, bütçe)
-- [ ] `musteriler`: AI izni ve kodla otomatik işleme izni alanlarıyla
-- [ ] `firsatlar`
-- [ ] `projeler`: müşteri, bütçe, kilometre taşları, AI izni
-- [ ] `proje_uyeleri`
-- [ ] `gorevler` ve görev yorumları
-- [ ] `calismalar` ve araç çağrıları
-- [ ] `onaylar`
-- [ ] `iz_kaydi`: güncelleme ve silmeyi veritabanı düzeyinde engelleyen kural
-- [ ] `notlar`, `not_surumleri`, `not_baglantilari`
-- [ ] `belgeler`
-- [ ] `istasyon_adaylari`
-- [ ] `entegrasyonlar`: şifreli token alanı
-- [ ] Bildirim kaydı tablosu (Karar: M46)
-- [ ] (Rapor) Şirket adlarının koda gömülmemesi: yeni bir şirket kod değişmeden, kayıt ve ayarla açılabilmeli (Ürünleşme ön koşulu)
+- [x] `sirketler`: `tur` (`sirket`, `ozel_alan`) ve kısa kod (Karar: M8, teknik)
+- [x] `kullanicilar`
+- [x] `uyelikler`: kullanıcı, şirket, rol
+- [x] `ajan_tanimlari` ve `kart_surumleri` (global, salt okunur)
+- [x] `sirket_ajanlari`: durum, ayarlar (Drive klasörleri, öncelikli göndericiler, Figma dosyası, bütçe)
+- [x] `musteriler`: AI izni ve kodla otomatik işleme izni alanlarıyla
+- [x] `firsatlar`
+- [x] `projeler`: müşteri, bütçe, kilometre taşları, AI izni
+- [x] `proje_uyeleri`
+- [x] `gorevler` ve görev yorumları
+- [x] `calismalar` ve araç çağrıları
+- [x] `onaylar`
+- [x] `iz_kaydi`: güncelleme ve silmeyi veritabanı düzeyinde engelleyen kural
+- [x] `notlar`, `not_surumleri`, `not_baglantilari`
+- [x] `belgeler`
+- [x] `istasyon_adaylari`
+- [x] `entegrasyonlar`: şifreli token alanı
+- [x] Bildirim kaydı tablosu (Karar: M46) (kimin hatırlatacağı M46'da açık; tablo yalnızca kaydı tutar)
+- [x] (Rapor) Şirket adlarının koda gömülmemesi: yeni bir şirket kod değişmeden, kayıt ve ayarla açılabilmeli (Ürünleşme ön koşulu)
 - [ ] (Rapor) Kartların şirketten ve modelden bağımsız yazıldığının denetimi
 
 Ölçüt verisi (Rapor: ölçüm ilk günden başlar; pano Sprint 4'te gelse de veri pilot açılışından itibaren kaydedilmeli):
 
-- [ ] Tamamlanan iş: görevin birimi, şirketi ve tamamlanma zamanı
-- [ ] İlk seferde onay oranı: onayın düzeltmesiz verilip verilmediği, ajan başına
-- [ ] Onay bekleme süresi: onaya düşme ve karar zamanları
-- [ ] Düzeltme nedenleri: ret ve düzeltme gerekçelerinin sınıfı
-- [ ] Kazanılan insan saati: işin eski süresi ile yeni süresi
-- [ ] Yanıt ve teslim süresi: talep ve sonuç zamanları
-- [ ] İş başına maliyet: model, araç ve altyapı; iç iş ve proje ayrı
-- [ ] Kritik hata sayısı: işaretlenen olaylar
-- [ ] Kullanım oranı: kullanıcının haftalık etkinliği
-- [ ] Yönlendirme doğruluğu: KOR-1'in ilk seferde doğru birime verdiği taleplerin payı
-- [ ] Kaçan son tarih sayısı
+- [x] Tamamlanan iş: görevin birimi, şirketi ve tamamlanma zamanı
+- [x] İlk seferde onay oranı: onayın düzeltmesiz verilip verilmediği, ajan başına
+- [x] Onay bekleme süresi: onaya düşme ve karar zamanları
+- [x] Düzeltme nedenleri: ret ve düzeltme gerekçelerinin sınıfı
+- [x] Kazanılan insan saati: işin eski süresi ile yeni süresi
+- [x] Yanıt ve teslim süresi: talep ve sonuç zamanları
+- [x] İş başına maliyet: model, araç ve altyapı; iç iş ve proje ayrı
+- [x] Kritik hata sayısı: işaretlenen olaylar
+- [x] Kullanım oranı: kullanıcının haftalık etkinliği
+- [x] Yönlendirme doğruluğu: KOR-1'in ilk seferde doğru birime verdiği taleplerin payı
+- [x] Kaçan son tarih sayısı
 
-Karar bekleyen alan ve tablolar (veri modeli yazılmadan önce kapanmalı):
+Karar bekleyen alan ve tablolar (2 Ekim kararlarıyla kapandı, `docs/kararlar/2026-10-02.md` 6-13):
 
-- [ ] Birimler: tablo mu, kartlardan türetme mi; `gorevler` tablosunda birim alanı (Karar: M39)
-- [ ] Üst görev alanı ve alt görevin sonuçlanma kuralı (Karar: M31)
-- [ ] Notlarda tek doğru kaynak işareti ve not durumu (Karar: M4)
-- [ ] Notlarda ve görevlerde kaynak türü: iç, dış (Karar: M14, X1-1)
-- [ ] Üretilen dosyalar için tablo (Karar: M38)
-- [ ] Onay kaydının ek alanları: öncelik, kaynaklar, iki ayrı gerekçe, ret nedeni, seçilen seçenek, dayandığı sürüm, önceki onay, gönderildi işareti (Karar: M25, M24, X1-7, M23, M22)
-- [ ] Görev durumlarına `yanit_bekliyor` eklenmesi (Karar: X1-6)
-- [ ] Kritik hata kaydı (Karar: R10)
-- [ ] Çalışma kaydında ham içeriğin saklama süresi (Karar: M12)
+- [x] Birimler: tablo mu, kartlardan türetme mi; `gorevler` tablosunda birim alanı (Karar: M39)
+- [x] Üst görev alanı (`ust_gorev_id`, teknik)
+- [ ] Alt görevin sonuçlanma kuralı (Karar: M31; açık)
+- [x] Notlarda tek doğru kaynak işareti ve not durumu (Karar: M4)
+- [x] Notlarda ve görevlerde kaynak türü: iç, dış (Karar: M14, X1-1)
+- [x] Üretilen dosyalar için tablo (Karar: M38)
+- [x] Onay kaydının ek alanları: öncelik, kaynaklar, iki ayrı gerekçe, ret nedeni, seçilen seçenek, dayandığı sürüm, önceki onay, gönderildi işareti (Karar: M25, M24, X1-7, M23, M22)
+- [x] Görev durumlarına `yanit_bekliyor` eklenmesi (Karar: X1-6)
+- [x] Kritik hata kaydı (Karar: R10)
+- [x] Çalışma kaydında ham içeriğin saklama süresi (Karar: M12)
 
 Güvenlik politikaları (RLS):
 
-- [ ] Şirket ayrımı: bağlamdaki şirketin dışındaki satır görünmez
-- [ ] Bağlam yokken hiçbir satır dönmez
-- [ ] Proje kapsamı: `proje_id` doluysa yalnızca proje üyeleri ve kurucu
-- [ ] Ajan çalışması daraltması: proje bağlamı yoksa proje satırı yok; varsa yalnızca kendi projesi
-- [ ] AI izni olmayan müşteriye ve projeye bağlı kayıtların ajan bağlamına kapalı olması
-- [ ] Kullanıcının yalnızca kendi kaydını, üyeliklerini ve şirketlerini görmesi
-- [ ] Dış kişinin yalnızca kendisine açılan görev ve notları görmesi
-- [ ] Kurucu özel alanına yalnızca kurucunun erişmesi
-- [ ] Global tabloların uygulama rolü için salt okunur olması
+- [x] Şirket ayrımı: bağlamdaki şirketin dışındaki satır görünmez
+- [x] Bağlam yokken hiçbir satır dönmez
+- [x] Proje kapsamı: `proje_id` doluysa yalnızca proje üyeleri ve kurucu
+- [x] Ajan çalışması daraltması: proje bağlamı yoksa proje satırı yok; varsa yalnızca kendi projesi
+- [x] AI izni olmayan müşteriye ve projeye bağlı kayıtların ajan bağlamına kapalı olması
+- [x] Kullanıcının yalnızca kendi kaydını, üyeliklerini ve şirketlerini görmesi
+- [x] Dış kişinin yalnızca kendisine açılan görev ve notları görmesi
+- [x] Kurucu özel alanına yalnızca kurucunun erişmesi
+- [x] Global tabloların uygulama rolü için salt okunur olması
 
 Başlangıç verisi:
 
-- [ ] Arma DX, Pillika ve Kurucu alanı kayıtları
-- [ ] Kurucunun kullanıcı ve üyelik kayıtları
+- [x] Arma DX, Pillika ve Kurucu alanı kayıtları (`supabase/seed.sql`; birimler `agents/birimler.yaml`)
+- [ ] Kurucunun kullanıcı ve üyelik kayıtları (Senden: giriş e-postası)
 
 Testler (kısıtlı rolle):
 
-- [ ] Bağlam Pillika iken Arma DX satırı okunamaz
-- [ ] Bağlam yokken hiçbir satır okunamaz
-- [ ] Proje kapsamlı satır proje dışından okunamaz
-- [ ] Proje bağlamı olmayan ajan çalışması proje satırı okuyamaz, kimliği kurucu olsa bile
-- [ ] Kullanıcı başkasının üyeliğini göremez
-- [ ] AI izni olmayan müşterinin kaydı ajan bağlamında okunamaz
-- [ ] `iz_kaydi` satırı değiştirilemez ve silinemez
-- [ ] Her yeni tablo için şirket ayrımı testi
+- [x] Bağlam Pillika iken Arma DX satırı okunamaz
+- [x] Bağlam yokken hiçbir satır okunamaz
+- [x] Proje kapsamlı satır proje dışından okunamaz
+- [x] Proje bağlamı olmayan ajan çalışması proje satırı okuyamaz, kimliği kurucu olsa bile
+- [x] Kullanıcı başkasının üyeliğini göremez
+- [x] AI izni olmayan müşterinin kaydı ajan bağlamında okunamaz
+- [x] `iz_kaydi` satırı değiştirilemez ve silinemez
+- [x] Her yeni tablo için şirket ayrımı testi
 
 ### 0.3 Google ile giriş (M1)
 
