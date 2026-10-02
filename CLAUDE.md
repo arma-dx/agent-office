@@ -84,7 +84,8 @@ Rapor neyin ve neden yapılacağını, PLAN ve bu dosya nasıl yapılacağını 
 
 - Ekran listesi `docs/PLAN.md` içinde. Günlük iş listeler, pano ve Onay Masası üzerinden yürür; telefonda alt menü: Bugün, Onaylar, Görevler, Notlar, Ofis.
 - shadcn/ui yalnızca davranış ve erişilebilirlik için kullanılır. Varsayılan teması kullanılmaz, aşağıdaki değişkenlerle değiştirilir.
-- Renk değişkenleri: zemin `#F6F7F9`, yüzey `#FFFFFF`, metin `#18202E`, ikincil metin `#5B6475`, çizgi `#DDE1E8`, vurgu `#13807D`, hata `#C2412D`, onay bekliyor `#9A6412`. Karanlık tema aynı adlarla tanımlanır.
+- Pilottaki arayüz geçicidir (2 Ekim kararı): ileride baştan ele alınacak; o zamana kadar aşağıdaki kurallar geçerli.
+- Renk değişkenleri: zemin `#F6F7F9`, yüzey `#FFFFFF`, metin `#18202E`, ikincil metin `#5B6475`, çizgi `#DDE1E8`, form kutusu kenarlığı `#858E9E`, vurgu `#127A77` (önceki `#13807D` zemin üzerinde okunabilirlik eşiğinin altındaydı), hata `#C2412D`, onay bekliyor `#9A6412`. Karanlık tema aynı adlarla tanımlanır; değerleri `apps/web/src/index.css` içinde.
 - Yazı: IBM Plex Sans, tek aile. Tablolarda rakamlar eşit genişlikte; başlıklar cümle düzeninde.
 - Ayrım gölgeyle değil ince çizgi ve boşlukla yapılır. Köşe yuvarlaklığı küçük ve öğenin türüne göre tutarlı.
 - Hareket yalnızca kullanıcının yaptığı işin sonucunu gösterir (onaylanan iş kuyruktan kayarak çıkar). Süs amaçlı giriş animasyonu yok; azaltılmış hareket tercihine uyulur.

@@ -19,31 +19,32 @@ Tamamlananlar:
 - [x] Panel kodunun sunucu koduna ve anahtarlara erişememesi (kural 1 koruması)
 - [x] Loglarda gizli bilgilerin maskelenmesi
 - [x] Tasarım raporu, kararlar ve kartların birbirine uyumu
+- [x] Arayüz temeli (0.1, geçici arayüz): yönlendirici, API istemcisi, tema, ana yerleşim, ortak bileşenler, boş ekranlar
 
-Henüz olmayanlar: veritabanı (göç dosyası yok), giriş, hiçbir ekran, hiçbir ajan, hiçbir skill, test ve canlı ortam.
+Henüz olmayanlar: veritabanı (göç dosyası yok), giriş, işlevli ekran (yalnızca boş ekranlar var), hiçbir ajan, hiçbir skill, test ve canlı ortam.
 
 ## Sprint 0
 
 ### 0.1 Arayüz temeli
 
-Giriş ekranından önce.
+Giriş ekranından önce. Arayüz geçici (2 Ekim); ileride baştan ele alınacak.
 
-- [ ] TanStack Router kurulumu ve sayfa yapısı
-- [ ] TanStack Query kurulumu ve API istemcisi (bütün istekler `/api` üzerinden)
-- [ ] Tailwind 4 kurulumu
-- [ ] shadcn/ui kurulumu; varsayılan temanın kaldırılması
-- [ ] CLAUDE.md'deki renk değişkenlerinin shadcn değişken adlarına eşlenmesi
-- [ ] Vurgu renginin kontrast düzeltmesi (Karar: arayüz temeli, vurgu rengi)
-- [ ] Form alanları için ayrı kenarlık rengi (Karar: arayüz temeli, kenarlık)
-- [ ] Karanlık tema renk değerleri (Karar: arayüz temeli, karanlık tema)
-- [ ] IBM Plex Sans yazı tipinin kendi sunucumuzdan verilmesi; tablolarda eşit genişlikli rakamlar
-- [ ] react-hook-form ve zod ile ortak form düzeni
-- [ ] Ana yerleşim: üst çubuk, şirket seçici, içerik alanı
-- [ ] Telefonda alt menü: Bugün, Onaylar, Görevler, Notlar, Ofis
-- [ ] Ortak bileşenler: düğme, form alanı, tablo, liste satırı, boş ekran, hata mesajı, yükleniyor durumu
-- [ ] Klavye odağının görünür olması; azaltılmış hareket tercihine uyum
-- [ ] Elle yazılmış PWA manifesti ve uygulama simgeleri
-- [ ] Hata sınırı ve "sayfa bulunamadı" ekranı
+- [x] TanStack Router kurulumu ve sayfa yapısı
+- [x] TanStack Query kurulumu ve API istemcisi (bütün istekler `/api` üzerinden)
+- [x] Tailwind 4 kurulumu
+- [x] shadcn/ui kurulumu; varsayılan temanın kaldırılması
+- [x] CLAUDE.md'deki renk değişkenlerinin shadcn değişken adlarına eşlenmesi
+- [x] Vurgu renginin kontrast düzeltmesi: `#127A77` (geçici arayüz, 2 Ekim)
+- [x] Form alanları için ayrı kenarlık rengi: `#858E9E`
+- [x] Karanlık tema renk değerleri (geçici; sistem tercihini izler)
+- [x] IBM Plex Sans yazı tipinin kendi sunucumuzdan verilmesi; tablolarda eşit genişlikli rakamlar
+- [x] react-hook-form ve zod ile ortak form düzeni
+- [x] Ana yerleşim: üst çubuk, şirket seçici (geçici örnek liste), içerik alanı
+- [x] Telefonda alt menü: Bugün, Onaylar, Görevler, Notlar, Ofis (Ofis, Kasım'a kadar Ajanlar ekranını açar)
+- [x] Ortak bileşenler: düğme, form alanı, tablo, liste satırı, boş ekran, hata mesajı, yükleniyor durumu
+- [x] Klavye odağının görünür olması; azaltılmış hareket tercihine uyum
+- [x] Elle yazılmış PWA manifesti ve uygulama simgeleri (geçici simge)
+- [x] Hata sınırı ve "sayfa bulunamadı" ekranı
 
 ### 0.2 Veri modeli ve şirket ayrımı
 
@@ -163,6 +164,7 @@ Roller ve şirket:
 
 - [ ] Girişten sonra şirket seçimi; tek üyeliği olanın doğrudan geçmesi
 - [ ] Üst çubukta şirket seçici; kurucu için holding görünümü ve Kurucu özel alanı
+- [ ] Şirket seçicideki geçici örnek listenin (`apps/web/src/gecici-veri.ts`) kaldırılması; liste kullanıcının üyeliklerinden gelir
 - [ ] Her API ucunda rol denetimi: `kurucu`, `calisan`, `dis_kisi`
 - [ ] Holding görünümü için API'de salt okunur birleştirme
 

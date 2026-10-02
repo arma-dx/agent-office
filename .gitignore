@@ -4,6 +4,7 @@ dist/
 coverage/
 .vitest/
 *.tsbuildinfo
+.tanstack/
 
 # Gizli anahtarlar: .env dosyaları depoya girmez (CLAUDE.md kural 6)
 .env

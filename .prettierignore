@@ -4,6 +4,7 @@ docs/
 agents/
 skills/
 **/dist
+apps/web/src/routeTree.gen.ts
 **/coverage
 **/.vite
 **/.vitest

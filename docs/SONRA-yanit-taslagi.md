@@ -63,7 +63,7 @@ Kasım'dan önce:
 - Pilot hedefte kapısının sayısal hedefleri (R11).
 - KOR-2 ve HAF-2'nin hedef seviyesi: kartlardaki Y3 mü, rapordaki Y2 mi (M20).
 
-Henüz yanıtı olmayan SONRA maddeleri: N11, N12, N15, N17, N21, N26, N31, N40, N41, N43, N44; ayrıca M51'deki N18 ve M54'teki N30 alt soruları. Bunlara yanıt önerisi sonraki turda eklenecek.
+Henüz yanıtı olmayan SONRA maddeleri: N11, N12, N15, N17, N21, N26, N31, N40, N43, N44; ayrıca M51'deki N18 ve M54'teki N30 alt soruları. Bunlara yanıt önerisi sonraki turda eklenecek.
 
 ## Hukuk ve KVKK
 

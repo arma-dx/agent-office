@@ -1,9 +1,11 @@
 // @ts-check
 import js from '@eslint/js';
+import pluginQuery from '@tanstack/eslint-plugin-query';
+import pluginRouter from '@tanstack/eslint-plugin-router';
 import { defineConfig, globalIgnores } from 'eslint/config';
 import prettier from 'eslint-config-prettier/flat';
 import reactHooks from 'eslint-plugin-react-hooks';
-import reactRefresh from 'eslint-plugin-react-refresh';
+import { reactRefresh } from 'eslint-plugin-react-refresh';
 import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
@@ -92,6 +94,8 @@ function serverOnlyRules(webBlock) {
 export default defineConfig([
   globalIgnores([
     '**/dist/',
+    // TanStack Router'ın ürettiği dosya; elle düzenlenmez.
+    'apps/web/src/routeTree.gen.ts',
     '**/coverage/',
     '**/.vite/',
     '**/.vitest/',
@@ -142,9 +146,24 @@ export default defineConfig([
   {
     name: 'agent-office/web',
     files: ['apps/web/src/**/*.{ts,tsx}'],
-    extends: [reactHooks.configs.flat.recommended, reactRefresh.configs.vite],
+    extends: [
+      reactHooks.configs.flat.recommended,
+      // Rota dosyaları Route nesnesini dışa aktarır; bu sarmalayıcılar bileşen sayılır.
+      reactRefresh.configs.vite({
+        extraHOCs: ['createFileRoute', 'createRootRoute', 'createRootRouteWithContext'],
+      }),
+      pluginQuery.configs['flat/recommended'],
+      pluginRouter.configs['flat/recommended'],
+    ],
     languageOptions: { globals: globals.browser },
     rules: serverOnlyRules(true),
+  },
+
+  {
+    // shadcn bileşenleri bileşenin yanında varyant yardımcılarını da dışa aktarır.
+    name: 'agent-office/web-shadcn',
+    files: ['apps/web/src/components/ui/**/*.tsx'],
+    rules: { 'react-refresh/only-export-components': 'off' },
   },
 
   {

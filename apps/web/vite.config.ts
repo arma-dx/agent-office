@@ -1,5 +1,7 @@
 /// <reference types="vitest/config" />
 import { fileURLToPath } from 'node:url';
+import tailwindcss from '@tailwindcss/vite';
+import { tanstackRouter } from '@tanstack/router-plugin/vite';
 import react from '@vitejs/plugin-react';
 import { defineConfig, loadEnv } from 'vite';
 
@@ -10,7 +12,13 @@ export default defineConfig(({ mode }) => {
   const apiPort = loadEnv(mode, kokDizin, 'PORT').PORT ?? '3000';
 
   return {
-    plugins: [react()],
+    plugins: [
+      // Yönlendirici eklentisi react()'ten önce gelir; src/routes altından routeTree.gen.ts üretir.
+      tanstackRouter({ target: 'react', autoCodeSplitting: true, quoteStyle: 'single' }),
+      react(),
+      tailwindcss(),
+    ],
+    resolve: { tsconfigPaths: true },
     // Panel ortam değişkeni okumaz: .env yüklenmez, VITE_ önekli süreç değişkenleri de pakete girmez.
     envDir: false,
     envPrefix: 'PANEL_PUBLIC_',
