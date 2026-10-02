@@ -9,6 +9,8 @@ export const K = {
   arma: id(1),
   pillika: id(2),
   kurucuAlani: id(3),
+  // Kurucunun üyesi olmadığı, başka bir kurucunun yönettiği şirket (hesap yönetimi testleri için).
+  baska: id(4),
 
   kurucu: id(11),
   calisanA: id(12),
@@ -16,6 +18,11 @@ export const K = {
   disKisiA: id(14),
   yetkiliA: id(15),
   disKisiP: id(16),
+  // baska şirketin kurucusu ve hem Arma DX'te hem baska şirkette çalışan kişi.
+  yabanciKurucu: id(17),
+  ortakCalisan: id(18),
+  // Hiçbir şirkete üye olmayan (ayrılmış) kişi.
+  eskiCalisan: id(19),
 
   musteriA: id(21),
   musteriAIzinsiz: id(22),
@@ -84,15 +91,32 @@ export async function veriYukle(istemci: pg.Client): Promise<void> {
     insert into ofis.sirketler (id, kod, ad, tur) values
       ('${K.arma}', 'armadx', 'Arma DX', 'sirket'),
       ('${K.pillika}', 'pillika', 'Pillika', 'sirket'),
-      ('${K.kurucuAlani}', 'kurucu_alani', 'Kurucu', 'ozel_alan');
+      ('${K.kurucuAlani}', 'kurucu_alani', 'Kurucu', 'ozel_alan'),
+      ('${K.baska}', 'baska', 'Başka Şirket', 'sirket');
 
-    insert into ofis.kullanicilar (id, eposta, ad) values
-      ('${K.kurucu}', 'kurucu@ornek.test', 'Kurucu'),
-      ('${K.calisanA}', 'calisan.a@ornek.test', 'Çalışan A'),
-      ('${K.calisanP}', 'calisan.p@ornek.test', 'Çalışan P'),
-      ('${K.disKisiA}', 'musavir@ornek.test', 'Mali Müşavir'),
-      ('${K.yetkiliA}', 'yetkili.a@ornek.test', 'Yetkili Çalışan A'),
-      ('${K.disKisiP}', 'avukat@ornek.test', 'Avukat');
+    insert into ofis.kullanicilar (id, ad) values
+      ('${K.kurucu}', 'Kurucu'),
+      ('${K.calisanA}', 'Çalışan A'),
+      ('${K.calisanP}', 'Çalışan P'),
+      ('${K.disKisiA}', 'Mali Müşavir'),
+      ('${K.yetkiliA}', 'Yetkili Çalışan A'),
+      ('${K.disKisiP}', 'Avukat'),
+      ('${K.yabanciKurucu}', 'Başka Kurucu'),
+      ('${K.ortakCalisan}', 'Ortak Çalışan'),
+      ('${K.eskiCalisan}', 'Eski Çalışan');
+
+    -- Kurucunun iki hesabı var; ikisiyle de aynı kullanıcı olarak girer.
+    insert into ofis.kullanici_epostalari (eposta, kullanici_id) values
+      ('kurucu@arma.test', '${K.kurucu}'),
+      ('kurucu@pillika.test', '${K.kurucu}'),
+      ('calisan.a@ornek.test', '${K.calisanA}'),
+      ('calisan.p@ornek.test', '${K.calisanP}'),
+      ('musavir@ornek.test', '${K.disKisiA}'),
+      ('yetkili.a@ornek.test', '${K.yetkiliA}'),
+      ('avukat@ornek.test', '${K.disKisiP}'),
+      ('kurucu@baska.test', '${K.yabanciKurucu}'),
+      ('ortak@ornek.test', '${K.ortakCalisan}'),
+      ('eski@ornek.test', '${K.eskiCalisan}');
 
     insert into ofis.uyelikler (sirket_id, kullanici_id, rol, onay_yetkisi) values
       ('${K.arma}', '${K.kurucu}', 'kurucu', true),
@@ -102,7 +126,10 @@ export async function veriYukle(istemci: pg.Client): Promise<void> {
       ('${K.arma}', '${K.yetkiliA}', 'calisan', true),
       ('${K.arma}', '${K.disKisiA}', 'dis_kisi', false),
       ('${K.pillika}', '${K.calisanP}', 'calisan', false),
-      ('${K.pillika}', '${K.disKisiP}', 'dis_kisi', false);
+      ('${K.pillika}', '${K.disKisiP}', 'dis_kisi', false),
+      ('${K.baska}', '${K.yabanciKurucu}', 'kurucu', true),
+      ('${K.baska}', '${K.ortakCalisan}', 'calisan', false),
+      ('${K.arma}', '${K.ortakCalisan}', 'calisan', false);
 
     insert into ofis.birimler (kod, ad, sirket_kod, pilotta_acik) values
       ('KOR', 'Koordinasyon Katmanı', null, true),

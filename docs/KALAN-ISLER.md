@@ -54,7 +54,7 @@ Altyapı:
 
 - [ ] Supabase hesabı ve iki proje: test ve canlı (Senden: hesap erişimi)
 - [x] Veri bölgesinin seçimi: AB, Frankfurt (2 Ekim, karar 14)
-- [ ] Yerel veritabanı: `supabase start` ve `supabase db reset` çalışır durumda (Senden: Docker Desktop açık olmalı, Supabase CLI kurulacak. Göçler şimdilik düz PostgreSQL 17'de ve CI'da deneniyor)
+- [x] Yerel veritabanı: `supabase start` ve `supabase db reset` çalışır durumda (göçler ve testler yerel Supabase'de, süper kullanıcı olmayan `postgres` rolüyle geçiyor)
 - [x] Yetkili göç rolü ile kısıtlı uygulama rolünün ayrılması; uygulama rolünde `BYPASSRLS` yok
 - [x] `packages/db` içinde bağlam kuran yardımcı: `app.sirket_id`, `app.kullanici_id`, `app.proje_id`, `app.eposta`, `app.ajan_kod`
 - [ ] API isteği başına tek transaction; ajan çalışmasında adım başına kısa transaction (yardımcılar hazır: `baglamliIslem`, `ajanAdimi`; API'ye ilk veri isteğiyle 0.3'te bağlanır)
@@ -64,6 +64,7 @@ Tablolar:
 
 - [x] `sirketler`: `tur` (`sirket`, `ozel_alan`) ve kısa kod (Karar: M8, teknik)
 - [x] `kullanicilar`
+- [x] `kullanici_epostalari`: bir kişinin birden çok Google hesabı (2 Ekim, karar 15)
 - [x] `uyelikler`: kullanıcı, şirket, rol
 - [x] `ajan_tanimlari` ve `kart_surumleri` (global, salt okunur)
 - [x] `sirket_ajanlari`: durum, ayarlar (Drive klasörleri, öncelikli göndericiler, Figma dosyası, bütçe)
@@ -125,7 +126,7 @@ Güvenlik politikaları (RLS):
 Başlangıç verisi:
 
 - [x] Arma DX, Pillika ve Kurucu alanı kayıtları (`supabase/seed.sql`; birimler `agents/birimler.yaml`)
-- [ ] Kurucunun kullanıcı ve üyelik kayıtları (Senden: giriş e-postası)
+- [x] Kurucunun kullanıcı ve üyelik kayıtları (`supabase/seed.sql`; üç adres eklendi, `omer@pililka.com` yazımı soruldu)
 
 Testler (kısıtlı rolle):
 

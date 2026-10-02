@@ -1,14 +1,15 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { BaglamGirdisi } from '../src/baglam.ts';
 import { K } from './veri.ts';
-import { deneme, havuzlariKapat, veritabaniYok, yonetici } from './yardimci.ts';
+import { deneme, havuzlariKapat, veritabaniYok, yonetici, yoneticiDenemesi } from './yardimci.ts';
 
 // Şirket ayrımı ve görünürlük testleri (CLAUDE.md kural 2, 9, 12; PLAN Testler). Hepsi kısıtlı
 // uygulama rolüyle koşar; tablo listesi veritabanından okunur, böylece yeni tablo kendiliğinden
 // teste girer.
 
 const GLOBAL = ['ajan_tanimlari', 'araclar', 'birimler', 'kart_surumleri'];
-const SIRKET_ID_TASIMAYAN = ['kullanicilar', 'sirketler'];
+// Kimlik tabloları: kişi birden çok şirkete üye olabilir.
+const SIRKET_ID_TASIMAYAN = ['kullanici_epostalari', 'kullanicilar', 'sirketler'];
 
 function kisi(sirketId: string, kullaniciId: string, projeId: string | null = null): BaglamGirdisi {
   return { sirketId, kullaniciId, projeId };
@@ -409,17 +410,132 @@ describe.skipIf(veritabaniYok)('şirket ayrımı', () => {
       expect(await d.satirlar('select id from ofis.kullanicilar')).toEqual([{ id: K.calisanA }]);
       expect(await d.satirlar('select id from ofis.sirketler')).toEqual([{ id: K.arma }]);
 
+      expect(await d.satirlar('select eposta from ofis.kullanici_epostalari')).toEqual([
+        { eposta: 'calisan.a@ornek.test' },
+      ]);
+
       // Kurucu kendi şirketinin üyelerini görür, öteki şirketin üyelerini görmez.
       await d.baglam(kisi(K.arma, K.kurucu));
-      expect(await d.say('uyelikler', 'sirket_id = $1', [K.arma])).toBe(4);
+      expect(await d.say('uyelikler', 'sirket_id = $1', [K.arma])).toBe(5);
       expect(await d.say('uyelikler', 'kullanici_id = $1', [K.calisanP])).toBe(0);
       expect(await d.say('kullanicilar', 'id = $1', [K.calisanP])).toBe(0);
+      expect(await d.say('kullanici_epostalari', 'kullanici_id = $1', [K.calisanP])).toBe(0);
+      expect(await d.say('kullanici_epostalari', 'kullanici_id = $1', [K.calisanA])).toBe(1);
       expect(await d.say('sirketler')).toBe(3);
+      // Ortak çalışanın başka şirketteki üyeliği görünmez.
+      expect(await d.say('uyelikler', 'kullanici_id = $1', [K.ortakCalisan])).toBe(1);
 
-      // Girişte yalnızca doğrulanmış e-postanın kaydı bulunur.
+      // Girişte yalnızca doğrulanmış e-postanın kaydı bulunur; büyük harf fark etmez.
       await d.baglam({ eposta: 'Calisan.A@ornek.test' });
       expect(await d.satirlar('select id from ofis.kullanicilar')).toEqual([{ id: K.calisanA }]);
+      expect(await d.say('kullanici_epostalari')).toBe(1);
       expect(await d.say('uyelikler')).toBe(0);
+      await d.baglam({ eposta: 'yok@ornek.test' });
+      expect(await d.say('kullanicilar')).toBe(0);
+    });
+  });
+
+  it('bir kişi birden çok e-postayla aynı kullanıcı olarak bulunur', async () => {
+    await deneme(async (d) => {
+      for (const eposta of ['kurucu@arma.test', 'KURUCU@pillika.test']) {
+        await d.baglam({ eposta });
+        expect(await d.satirlar('select id from ofis.kullanicilar')).toEqual([{ id: K.kurucu }]);
+        // Girişte yalnızca o adres görünür, kişinin öteki adresleri görünmez.
+        expect(await d.say('kullanici_epostalari')).toBe(1);
+      }
+      await d.baglam(kisi(K.arma, K.kurucu));
+      expect(await d.say('kullanici_epostalari', 'kullanici_id = $1', [K.kurucu])).toBe(2);
+      // Ajan çalışması e-posta görmez.
+      await d.baglam(ajan(K.arma, 'KOR-1'));
+      expect(await d.say('kullanici_epostalari')).toBe(0);
+    });
+  });
+
+  it('uygulama kimlik kaydı açamaz ve e-posta yazamaz', async () => {
+    await deneme(async (d) => {
+      await d.baglam(kisi(K.arma, K.kurucu));
+      expect((await d.hata(`insert into ofis.kullanicilar (ad) values ('Yeni Kişi')`)).kod).toBe(
+        '42501',
+      );
+      expect(
+        (
+          await d.hata(
+            'insert into ofis.kullanici_epostalari (eposta, kullanici_id) values ($1, $2)',
+            ['yeni.a@ornek.test', K.calisanA],
+          )
+        ).kod,
+      ).toBe('42501');
+      expect((await d.hata('delete from ofis.kullanici_epostalari')).kod).toBe('42501');
+      expect(
+        (await d.hata(`update ofis.kullanici_epostalari set eposta = 'x@ornek.test'`)).kod,
+      ).toBe('42501');
+    });
+  });
+
+  it('hesabı yalnızca, hesabın erişebildiği her şirkette kurucu olan kişi yönetir', async () => {
+    await deneme(async (d) => {
+      await d.baglam(kisi(K.arma, K.kurucu));
+      expect(
+        await d.calistir(`update ofis.kullanicilar set ad = 'Çalışan A2' where id = $1`, [
+          K.calisanA,
+        ]),
+      ).toBe(1);
+      expect(
+        await d.calistir('update ofis.kullanicilar set aktif = false where id = $1', [K.calisanA]),
+      ).toBe(1);
+      // Başka şirkete de erişen ve hiçbir şirkete üye olmayan hesap yönetilemez.
+      expect(
+        await d.calistir('update ofis.kullanicilar set aktif = false where id = $1', [
+          K.ortakCalisan,
+        ]),
+      ).toBe(0);
+      expect(
+        await d.calistir(`update ofis.kullanicilar set ad = 'x' where id = $1`, [K.eskiCalisan]),
+      ).toBe(0);
+      // WHERE'siz toplu güncelleme de yalnızca yönetilen hesaplara ve kişinin kendisine ulaşır.
+      expect(await d.calistir('update ofis.kullanicilar set ad = ad')).toBe(4);
+
+      await d.baglam(kisi(K.baska, K.yabanciKurucu));
+      expect(await d.calistir('update ofis.kullanicilar set aktif = aktif, ad = ad')).toBe(1);
+      expect(
+        await d.calistir('update ofis.kullanicilar set aktif = false where id <> $1', [
+          K.yabanciKurucu,
+        ]),
+      ).toBe(0);
+
+      // Kişi kendi adını değiştirir, hesabını kapatamaz.
+      await d.baglam(kisi(K.arma, K.yetkiliA));
+      expect(
+        await d.calistir(`update ofis.kullanicilar set ad = 'Yeni Ad' where id = $1`, [K.yetkiliA]),
+      ).toBe(1);
+      expect(
+        (await d.hata('update ofis.kullanicilar set aktif = false where id = $1', [K.yetkiliA]))
+          .kod,
+      ).toBe('42501');
+      expect(
+        await d.calistir(`update ofis.kullanicilar set ad = 'x' where id = $1`, [K.calisanA]),
+      ).toBe(0);
+
+      // Ajan çalışması yalnızca kimliğin kaydını okur, değiştiremez.
+      await d.baglam(ajan(K.arma, 'KOR-1'));
+      expect(await d.satirlar('select id from ofis.kullanicilar')).toEqual([{ id: K.kurucu }]);
+      expect(await d.calistir(`update ofis.kullanicilar set ad = 'x'`)).toBe(0);
+    });
+  });
+
+  it('e-posta küçük harfle ve geçerli biçimde tutulur', async () => {
+    await yoneticiDenemesi(async (d) => {
+      for (const eposta of ['Buyuk@Ornek.test', 'bosluk @ornek.test', 'adsiz', 'iki@@ornek.test']) {
+        expect(
+          (
+            await d.hata(
+              'insert into ofis.kullanici_epostalari (eposta, kullanici_id) values ($1, $2)',
+              [eposta, K.eskiCalisan],
+            )
+          ).kod,
+          eposta,
+        ).toBe('23514');
+      }
     });
   });
 

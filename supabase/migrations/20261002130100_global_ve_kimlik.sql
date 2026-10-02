@@ -64,12 +64,20 @@ create table ofis.sirketler (
 -- Kişi birden çok şirkete üye olabilir; bu yüzden kullanicilar sirket_id taşımaz.
 create table ofis.kullanicilar (
   id uuid primary key default gen_random_uuid(),
-  eposta text not null check (eposta = lower(eposta) and eposta like '%@%'),
   ad text not null,
   aktif boolean not null default true,
   olusturma timestamptz not null default now()
 );
-create unique index kullanicilar_eposta on ofis.kullanicilar (eposta);
+
+-- Bir kişinin birden çok Google hesabı olabilir (kurucunun Arma DX ve Pillika adresleri gibi); hepsi
+-- aynı kullanıcıya bağlanır. Giriş, doğrulanmış e-postanın burada kaydı varsa yapılır (kural 3).
+-- Kimlik tablosudur, sirket_id taşımaz.
+create table ofis.kullanici_epostalari (
+  eposta text primary key check (eposta = lower(eposta) and eposta ~ '^[^@\s]+@[^@\s]+\.[^@\s]+$'),
+  kullanici_id uuid not null references ofis.kullanicilar (id) on delete cascade,
+  olusturma timestamptz not null default now()
+);
+create index kullanici_epostalari_kullanici on ofis.kullanici_epostalari (kullanici_id);
 
 create table ofis.uyelikler (
   id uuid primary key default gen_random_uuid(),
@@ -120,17 +128,48 @@ create function ofis.kurucu_mu() returns boolean
 
 grant execute on function ofis.rolum(), ofis.sirket_ici_mi(), ofis.kurucu_mu() to ofis_uygulama;
 
+-- Bağlamdaki kişi bu hesabı yönetebilir mi: hesap bağlamdaki şirketin üyesi ve hesabın üyesi olduğu
+-- her şirkette bağlamdaki kişi kurucu. Hiçbir şirkete üye olmayan hesabı kimse yönetemez; böylece bir
+-- şirketin kurucusu başka bir şirkete erişen ya da sahipsiz kalan bir hesabı değiştiremez.
+create function ofis.hesabi_yonetebilir_mi(p_kullanici uuid) returns boolean
+  language sql stable security definer set search_path = ''
+  as $$
+    select ofis.baglam_ajan() is null
+      and ofis.baglam_kullanici() is not null
+      and exists (
+        select 1 from ofis.uyelikler u
+        where u.kullanici_id = p_kullanici and u.sirket_id = ofis.baglam_sirket()
+      )
+      and not exists (
+        select 1 from ofis.uyelikler u
+        where u.kullanici_id = p_kullanici
+          and not exists (
+            select 1 from ofis.uyelikler k
+            where k.sirket_id = u.sirket_id and k.kullanici_id = ofis.baglam_kullanici()
+              and k.rol = 'kurucu'
+          )
+      )
+  $$;
+alter function ofis.hesabi_yonetebilir_mi(uuid) owner to ofis_yetki_okuyucu;
+grant execute on function ofis.hesabi_yonetebilir_mi(uuid) to ofis_uygulama;
+
 -- Satır kuralları -----------------------------------------------------------------------------------
 
 alter table ofis.sirketler enable row level security;
 alter table ofis.sirketler force row level security;
 alter table ofis.kullanicilar enable row level security;
 alter table ofis.kullanicilar force row level security;
+alter table ofis.kullanici_epostalari enable row level security;
+alter table ofis.kullanici_epostalari force row level security;
 alter table ofis.uyelikler enable row level security;
 alter table ofis.uyelikler force row level security;
 
 grant select on ofis.sirketler to ofis_uygulama;
-grant select, insert, update (ad, aktif) on ofis.kullanicilar to ofis_uygulama;
+-- Hesap açmak ve e-posta bağlamak davet ve giriş işinin parçasıdır (KALAN-ISLER 0.3): orada, adresin
+-- sahibi Google ile doğrulandıktan sonra dar bir işlevle yapılır. O güne kadar uygulama kimlik
+-- kaydı açamaz ve e-posta yazamaz; bu kayıtları yalnızca başlangıç verisi yazar.
+grant select, update (ad, aktif) on ofis.kullanicilar to ofis_uygulama;
+grant select on ofis.kullanici_epostalari to ofis_uygulama;
 grant select, insert, update, delete on ofis.uyelikler to ofis_uygulama;
 
 -- Okuyucu rolün kendi kuralı: üyelikleri koşulsuz okur (yalnızca SELECT yetkisi var).
@@ -160,11 +199,33 @@ create policy gorunur on ofis.sirketler for select to ofis_uygulama
     )
   );
 
--- Kullanıcı kaydı: kendisi ve girişte doğrulanmış e-postası; kurucu ayrıca şirketinin üyelerini görür.
+-- E-posta kaydı: girişte doğrulanan e-postanın kendisi; kişinin kendi adresleri; kurucu ayrıca
+-- şirketinin üyelerinin adreslerini görür. Ajan çalışması e-posta görmez (kişisel veri).
+create policy gorunur on ofis.kullanici_epostalari for select to ofis_uygulama
+  using (
+    ofis.baglam_ajan() is null
+    and (
+      eposta = ofis.baglam_eposta()
+      or kullanici_id = ofis.baglam_kullanici()
+      or (
+        ofis.kurucu_mu()
+        and exists (
+          select 1 from ofis.uyelikler u
+          where u.kullanici_id = kullanici_epostalari.kullanici_id
+            and u.sirket_id = ofis.baglam_sirket()
+        )
+      )
+    )
+  );
+-- Kullanıcı kaydı: kendisi ve girişte doğrulanmış e-postanın sahibi; kurucu ayrıca şirketinin
+-- üyelerini görür.
 create policy gorunur on ofis.kullanicilar for select to ofis_uygulama
   using (
     id = ofis.baglam_kullanici()
-    or eposta = ofis.baglam_eposta()
+    or exists (
+      select 1 from ofis.kullanici_epostalari e
+      where e.kullanici_id = kullanicilar.id and e.eposta = ofis.baglam_eposta()
+    )
     or (
       ofis.kurucu_mu()
       and ofis.baglam_ajan() is null
@@ -174,23 +235,14 @@ create policy gorunur on ofis.kullanicilar for select to ofis_uygulama
       )
     )
   );
--- Davet: kullanıcı kaydını kurucu açar (kimlik uygulamada üretilir; kayıt üyelik eklenene kadar
--- görünmediği için RETURNING kullanılmaz). Kişi kendi adını, kurucu şirketindeki üyelerin kaydını
--- günceller; hesabı yalnızca kurucu kapatır (aktif alanı).
-create policy kurucu_ekler on ofis.kullanicilar for insert to ofis_uygulama
-  with check (ofis.kurucu_mu() and ofis.baglam_ajan() is null);
+-- Kişi kendi adını günceller; kurucu, yönetebildiği hesabın adını günceller ve hesabı açar ya da
+-- kapatır (aktif alanı). WHERE'siz toplu güncelleme de yalnızca bu satırlara ulaşır.
 create policy guncelleme on ofis.kullanicilar for update to ofis_uygulama
   using (
     ofis.baglam_ajan() is null
     and (
       id = ofis.baglam_kullanici()
-      or (
-        ofis.kurucu_mu()
-        and exists (
-          select 1 from ofis.uyelikler u
-          where u.kullanici_id = kullanicilar.id and u.sirket_id = ofis.baglam_sirket()
-        )
-      )
+      or (ofis.kurucu_mu() and ofis.hesabi_yonetebilir_mi(id))
     )
   );
 
@@ -198,7 +250,7 @@ create function ofis.kullanici_denetimi() returns trigger
   language plpgsql set search_path = ''
   as $$
 begin
-  if new.aktif is distinct from old.aktif and not ofis.kurucu_mu() then
+  if new.aktif is distinct from old.aktif and not ofis.hesabi_yonetebilir_mi(new.id) then
     raise exception 'Hesabı yalnızca kurucu açar ya da kapatır' using errcode = 'insufficient_privilege';
   end if;
   return new;

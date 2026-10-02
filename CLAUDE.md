@@ -113,7 +113,7 @@ Gerekenler: Node 24.15 ya da üstü bir 24.x sürümü (`engines`: `^24.15.0`; `
 - `pnpm smoke`: api modüllerini (dinlemeye başlayan `main.ts` hariç) ve worker'ın giriş dosyasını Node ile doğrudan yükler; tsc ve Vitest'in kaçırdığı içe aktarma hatalarını yakalar
 - `pnpm peers check`: paketlerin birbirine uyumunu denetler
 - `pnpm --filter @agent-office/web build`: panelin derlenmiş dosyaları
-- `supabase start`: yerel veritabanı (Docker gerekir); `supabase db reset`: göçleri ve `supabase/seed.sql` başlangıç verisini baştan uygular
+- `supabase start`: yerel veritabanı (Docker gerekir; işin bitince `supabase stop`); `supabase db reset`: göçleri ve `supabase/seed.sql` başlangıç verisini baştan uygular. Yerel Supabase ile testler: `TEST_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres pnpm test`
 
 ## Çalışma şekli
 

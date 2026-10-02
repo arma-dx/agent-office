@@ -1,11 +1,15 @@
--- Yerel geliştirme ve test ortamının başlangıç verisi (supabase db reset göçlerden sonra yükler).
--- Canlı ortama yüklenmez.
+-- Başlangıç verisi. Yerelde `supabase db reset` göçlerden sonra boş veritabanına yükler; test ve canlı
+-- projede kurulumda bir kez, boş veritabanına yüklenir. Şirket ve birim satırları var olanı atlar;
+-- kurucu bloğu veritabanında herhangi bir kullanıcı varsa hiçbir şey yapmaz. Kurulumdan sonraki
+-- değişiklikler (yeni adres, yeni üye) bu dosyayla taşınmaz; panelden ya da gözden geçirilmiş tek
+-- seferlik bir komutla yapılır.
 
 -- Şirketler kayıtla açılır, koda gömülmez (KALAN-ISLER 0.2, ürünleşme ön koşulu).
 insert into ofis.sirketler (kod, ad, tur) values
   ('armadx', 'Arma DX', 'sirket'),
   ('pillika', 'Pillika', 'sirket'),
-  ('kurucu_alani', 'Kurucu', 'ozel_alan');
+  ('kurucu_alani', 'Kurucu', 'ozel_alan')
+on conflict (kod) do nothing;
 
 -- Birimler: agents/birimler.yaml ile aynı liste. Kart senkronizasyonu (KALAN-ISLER 1.2) gelince
 -- birimler oradan yazılır ve bu blok kaldırılır.
@@ -46,6 +50,30 @@ insert into ofis.birimler (kod, ad, sirket_kod, pilotta_acik) values
   ('P-DES', 'Kullanıcı Destek', 'pillika', false),
   ('P-ODE', 'Ödeme ve Mutabakat', 'pillika', false),
   ('P-HIZ', 'Araç Hizmetleri', 'pillika', false),
-  ('P-BUY', 'Büyüme ve Pazar Geliştirme', 'pillika', false);
+  ('P-BUY', 'Büyüme ve Pazar Geliştirme', 'pillika', false)
+on conflict (kod) do nothing;
 
--- Kurucunun kullanıcı ve üyelik kayıtları, giriş e-postası belli olunca eklenir.
+-- Kurucu: tek kullanıcı, birden çok Google hesabı (2 Ekim, karar 15). Üç şirkette de kurucu ve onay
+-- yetkili. Yalnızca hiç kullanıcı yokken açılır.
+do $$
+declare
+  kurucu uuid;
+begin
+  if exists (select 1 from ofis.kullanicilar) then
+    raise notice 'Kullanıcı kayıtları var; kurucu bloğu atlandı';
+    return;
+  end if;
+  insert into ofis.kullanicilar (ad) values ('Ömer Kadıoğlu') returning id into kurucu;
+  insert into ofis.kullanici_epostalari (eposta, kullanici_id) values
+    ('omer@armadx.com', kurucu),
+    ('omer.kadioglu@armadx.com', kurucu),
+    ('omer.kadioglu@pillika.com', kurucu);
+  insert into ofis.uyelikler (sirket_id, kullanici_id, rol, onay_yetkisi)
+    select s.id, kurucu, 'kurucu', true
+    from ofis.sirketler s
+    where s.kod in ('armadx', 'pillika', 'kurucu_alani');
+  if (select count(*) from ofis.uyelikler where kullanici_id = kurucu) <> 3 then
+    raise exception 'Kurucu üç şirkete de üye yapılamadı';
+  end if;
+end
+$$;
