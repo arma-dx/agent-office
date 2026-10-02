@@ -67,7 +67,8 @@ begin
 
   if tg_op = 'INSERT' then
     new.olusturan_ajan_kod := ajan;
-    new.olusturan_kullanici_id := kisi;
+    -- Ajanın notunda da çalışmanın kimliği (kimin adına yazıldığı) tutulur.
+    new.olusturan_kullanici_id := ofis.baglam_kullanici();
     new.olusturma := pg_catalog.now();
     new.surum := 1;
   else
@@ -82,6 +83,11 @@ begin
       end if;
       if old.kaynak_turu = 'dis' and new.kaynak_turu = 'ic' then
         raise exception 'Dış kaynaklı notu ajan iç olarak işaretleyemez'
+          using errcode = 'insufficient_privilege';
+      end if;
+      -- Taslak not onaydan sonra paylaşılır; taslaktan çıkarmayı onaylayan kişi yapar (3 Ekim, karar 1).
+      if old.durum = 'taslak' and new.durum <> 'taslak' then
+        raise exception 'Taslak notu ajan paylaşamaz; not onaydan sonra paylaşılır'
           using errcode = 'insufficient_privilege';
       end if;
     end if;

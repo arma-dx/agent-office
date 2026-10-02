@@ -417,6 +417,121 @@ describe.skipIf(veritabaniYok)('onay kuralları', () => {
 describe.skipIf(veritabaniYok)('not kuralları', () => {
   afterAll(havuzlariKapat);
 
+  it('ajanın taslak notunu onaya kadar yalnızca onay yetkilileri ve yazan ajan görür', async () => {
+    await deneme(async (d) => {
+      await d.baglam(korA);
+      const [taslak] = await d.satirlar<{ id: string; durum: string }>(
+        `insert into ofis.notlar (sirket_id, baslik, govde) values ($1, 'Ajan Taslağı', 'Özet [[Genel Not]]') returning id, durum`,
+        [K.arma],
+      );
+      expect(taslak?.durum).toBe('taslak');
+      const id = taslak?.id;
+      await d.calistir(
+        `insert into ofis.belgeler (sirket_id, drive_dosya_id, ad, kaynak_not_id) values ($1, 'drive_taslak_belge', 'Taslak kaynak', $2)`,
+        [K.arma, id],
+      );
+      // Taslağın onay kaydı taslağın metnini taşır.
+      const onay = await onayAc(d, {
+        baslik: 'Taslak not',
+        icerik: { govde: 'Özet' },
+        dayanak_turu: 'not',
+        dayanak_id: id,
+        dayanak_surumu: 1,
+      });
+      const gorur = async () => ({
+        not: await d.say('notlar', 'id = $1', [id]),
+        surum: await d.say('not_surumleri', 'not_id = $1', [id]),
+        baglanti: await d.say('not_baglantilari', 'kaynak_not_id = $1', [id]),
+        belge: await d.say('belgeler', 'kaynak_not_id = $1', [id]),
+        onay: await d.say('onaylar', 'id = $1', [onay]),
+      });
+      const hepsi = { not: 1, surum: 1, baglanti: 1, belge: 1, onay: 1 };
+      const hicbiri = { not: 0, surum: 0, baglanti: 0, belge: 0, onay: 0 };
+      expect(await gorur()).toEqual(hepsi);
+
+      // Ajan taslağı kendisi paylaşamaz.
+      expect((await d.hata(`update ofis.notlar set durum = 'etkin' where id = $1`, [id])).kod).toBe(
+        '42501',
+      );
+
+      // Onay yetkisi olmayan çalışan ve başka ajan göremez, değiştiremez.
+      await d.baglam(calisanA);
+      expect(await gorur()).toEqual(hicbiri);
+      expect(await d.calistir(`update ofis.notlar set govde = 'x' where id = $1`, [id])).toBe(0);
+      await d.baglam({ sirketId: K.arma, kullaniciId: K.kurucu, ajanKod: 'HAF-1' });
+      expect(await gorur()).toEqual(hicbiri);
+
+      // Dış kişiye açılmış olsa da onaya kadar göremez.
+      await d.baglam(kurucuA);
+      await d.calistir(
+        `insert into ofis.erisim_paylasimlari (sirket_id, kullanici_id, kayit_turu, kayit_id) values ($1, $2, 'not', $3)`,
+        [K.arma, K.disKisiA, id],
+      );
+      await d.baglam({ sirketId: K.arma, kullaniciId: K.disKisiA });
+      expect(await d.say('notlar', 'id = $1', [id])).toBe(0);
+
+      // Onay yetkilileri görür.
+      await d.baglam(yetkiliA);
+      expect(await gorur()).toEqual(hepsi);
+      await d.baglam(kurucuA);
+      expect(await gorur()).toEqual(hepsi);
+
+      // Onaylanıp etkinleşince şirkette herkes görür.
+      await d.calistir(`update ofis.onaylar set durum = 'onaylandi' where id = $1`, [onay]);
+      await d.calistir(`update ofis.notlar set durum = 'etkin' where id = $1`, [id]);
+      await d.baglam(calisanA);
+      expect(await d.say('notlar', 'id = $1', [id])).toBe(1);
+      expect(await d.say('onaylar', 'id = $1', [onay])).toBe(1);
+      await d.baglam({ sirketId: K.arma, kullaniciId: K.kurucu, ajanKod: 'HAF-1' });
+      expect(await d.say('notlar', 'id = $1', [id])).toBe(1);
+      await d.baglam({ sirketId: K.arma, kullaniciId: K.disKisiA });
+      expect(await d.say('notlar', 'id = $1', [id])).toBe(1);
+    });
+  });
+
+  it('ajan çalışması taslağı adına koştuğu kişinin sınırıyla görür', async () => {
+    await deneme(async (d) => {
+      // Kurucu adına yazılan taslak.
+      await d.baglam(korA);
+      const [kurucuTaslagi] = await d.satirlar<{ id: string }>(
+        `insert into ofis.notlar (sirket_id, baslik) values ($1, 'Kurucu adına taslak') returning id`,
+        [K.arma],
+      );
+      // Onay yetkisi olmayan çalışan adına koşan çalışma kendi taslağını açar ve görür, kurucu
+      // adına yazılmış taslağı görmez.
+      const calisanAdina = { sirketId: K.arma, kullaniciId: K.calisanA, ajanKod: 'KOR-1' };
+      await d.baglam(calisanAdina);
+      const [calisanTaslagi] = await d.satirlar<{ id: string; olusturan_kullanici_id: string }>(
+        `insert into ofis.notlar (sirket_id, baslik) values ($1, 'Çalışan adına taslak') returning id, olusturan_kullanici_id`,
+        [K.arma],
+      );
+      expect(calisanTaslagi?.olusturan_kullanici_id).toBe(K.calisanA);
+      expect(await d.say('notlar', 'id = $1', [calisanTaslagi?.id])).toBe(1);
+      expect(await d.say('notlar', 'id = $1', [kurucuTaslagi?.id])).toBe(0);
+      // Onay yetkilisi adına koşan çalışma ikisini de görür; çalışan panelde ikisini de görmez.
+      await d.baglam({ sirketId: K.arma, kullaniciId: K.yetkiliA, ajanKod: 'KOR-1' });
+      expect(await d.say('notlar', 'id = any($1)', [[kurucuTaslagi?.id, calisanTaslagi?.id]])).toBe(
+        2,
+      );
+      await d.baglam(calisanA);
+      expect(await d.say('notlar', 'id = any($1)', [[kurucuTaslagi?.id, calisanTaslagi?.id]])).toBe(
+        0,
+      );
+    });
+  });
+
+  it('kişinin taslak notu şirket içinde görünür kalır', async () => {
+    await deneme(async (d) => {
+      await d.baglam(calisanA);
+      await d.calistir(
+        `insert into ofis.notlar (sirket_id, baslik) values ($1, 'Çalışan Taslağı')`,
+        [K.arma],
+      );
+      await d.baglam(yetkiliA);
+      expect(await d.say('notlar', `baslik = 'Çalışan Taslağı' and durum = 'taslak'`)).toBe(1);
+    });
+  });
+
   it('tek doğru kaynak işaretini yalnızca kurucu koyar ve kaldırır', async () => {
     await deneme(async (d) => {
       await d.baglam(calisanA);
