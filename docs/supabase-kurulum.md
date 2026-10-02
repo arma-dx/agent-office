@@ -31,7 +31,7 @@ Plan: Ücretsiz planda yedek yok ve proje bir hafta kullanılmazsa duraklatılı
 
 Terminalde, proje klasöründe:
 
-1. Supabase'de Account > Access Tokens: yalnızca bu projeye erişen, 7 gün süreli bir erişim anahtarı oluşturun ve kopyalayın.
+1. Supabase'de Account > Access Tokens: yalnızca bu projeye erişen, 7 gün süreli bir erişim anahtarı oluşturun. İzinler: proje ayarları ve API anahtarları için okuma, veritabanı için okuma ve yazma. Anahtarı kopyalayın.
 2. Girişte anahtarı panodan verin (komut geçmişine düşmez), sonra panoyu temizleyin:
 
    ```bash

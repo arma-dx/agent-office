@@ -52,7 +52,7 @@ Sürüyor. Göçler `supabase/migrations`, testler `packages/db/test` (kısıtl�
 
 Altyapı:
 
-- [ ] Supabase hesabı ve iki proje: test ve canlı (Senden: test projesi; adımlar `docs/supabase-kurulum.md`)
+- [ ] Supabase hesabı ve iki proje: test ve canlı (test projesi açıldı; canlı için Pro plan kararı bekleniyor; adımlar `docs/supabase-kurulum.md`)
 - [x] Veri bölgesinin seçimi: AB, Frankfurt (2 Ekim, karar 14)
 - [x] Yerel veritabanı: `supabase start` ve `supabase db reset` çalışır durumda (göçler ve testler yerel Supabase'de, süper kullanıcı olmayan `postgres` rolüyle geçiyor)
 - [x] Yetkili göç rolü ile kısıtlı uygulama rolünün ayrılması; uygulama rolünde `BYPASSRLS` yok
@@ -126,7 +126,7 @@ Güvenlik politikaları (RLS):
 Başlangıç verisi:
 
 - [x] Arma DX, Pillika ve Kurucu alanı kayıtları (`supabase/seed.sql`; birimler `agents/birimler.yaml`)
-- [x] Kurucunun kullanıcı ve üyelik kayıtları (`supabase/seed.sql`; üç adres eklendi, `omer@pililka.com` yazımı soruldu)
+- [x] Kurucunun kullanıcı ve üyelik kayıtları (`supabase/seed.sql`; dört adres, 2 Ekim karar 15)
 
 Testler (kısıtlı rolle):
 

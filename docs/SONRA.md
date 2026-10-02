@@ -155,7 +155,10 @@ Arayüz temeli kuruldu (KALAN-ISLER 0.1). Kurucunun 2 Ekim kararıyla arayüz ge
 
 ## Veri modeli (KALAN-ISLER 0.2)
 
-- Taslak notun görünürlüğü: PLAN'a göre Y1 ajanın notu taslak açılır, onaydan sonra paylaşılır. Satır kuralları şu an taslak notu da şirket içinde (proje notuysa proje üyelerine) gösteriyor. Soru: taslak notu onaya kadar yalnızca kurucu ve onay yetkilileri mi görsün?
+- Taslak notun görünürlüğü: 3 Ekim karar 1 ile kapandı (ajanın taslağını onaya kadar yalnızca kurucu ve onay yetkilileri görür).
+- KOR-3 ve taslak not: KOR-3 (ve KOR-2) bekleyen onayları özetleyip kurucuya sunuyor. 3 Ekim karar 1'in uygulamasıyla dayanağı ajan taslağı olan onay kaydını başka ajanlar göremiyor; KOR-3 de göremiyor. Soru: KOR-3 bu onayları özetleyebilsin mi (dar bir istisna), yoksa bu onaylar Onay Masası'nda özetsiz mi dursun?
+- Taslağı yazan çalışmanın ham kaydı: ajanın not yazma çağrısının ham girdisi taslağın metnini taşır ve çalışma kaydı şirket içinde görünür. Worker yazılırken (0.4) not yazan araçların ham girdisinde ve sonucunda gövde değil yalnızca not kimliği saklanacak; içerik notun kendisinde ve sürümlerinde zaten duruyor.
+- Not adı benzersizliği: aynı klasörde aynı adlı, görünmeyen bir ajan taslağı varsa yeni not açılamıyor ve hata taslağın varlığını belli ediyor. API bu hatada "bu adla bir not var ya da onay bekliyor" diye genel bir ileti verecek (0.3 ve not modülü).
 - Ekip listesi: kural 9 gereği çalışan, aynı şirketteki başka kişilerin üyelik ve kullanıcı kaydını göremiyor (yalnızca kurucu görüyor). Görev atama ve yorumlarda kişi adı göstermek için şirketin üye adlarını döndüren dar bir işlev gerekecek (modül M2).
 - Silme: görev silinmiyor (iptal ediliyor), görev yorumu, çalışma, onay ve iz kaydı değiştirilmiyor ve silinmiyor. Kişisel veri silme talebinde (N36) bu kayıtların nasıl temizleneceği avukatın görüşüyle birlikte kararlaştırılacak.
 - Proje taşıma: görevin, notun ve belgenin projesi sonradan değiştirilemiyor; yorumlar, çalışmalar, onaylar ve dosyalar kapsamı açılışta görevden aldığı için taşınan kayıt bunları geride bırakırdı. Taşıma gerekirse bağlı kayıtlarla birlikte taşıyan bir işlev yazılır.
