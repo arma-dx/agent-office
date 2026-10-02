@@ -1,9 +1,9 @@
 # Yerel Supabase (supabase start). Canlıdaki gibi yalnızca PostgreSQL kullanılır: panel Supabase'e
 # hiç bağlanmaz (CLAUDE.md kural 1), Data API (PostgREST), Auth, Realtime, Storage, Edge Functions,
 # e-posta, analytics ve Studio kapalı.
-# Docker yayımlanan portları varsayılan olarak bütün ağ arabirimlerinde açar; yerel veritabanının
-# parolası herkesçe bilinen varsayılandır. Docker Desktop > Settings > Docker Engine ayarına
-# "ip": "127.0.0.1" eklenmeden yığın uzun süre açık bırakılmaz.
+# Docker Desktop yayımlanan portları bütün ağ arabirimlerinde açar (Docker Engine'deki "ip" ayarı
+# bunu değiştirmiyor, 3 Ekim'de denendi) ve yerel veritabanının parolası herkesçe bilinen
+# varsayılandır. Yığın yalnızca gerektiğinde açılır, iş bitince `supabase stop` ile kapatılır.
 # For detailed configuration reference documentation, visit:
 # https://supabase.com/docs/guides/local-development/cli/config
 # A string used to distinguish different Supabase projects on the same host. Defaults to the
