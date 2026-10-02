@@ -470,6 +470,13 @@ describe.skipIf(veritabaniYok)('not kuralları', () => {
       await d.baglam({ sirketId: K.arma, kullaniciId: K.disKisiA });
       expect(await d.say('notlar', 'id = $1', [id])).toBe(0);
 
+      // KOR-3 onay kuyruğunu özetler: onay kaydını görür, taslak notun kendisini görmez; adına
+      // koştuğu kişi onay yetkili değilse onayı da görmez (3 Ekim, karar 3).
+      await d.baglam({ sirketId: K.arma, kullaniciId: K.kurucu, ajanKod: 'KOR-3' });
+      expect(await gorur()).toEqual({ ...hicbiri, onay: 1 });
+      await d.baglam({ sirketId: K.arma, kullaniciId: K.calisanA, ajanKod: 'KOR-3' });
+      expect(await gorur()).toEqual(hicbiri);
+
       // Onay yetkilileri görür.
       await d.baglam(yetkiliA);
       expect(await gorur()).toEqual(hepsi);
