@@ -1,57 +1,57 @@
-kod: HAF-2
-ad: Kurumsal Arama Ajanı
-birim: HAF
-sirketler: [armadx, pillika]
-surum: "0.1"
-durum: taslak
-sorumlu: kurucu
-proje_baglami: varsa   # proje sayfasından sorulan soru o projede aranır; genel ekranda soruyu soran kişi proje seçebilir
+code: HAF-2
+name: Kurumsal Arama Ajanı
+unit: HAF
+companies: [armadx, pillika]
+version: "0.1"
+status: draft
+owner: founder
+project_context: if_available   # proje sayfasından sorulan soru o projede aranır; genel ekranda soruyu soran kişi proje seçebilir
 
-amac: >
+purpose: >
   Çalışanların ve diğer ajanların sorularını not sisteminden, her bilgi için kaynak göstererek yanıtlar.
 
-tetikleyiciler:
-  - tur: talep
-    aciklama: Panelde sorulan soru
-  - tur: devir
-    aciklama: Diğer ajanların bilgi isteği
+triggers:
+  - type: request
+    description: Panelde sorulan soru
+  - type: handoff
+    description: Diğer ajanların bilgi isteği
 
-girdiler:
+inputs:
   - Soru
   - Soranın rolü ve şirketi
   - Notlar
 
-ciktilar:
+outputs:
   - Her iddianın yanında not bağlantısı olan yanıt
   - Bilgi bulunamazsa bunu açıkça söyleyen yanıt ve Bilgi Tabanı Ajanına görev
 
-skills: [kaynakli-yanit]
+skills: [sourced-answer]
 
-araclar: [not_ara, not_oku, gorev_ac]
+tools: [search_notes, read_note, create_task]
 
-bilgi_kaynaklari:
+knowledge_sources:
   - Not sistemi, soranın erişimiyle sınırlı
 
-yetki:
-  seviye: Y2
-  hedef: Y3
+authority:
+  level: Y2
+  target: Y3
 
-onay_noktalari:
+approval_points:
   - Yok; yalnızca okur ve yanıtlar
 
-eskalasyon:
+escalation:
   - Aynı soru üç kez yanıtsız kalırsa kurucuya bildirir
 
-yasaklar:
+prohibitions:
   - Kaynaksız bilgi vermez ve tahmin yürütmez
   - Soranın erişimi olmayan notu göstermez, varlığını da ima etmez
 
 model: claude-sonnet-5-5
-sinirlar:
-  arac_cagrisi: 12
-  sure_dakika: 2
+limits:
+  tool_calls: 12
+  duration_minutes: 2
 
-olcutler:
+metrics:
   - Kaynak gösterme oranı
   - Yanıtsız kalan soru oranı ve kapanma süresi
   - Kullanıcı geri bildirimi

@@ -1,19 +1,20 @@
--- Başlangıç verisi. Yerelde `supabase db reset` göçlerden sonra boş veritabanına yükler; test ve canlı
--- projede kurulumda bir kez, boş veritabanına yüklenir. Şirket ve birim satırları var olanı atlar;
--- kurucu bloğu veritabanında herhangi bir kullanıcı varsa hiçbir şey yapmaz. Kurulumdan sonraki
--- değişiklikler (yeni adres, yeni üye) bu dosyayla taşınmaz; panelden ya da gözden geçirilmiş tek
--- seferlik bir komutla yapılır.
+-- Seed data. Locally, `supabase db reset` loads it into the empty database after the migrations;
+-- in the test and production projects it is loaded once, into the empty database, during setup.
+-- Company and unit rows skip what already exists; the founder block does nothing if the database
+-- has any user. Changes after setup (a new address, a new member) are not carried by this file;
+-- they are made from the panel or with a reviewed one-off command.
 
--- Şirketler kayıtla açılır, koda gömülmez (KALAN-ISLER 0.2, ürünleşme ön koşulu).
-insert into ofis.sirketler (kod, ad, tur) values
-  ('armadx', 'Arma DX', 'sirket'),
-  ('pillika', 'Pillika', 'sirket'),
-  ('kurucu_alani', 'Kurucu', 'ozel_alan')
-on conflict (kod) do nothing;
+-- Companies are opened by inserting a record, not hard-coded (KALAN-ISLER 0.2, a prerequisite for
+-- productisation).
+insert into office.companies (code, name, kind) values
+  ('armadx', 'Arma DX', 'company'),
+  ('pillika', 'Pillika', 'company'),
+  ('founder_space', 'Kurucu', 'private_space')
+on conflict (code) do nothing;
 
--- Birimler: agents/birimler.yaml ile aynı liste. Kart senkronizasyonu (KALAN-ISLER 1.2) gelince
--- birimler oradan yazılır ve bu blok kaldırılır.
-insert into ofis.birimler (kod, ad, sirket_kod, pilotta_acik) values
+-- Units: the same list as agents/units.yaml. When card sync (KALAN-ISLER 1.2) arrives, the units
+-- are written from there and this block is removed.
+insert into office.units (code, name, company_code, pilot_enabled) values
   ('KOR', 'Koordinasyon Katmanı', null, true),
   ('OFY', 'Ofis Yönetimi ve Denetim', null, false),
   ('HAF', 'Kurumsal Hafıza', null, true),
@@ -51,30 +52,30 @@ insert into ofis.birimler (kod, ad, sirket_kod, pilotta_acik) values
   ('P-ODE', 'Ödeme ve Mutabakat', 'pillika', false),
   ('P-HIZ', 'Araç Hizmetleri', 'pillika', false),
   ('P-BUY', 'Büyüme ve Pazar Geliştirme', 'pillika', false)
-on conflict (kod) do nothing;
+on conflict (code) do nothing;
 
--- Kurucu: tek kullanıcı, birden çok Google hesabı (2 Ekim, karar 15). Üç şirkette de kurucu ve onay
--- yetkili. Yalnızca hiç kullanıcı yokken açılır.
+-- Founder: a single user with several Google accounts (2 October, decision 15). Founder and able to
+-- approve in all three companies. Created only when there are no users at all.
 do $$
 declare
-  kurucu uuid;
+  founder uuid;
 begin
-  if exists (select 1 from ofis.kullanicilar) then
-    raise notice 'Kullanıcı kayıtları var; kurucu bloğu atlandı';
+  if exists (select 1 from office.users) then
+    raise notice 'User records exist; founder block skipped';
     return;
   end if;
-  insert into ofis.kullanicilar (ad) values ('Ömer Kadıoğlu') returning id into kurucu;
-  insert into ofis.kullanici_epostalari (eposta, kullanici_id) values
-    ('omer@armadx.com', kurucu),
-    ('omer.kadioglu@armadx.com', kurucu),
-    ('omer@pillika.com', kurucu),
-    ('omer.kadioglu@pillika.com', kurucu);
-  insert into ofis.uyelikler (sirket_id, kullanici_id, rol, onay_yetkisi)
-    select s.id, kurucu, 'kurucu', true
-    from ofis.sirketler s
-    where s.kod in ('armadx', 'pillika', 'kurucu_alani');
-  if (select count(*) from ofis.uyelikler where kullanici_id = kurucu) <> 3 then
-    raise exception 'Kurucu üç şirkete de üye yapılamadı';
+  insert into office.users (name) values ('Ömer Kadıoğlu') returning id into founder;
+  insert into office.user_emails (email, user_id) values
+    ('omer@armadx.com', founder),
+    ('omer.kadioglu@armadx.com', founder),
+    ('omer@pillika.com', founder),
+    ('omer.kadioglu@pillika.com', founder);
+  insert into office.memberships (company_id, user_id, role, can_approve)
+    select s.id, founder, 'founder', true
+    from office.companies s
+    where s.code in ('armadx', 'pillika', 'founder_space');
+  if (select count(*) from office.memberships where user_id = founder) <> 3 then
+    raise exception 'The founder could not be made a member of all three companies';
   end if;
 end
 $$;

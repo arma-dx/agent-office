@@ -1,27 +1,29 @@
 import pg from 'pg';
 
 export {
-  ajanAdimi,
-  ajanBaglamiSemasi,
-  baglamKur,
-  baglamliIslem,
-  baglamSemasi,
-  type AjanBaglami,
-  type Baglam,
-  type BaglamGirdisi,
-} from './baglam.ts';
+  agentContextSchema,
+  agentStep,
+  contextSchema,
+  setContext,
+  withContext,
+  type AgentContext,
+  type Context,
+  type ContextInput,
+} from './context.ts';
 
 /**
- * Bağlantı havuzu. Adres kısıtlı uygulama rolüne aittir (ofis_uygulama üyesi, BYPASSRLS yok);
- * yetkili rolün adresi uygulamaya hiç verilmez (kural 9). Adres loglara yazılmaz.
- * Boştaki bir bağlantı koparsa havuz hata yayar; dinleyici olmazsa süreç çöker, bu yüzden zorunlu.
+ * Connection pool. The connection string belongs to the restricted application role (member of
+ * office_app, no BYPASSRLS); the privileged role's connection string is never given to the
+ * application (rule 9). The connection string is not written to logs.
+ * If an idle connection drops, the pool emits an error; without a listener the process crashes, so
+ * the listener is required.
  */
-export function havuzOlustur(
-  baglantiAdresi: string,
-  uygulamaAdi: string,
-  hataDinleyici: (hata: Error) => void,
+export function createPool(
+  connectionString: string,
+  applicationName: string,
+  onError: (error: Error) => void,
 ): pg.Pool {
-  const havuz = new pg.Pool({ connectionString: baglantiAdresi, application_name: uygulamaAdi });
-  havuz.on('error', hataDinleyici);
-  return havuz;
+  const pool = new pg.Pool({ connectionString, application_name: applicationName });
+  pool.on('error', onError);
+  return pool;
 }

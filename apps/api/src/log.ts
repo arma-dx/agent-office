@@ -1,9 +1,9 @@
-// Kural 6: gizli değerler loglara girmez.
-// Adı gizli bir alanı andıran her değer, düz nesnelerde her derinlikte maskelenir (formatters.log).
-// Fastify istek nesnesi düz nesne değildir; onun başlıkları pino redact yollarıyla maskelenir.
-// Hata nesnelerine gizli değer eklenmez, ortam ve yapılandırma nesneleri bütün olarak loglanmaz.
+// Rule 6: secret values never reach the logs.
+// Every value whose key looks like a secret is redacted at any depth in plain objects (formatters.log).
+// The Fastify request object is not a plain object; its headers are redacted through pino redact paths.
+// Secret values are never attached to error objects, and env or config objects are never logged whole.
 
-export const MASKE = '[REDACTED]';
+export const REDACTED = '[REDACTED]';
 
 export const REDACT_PATHS = [
   'req.headers.authorization',
@@ -13,41 +13,41 @@ export const REDACT_PATHS = [
   'res.headers["set-cookie"]',
 ];
 
-// Tam ad eşleşmesi ya da "_token", "-key", "_secret", "_password" ile biten adlar.
-// "input_tokens" gibi sayaçlar eşleşmez; maliyet kaydı için gerekirler.
-const GIZLI_ALAN =
+// An exact name match, or a name ending in "_token", "-key", "_secret", "_password".
+// Counters such as "input_tokens" do not match; they are needed for cost records.
+const SECRET_KEY_PATTERN =
   /^(pass(word|wd)?|secret|token|api[-_]?key|authorization|cookie|set-cookie|credentials?|database_url|dsn|connection_?string)$|[-_](secret|token|key|password)$/i;
-// Deve yazımı: apiKey, accessToken, clientSecret.
-const GIZLI_ALAN_DEVE = /[a-z0-9](Secret|Token|Key|Password)$/;
-const EN_FAZLA_DERINLIK = 8;
+// camelCase: apiKey, accessToken, clientSecret.
+const SECRET_KEY_CAMEL_PATTERN = /[a-z0-9](Secret|Token|Key|Password)$/;
+const MAX_DEPTH = 8;
 
-export function gizliAlanMi(ad: string): boolean {
-  return GIZLI_ALAN.test(ad) || GIZLI_ALAN_DEVE.test(ad);
+export function isSecretKey(key: string): boolean {
+  return SECRET_KEY_PATTERN.test(key) || SECRET_KEY_CAMEL_PATTERN.test(key);
 }
 
-function duzNesneMi(deger: unknown): deger is Record<string, unknown> {
-  if (deger === null || typeof deger !== 'object') return false;
-  const ata: unknown = Object.getPrototypeOf(deger);
-  return ata === Object.prototype || ata === null;
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (value === null || typeof value !== 'object') return false;
+  const proto: unknown = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
 }
 
-function gizleDeger(deger: unknown, derinlik: number): unknown {
-  if (derinlik > EN_FAZLA_DERINLIK) return deger;
-  if (Array.isArray(deger)) return deger.map((oge: unknown) => gizleDeger(oge, derinlik + 1));
-  if (!duzNesneMi(deger)) return deger;
-  const sonuc: Record<string, unknown> = {};
-  for (const [ad, alt] of Object.entries(deger)) {
-    sonuc[ad] = gizliAlanMi(ad) ? MASKE : gizleDeger(alt, derinlik + 1);
+function redactValue(value: unknown, depth: number): unknown {
+  if (depth > MAX_DEPTH) return value;
+  if (Array.isArray(value)) return value.map((item: unknown) => redactValue(item, depth + 1));
+  if (!isPlainObject(value)) return value;
+  const result: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(value)) {
+    result[key] = isSecretKey(key) ? REDACTED : redactValue(child, depth + 1);
   }
-  return sonuc;
+  return result;
 }
 
-export function gizle(nesne: Record<string, unknown>): Record<string, unknown> {
-  return gizleDeger(nesne, 0) as Record<string, unknown>;
+export function redact(object: Record<string, unknown>): Record<string, unknown> {
+  return redactValue(object, 0) as Record<string, unknown>;
 }
 
-// Sorgu dizesi (ör. OAuth dönüşündeki code) loga yazılmaz.
-export function sorgusuzYol(url: string): string {
-  const soru = url.indexOf('?');
-  return soru === -1 ? url : url.slice(0, soru);
+// The query string (e.g. the code in an OAuth callback) is never written to the log.
+export function stripQuery(url: string): string {
+  const question = url.indexOf('?');
+  return question === -1 ? url : url.slice(0, question);
 }

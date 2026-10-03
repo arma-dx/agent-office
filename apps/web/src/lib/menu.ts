@@ -1,13 +1,13 @@
 import { CalendarDays, ClipboardCheck, Building2, ListTodo, NotebookText } from 'lucide-react';
 
 /**
- * Ana menü: telefonda alt menü, geniş ekranda üst çubuk.
- * "Ofis" sekmesi, Ofis görünümü (modül M15, Kasım) gelene kadar Ajanlar ekranını açar.
+ * Main menu: bottom menu on phones, top bar on wide screens.
+ * The "Ofis" tab opens the Agents screen until the Office view (module M15, November) arrives.
  */
-export const ANA_MENU = [
-  { to: '/', etiket: 'Bugün', ikon: CalendarDays },
-  { to: '/onaylar', etiket: 'Onaylar', ikon: ClipboardCheck },
-  { to: '/gorevler', etiket: 'Görevler', ikon: ListTodo },
-  { to: '/notlar', etiket: 'Notlar', ikon: NotebookText },
-  { to: '/ajanlar', etiket: 'Ofis', ikon: Building2 },
+export const MAIN_MENU = [
+  { to: '/', label: 'Bugün', icon: CalendarDays },
+  { to: '/approvals', label: 'Onaylar', icon: ClipboardCheck },
+  { to: '/tasks', label: 'Görevler', icon: ListTodo },
+  { to: '/notes', label: 'Notlar', icon: NotebookText },
+  { to: '/agents', label: 'Ofis', icon: Building2 },
 ] as const;

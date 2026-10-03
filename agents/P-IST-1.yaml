@@ -1,65 +1,65 @@
-kod: P-IST-1
-ad: İstasyon Veri Toplama Ajanı
-birim: P-IST
-sirketler: [pillika]
-surum: "0.1"
-durum: taslak
-sorumlu: kurucu
+code: P-IST-1
+name: İstasyon Veri Toplama Ajanı
+unit: P-IST
+companies: [pillika]
+version: "0.1"
+status: draft
+owner: founder
 
-amac: >
+purpose: >
   İzin verilen kaynaklardan şarj istasyonu verisini toplar, tek biçime çevirir, tekrarları birleştirir
   ve doğrulamaya hazır aday kayıtlar üretir. Canlı uygulamaya aktarma bu kartın kapsamında değildir.
 
-tetikleyiciler:
-  - tur: zamanlanmis
-    aciklama: Her gün 03.00 (varsayılan)
-  - tur: talep
-    aciklama: Kurucunun yeni kaynak ya da bölge isteği
+triggers:
+  - type: scheduled
+    description: Her gün 03.00 (varsayılan)
+  - type: request
+    description: Kurucunun yeni kaynak ya da bölge isteği
 
-girdiler:
+inputs:
   - Kaynak listesi (kurucunun onayladığı operatör siteleri, açık veri ve resmî yayınlar)
   - Pillika'nın mevcut istasyon kayıtları
   - Veri biçimi kuralları
 
-ciktilar:
+outputs:
   - Aday istasyon kayıtları: konum, operatör, soket tipleri, güç, erişim, kaynak ve tarih
   - Eşleşme ve tekrar raporu
   - Değişen ya da kapanan istasyonlar listesi
   - Kaynak hataları
 
-skills: [istasyon-verisi]
+skills: [station-data]
 
-araclar: [web_getir, istasyon_oku, istasyon_aday_yaz, not_oku, gorev_ac, onaya_gonder]
+tools: [fetch_web, read_stations, write_station_candidates, read_note, create_task, submit_for_approval]
 
-bilgi_kaynaklari:
+knowledge_sources:
   - Kaynak listesi notu (tek doğru kaynak)
   - Veri biçimi kuralları notu
 
-yetki:
-  seviye: Y2   # yalnızca aday tablosuna yazar
-  hedef: Y2
+authority:
+  level: Y2   # yalnızca aday tablosuna yazar
+  target: Y2
 
-onay_noktalari:
+approval_points:
   - Kaynak listesine yeni kaynak eklemek
   - Mevcut bir istasyonu kapalı olarak işaretlemek
 
-eskalasyon:
+escalation:
   - İki kaynak aynı istasyon için çelişen bilgi veriyorsa ikisini de kaynağıyla kaydeder ve doğrulama görevi açar
   - Bir kaynak üst üste üç gün hata verirse bildirir
 
-yasaklar:
+prohibitions:
   - Kullanım koşulları izin vermeyen ya da giriş gerektiren kaynaklardan veri çekmez
   - Kaynağı belirsiz veri yazmaz
   - Kullanıcı adı ya da telefon gibi kişisel veri toplamaz
   - OCPI ile bağlı operatörlerin kayıtlarını web kaynaklarıyla ezmez
 
 model: claude-haiku-4-5-20251001
-model_zor: claude-sonnet-5-5   # eşleştirme belirsizse
-sinirlar:
-  arac_cagrisi: 60
-  sure_dakika: 30
+model_hard: claude-sonnet-5-5   # eşleştirme belirsizse
+limits:
+  tool_calls: 60
+  duration_minutes: 30
 
-olcutler:
+metrics:
   - Aday kayıtların doğrulamada doğru çıkma oranı
   - Tekrar kayıt oranı
   - Kapsanan istasyon sayısı

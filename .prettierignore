@@ -1,5 +1,5 @@
 pnpm-lock.yaml
-# Kurucunun yazdığı içerik; Prettier biçimlendirmez (kartlardaki [a, b] listeleri korunur).
+# Content written by the founder; Prettier does not format it (keeps the [a, b] lists in cards).
 docs/
 agents/
 skills/

@@ -1,17 +1,17 @@
 import { createFileRoute } from '@tanstack/react-router';
-import { BosEkran } from '@/components/durum';
+import { EmptyState } from '@/components/states';
 
 export const Route = createFileRoute('/')({
-  component: Bugun,
+  component: TodayScreen,
 });
 
-function Bugun() {
+function TodayScreen() {
   return (
     <div className="flex flex-col gap-4">
       <h1 className="text-xl font-semibold">Bugün</h1>
-      <BosEkran
-        baslik="Bugün için bir şey yok"
-        aciklama="Bekleyen onaylar, bugünkü görevler ve ajanların son işleri burada görünecek."
+      <EmptyState
+        title="Bugün için bir şey yok"
+        description="Bekleyen onaylar, bugünkü görevler ve ajanların son işleri burada görünecek."
       />
     </div>
   );

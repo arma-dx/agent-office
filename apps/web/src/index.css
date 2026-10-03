@@ -2,13 +2,13 @@
 @import 'tw-animate-css';
 
 /*
- * Arayüz şimdilik geçici (2 Ekim 2026); tasarım ileride baştan ele alınacak.
- * Renkler CLAUDE.md'deki değişkenlerden. Vurgu #13807d yerine #127a77: zemin üzerinde 4.8:1 (normal metin
- * için en az 4.5:1). Form kutusu kenarlığı ayrı (--kenarlik): beyaz üzerinde 3.3:1 (kutu sınırı için en az 3:1);
- * ince ayırıcı çizgiler --cizgi ile kalır.
+ * The interface is temporary for now (2 October 2026); the design will be redone later.
+ * Colors come from the variables in CLAUDE.md. Brand #127a77 instead of #13807d: 4.8:1 on the canvas (at least
+ * 4.5:1 for normal text). The form field border is separate (--field-border): 3.3:1 on white (at least 3:1 for a
+ * box boundary); thin divider lines stay on --line.
  */
 
-/* Yazı tipi kendi sunucumuzdan: yalnızca latin ve latin-ext (Türkçe harfler için yeterli). */
+/* Font served from our own server: only latin and latin-ext (enough for Turkish letters). */
 @font-face {
   font-family: 'IBM Plex Sans Variable';
   font-style: normal;
@@ -33,13 +33,13 @@
     U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 
-/* Karanlık tema, kök öğedeki data-theme ile seçilir (main.tsx sistem tercihini izler). */
+/* The dark theme is selected by data-theme on the root element (main.tsx follows the system preference). */
 @custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
 
 /*
- * shadcn bileşenlerinin kullandığı veri durumu varyantları ve animasyonlar.
- * Kaynak: shadcn/ui 4.21.0, dist/tailwind.css; shadcn paketini kurmamak için gereken kısım alındı.
- * Copyright (c) 2023 shadcn. MIT lisansı; metni components/ui/LICENSE dosyasında.
+ * Data state variants and animations used by the shadcn components.
+ * Source: shadcn/ui 4.21.0, dist/tailwind.css; only the needed part was copied to avoid installing the shadcn package.
+ * Copyright (c) 2023 shadcn. MIT license; its text is in components/ui/LICENSE.
  */
 @theme inline {
   @keyframes accordion-down {
@@ -112,91 +112,91 @@
 }
 
 :root {
-  --zemin: #f6f7f9;
-  --yuzey: #ffffff;
-  --metin: #18202e;
-  --ikincil-metin: #5b6475;
-  --cizgi: #dde1e8;
-  --kenarlik: #858e9e;
-  --vurgu: #127a77;
-  --vurgu-etkin: #0f6663;
-  --vurgu-uzeri: #ffffff;
-  --hata: #c2412d;
-  --onay-bekliyor: #9a6412;
+  --canvas: #f6f7f9;
+  --surface: #ffffff;
+  --ink: #18202e;
+  --ink-secondary: #5b6475;
+  --line: #dde1e8;
+  --field-border: #858e9e;
+  --brand: #127a77;
+  --brand-active: #0f6663;
+  --on-brand: #ffffff;
+  --error: #c2412d;
+  --awaiting-approval: #9a6412;
   --radius: 0.375rem;
 }
 
-/* Karanlık tema; her renk koyu zemin ve yüzey üzerinde en az 4.5:1 (kenarlık en az 3:1). */
+/* Dark theme; every color is at least 4.5:1 on the dark canvas and surface (field border at least 3:1). */
 [data-theme='dark'] {
-  --zemin: #12161d;
-  --yuzey: #1a1f29;
-  --metin: #e6e9ef;
-  --ikincil-metin: #a3abb9;
-  --cizgi: #2c3340;
-  --kenarlik: #6b7486;
-  --vurgu: #4db6b1;
-  --vurgu-etkin: #6cc6c1;
-  --vurgu-uzeri: #12161d;
-  --hata: #ee7a66;
-  --onay-bekliyor: #d9a24c;
+  --canvas: #12161d;
+  --surface: #1a1f29;
+  --ink: #e6e9ef;
+  --ink-secondary: #a3abb9;
+  --line: #2c3340;
+  --field-border: #6b7486;
+  --brand: #4db6b1;
+  --brand-active: #6cc6c1;
+  --on-brand: #12161d;
+  --error: #ee7a66;
+  --awaiting-approval: #d9a24c;
 }
 
-/* Betik çalışmadan önceki ilk çizimde de sistem tercihine uyulur (açılışta açık renk parlaması olmaz). */
+/* The first paint before the script runs also follows the system preference (no light flash on load). */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) {
-    --zemin: #12161d;
-    --yuzey: #1a1f29;
-    --metin: #e6e9ef;
-    --ikincil-metin: #a3abb9;
-    --cizgi: #2c3340;
-    --kenarlik: #6b7486;
-    --vurgu: #4db6b1;
-    --vurgu-etkin: #6cc6c1;
-    --vurgu-uzeri: #12161d;
-    --hata: #ee7a66;
-    --onay-bekliyor: #d9a24c;
+    --canvas: #12161d;
+    --surface: #1a1f29;
+    --ink: #e6e9ef;
+    --ink-secondary: #a3abb9;
+    --line: #2c3340;
+    --field-border: #6b7486;
+    --brand: #4db6b1;
+    --brand-active: #6cc6c1;
+    --on-brand: #12161d;
+    --error: #ee7a66;
+    --awaiting-approval: #d9a24c;
     color-scheme: dark;
   }
 }
 
-/* shadcn bileşenleri bu adları hem yardımcı sınıf hem de ham var(--...) olarak kullanır. */
+/* shadcn components use these names both as utility classes and as raw var(--...). */
 :root,
 [data-theme] {
-  --background: var(--zemin);
-  --foreground: var(--metin);
-  --card: var(--yuzey);
-  --card-foreground: var(--metin);
-  --popover: var(--yuzey);
-  --popover-foreground: var(--metin);
-  --primary: var(--vurgu);
-  --primary-foreground: var(--vurgu-uzeri);
-  --secondary: var(--zemin);
-  --secondary-foreground: var(--metin);
-  --muted: var(--zemin);
-  --muted-foreground: var(--ikincil-metin);
-  --accent: var(--zemin);
-  --accent-foreground: var(--metin);
-  --destructive: var(--hata);
-  --border: var(--cizgi);
-  --input: var(--kenarlik);
-  --ring: var(--vurgu);
+  --background: var(--canvas);
+  --foreground: var(--ink);
+  --card: var(--surface);
+  --card-foreground: var(--ink);
+  --popover: var(--surface);
+  --popover-foreground: var(--ink);
+  --primary: var(--brand);
+  --primary-foreground: var(--on-brand);
+  --secondary: var(--canvas);
+  --secondary-foreground: var(--ink);
+  --muted: var(--canvas);
+  --muted-foreground: var(--ink-secondary);
+  --accent: var(--canvas);
+  --accent-foreground: var(--ink);
+  --destructive: var(--error);
+  --border: var(--line);
+  --input: var(--field-border);
+  --ring: var(--brand);
 }
 
 @theme inline {
   --font-sans: 'IBM Plex Sans Variable', system-ui, sans-serif;
   --font-heading: var(--font-sans);
 
-  --color-zemin: var(--zemin);
-  --color-yuzey: var(--yuzey);
-  --color-metin: var(--metin);
-  --color-ikincil-metin: var(--ikincil-metin);
-  --color-cizgi: var(--cizgi);
-  --color-kenarlik: var(--kenarlik);
-  --color-vurgu: var(--vurgu);
-  --color-vurgu-etkin: var(--vurgu-etkin);
-  --color-vurgu-uzeri: var(--vurgu-uzeri);
-  --color-hata: var(--hata);
-  --color-onay-bekliyor: var(--onay-bekliyor);
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-ink: var(--ink);
+  --color-ink-secondary: var(--ink-secondary);
+  --color-line: var(--line);
+  --color-field-border: var(--field-border);
+  --color-brand: var(--brand);
+  --color-brand-active: var(--brand-active);
+  --color-on-brand: var(--on-brand);
+  --color-error: var(--error);
+  --color-awaiting-approval: var(--awaiting-approval);
 
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -236,19 +236,19 @@
   body {
     @apply bg-background font-sans text-foreground antialiased;
   }
-  /* Tablolarda rakamlar eşit genişlikte. */
+  /* Tabular figures in tables. */
   table {
     font-variant-numeric: tabular-nums;
   }
 }
 
-/* Klavye odağı her zaman görünür. Katmansız yazıldı: bileşenlerdeki outline-none sınıfını yener. */
+/* Keyboard focus is always visible. Written outside a layer so it beats the outline-none class in components. */
 :focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 2px;
 }
 
-/* Azaltılmış hareket tercihine uyulur. */
+/* The reduced motion preference is respected. */
 @media (prefers-reduced-motion: reduce) {
   *,
   ::before,

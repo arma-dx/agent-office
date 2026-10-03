@@ -6,7 +6,7 @@ const app = buildServer({ logLevel: env.LOG_LEVEL });
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.once(signal, () => {
-    app.log.info({ signal }, 'kapatılıyor');
+    app.log.info({ signal }, 'shutting down');
     app.close().then(
       () => process.exit(0),
       (error: unknown) => {

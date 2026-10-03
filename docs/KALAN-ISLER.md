@@ -52,34 +52,36 @@ Sürüyor. Göçler `supabase/migrations`, testler `packages/db/test` (kısıtl�
 
 Altyapı:
 
-- [ ] Supabase hesabı ve iki proje: test ve canlı (test projesi hazır: 3 Ekim'de 13 göç ve başlangıç verisi gönderildi, denetimde hata yok; canlı için Pro plan kararı bekleniyor; adımlar `docs/supabase-kurulum.md`)
+- [ ] Supabase hesabı ve iki proje: test ve canlı (test projesi açıldı; canlı için Pro plan kararı bekleniyor; adımlar `docs/supabase-kurulum.md`)
 - [x] Veri bölgesinin seçimi: AB, Frankfurt (2 Ekim, karar 14)
 - [x] Yerel veritabanı: `supabase start` ve `supabase db reset` çalışır durumda (göçler ve testler yerel Supabase'de, süper kullanıcı olmayan `postgres` rolüyle geçiyor)
 - [x] Yetkili göç rolü ile kısıtlı uygulama rolünün ayrılması; uygulama rolünde `BYPASSRLS` yok
-- [x] `packages/db` içinde bağlam kuran yardımcı: `app.sirket_id`, `app.kullanici_id`, `app.proje_id`, `app.eposta`, `app.ajan_kod`
-- [ ] API isteği başına tek transaction; ajan çalışmasında adım başına kısa transaction (yardımcılar hazır: `baglamliIslem`, `ajanAdimi`; API'ye ilk veri isteğiyle 0.3'te bağlanır)
+- [x] `packages/db` içinde bağlam kuran yardımcı: `app.company_id`, `app.user_id`, `app.project_id`, `app.email`, `app.agent_code`
+- [ ] API isteği başına tek transaction; ajan çalışmasında adım başına kısa transaction (yardımcılar hazır: `withContext`, `agentStep`; API'ye ilk veri isteğiyle 0.3'te bağlanır)
 - [x] pg-boss kurulumu, ayrı şemada; işlere yalnızca kimlik konması
+- [x] Veritabanı ve kod adlarının İngilizceye geçirilmesi (3 Ekim, karar 4; `docs/ad-sozlugu.md`)
+- [ ] Test projesinin sıfırlanıp İngilizce göçlerle yeniden kurulması ve eski `ofis_*` rollerinin silinmesi (kurucunun onayıyla, 3 Ekim karar 4)
 
 Tablolar:
 
-- [x] `sirketler`: `tur` (`sirket`, `ozel_alan`) ve kısa kod (Karar: M8, teknik)
-- [x] `kullanicilar`
-- [x] `kullanici_epostalari`: bir kişinin birden çok Google hesabı (2 Ekim, karar 15)
-- [x] `uyelikler`: kullanıcı, şirket, rol
-- [x] `ajan_tanimlari` ve `kart_surumleri` (global, salt okunur)
-- [x] `sirket_ajanlari`: durum, ayarlar (Drive klasörleri, öncelikli göndericiler, Figma dosyası, bütçe)
-- [x] `musteriler`: AI izni ve kodla otomatik işleme izni alanlarıyla
-- [x] `firsatlar`
-- [x] `projeler`: müşteri, bütçe, kilometre taşları, AI izni
-- [x] `proje_uyeleri`
-- [x] `gorevler` ve görev yorumları
-- [x] `calismalar` ve araç çağrıları
-- [x] `onaylar`
-- [x] `iz_kaydi`: güncelleme ve silmeyi veritabanı düzeyinde engelleyen kural
-- [x] `notlar`, `not_surumleri`, `not_baglantilari`
-- [x] `belgeler`
-- [x] `istasyon_adaylari`
-- [x] `entegrasyonlar`: şifreli token alanı
+- [x] `companies`: `kind` (`company`, `private_space`) ve kısa kod (Karar: M8, teknik)
+- [x] `users`
+- [x] `user_emails`: bir kişinin birden çok Google hesabı (2 Ekim, karar 15)
+- [x] `memberships`: kullanıcı, şirket, rol
+- [x] `agent_definitions` ve `card_versions` (global, salt okunur)
+- [x] `company_agents`: durum, ayarlar (Drive klasörleri, öncelikli göndericiler, Figma dosyası, bütçe)
+- [x] `customers`: AI izni ve kodla otomatik işleme izni alanlarıyla
+- [x] `opportunities`
+- [x] `projects`: müşteri, bütçe, kilometre taşları, AI izni
+- [x] `project_members`
+- [x] `tasks` ve görev yorumları
+- [x] `runs` ve araç çağrıları
+- [x] `approvals`
+- [x] `audit_log`: güncelleme ve silmeyi veritabanı düzeyinde engelleyen kural
+- [x] `notes`, `note_versions`, `note_links`
+- [x] `documents`
+- [x] `station_candidates`
+- [x] `integrations`: şifreli token alanı
 - [x] Bildirim kaydı tablosu (Karar: M46) (kimin hatırlatacağı M46'da açık; tablo yalnızca kaydı tutar)
 - [x] (Rapor) Şirket adlarının koda gömülmemesi: yeni bir şirket kod değişmeden, kayıt ve ayarla açılabilmeli (Ürünleşme ön koşulu)
 - [ ] (Rapor) Kartların şirketten ve modelden bağımsız yazıldığının denetimi
@@ -100,14 +102,14 @@ Tablolar:
 
 Karar bekleyen alan ve tablolar (2 Ekim kararlarıyla kapandı, `docs/kararlar/2026-10-02.md` 6-13):
 
-- [x] Birimler: tablo mu, kartlardan türetme mi; `gorevler` tablosunda birim alanı (Karar: M39)
-- [x] Üst görev alanı (`ust_gorev_id`, teknik)
+- [x] Birimler: tablo mu, kartlardan türetme mi; `tasks` tablosunda birim alanı (Karar: M39)
+- [x] Üst görev alanı (`parent_task_id`, teknik)
 - [ ] Alt görevin sonuçlanma kuralı (Karar: M31; açık)
 - [x] Notlarda tek doğru kaynak işareti ve not durumu (Karar: M4)
 - [x] Notlarda ve görevlerde kaynak türü: iç, dış (Karar: M14, X1-1)
 - [x] Üretilen dosyalar için tablo (Karar: M38)
 - [x] Onay kaydının ek alanları: öncelik, kaynaklar, iki ayrı gerekçe, ret nedeni, seçilen seçenek, dayandığı sürüm, önceki onay, gönderildi işareti (Karar: M25, M24, X1-7, M23, M22)
-- [x] Görev durumlarına `yanit_bekliyor` eklenmesi (Karar: X1-6)
+- [x] Görev durumlarına `awaiting_reply` eklenmesi (Karar: X1-6)
 - [x] Kritik hata kaydı (Karar: R10)
 - [x] Çalışma kaydında ham içeriğin saklama süresi (Karar: M12)
 
@@ -115,7 +117,7 @@ Güvenlik politikaları (RLS):
 
 - [x] Şirket ayrımı: bağlamdaki şirketin dışındaki satır görünmez
 - [x] Bağlam yokken hiçbir satır dönmez
-- [x] Proje kapsamı: `proje_id` doluysa yalnızca proje üyeleri ve kurucu
+- [x] Proje kapsamı: `project_id` doluysa yalnızca proje üyeleri ve kurucu
 - [x] Ajan çalışması daraltması: proje bağlamı yoksa proje satırı yok; varsa yalnızca kendi projesi
 - [x] AI izni olmayan müşteriye ve projeye bağlı kayıtların ajan bağlamına kapalı olması
 - [x] Kullanıcının yalnızca kendi kaydını, üyeliklerini ve şirketlerini görmesi
@@ -125,7 +127,7 @@ Güvenlik politikaları (RLS):
 
 Başlangıç verisi:
 
-- [x] Arma DX, Pillika ve Kurucu alanı kayıtları (`supabase/seed.sql`; birimler `agents/birimler.yaml`)
+- [x] Arma DX, Pillika ve Kurucu alanı kayıtları (`supabase/seed.sql`; birimler `agents/units.yaml`)
 - [x] Kurucunun kullanıcı ve üyelik kayıtları (`supabase/seed.sql`; dört adres, 2 Ekim karar 15)
 
 Testler (kısıtlı rolle):
@@ -136,7 +138,7 @@ Testler (kısıtlı rolle):
 - [x] Proje bağlamı olmayan ajan çalışması proje satırı okuyamaz, kimliği kurucu olsa bile
 - [x] Kullanıcı başkasının üyeliğini göremez
 - [x] AI izni olmayan müşterinin kaydı ajan bağlamında okunamaz
-- [x] `iz_kaydi` satırı değiştirilemez ve silinemez
+- [x] `audit_log` satırı değiştirilemez ve silinemez
 - [x] Her yeni tablo için şirket ayrımı testi
 
 ### 0.3 Google ile giriş (M1)
@@ -152,7 +154,7 @@ Sunucu tarafı:
 
 - [ ] Giriş akışının API'de yürümesi (tarayıcıda değil); durum değeri ve tek kullanımlık değer denetimi
 - [ ] Kimlik belirtecinin doğrulanması
-- [ ] Yalnızca `uyelikler` tablosunda kaydı olan e-postanın kabulü; diğerlerinin anlaşılır mesajla reddi
+- [ ] Yalnızca `memberships` tablosunda kaydı olan e-postanın kabulü; diğerlerinin anlaşılır mesajla reddi
 - [ ] `amr` alanının denenmesi: kuruluş hesabında ve dış kişinin kişisel hesabında
 - [ ] İki adımlı doğrulamanın girişte kodla denetlenmesi; alan gelmezse izlenecek yol (Karar: G1)
 - [ ] Oturum çerezi: `office.armadx.com` üzerinde, yalnızca sunucunun okuyabildiği, güvenli
@@ -160,14 +162,14 @@ Sunucu tarafı:
 - [ ] Çıkış ve bütün oturumları kapatma
 - [ ] İstek sahteciliğine karşı koruma
 - [ ] Giriş denemelerinde hız sınırı
-- [ ] Giriş, çıkış ve reddedilen denemelerin `iz_kaydi`'na yazılması
+- [ ] Giriş, çıkış ve reddedilen denemelerin `audit_log`'a yazılması
 
 Roller ve şirket:
 
 - [ ] Girişten sonra şirket seçimi; tek üyeliği olanın doğrudan geçmesi
 - [ ] Üst çubukta şirket seçici; kurucu için holding görünümü ve Kurucu özel alanı
-- [ ] Şirket seçicideki geçici örnek listenin (`apps/web/src/gecici-veri.ts`) kaldırılması; liste kullanıcının üyeliklerinden gelir
-- [ ] Her API ucunda rol denetimi: `kurucu`, `calisan`, `dis_kisi`
+- [ ] Şirket seçicideki geçici örnek listenin (`apps/web/src/placeholder-data.ts`) kaldırılması; liste kullanıcının üyeliklerinden gelir
+- [ ] Her API ucunda rol denetimi: `founder`, `employee`, `external`
 - [ ] Holding görünümü için API'de salt okunur birleştirme
 
 Passkey:
@@ -198,7 +200,7 @@ Sunucu:
 - [ ] Durum geçiş kuralları: insan hangi geçişi yapar, ajan hangisini (Karar: M16)
 - [ ] Atama: insana ya da ajana; atama değişikliği kuralı (Karar: M17)
 - [ ] Öncelik, son tarih, proje ve birim alanları
-- [ ] Her değişikliğin `iz_kaydi`'na yazılması
+- [ ] Her değişikliğin `audit_log`'a yazılması
 
 Arayüz:
 
@@ -228,7 +230,7 @@ Sunucu:
 - [ ] Onaylanan çağrının onaydan sonra uygulanması için altyapı (Karar: M5)
 - [ ] Kodla hesaplanan risk işaretleri: dış alıcı, fiyat, tek doğru kaynak, dış kaynaklı içerik (Karar: M21)
 - [ ] Dayandığı kayıt değişmişse onayın kapanması (Karar: X1-7)
-- [ ] Her kararın `iz_kaydi`'na yazılması: onaylayan ve zaman
+- [ ] Her kararın `audit_log`'a yazılması: onaylayan ve zaman
 
 Arayüz:
 
@@ -261,7 +263,7 @@ Testler:
 - [ ] İç iş ve proje etiketi; proje maliyetinin projeye yazılması
 - [ ] İstem önbelleğinin açılması ve önbellek tokenlarının ayrı sayılması
 - [ ] Hata, hız sınırı ve yeniden deneme davranışı
-- [ ] `iz_kaydi` yazma yardımcıları: kim, ne yaptı, hangi veriye baktı, ne zaman
+- [ ] `audit_log` yazma yardımcıları: kim, ne yaptı, hangi veriye baktı, ne zaman
 - [ ] Çalışma kaydına ne kadar içerik yazılacağı (Karar: M12)
 - [ ] Testler: maliyet hesabı, kayıt bütünlüğü
 
@@ -308,7 +310,7 @@ Kart ve skill yükleme:
 
 - [ ] Görev kartı için şema ve doğrulama
 - [ ] Katalogda olmayan aracı kullanan kartın reddi
-- [ ] Kartın `sirketler` alanına göre açılabileceği şirketlerin sınırlanması
+- [ ] Kartın `companies` alanına göre açılabileceği şirketlerin sınırlanması
 - [ ] Kart durumunun anlamı: taslak, deneme, etkin (Karar: M40)
 - [ ] Skill klasörünün okunması: SKILL.md, şablonlar, örnekler
 - [ ] YAML yorumlarındaki kuralların alanlara taşınması (Karar: M42)
@@ -375,13 +377,13 @@ Dayanıklılık:
 
 Sprint 1 araçları:
 
-- [ ] `gorev_ara`, `gorev_oku`
-- [ ] `gorev_ac`, `gorev_oner`, `gorev_guncelle`
-- [ ] `ajan_listele`, `kullanici_listele`
-- [ ] `bildirim_gonder`
-- [ ] `onaya_gonder`, `onay_kuyrugu_oku`, `onay_ozeti_yaz`
-- [ ] `not_ara`, `not_oku`, `not_yaz`, `not_guncelle`, `not_bagla`
-- [ ] `drive_listele`, `drive_oku`, `belge_ice_aktar`
+- [ ] `search_tasks`, `read_task`
+- [ ] `create_task`, `suggest_task`, `update_task`
+- [ ] `list_agents`, `list_users`
+- [ ] `send_notification`
+- [ ] `submit_for_approval`, `read_approval_queue`, `write_approval_summary`
+- [ ] `search_notes`, `read_note`, `write_note`, `update_note`, `link_notes`
+- [ ] `list_drive`, `read_drive_file`, `import_document`
 
 Testler:
 
@@ -395,9 +397,9 @@ Testler:
 
 ### 1.2 Görev kartı yönetimi (M6)
 
-- [ ] Kart senkronizasyonu: depodaki YAML'ın git commit kimliğiyle `kart_surumleri`'ne yazılması
+- [ ] Kart senkronizasyonu: depodaki YAML'ın git commit kimliğiyle `card_versions`'a yazılması
 - [ ] Her çalışmanın hangi kart sürümüyle koştuğunu kaydetmesi
-- [ ] `sirket_ajanlari` satırlarının açılması ve ayar ekranı
+- [ ] `company_agents` satırlarının açılması ve ayar ekranı
 - [ ] Ajanlar ekranı: birimlere göre ajanlar, durum, yetki seviyesi
 - [ ] Şirket başına durdurma düğmesi ve "her yerde durdur"
 - [ ] Görev kartı ekranı: kart ve skill salt okunur, sürüm geçmişi
@@ -412,7 +414,7 @@ Sunucu:
 - [ ] Klasör yolu ve klasör ağacı
 - [ ] YAML özelliklerin ayrıştırılması ve doğrulanması
 - [ ] Not türleri ve zorunlu özellikler için tek şema (Karar: M35)
-- [ ] `[[Not adı]]` bağlantılarının kaydederken `not_baglantilari`'na çıkarılması
+- [ ] `[[Not adı]]` bağlantılarının kaydederken `note_links`'e çıkarılması
 - [ ] Geri bağlantılar; görülemeyen notun başlığının dönmemesi
 - [ ] Sürüm geçmişi
 - [ ] Taslak durumu: Y1 ajanın notu onaydan sonra paylaşılır
@@ -446,7 +448,7 @@ Testler:
 - [ ] Klasör izin listesi ekranı; listenin kodla denetlenmesi
 - [ ] Aynı klasörün iki şirkette olamaması (Karar: X2-3)
 - [ ] Değişen belgelerin yoklamayla alınması (Karar: M26)
-- [ ] `belgeler` kaydı ve kaynak notuna bağlanması
+- [ ] `documents` kaydı ve kaynak notuna bağlanması
 - [ ] Belge türleri: Google Dokümanlar, PDF, Word; markdown'a çevirme
 - [ ] Hassas veri taraması: kimlik numarası, IBAN, kart numarası (Karar: M37)
 - [ ] Kişisel veri içeren klasörlerin bağlanmaması (1 Ekim, karar 7)
@@ -481,13 +483,13 @@ Her ajan için ortak adımlar:
 - [ ] Skill'in yazılması: SKILL.md, şablonlar
 - [ ] Test seti: 10-20 örnek girdi ve kabul ölçütü
 - [ ] Kart kuralları için testler: araç, yasak, eskalasyon (Karar: M43)
-- [ ] İki şirkette `sirket_ajanlari` satırı
+- [ ] İki şirkette `company_agents` satırı
 - [ ] Deneme çalışmaları ve düzeltme
 - [ ] Etkin duruma alma
 
 KOR-1, Ofis Koordinatörü (M8):
 
-- [ ] `yonlendirme` skill'i
+- [ ] `routing` skill'i
 - [ ] Talebin şirket, birim ve önceliğe göre sınıflandırılması
 - [ ] Alt görevlere bölme ve atama
 - [ ] İki şirketi kapsayan talepte öteki şirket için öneri bırakma
@@ -499,7 +501,7 @@ KOR-1, Ofis Koordinatörü (M8):
 
 KOR-2, Görev Takip:
 
-- [ ] `gorev-takibi` skill'i
+- [ ] `task-tracking` skill'i
 - [ ] Zamanlanmış çalışma; proje başına ayrı
 - [ ] Geciken ve tıkanan işlerin kodla listelenmesi
 - [ ] Kişiye özel hatırlatmalar
@@ -513,7 +515,7 @@ KOR-2, Görev Takip:
 
 KOR-3, Onay Masası:
 
-- [ ] `onay-ozeti` skill'i
+- [ ] `approval-summary` skill'i
 - [ ] Yeni onayda tetiklenme; sıklık sınırı
 - [ ] Özet, risk notu ve öncelik yazma
 - [ ] Günlük onay turunun paketlenmesi; tur saatleri (Karar: R12)
@@ -522,7 +524,7 @@ KOR-3, Onay Masası:
 
 HAF-1, Bilgi Tabanı:
 
-- [ ] `not-yazimi` ve `karar-notu` skill'leri
+- [ ] `note-writing` ve `decision-note` skill'leri
 - [ ] Yeni ya da değişen belgede içe aktarma
 - [ ] Etiketleme ve bağlama
 - [ ] Haftalık bakım: eskimiş, çelişen ve bağlantısız notlar
@@ -535,7 +537,7 @@ HAF-1, Bilgi Tabanı:
 
 HAF-2, Kurumsal Arama:
 
-- [ ] `kaynakli-yanit` skill'i
+- [ ] `sourced-answer` skill'i
 - [ ] Her iddianın yanında not bağlantısı
 - [ ] Soranın erişimine göre süzme
 - [ ] Proje seçimine göre arama
@@ -576,7 +578,7 @@ Rapora göre Ofis Yönetimi ve Denetim birimi (kalite, maliyet, iyileştirme) pi
 - [ ] Projeler sekmesi: proje, bütçe, kilometre taşları (Karar: M48)
 - [ ] Proje üyelerinin yönetimi
 - [ ] Projeye Drive klasörü ve GitHub deposu bağlama (Karar: M10, M47)
-- [ ] `musteri_oku` ve proje okuma araçları
+- [ ] `read_customer` ve proje okuma araçları
 - [ ] Testler: görünürlük ve AI izni
 
 ### 2.2 PDF ve şablonlar (M11)
@@ -586,13 +588,13 @@ Rapora göre Ofis Yönetimi ve Denetim birimi (kalite, maliyet, iyileştirme) pi
 - [ ] Rapor şablonu
 - [ ] (Senden) Marka kitleri ve mevcut teklif örnekleri
 - [ ] Şirkete özgü şablonların nerede tutulacağı (Karar: M15, M38)
-- [ ] `pdf_uret` aracı
+- [ ] `generate_pdf` aracı
 - [ ] Üretilen dosyanın kaydı ve erişimin kayıt üzerinden doğrulanması
 - [ ] Panelde önizleme ve indirme
 
 ### 2.3 Teklif Ajanı (A-TEK-2)
 
-- [ ] `teklif` skill'i: ücret kartı ve teklif kurallarından
+- [ ] `proposal` skill'i: ücret kartı ve teklif kurallarından
 - [ ] (Rapor) Fizibilite değerlendirmesi
 - [ ] İş kırılımı
 - [ ] Ücret kartına göre fiyat
@@ -609,7 +611,7 @@ Rapora göre Ofis Yönetimi ve Denetim birimi (kalite, maliyet, iyileştirme) pi
 ### 2.4 Proje Takip Ajanı (A-PRJ-2)
 
 - [ ] GitHub bağlantısı: yalnızca seçili depoları okuyan uygulama (Karar: M47)
-- [ ] `github_oku` aracı
+- [ ] `read_github` aracı
 - [ ] Haftalık durum raporu; proje başına ayrı çalışma
 - [ ] İç rapor: durum, tamamlananlar, gelecek hafta, riskler, bütçe
 - [ ] (Rapor) Risk listesi

@@ -10,7 +10,7 @@ import {
 const Toaster = ({ ...props }: ToasterProps) => {
   return (
     <Sonner
-      // data-theme sistem tercihini izlediği için sonner da aynı tercihi kendisi izler.
+      // data-theme follows the system preference, so sonner follows the same preference itself.
       theme="system"
       className="toaster group"
       icons={{

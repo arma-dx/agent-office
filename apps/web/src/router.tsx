@@ -1,6 +1,6 @@
 import type { QueryClient } from '@tanstack/react-query';
 import { createRouter, type RouterHistory } from '@tanstack/react-router';
-import { BulunamadiEkrani, HataEkrani } from '@/components/ekranlar';
+import { ErrorScreen, NotFoundScreen } from '@/components/screens';
 import { routeTree } from './routeTree.gen.ts';
 
 export function createAppRouter(opts: { queryClient: QueryClient; history?: RouterHistory }) {
@@ -8,8 +8,8 @@ export function createAppRouter(opts: { queryClient: QueryClient; history?: Rout
     routeTree,
     context: { queryClient: opts.queryClient },
     defaultPreload: 'intent',
-    defaultNotFoundComponent: BulunamadiEkrani,
-    defaultErrorComponent: HataEkrani,
+    defaultNotFoundComponent: NotFoundScreen,
+    defaultErrorComponent: ErrorScreen,
     ...(opts.history ? { history: opts.history } : {}),
   });
 }

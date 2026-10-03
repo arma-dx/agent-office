@@ -1,0 +1,136 @@
+# Birimler (2 Ekim karar 6, M39). Kaynak: docs/agent-office-tasarım-raporu.md, 37 birim.
+# Ajan kodunun öneki birim kodudur. company: boşsa iki şirkette ortak birim, doluysa o şirketin kısa kodu.
+# pilot_enabled: pilotta ajanı olan birimler. Kart senkronizasyonu (KALAN-ISLER 1.2) bu dosyayı da
+# units tablosuna yazar; o güne kadar supabase/seed.sql aynı listeyi yükler.
+
+units:
+  - code: KOR
+    name: Koordinasyon Katmanı
+    pilot_enabled: true
+  - code: OFY
+    name: Ofis Yönetimi ve Denetim
+    pilot_enabled: false
+  - code: HAF
+    name: Kurumsal Hafıza
+    pilot_enabled: true
+  - code: STR
+    name: Strateji ve Yönetim
+    pilot_enabled: false
+  - code: FIN
+    name: Finans ve Muhasebe
+    pilot_enabled: false
+  - code: HUK
+    name: Hukuk ve Uyum
+    pilot_enabled: false
+  - code: IK
+    name: İnsan Kaynakları
+    pilot_enabled: false
+  - code: BT
+    name: Bilgi Teknolojileri ve Güvenlik
+    pilot_enabled: false
+  - code: PAZ
+    name: Pazarlama
+    pilot_enabled: false
+  - code: TAS
+    name: Tasarım ve Kreatif Stüdyo
+    pilot_enabled: true
+  - code: SOS
+    name: Sosyal Medya
+    pilot_enabled: true
+  - code: KIL
+    name: Kurumsal İletişim
+    pilot_enabled: false
+  - code: SAI
+    name: Satın Alma ve İdari İşler
+    pilot_enabled: false
+  - code: VER
+    name: Veri ve Raporlama
+    pilot_enabled: false
+  - code: YAZ
+    name: Yazılım Geliştirme
+    pilot_enabled: false
+  - code: ALT
+    name: Altyapı ve Bulut Operasyonları
+    pilot_enabled: false
+  - code: DON
+    name: Donanım ve Gömülü Sistemler
+    pilot_enabled: false
+  - code: TED
+    name: Tedarik Zinciri ve Lojistik
+    pilot_enabled: false
+  - code: A-SAT
+    name: Satış ve İş Geliştirme
+    company: armadx
+    pilot_enabled: false
+  - code: A-KES
+    name: Keşif ve Dönüşüm Danışmanlığı
+    company: armadx
+    pilot_enabled: true
+  - code: A-TEK
+    name: Çözüm ve Teklif
+    company: armadx
+    pilot_enabled: true
+  - code: A-IHA
+    name: Kamu İhaleleri
+    company: armadx
+    pilot_enabled: false
+  - code: A-PRJ
+    name: Proje Teslimat
+    company: armadx
+    pilot_enabled: true
+  - code: A-AI
+    name: AI Çözümleri
+    company: armadx
+    pilot_enabled: false
+  - code: A-MUS
+    name: Müşteri Başarısı ve Destek
+    company: armadx
+    pilot_enabled: false
+  - code: A-KAT
+    name: Ürün ve Çözüm Kataloğu
+    company: armadx
+    pilot_enabled: false
+  - code: P-URN
+    name: Ürün Yönetimi
+    company: pillika
+    pilot_enabled: false
+  - code: P-CPO
+    name: CPO İlişkileri ve Entegrasyon
+    company: pillika
+    pilot_enabled: false
+  - code: P-IST
+    name: İstasyon Verisi ve Şarj Operasyonları
+    company: pillika
+    pilot_enabled: true
+  - code: P-ARC
+    name: Araç Verisi, Görsel ve Rota
+    company: pillika
+    pilot_enabled: false
+  - code: P-API
+    name: API Portalı
+    company: pillika
+    pilot_enabled: false
+  - code: P-ADS
+    name: Pillika ADS
+    company: pillika
+    pilot_enabled: false
+  - code: P-BAR
+    name: Pillika Barrier
+    company: pillika
+    pilot_enabled: false
+  - code: P-DES
+    name: Kullanıcı Destek
+    company: pillika
+    pilot_enabled: false
+  - code: P-ODE
+    name: Ödeme ve Mutabakat
+    company: pillika
+    pilot_enabled: false
+  - code: P-HIZ
+    name: Araç Hizmetleri
+    company: pillika
+    pilot_enabled: false
+  - code: P-BUY
+    name: Büyüme ve Pazar Geliştirme
+    company: pillika
+    pilot_enabled: false

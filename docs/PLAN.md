@@ -22,15 +22,15 @@ Kapsam dışı: dış müşterilere kurulum (Ürünleşme), WhatsApp ve Uyumsoft
 | Arayüz | Telefona uyumlu web uygulaması (PWA); onaylar telefondan verilir |
 | Barındırma | AWS'de tek sunucu, Docker Compose: Caddy (HTTPS ve yönlendirme), panel dosyaları, API ve çalıştırıcı; iş kuyruğu PostgreSQL üzerinde (pg-boss); Cloudflare önde DNS ve koruma |
 | Alan adları | office.armadx.com (panel ve /api, iki şirket için tek giriş), office-test.armadx.com (test), hooks.armadx.com (dış bildirimler) |
-| Veritabanı | Supabase PostgreSQL; veritabanına yalnızca sunucu tarafı (API ve worker) bağlanır, tarayıcı hiçbir zaman; API ve worker `BYPASSRLS` yetkisi olmayan kısıtlı bir rolle bağlanır, her API isteği tek bir transaction'dır ve `SET LOCAL` ile `app.sirket_id`, `app.kullanici_id`, `app.proje_id` ve girişte doğrulanmış `app.eposta` bağlamını kurar; ajan çalışmasında bağlama `app.ajan_kod` eklenir, her veritabanı adımı kendi kısa transaction'ında yürür ve bağlamı her adımda yeniden kurar; RLS ile şirket ve proje ayrımı; dosyalar Supabase depolamasında |
-| Kimlik | Google ile davetli giriş (giriş istemcisi: External; `openid`, `email`, `profile`), API üzerinden sunucu tarafında; yalnızca `uyelikler` tablosunda kaydı olan e-posta girer; iki adımlı doğrulama zorunlu; giriş görevinde önce kimlik belirtecinin `amr` alanının dış kişilerin hesaplarında da geldiği denenir, geliyorsa girişte bu alanla kodla denetlenir (gelmezse yol `docs/SONRA.md` G1'de); kısa oturum süresi; önemli onaylarda yeniden doğrulama panelde passkey ile. Ajanların Workspace erişimi ayrı bağlantı istemcisiyle (Internal; `gmail.readonly`, `calendar.readonly`, `drive.readonly`), bağlantıyı kuran kişinin kimliğiyle |
+| Veritabanı | Supabase PostgreSQL; veritabanına yalnızca sunucu tarafı (API ve worker) bağlanır, tarayıcı hiçbir zaman; API ve worker `BYPASSRLS` yetkisi olmayan kısıtlı bir rolle bağlanır, her API isteği tek bir transaction'dır ve `SET LOCAL` ile `app.company_id`, `app.user_id`, `app.project_id` ve girişte doğrulanmış `app.email` bağlamını kurar; ajan çalışmasında bağlama `app.agent_code` eklenir, her veritabanı adımı kendi kısa transaction'ında yürür ve bağlamı her adımda yeniden kurar; RLS ile şirket ve proje ayrımı; dosyalar Supabase depolamasında |
+| Kimlik | Google ile davetli giriş (giriş istemcisi: External; `openid`, `email`, `profile`), API üzerinden sunucu tarafında; yalnızca `memberships` tablosunda kaydı olan e-posta girer; iki adımlı doğrulama zorunlu; giriş görevinde önce kimlik belirtecinin `amr` alanının dış kişilerin hesaplarında da geldiği denenir, geliyorsa girişte bu alanla kodla denetlenir (gelmezse yol `docs/SONRA.md` G1'de); kısa oturum süresi; önemli onaylarda yeniden doğrulama panelde passkey ile. Ajanların Workspace erişimi ayrı bağlantı istemcisiyle (Internal; `gmail.readonly`, `calendar.readonly`, `drive.readonly`), bağlantıyı kuran kişinin kimliğiyle |
 | Model | Claude API, araç kullanımı ile ajan döngüsü; model adı görev kartından; rutin işte hızlı, zor işte güçlü model; tekrar eden talimatlarda istem önbelleği. Model katmanı değiştirilebilir tasarlanır, kartlar modelden bağımsız yazılır |
 | Dil | Ana dil Türkçe; ajan çıktıları İngilizce ve Arapça da istenebilir. Pilotta arayüz yalnızca Türkçe |
 | Maliyet | Model kullanımı ilk günden iş başına ölçülür; iç işler ve projeler ayrı izlenir, proje işlerinin maliyeti o projenin bütçesine yazılır. Gündelik iç işlerde ayrı üst sınır yok; ajan bazında bütçe uyarısı var |
 | Skill'ler | `skills/` altında SKILL.md klasörleri; çalıştırıcı okuyup çağrıya ekler, API'ye yüklenmez |
 | Not sistemi | Kurumsal hafıza Obsidian gibi markdown notlar: YAML özellikler, `[[bağlantı]]`, geri bağlantılar, etiketler; kaynak veritabanı |
 | Arama | PostgreSQL tam metin arama; gerekirse pgvector |
-| Entegrasyonlar | Pilotta Google Workspace (Gmail, Takvim, Drive, Meet kayıtları) ve GitHub; Ekim sonunda Figma. Rapordaki ilke: her dış sistem için bir bağlayıcı, ajana yalnızca kartındaki bağlayıcılar açılır. Pilotta bu, `agents/araclar.yaml` kataloğu ve kart izinleriyle karşılanır |
+| Entegrasyonlar | Pilotta Google Workspace (Gmail, Takvim, Drive, Meet kayıtları) ve GitHub; Ekim sonunda Figma. Rapordaki ilke: her dış sistem için bir bağlayıcı, ajana yalnızca kartındaki bağlayıcılar açılır. Pilotta bu, `agents/tools.yaml` kataloğu ve kart izinleriyle karşılanır |
 | PDF | HTML şablondan PDF |
 | Gizli anahtarlar | Barındırma sağlayıcısının kasası; ajana anahtar verilmez |
 | Kod ve yayın | GitHub, otomatik test ve yayın hattı; test ve canlı ortam ayrı. Yalnızca iki dal: `development` test ortamına (office-test.armadx.com), `main` canlı ortama (office.armadx.com) yayınlanır; başka dal açılmaz |
@@ -47,39 +47,39 @@ Pilotta panel internete açık; ileride yalnızca ofis ağından, dışarıdan V
 
 ## Veri modeli
 
-Şirket verisi tutan her tabloda `sirket_id` zorunlu ve RLS açık; kart tanımı ve araç kataloğu gibi global yapılandırma tabloları hariç (uygulama rolü bunları yalnızca okur). `gorevler`, `calismalar`, `onaylar`, `notlar`, `belgeler` ve `iz_kaydi` tablolarında boş bırakılabilir `proje_id` var; doluysa satırı yalnızca proje üyeleri ve kurucu görür. Ajan çalışmasında görünürlük ayrıca daraltılır: proje bağlamı olmayan ajan çalışması hiçbir projenin proje kapsamlı satırını görmez, proje bağlamı olan çalışma yalnızca kendi projesinin satırlarını görür; çalışmanın kimliği kurucu olsa bile. Çalışma kayıtlarının görünürlüğü bağlı olduğu görevden ya da projeden gelir.
+Şirket verisi tutan her tabloda `company_id` zorunlu ve RLS açık; kart tanımı ve araç kataloğu gibi global yapılandırma tabloları hariç (uygulama rolü bunları yalnızca okur). `tasks`, `runs`, `approvals`, `notes`, `documents` ve `audit_log` tablolarında boş bırakılabilir `project_id` var; doluysa satırı yalnızca proje üyeleri ve kurucu görür. Ajan çalışmasında görünürlük ayrıca daraltılır: proje bağlamı olmayan ajan çalışması hiçbir projenin proje kapsamlı satırını görmez, proje bağlamı olan çalışma yalnızca kendi projesinin satırlarını görür; çalışmanın kimliği kurucu olsa bile. Çalışma kayıtlarının görünürlüğü bağlı olduğu görevden ya da projeden gelir.
 
 | Tablo | İçerik |
 | --- | --- |
-| sirketler | Kiracılar ve özel alanlar. `tur`: `sirket` (Arma DX, Pillika) ya da `ozel_alan` (yalnızca kurucunun üye olduğu Kurucu alanı, `kurucu_alani`) |
-| kullanicilar, uyelikler | Kişi, üyesi olduğu şirketler, rol; giriş yalnızca `uyelikler` tablosunda kaydı olan e-postayla; kullanıcı yalnızca kendi kaydını, üyeliklerini ve üyesi olduğu şirketleri görür |
-| ajan_tanimlari, kart_surumleri | Global, `sirket_id` yok. Görev kartı: amaç, talimat, skill'ler, araç izinleri, yetki seviyesi, onay noktaları, model, sınırlar, sürüm geçmişi; depodaki YAML'dan her yayında git commit kimliğiyle senkronize edilir |
-| sirket_ajanlari | Şirkete özel ajan satırı: `sirket_id`, `ajan_kod`, durum (durdurma düğmesi), ayarlar (Drive klasörleri, öncelikli göndericiler, Figma çalışma dosyası, bütçe) |
-| gorevler | Talep, şirket, proje, atanan (insan ya da ajan), durum, öncelik, son tarih, yorumlar |
-| calismalar | Ajan çalışması: girdi, çıktı, araç çağrıları, model, kart sürümü, token, maliyet, süre, iç iş ya da proje etiketi |
-| onaylar | Onay bekleyen çıktı, özet, risk notu, fark, durum, gerekçe, onaylayan, zaman |
-| iz_kaydi | Değiştirilemeyen olay kaydı: kim, ne yaptı, hangi veriye baktı, ne zaman |
-| notlar, not_surumleri | Markdown not: klasör yolu, başlık, YAML özellikler, gövde, sürüm, arama dizini, taslak durumu (Y1 ajanın notu onaydan sonra paylaşılır); kararlar ve tutanaklar da not türü |
-| not_baglantilari | Notlardaki `[[...]]` bağlantıları; geri bağlantılar ve grafik görünümü buradan |
-| belgeler | Drive'dan gelen kaynak dosyalar; her biri bir kaynak notuna bağlı |
-| istasyon_adaylari | Pillika için toplanan istasyon verisi: kaynak, konum, operatör, soket tipleri, güç, erişim, tarih, doğrulama durumu, eşleşen kayıt |
-| musteriler, firsatlar | Basit müşteri listesi: kurum, kişi, fırsat, aşama, değer, sonraki adım; müşteri düzeyinde AI izni (izni olmayan müşteriye bağlı bütün kayıtlar ajan çalışmalarına kapalı) ve sözleşmenin kodla otomatik işlemeye izin verip vermediği |
-| projeler | Proje, müşteri, bütçe, kilometre taşları, AI izni (müşteri sözleşmesi AI kullanımına izin vermiyorsa o projede ajan çalışmaz) |
-| proje_uyeleri | Projenin üyeleri; proje kapsamlı satırları yalnızca üyeler ve kurucu görür |
-| entegrasyonlar | Bağlantı ayarları ve yetkileri, şirket bazında; Google bağlantı token'ları şifreli, yalnızca worker kullanır |
+| companies | Kiracılar ve özel alanlar. `kind`: `company` (Arma DX, Pillika) ya da `private_space` (yalnızca kurucunun üye olduğu Kurucu alanı, `founder_space`) |
+| users, memberships | Kişi, üyesi olduğu şirketler, rol; giriş yalnızca `memberships` tablosunda kaydı olan e-postayla; kullanıcı yalnızca kendi kaydını, üyeliklerini ve üyesi olduğu şirketleri görür |
+| agent_definitions, card_versions | Global, `company_id` yok. Görev kartı: amaç, talimat, skill'ler, araç izinleri, yetki seviyesi, onay noktaları, model, sınırlar, sürüm geçmişi; depodaki YAML'dan her yayında git commit kimliğiyle senkronize edilir |
+| company_agents | Şirkete özel ajan satırı: `company_id`, `agent_code`, durum (durdurma düğmesi), ayarlar (Drive klasörleri, öncelikli göndericiler, Figma çalışma dosyası, bütçe) |
+| tasks | Talep, şirket, proje, atanan (insan ya da ajan), durum, öncelik, son tarih, yorumlar |
+| runs | Ajan çalışması: girdi, çıktı, araç çağrıları, model, kart sürümü, token, maliyet, süre, iç iş ya da proje etiketi |
+| approvals | Onay bekleyen çıktı, özet, risk notu, fark, durum, gerekçe, onaylayan, zaman |
+| audit_log | Değiştirilemeyen olay kaydı: kim, ne yaptı, hangi veriye baktı, ne zaman |
+| notes, note_versions | Markdown not: klasör yolu, başlık, YAML özellikler, gövde, sürüm, arama dizini, taslak durumu (Y1 ajanın notu onaydan sonra paylaşılır); kararlar ve tutanaklar da not türü |
+| note_links | Notlardaki `[[...]]` bağlantıları; geri bağlantılar ve grafik görünümü buradan |
+| documents | Drive'dan gelen kaynak dosyalar; her biri bir kaynak notuna bağlı |
+| station_candidates | Pillika için toplanan istasyon verisi: kaynak, konum, operatör, soket tipleri, güç, erişim, tarih, doğrulama durumu, eşleşen kayıt |
+| customers, opportunities | Basit müşteri listesi: kurum, kişi, fırsat, aşama, değer, sonraki adım; müşteri düzeyinde AI izni (izni olmayan müşteriye bağlı bütün kayıtlar ajan çalışmalarına kapalı) ve sözleşmenin kodla otomatik işlemeye izin verip vermediği |
+| projects | Proje, müşteri, bütçe, kilometre taşları, AI izni (müşteri sözleşmesi AI kullanımına izin vermiyorsa o projede ajan çalışmaz) |
+| project_members | Projenin üyeleri; proje kapsamlı satırları yalnızca üyeler ve kurucu görür |
+| integrations | Bağlantı ayarları ve yetkileri, şirket bazında; Google bağlantı token'ları şifreli, yalnızca worker kullanır |
 
 ## Durumlar ve roller
 
 Onaylandı. Arayüzde Türkçe adlar, veritabanında parantez içindeki değerler kullanılır.
 
-- Görev durumu: Açık (`acik`), Sürüyor (`suruyor`), Onay bekliyor (`onay_bekliyor`), Yanıt bekliyor (`yanit_bekliyor`, 2 Ekim), Tamamlandı (`tamamlandi`), İptal (`iptal`)
-- Onay durumu: Bekliyor (`bekliyor`), Onaylandı (`onaylandi`), Düzeltme istendi (`duzeltme_istendi`), Reddedildi (`reddedildi`)
+- Görev durumu: Açık (`open`), Sürüyor (`in_progress`), Onay bekliyor (`awaiting_approval`), Yanıt bekliyor (`awaiting_reply`, 2 Ekim), Tamamlandı (`done`), İptal (`cancelled`)
+- Onay durumu: Bekliyor (`pending`), Onaylandı (`approved`), Düzeltme istendi (`changes_requested`), Reddedildi (`rejected`)
 
 | Rol | Yetki |
 | --- | --- |
-| Kurucu (`kurucu`) | Bütün şirketleri görür, bütün onayları verir, kullanıcı ve ajan ayarlarını yönetir; iki şirketi birlikte yalnızca holding görünümünde (salt okunur) görür; Kurucu özel alanının tek üyesidir |
-| Çalışan (`calisan`) | Üyesi olduğu şirketin görev ve notlarıyla çalışır; proje kapsamlı kayıtları yalnızca üyesi olduğu projelerde görür; onay yetkisi kurucu verirse açılır |
-| Dış kişi (`dis_kisi`) | Mali müşavir ve avukat gibi; kendi Google hesabıyla davetle girer; yalnızca kendisine açılan görev ve notları görür |
+| Kurucu (`founder`) | Bütün şirketleri görür, bütün onayları verir, kullanıcı ve ajan ayarlarını yönetir; iki şirketi birlikte yalnızca holding görünümünde (salt okunur) görür; Kurucu özel alanının tek üyesidir |
+| Çalışan (`employee`) | Üyesi olduğu şirketin görev ve notlarıyla çalışır; proje kapsamlı kayıtları yalnızca üyesi olduğu projelerde görür; onay yetkisi kurucu verirse açılır |
+| Dış kişi (`external`) | Mali müşavir ve avukat gibi; kendi Google hesabıyla davetle girer; yalnızca kendisine açılan görev ve notları görür |
 
 ## Yetki seviyeleri
 
@@ -94,7 +94,7 @@ Rapordaki dört seviye. Ajanların çoğu Y1 ile başlar; "Y1, hedef Y2" yazan a
 
 - Yükseltme: ajan en az 50 işte ilk seferde yüzde 95 onay oranına ulaşır ve son 30 günde kritik hata yapmazsa bir üst seviyeye önerilir; kararı birim sorumlusu, başlangıçta kurucu verir. Kritik hata ajanı hemen bir seviye düşürür ve vaka incelenir. Eşikler pilotta gerçek veriyle ayarlanır.
 - Hiçbir koşulda ajana bırakılmayan işler (ajan bu işlerde en fazla Y1): para transferi, imza ve taahhüt, resmî kurumlara başvuru ve beyan, kişisel verinin silinmesi ya da üçüncü kişiye aktarılması.
-- Pilotta Y1 kapısı kodla uygulanır (1 Ekim ikinci tur, karar 4): Y1 ajan yalnızca korumalı alana (taslaklar) ve kendi görevinin durumuna yazar; paylaşılan kayda yazması (bildirim, paylaşılan not, başka bir görevi güncelleme) onaya düşer; görev açma öneri olarak gelir. Ajanın soruları ve eskalasyonları "insana sor" yoluyla ajanın sorumlusuna (kartta `sorumlu`) ya da talep sahibine gider, onaya düşmez (2 Ekim, karar 1). Y2 ve Y3 kapıları karar bekliyor (`docs/SONRA.md`, M19).
+- Pilotta Y1 kapısı kodla uygulanır (1 Ekim ikinci tur, karar 4): Y1 ajan yalnızca korumalı alana (taslaklar) ve kendi görevinin durumuna yazar; paylaşılan kayda yazması (bildirim, paylaşılan not, başka bir görevi güncelleme) onaya düşer; görev açma öneri olarak gelir. Ajanın soruları ve eskalasyonları "insana sor" yoluyla ajanın sorumlusuna (kartta `owner`) ya da talep sahibine gider, onaya düşmez (2 Ekim, karar 1). Y2 ve Y3 kapıları karar bekliyor (`docs/SONRA.md`, M19).
 - Her ajanın bir insan sorumlusu var; sorumlu ajanı her an durdurabilir ya da işi devralabilir. Pilotta bütün ajanların sorumlusu ve bütün onaylar kurucuda; onay yetkisi zamanla ekibe devredilir.
 
 ## Ekranlar
@@ -126,7 +126,7 @@ Günlük iş listeler, pano ve Onay Masası üzerinden yürür. Üst çubukta ş
 | M2 | Görev kaydı | Talep, atama, durum, son tarih; pano ve liste | 0 |
 | M3 | Onay Masası | Kuyruk, özet, fark, onay, ret, düzeltme, gerekçe; telefonda tek dokunuş | 0 |
 | M4 | İz kaydı ve maliyet | Çalışma ve onay kaydı; token ve maliyet; iç iş ve proje ayrımı | 0 |
-| M5 | Ajan çalıştırıcı | Kart ve skill yükleme, Claude ile araç döngüsü, kuyruk, zamanlayıcı, olay tetikleyici, yeniden deneme, zaman aşımı, durdurma; Y1 kapısı, "insana sor" yolu; `proje_baglami` (proje başına zamanlanmış çalışma) ve proje özetlerinin kodla birleştirilmesi | 1 |
+| M5 | Ajan çalıştırıcı | Kart ve skill yükleme, Claude ile araç döngüsü, kuyruk, zamanlayıcı, olay tetikleyici, yeniden deneme, zaman aşımı, durdurma; Y1 kapısı, "insana sor" yolu; `project_context` (proje başına zamanlanmış çalışma) ve proje özetlerinin kodla birleştirilmesi | 1 |
 | M6 | Görev kartı yönetimi | Kart görüntüleme, sürüm geçmişi, test setini çalıştırma; düzenleme depoda PR ile. | 1 |
 | M7 | Not sistemi | Markdown editörü, `[[` ile not önerisi, geri bağlantılar, etiket ve özellik filtresi, arama, kaynak gösterme; Drive'dan içeri aktarma | 1 |
 | M8 | Ofis Koordinatörü | Talebi sınıflandırır, şirketi ve birimi belirler, alt görevlere böler; yönlendirme kararları kayıtlı ve düzeltilebilir; koordinatör devre dışıyken birimlere doğrudan erişim yolu (yedek yol) | 1 |
@@ -163,10 +163,10 @@ Rapordaki pilot seti. "Ne yapar" sütunu raporun tanımıdır; görev kartları 
 
 | Dosya | İçerik |
 | --- | --- |
-| `skills/teklif/SKILL.md` | Ne zaman kullanılacağı ve adım adım çalışma talimatı |
-| `skills/teklif/sablonlar/` | Çıktı şablonları |
-| `skills/teklif/ornekler/` | Onaylanmış iyi çıktı örnekleri |
-| `skills/teklif/testler/` | 10-20 örnek girdi ve kabul ölçütleri |
+| `skills/proposal/SKILL.md` | Ne zaman kullanılacağı ve adım adım çalışma talimatı |
+| `skills/proposal/templates/` | Çıktı şablonları |
+| `skills/proposal/examples/` | Onaylanmış iyi çıktı örnekleri |
+| `skills/proposal/tests/` | 10-20 örnek girdi ve kabul ölçütleri |
 | `agents/A-TEK-2.yaml` | Görev kartı: skill'ler, araçlar, yetki seviyesi, onay noktaları, model, sınırlar |
 
 Skill içeriği kurucunun verdiği gerçek dokümanlardan yazılır; bilgi uydurulmaz.
@@ -278,4 +278,4 @@ Kazanılan zamanın ölçülebilmesi için pilottan önce seçilen işlerin bug�
 | Maliyet | Çalışma başına maliyetin beklenen aralıkta kalması | Haftalık |
 | Yasak işler | Para, imza, resmî başvuru ve kişisel veri silme ya da aktarma işlerinde hiçbir ajanın Y1'in üstüne çıkamaması | Her yayında |
 | AI izni | AI izni olmayan projede hiçbir ajanın çalışamaması; izni olmayan müşteriye bağlı kayıtların ajan çalışmasına kapalı olması; bu müşteride yalnızca model çağırmayan sistem işlerinin sürmesi | Her yayında |
-| Yetki kapısı | Y1 ajanın `ic_yazma` çağrısının onaya düşmesi; "insana sor" yolunun onaya düşmemesi | Her yayında |
+| Yetki kapısı | Y1 ajanın `internal_write` çağrısının onaya düşmesi; "insana sor" yolunun onaya düşmemesi | Her yayında |

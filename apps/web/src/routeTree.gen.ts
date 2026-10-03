@@ -10,73 +10,73 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as AjanlarRouteImport } from './routes/ajanlar'
-import { Route as GorevlerRouteImport } from './routes/gorevler'
-import { Route as NotlarRouteImport } from './routes/notlar'
-import { Route as OnaylarRouteImport } from './routes/onaylar'
+import { Route as AgentsRouteImport } from './routes/agents'
+import { Route as ApprovalsRouteImport } from './routes/approvals'
+import { Route as NotesRouteImport } from './routes/notes'
+import { Route as TasksRouteImport } from './routes/tasks'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AjanlarRoute = AjanlarRouteImport.update({
-  id: '/ajanlar',
-  path: '/ajanlar',
+const AgentsRoute = AgentsRouteImport.update({
+  id: '/agents',
+  path: '/agents',
   getParentRoute: () => rootRouteImport,
 } as any)
-const GorevlerRoute = GorevlerRouteImport.update({
-  id: '/gorevler',
-  path: '/gorevler',
+const ApprovalsRoute = ApprovalsRouteImport.update({
+  id: '/approvals',
+  path: '/approvals',
   getParentRoute: () => rootRouteImport,
 } as any)
-const NotlarRoute = NotlarRouteImport.update({
-  id: '/notlar',
-  path: '/notlar',
+const NotesRoute = NotesRouteImport.update({
+  id: '/notes',
+  path: '/notes',
   getParentRoute: () => rootRouteImport,
 } as any)
-const OnaylarRoute = OnaylarRouteImport.update({
-  id: '/onaylar',
-  path: '/onaylar',
+const TasksRoute = TasksRouteImport.update({
+  id: '/tasks',
+  path: '/tasks',
   getParentRoute: () => rootRouteImport,
 } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/ajanlar': typeof AjanlarRoute
-  '/gorevler': typeof GorevlerRoute
-  '/notlar': typeof NotlarRoute
-  '/onaylar': typeof OnaylarRoute
+  '/agents': typeof AgentsRoute
+  '/approvals': typeof ApprovalsRoute
+  '/notes': typeof NotesRoute
+  '/tasks': typeof TasksRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/ajanlar': typeof AjanlarRoute
-  '/gorevler': typeof GorevlerRoute
-  '/notlar': typeof NotlarRoute
-  '/onaylar': typeof OnaylarRoute
+  '/agents': typeof AgentsRoute
+  '/approvals': typeof ApprovalsRoute
+  '/notes': typeof NotesRoute
+  '/tasks': typeof TasksRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/ajanlar': typeof AjanlarRoute
-  '/gorevler': typeof GorevlerRoute
-  '/notlar': typeof NotlarRoute
-  '/onaylar': typeof OnaylarRoute
+  '/agents': typeof AgentsRoute
+  '/approvals': typeof ApprovalsRoute
+  '/notes': typeof NotesRoute
+  '/tasks': typeof TasksRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/ajanlar' | '/gorevler' | '/notlar' | '/onaylar'
+  fullPaths: '/' | '/agents' | '/approvals' | '/notes' | '/tasks'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/ajanlar' | '/gorevler' | '/notlar' | '/onaylar'
-  id: '__root__' | '/' | '/ajanlar' | '/gorevler' | '/notlar' | '/onaylar'
+  to: '/' | '/agents' | '/approvals' | '/notes' | '/tasks'
+  id: '__root__' | '/' | '/agents' | '/approvals' | '/notes' | '/tasks'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  AjanlarRoute: typeof AjanlarRoute
-  GorevlerRoute: typeof GorevlerRoute
-  NotlarRoute: typeof NotlarRoute
-  OnaylarRoute: typeof OnaylarRoute
+  AgentsRoute: typeof AgentsRoute
+  ApprovalsRoute: typeof ApprovalsRoute
+  NotesRoute: typeof NotesRoute
+  TasksRoute: typeof TasksRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -88,32 +88,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/ajanlar': {
-      id: '/ajanlar'
-      path: '/ajanlar'
-      fullPath: '/ajanlar'
-      preLoaderRoute: typeof AjanlarRouteImport
+    '/agents': {
+      id: '/agents'
+      path: '/agents'
+      fullPath: '/agents'
+      preLoaderRoute: typeof AgentsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/gorevler': {
-      id: '/gorevler'
-      path: '/gorevler'
-      fullPath: '/gorevler'
-      preLoaderRoute: typeof GorevlerRouteImport
+    '/approvals': {
+      id: '/approvals'
+      path: '/approvals'
+      fullPath: '/approvals'
+      preLoaderRoute: typeof ApprovalsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/notlar': {
-      id: '/notlar'
-      path: '/notlar'
-      fullPath: '/notlar'
-      preLoaderRoute: typeof NotlarRouteImport
+    '/notes': {
+      id: '/notes'
+      path: '/notes'
+      fullPath: '/notes'
+      preLoaderRoute: typeof NotesRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/onaylar': {
-      id: '/onaylar'
-      path: '/onaylar'
-      fullPath: '/onaylar'
-      preLoaderRoute: typeof OnaylarRouteImport
+    '/tasks': {
+      id: '/tasks'
+      path: '/tasks'
+      fullPath: '/tasks'
+      preLoaderRoute: typeof TasksRouteImport
       parentRoute: typeof rootRouteImport
     }
   }
@@ -121,10 +121,10 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  AjanlarRoute: AjanlarRoute,
-  GorevlerRoute: GorevlerRoute,
-  NotlarRoute: NotlarRoute,
-  OnaylarRoute: OnaylarRoute,
+  AgentsRoute: AgentsRoute,
+  ApprovalsRoute: ApprovalsRoute,
+  NotesRoute: NotesRoute,
+  TasksRoute: TasksRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

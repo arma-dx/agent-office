@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { baseEnvSchema, parseEnv } from '@agent-office/shared/env';
 
 export const apiEnvSchema = baseEnvSchema.extend({
-  // Boş değer bütün arayüzleri dinletir; bu yüzden reddedilir.
+  // An empty value would listen on every interface, so it is rejected.
   HOST: z.string().trim().min(1).default('127.0.0.1'),
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
 });

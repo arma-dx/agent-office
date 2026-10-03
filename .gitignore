@@ -1,4 +1,4 @@
-# Bağımlılıklar ve derleme çıktıları
+# Dependencies and build output
 node_modules/
 dist/
 coverage/
@@ -6,12 +6,12 @@ coverage/
 *.tsbuildinfo
 .tanstack/
 
-# Gizli anahtarlar: .env dosyaları depoya girmez (CLAUDE.md kural 6)
+# Secrets: .env files never enter the repository (CLAUDE.md rule 6)
 .env
 .env.*
 !.env.example
 
-# Yerel dosyalar
+# Local files
 *.log
 *.local
 .DS_Store

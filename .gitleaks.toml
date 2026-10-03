@@ -11,13 +11,13 @@ keywords = ["sb_secret_"]
 
 [[rules]]
 id = "postgres-connection-string"
-description = "Parola içeren Postgres bağlantı adresi"
+description = "Postgres connection URL with a password"
 regex = '''(?i)postgres(?:ql)?://[^:/@\s]+:([^@\s]{6,})@'''
 secretGroup = 1
 keywords = ["postgres"]
 
 [[rules.allowlists]]
-description = "Yer tutucular ve yerel Supabase varsayılanı"
+description = "Placeholders and the local Supabase default"
 regexTarget = "line"
 regexes = [
   '''(?i)postgres(?:ql)?://postgres:postgres@(127\.0\.0\.1|localhost)''',

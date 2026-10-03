@@ -5,28 +5,28 @@ import { tanstackRouter } from '@tanstack/router-plugin/vite';
 import react from '@vitejs/plugin-react';
 import { defineConfig, loadEnv } from 'vite';
 
-const kokDizin = fileURLToPath(new URL('../..', import.meta.url));
+const rootDir = fileURLToPath(new URL('../..', import.meta.url));
 
 export default defineConfig(({ mode }) => {
-  // Kökteki .env'den yalnızca PORT okunur; geliştirme sunucusunun API adresi içindir, pakete girmez.
-  const apiPort = loadEnv(mode, kokDizin, 'PORT').PORT ?? '3000';
+  // Only PORT is read from the root .env; it is for the dev server's API address and does not enter the bundle.
+  const apiPort = loadEnv(mode, rootDir, 'PORT').PORT ?? '3000';
 
   return {
     plugins: [
-      // Yönlendirici eklentisi react()'ten önce gelir; src/routes altından routeTree.gen.ts üretir.
+      // The router plugin comes before react(); it generates routeTree.gen.ts from src/routes.
       tanstackRouter({ target: 'react', autoCodeSplitting: true, quoteStyle: 'single' }),
       react(),
       tailwindcss(),
     ],
     resolve: { tsconfigPaths: true },
-    // Panel ortam değişkeni okumaz: .env yüklenmez, VITE_ önekli süreç değişkenleri de pakete girmez.
+    // The panel reads no environment variables: .env is not loaded, and VITE_ prefixed process variables do not enter the bundle.
     envDir: false,
     envPrefix: 'PANEL_PUBLIC_',
     server: {
       port: 5173,
       strictPort: true,
       proxy: {
-        // Tarayıcı yalnızca göreli /api/ çağırır; geliştirmede yerel Fastify'a aktarılır.
+        // The browser only calls the relative /api/; in development it is forwarded to the local Fastify.
         '/api/': { target: `http://127.0.0.1:${apiPort}` },
       },
     },

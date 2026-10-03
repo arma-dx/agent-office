@@ -3,7 +3,7 @@ import { defineProject } from 'vitest/config';
 export default defineProject({
   test: {
     environment: 'node',
-    // Kuyruk testleri için ayrı test veritabanı (packages/db ile aynı kurulum, ayrı ad).
-    globalSetup: ['./test/kurulum.ts'],
+    // A separate test database for the queue tests (same setup as packages/db, different name).
+    globalSetup: ['./test/setup.ts'],
   },
 });

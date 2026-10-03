@@ -4,8 +4,8 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
-    // Proje listesi package.json taşıyan klasörlerden çıkarılır; başıboş dosyalar listeye girmez.
-    // Klasör projeleri kök ayarları devralmaz; her paketin kendi ayarı kendi klasöründedir.
-    projects: globSync('{apps,packages}/*/package.json').map((yol) => dirname(yol)),
+    // The project list is derived from folders that hold a package.json; stray files stay out.
+    // Folder projects do not inherit the root settings; each package keeps its own config.
+    projects: globSync('{apps,packages}/*/package.json').map((path) => dirname(path)),
   },
 });

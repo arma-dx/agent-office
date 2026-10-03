@@ -72,13 +72,15 @@ Terminalde, proje klasöründe:
 
 Bundan sonraki göçler `supabase db push` ile gider (`--include-seed` olmadan). Uygulanmış bir göç dosyası değiştirilmez; değişiklik yeni bir göçle gelir.
 
+Tek seferlik istisna (3 Ekim, karar 4): adlar İngilizceye geçerken göçler baştan yazıldı. Test projesi, kurucunun onayıyla `supabase db reset --linked` ile sıfırlanır (göçler ve başlangıç verisi yeniden kurulur), ardından eski `ofis_*` rolleri silinir. Canlı proje henüz açılmadığı için orada böyle bir adım yok.
+
 ## 4. Uygulama rollerine parola (sunucu kurulurken)
 
-Göçler `ofis_api` ve `ofis_worker` giriş rollerini parolasız açar. Sunucu kurulurken parolalar parola yöneticisinde üretilir ve psql'de `postgres` olarak bağlanıp `\password ofis_api` ve `\password ofis_worker` ile verilir. Parolalar yalnızca sunucunun gizli ayarlarında durur. Studio'nun SQL ekranında parola verilmez, çünkü açık metin loglara düşer.
+Göçler `office_api` ve `office_worker` giriş rollerini parolasız açar. Sunucu kurulurken parolalar parola yöneticisinde üretilir ve psql'de `postgres` olarak bağlanıp `\password office_api` ve `\password office_worker` ile verilir. Parolalar yalnızca sunucunun gizli ayarlarında durur. Studio'nun SQL ekranında parola verilmez, çünkü açık metin loglara düşer.
 
 ## 5. Bağlantı (sunucu kurulurken)
 
-- Doğrudan bağlantı yalnızca IPv6. Sunucudan Supavisor oturum kipiyle (session mode, port 5432) bağlanılır; kullanıcı adı `ofis_api.PROJE_KIMLIGI` biçimindedir. IPv4 eki (aylık yaklaşık 4 dolar) alınırsa doğrudan bağlantı kullanılabilir.
+- Doğrudan bağlantı yalnızca IPv6. Sunucudan Supavisor oturum kipiyle (session mode, port 5432) bağlanılır; kullanıcı adı `office_api.PROJE_KIMLIGI` biçimindedir. IPv4 eki (aylık yaklaşık 4 dolar) alınırsa doğrudan bağlantı kullanılabilir.
 - SSL sertifika doğrulamalı kullanılır (Supabase'in CA sertifikası).
 - Ağ kısıtlaması yalnızca sunucunun IP adresine izin verir.
 

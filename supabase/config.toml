@@ -1,9 +1,9 @@
-# Yerel Supabase (supabase start). Canlıdaki gibi yalnızca PostgreSQL kullanılır: panel Supabase'e
-# hiç bağlanmaz (CLAUDE.md kural 1), Data API (PostgREST), Auth, Realtime, Storage, Edge Functions,
-# e-posta, analytics ve Studio kapalı.
-# Docker Desktop yayımlanan portları bütün ağ arabirimlerinde açar (Docker Engine'deki "ip" ayarı
-# bunu değiştirmiyor, 3 Ekim'de denendi) ve yerel veritabanının parolası herkesçe bilinen
-# varsayılandır. Yığın yalnızca gerektiğinde açılır, iş bitince `supabase stop` ile kapatılır.
+# Local Supabase (supabase start). As in production, only PostgreSQL is used: the panel never
+# connects to Supabase (CLAUDE.md rule 1); the Data API (PostgREST), Auth, Realtime, Storage, Edge
+# Functions, email, analytics and Studio are disabled.
+# Docker Desktop publishes ports on every network interface (the "ip" setting in Docker Engine does
+# not change this, tried on 3 October) and the local database password is the publicly known
+# default. Start the stack only when needed and shut it down with `supabase stop` when done.
 # For detailed configuration reference documentation, visit:
 # https://supabase.com/docs/guides/local-development/cli/config
 # A string used to distinguish different Supabase projects on the same host. Defaults to the

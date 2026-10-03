@@ -1,0 +1,136 @@
+# Araç kataloğu (pilot)
+# kind: read | draft | internal_write | external_effect
+# draft: ajana teknik olarak ayrılmış korumalı alana yazar (ayrı Figma dosyası, panel içi taslak, aday tablosu); kural 4'e göre iç yazmadır.
+# internal_write: paylaşılan kayda yazar (görev, bildirim, paylaşılan not, müşteri kaydı).
+# external_effect sınıfındaki her çağrı Onay Masası'na düşer.
+# Y1 kartların internal_write çağrıları onaya düşer. İstisnalar: kendi görevinin durum geçişlerini çalıştırıcı yapar;
+# Y1'in write_note çağrısı notu draft durumunda açar, not onaydan sonra paylaşılır. Görev açma Y1'de suggest_task ile öneri olarak gelir.
+# Ajanın soruları ve "kurucuya bildirir" türündeki eskalasyonları katalogdaki bir araçla değil, çalıştırıcının "insana sor" yoluyla gider; bu yol onaya düşmez.
+# Araçlardan onay isteyen durumlar, sınıfı ne olursa olsun (ör. draft sınıfındaki write_station_candidates), "approval_rule" alanında yazılıdır.
+# Her çalışma tek bir şirket adına koşar. Bütün araçlar çalışmanın bağlamıyla (şirket, kullanıcı, ajan ve varsa proje) ve kartındaki izinle sınırlıdır.
+# Proje bağlamı olmayan ajan çalışması proje kapsamlı satır görmez. AI izni olmayan müşteriye bağlı bütün kayıtlar ajan çalışmalarına kapalıdır.
+# Google araçları (Gmail, Takvim, Drive, Meet dökümü) bağlantı istemcisiyle ve bağlantıyı kuran kişinin (pilotta kurucu)
+# kimliğiyle çalışır; kapsamlar yalnızca gmail.readonly, calendar.readonly ve drive.readonly (gmail.send ileride yalnızca
+# send_email için). Token'lar şifreli saklanır, yalnızca worker kullanır. Pilotta servis hesabı ve alan genelinde yetki devri kullanılmaz.
+# Drive'dan okuyan araçlar (list_drive, read_drive_file, import_document, read_meeting_transcript) yalnızca company_agents.settings
+# alanındaki izinli klasörlere erişir; izin listesi kodla denetlenir.
+# Avukatın görüşü gelene kadar kişisel veri içeren kaynaklar bağlanmaz (Gmail, Takvim, Meet dökümleri, müşteri görüşme kayıtları,
+# kişisel veri içeren Drive klasörleri); izin listesine yalnızca kişisel veri içermeyen şirket belgeleri girer.
+
+tools:
+  - name: search_tasks
+    kind: read
+    description: Görev kaydında şirket, durum, atanan ve son tarihe göre arama
+  - name: read_task
+    kind: read
+    description: Tek görevin ayrıntısı, yorumları ve çalışma geçmişi
+  - name: create_task
+    kind: internal_write
+    description: Yeni görev ya da alt görev açar, insana ya da ajana atar
+  - name: suggest_task
+    kind: draft
+    description: Görev önerisi hazırlar; görevi kendisi açmaz, ilgili kişi (pilotta kurucu) tek dokunuşla açar. KOR-4'te önerinin açılacağı şirketi, KOR-1'de iki şirketli talebin diğer şirketini kurucu seçer
+  - name: update_task
+    kind: internal_write
+    description: Görevin durumunu değiştirir, yorum ve etiket ekler
+    approval_rule: Görevin atananı ya da son tarihi değişiyorsa
+  - name: list_agents
+    kind: read
+    description: Şirkette açık ajanların kodu, birimi, durumu ve kart özeti
+  - name: list_users
+    kind: read
+    description: Şirketteki kullanıcılar ve rolleri
+  - name: send_notification
+    kind: internal_write
+    description: Ekip üyesine panel içi bildirim ve şirket içi e-posta; dış adreslere gönderemez; telefon bildirimi hassas bilgi taşımaz
+  - name: submit_for_approval
+    kind: draft
+    description: Çıktıyı gerekçe, kaynaklar ve değişiklik farkıyla Onay Masası'na koyar
+  - name: read_approval_queue
+    kind: read
+    description: Bekleyen onaylar ve ayrıntıları
+  - name: write_approval_summary
+    kind: internal_write
+    description: Onay kaydına özet, risk notu ve öncelik yazar; kararı değiştiremez
+  - name: search_notes
+    kind: read
+    description: Notlarda tam metin, etiket ve özellik araması; soranın erişimiyle sınırlı
+  - name: read_note
+    kind: read
+    description: Notun gövdesi, özellikleri, bağlantıları ve geri bağlantıları; geri bağlantılar da çalışmanın bağlamıyla süzülür, görülemeyen notun başlığı dönmez
+  - name: write_note
+    kind: internal_write
+    description: Yeni not ya da taslak not oluşturur; Y1 ajanın notu draft durumunda açılır, onaydan sonra paylaşılır
+  - name: update_note
+    kind: internal_write
+    description: Mevcut notu değiştirir
+    approval_rule: Not "tek doğru kaynak" olarak işaretliyse, siliniyorsa ya da arşivleniyorsa
+  - name: link_notes
+    kind: internal_write
+    description: Notlar arasına bağlantı ve etiket ekler
+    approval_rule: Bağlantı ya da etiket "tek doğru kaynak" olarak işaretli bir nota ekleniyorsa
+  - name: list_drive
+    kind: read
+    description: İzin verilen Google Drive klasörlerindeki dosyaları listeler
+  - name: read_drive_file
+    kind: read
+    description: Drive dosyasının metnini okur
+  - name: import_document
+    kind: internal_write
+    description: Drive belgesini kaynak notu olarak içe aktarır ve documents tablosuna bağlar
+    approval_rule: İçe aktarma "tek doğru kaynak" olarak işaretli bir notu değiştiriyorsa
+  - name: read_customer
+    kind: read
+    description: Müşteri ve fırsat kaydı
+  - name: update_customer
+    kind: internal_write
+    description: Fırsat aşaması, sonraki adım ve not ekler
+  - name: read_project
+    kind: read
+    description: Proje, kilometre taşları ve bütçe
+  - name: read_costs
+    kind: read
+    description: Proje ya da ajan bazında çalışma maliyetleri
+  - name: read_github
+    kind: read
+    description: Projeye bağlı depolarda commit, değişiklik isteği ve iş kayıtları
+  - name: generate_pdf
+    kind: draft
+    description: HTML şablondan PDF üretir ve dosya olarak saklar
+  - name: draft_email
+    kind: draft
+    description: E-posta taslağını panelde saklar; Gmail'e yazmaz ve göndermez, kullanıcı taslağı kopyalar ya da "Gmail'de aç" bağlantısıyla kendisi gönderir (Sprint 3)
+  - name: send_email
+    kind: external_effect
+    description: Dış alıcıya e-posta gönderir; gmail.send kapsamı gerekir, her çağrı onay ister (pilotta kapalı)
+  - name: search_gmail
+    kind: read
+    description: Bağlantıyı kuran kişinin (pilotta kurucu) posta kutusunda arama (Sprint 3)
+  - name: read_gmail
+    kind: read
+    description: E-postanın ve eklerinin metnini okur (Sprint 3)
+  - name: read_calendar
+    kind: read
+    description: Takvim etkinlikleri, katılımcılar ve toplantı bağlantıları (Sprint 3)
+  - name: read_meeting_transcript
+    kind: read
+    description: Meet'in Drive'a kaydettiği transkripti ya da kaydın yazıya dökülmüş hâlini okur (Sprint 3)
+  - name: fetch_web
+    kind: read
+    description: İzin listesindeki kaynaklardan herkese açık sayfa ya da veri dosyası çeker; giriş gerektiren sayfalara giremez
+  - name: read_stations
+    kind: read
+    description: Pillika'nın mevcut istasyon kayıtlarını ve aday kayıtları okur
+  - name: write_station_candidates
+    kind: draft
+    description: Toplanan istasyon verisini aday tablosuna yazar; canlı uygulamaya aktarmaz
+    approval_rule: Mevcut bir istasyon kapalı olarak işaretleniyorsa
+  - name: read_figma
+    kind: read
+    description: Figma dosyası, bileşenler ve tasarım değişkenleri (Sprint 4)
+  - name: write_figma
+    kind: draft
+    description: Yalnızca ajana ayrılmış ayrı Figma dosyasında çerçeve ve bileşen oluşturur; dosya kimliği company_agents.settings alanındaki izin listesinden okunur, ana tasarım dosyası bu listede yer almaz (Sprint 4)
+  - name: generate_image
+    kind: draft
+    description: Onaylı şablondan kanal ölçülerinde görsel üretir (HTML ya da SVG'den PNG)
