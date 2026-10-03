@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { APP_NAME } from '@agent-office/shared';
 import { baseEnvSchema, parseEnv } from '@agent-office/shared/env';
 
 /** Local development: Vite serves the panel here and forwards /api to this server. */
@@ -129,6 +130,17 @@ export interface GoogleSettings {
   redirectUri: string;
 }
 
+/**
+ * The WebAuthn relying party of the passkeys: the panel's host is the RP ID (one per environment:
+ * office.armadx.com, office-test.armadx.com, localhost), and the panel's origin is the only origin
+ * a ceremony is accepted from.
+ */
+export interface RelyingParty {
+  id: string;
+  name: string;
+  origin: string;
+}
+
 /** What the server needs from the environment. Never logged as a whole (rule 6). */
 export interface ServerConfig {
   panelOrigin: string;
@@ -139,6 +151,7 @@ export interface ServerConfig {
   companyEmailDomains: readonly string[];
   trustProxy: string[] | null;
   google: GoogleSettings | null;
+  relyingParty: RelyingParty;
 }
 
 export function serverConfig(env: ApiEnv): ServerConfig {
@@ -160,5 +173,10 @@ export function serverConfig(env: ApiEnv): ServerConfig {
             redirectUri: GOOGLE_REDIRECT_URI,
           }
         : null,
+    relyingParty: {
+      id: new URL(env.PANEL_ORIGIN).hostname,
+      name: APP_NAME,
+      origin: env.PANEL_ORIGIN,
+    },
   };
 }

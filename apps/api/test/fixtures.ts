@@ -17,6 +17,9 @@ export const ids = {
   changer: id(16),
   traveller: id(17),
   otherFounder: id(18),
+  // Passkey tests (id 19 is the members test's second founder).
+  holder: id(20),
+  newcomer: id(21),
 
   invitation: id(101),
 } as const;
@@ -42,6 +45,8 @@ export const accounts = {
   changer: { email: 'changer@armadx.test', sub: 'sub-changer', hd: 'armadx.test' },
   traveller: { email: 'traveller@armadx.test', sub: 'sub-traveller', hd: 'armadx.test' },
   otherFounder: { email: 'founder@other.test', sub: 'sub-other-founder', hd: 'other.test' },
+  holder: { email: 'holder@armadx.test', sub: 'sub-holder', hd: 'armadx.test' },
+  newcomer: { email: 'newcomer@armadx.test', sub: 'sub-newcomer', hd: 'armadx.test' },
   // Has the pending invitation of the fixtures; no account yet.
   invitee: { email: 'invitee@gmail.com', sub: 'sub-invitee' },
   // Neither invited nor a member.
@@ -69,7 +74,9 @@ export async function loadFixtures(client: Client): Promise<void> {
       ('${ids.leaver}', 'Ayrılacak Çalışan'),
       ('${ids.changer}', 'Rolü Değişecek Çalışan'),
       ('${ids.traveller}', 'Gezgin Çalışan'),
-      ('${ids.otherFounder}', 'Başka Kurucu');
+      ('${ids.otherFounder}', 'Başka Kurucu'),
+      ('${ids.holder}', 'Passkey Sahibi'),
+      ('${ids.newcomer}', 'Yeni Çalışan');
 
     insert into office.user_emails (email, user_id) values
       ('${accounts.founder.email}', '${ids.founder}'),
@@ -79,7 +86,9 @@ export async function loadFixtures(client: Client): Promise<void> {
       ('${accounts.leaver.email}', '${ids.leaver}'),
       ('${accounts.changer.email}', '${ids.changer}'),
       ('${accounts.traveller.email}', '${ids.traveller}'),
-      ('${accounts.otherFounder.email}', '${ids.otherFounder}');
+      ('${accounts.otherFounder.email}', '${ids.otherFounder}'),
+      ('${accounts.holder.email}', '${ids.holder}'),
+      ('${accounts.newcomer.email}', '${ids.newcomer}');
 
     insert into office.memberships (company_id, user_id, role, can_approve) values
       ('${ids.arma}', '${ids.founder}', 'founder', true),
@@ -91,11 +100,17 @@ export async function loadFixtures(client: Client): Promise<void> {
       ('${ids.arma}', '${ids.leaver}', 'employee', false),
       ('${ids.arma}', '${ids.changer}', 'employee', true),
       ('${ids.arma}', '${ids.traveller}', 'employee', false),
+      ('${ids.arma}', '${ids.holder}', 'employee', false),
+      ('${ids.arma}', '${ids.newcomer}', 'employee', false),
       ('${ids.otherCompany}', '${ids.otherFounder}', 'founder', true);
 
+    -- The founder's invitation, prepared without the passkey re-verification an invitation needs
+    -- (the trigger is off for this insert only).
     select set_config('app.company_id', '${ids.arma}', true),
            set_config('app.user_id', '${ids.founder}', true);
+    alter table office.invitations disable trigger require_step_up;
     insert into office.invitations (id, company_id, email, role, can_approve)
       values ('${ids.invitation}', '${ids.arma}', '${accounts.invitee.email}', 'employee', false);
+    alter table office.invitations enable trigger require_step_up;
   `);
 }

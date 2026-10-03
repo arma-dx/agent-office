@@ -7,6 +7,7 @@ import { REDACTED, REDACT_PATHS, redact, stripQuery } from './log.ts';
 import { registerAuthRoutes } from './routes/auth.ts';
 import { registerInvitationRoutes } from './routes/invitations.ts';
 import { registerMemberRoutes } from './routes/members.ts';
+import { registerPasskeyRoutes } from './routes/passkeys.ts';
 import { registerSessionRoutes } from './routes/session.ts';
 import { DEFAULT_RATE_LIMITS, registerRateLimit, sameOriginGuard } from './security.ts';
 import type { RouteDeps, ServerServices } from './services.ts';
@@ -52,9 +53,12 @@ export function buildServer(opts: BuildServerOptions = {}): FastifyInstance {
   );
   // Bodies are JSON only: the text/plain parser would let a cross-site form post a body.
   app.removeContentTypeParser('text/plain');
-  // Answers carry personal data and session state; no cache keeps them.
+  // Answers carry personal data and session state; no cache keeps them. No other page may show an
+  // answer in a frame (the panel's own pages get the same headers from the web server).
   app.addHook('onRequest', (_request, reply, done) => {
     reply.header('cache-control', 'no-store');
+    reply.header('content-security-policy', "frame-ancestors 'none'");
+    reply.header('x-frame-options', 'DENY');
     done();
   });
 
@@ -79,6 +83,7 @@ export function buildServer(opts: BuildServerOptions = {}): FastifyInstance {
       registerSessionRoutes(api, deps);
       registerInvitationRoutes(api, deps);
       registerMemberRoutes(api, deps);
+      registerPasskeyRoutes(api, deps);
       done();
     });
   }

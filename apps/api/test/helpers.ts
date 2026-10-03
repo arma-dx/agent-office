@@ -147,16 +147,18 @@ export function cookieValue(response: LightMyRequestResponse, name: string): str
 }
 
 /**
- * The whole Google flow through the fake provider: start, then the callback with the login cookie
- * and any other cookies the browser holds (for example the remembered company).
+ * The whole Google flow through the fake provider: start (startUrl may ask for a page to return
+ * to), then the callback with the login cookie and any other cookies the browser holds (for
+ * example the remembered company).
  */
 export async function signIn(
   server: TestServer,
   claims: Record<string, unknown>,
   names = { login: LOGIN_COOKIE, session: SESSION_COOKIE },
   browserCookies: Record<string, string> = {},
+  startUrl = '/api/auth/google',
 ): Promise<SignInResult> {
-  const start = await server.app.inject({ method: 'GET', url: '/api/auth/google' });
+  const start = await server.app.inject({ method: 'GET', url: startUrl });
   const location = new URL(String(start.headers.location));
   const state = location.searchParams.get('state') ?? '';
   const loginCookie = cookieValue(start, names.login) ?? '';

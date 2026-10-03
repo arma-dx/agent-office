@@ -37,6 +37,15 @@ export const apiErrorCodeSchema = z.enum([
   'last_founder',
   'founder_membership',
   'member_in_use',
+  // Passkeys (3 October decision 7).
+  'step_up_required',
+  'step_up_failed',
+  'no_passkey',
+  'passkey_not_allowed',
+  'passkey_limit',
+  'passkey_exists',
+  'passkey_registration_failed',
+  'challenge_limit',
 ]);
 export type ApiErrorCode = z.output<typeof apiErrorCodeSchema>;
 
@@ -77,6 +86,17 @@ export const setCompanyRequestSchema = z.strictObject({ companyId: z.uuid() });
 export const loginStatusSchema = z.enum(['denied', 'unavailable', 'expired', 'signed_out']);
 export type LoginStatus = z.output<typeof loginStatusSchema>;
 
+/**
+ * GET /api/auth/google?next=...: the panel page to open after the sign-in, for example
+ * /c/armadx/settings/security (the first passkey is added within 10 minutes of a sign-in). Only a
+ * company page of the panel: a path of lowercase letters, digits, "_" and "-" segments under /c/,
+ * never another site. Anything else opens the panel's start page.
+ */
+export const loginReturnPathSchema = z
+  .string()
+  .max(200)
+  .regex(/^\/c\/[a-z][a-z0-9_]*(\/[a-z0-9_-]+)*$/);
+
 export const invitationStatusSchema = z.enum(['pending', 'expired', 'accepted', 'cancelled']);
 
 export const invitationSchema = z.object({
@@ -93,11 +113,8 @@ export type Invitation = z.output<typeof invitationSchema>;
 /** GET /api/invitations (founder of the selected company). */
 export const invitationListSchema = z.object({ invitations: z.array(invitationSchema) });
 
-/**
- * POST /api/invitations. 201 with the invitation; 409 invitation_exists when the address already
- * has an invitation that is neither accepted nor cancelled, expired ones included (cancel it first).
- */
-export const createInvitationRequestSchema = z.strictObject({
+/** The fields of a new invitation (the panel's form): the address, the role, the approval right. */
+export const invitationFieldsSchema = z.strictObject({
   email: z
     .email()
     .max(254)
@@ -105,7 +122,323 @@ export const createInvitationRequestSchema = z.strictObject({
   role: z.enum(['employee', 'external']),
   canApprove: z.boolean().default(false),
 });
+export type InvitationFields = z.output<typeof invitationFieldsSchema>;
+
+// Passkeys and re-verification (3 October decision 7) ------------------------------------------
+
+/*
+ * Approvals that involve money, leave the company or change a source of truth note, membership
+ * changes and passkey changes need a re-verification with a passkey (WebAuthn). The panel asks for
+ * a challenge (POST /api/step-up/options), lets the browser sign it (startAuthentication of
+ * @simplewebauthn/browser) and sends the result as `stepUp` in the body of the action it confirms.
+ * The API recomputes what was confirmed from the action's own request and refuses anything else.
+ */
+
+const base64urlSchema = (max: number) =>
+  z
+    .string()
+    .min(1)
+    .max(max)
+    .regex(/^[A-Za-z0-9_-]+$/);
+
+// The browser reports the credential id as base64url (of at most 1023 bytes).
+const credentialIdSchema = base64urlSchema(1366);
+
+/**
+ * What startAuthentication of @simplewebauthn/browser returns. Only its shape is checked here; the
+ * API verifies the content (signature, challenge, origin, user handle) with @simplewebauthn/server.
+ */
+export const authenticationResponseSchema = z.looseObject({
+  id: credentialIdSchema,
+  rawId: credentialIdSchema,
+  type: z.literal('public-key'),
+  response: z.looseObject({
+    clientDataJSON: base64urlSchema(4096),
+    authenticatorData: base64urlSchema(4096),
+    signature: base64urlSchema(4096),
+    userHandle: base64urlSchema(128).nullish(),
+  }),
+});
+export type AuthenticationResponse = z.output<typeof authenticationResponseSchema>;
+
+/** What startRegistration of @simplewebauthn/browser returns; the API verifies it. */
+export const registrationResponseSchema = z.looseObject({
+  id: credentialIdSchema,
+  rawId: credentialIdSchema,
+  type: z.literal('public-key'),
+  response: z.looseObject({
+    clientDataJSON: base64urlSchema(4096),
+    attestationObject: base64urlSchema(32768),
+    transports: z.array(z.string().max(32)).max(16).optional(),
+  }),
+});
+export type RegistrationResponse = z.output<typeof registrationResponseSchema>;
+
+/** A signed re-verification, sent with the action it confirms. Each one is used once. */
+export const stepUpSchema = z.strictObject({
+  challengeId: z.uuid(),
+  response: authenticationResponseSchema,
+});
+export type StepUp = z.output<typeof stepUpSchema>;
+
+export const stepUpPurposeSchema = z.enum([
+  'approve',
+  'membership_change',
+  'invitation',
+  'passkey_add',
+  'passkey_revoke',
+]);
+export type StepUpPurpose = z.output<typeof stepUpPurposeSchema>;
+
+const STEP_UP_DETAIL_LIMIT = 20;
+
+/** What the person confirms beyond the subject: a flat record of short values. */
+export const stepUpDetailsSchema = z
+  .record(
+    z.string().min(1).max(64),
+    z.union([z.string().max(2000), z.number(), z.boolean(), z.null()]),
+  )
+  .refine((details) => Object.keys(details).length <= STEP_UP_DETAIL_LIMIT, {
+    message: `At most ${String(STEP_UP_DETAIL_LIMIT)} details`,
+  });
+export type StepUpDetails = z.output<typeof stepUpDetailsSchema>;
+
+/**
+ * What a membership change re-verification confirms: the change exactly as PATCH (update) or
+ * DELETE (remove) /api/members/:userId carries it. Build it with memberChangeDetails.
+ */
+export const memberChangeDetailsSchema = z.discriminatedUnion('action', [
+  z.strictObject({
+    action: z.literal('update'),
+    role: z.enum(['employee', 'external']).optional(),
+    canApprove: z.boolean().optional(),
+  }),
+  z.strictObject({ action: z.literal('remove') }),
+]);
+export type MemberChangeDetails = z.output<typeof memberChangeDetailsSchema>;
+
+/** The details of a member change, for POST /api/step-up/options; the API builds the same. */
+export function memberChangeDetails(
+  change:
+    { role?: 'employee' | 'external' | undefined; canApprove?: boolean | undefined } | 'remove',
+): MemberChangeDetails {
+  if (change === 'remove') {
+    return { action: 'remove' };
+  }
+  return {
+    action: 'update',
+    ...(change.role !== undefined ? { role: change.role } : {}),
+    ...(change.canApprove !== undefined ? { canApprove: change.canApprove } : {}),
+  };
+}
+
+/**
+ * What an invitation re-verification confirms: a new invitation exactly as POST /api/invitations
+ * carries it (create), or a renewal (renew). Build it with invitationChangeDetails. An invitation
+ * becomes a membership, with its role and approval right, at the first sign-in of the address, so
+ * creating or renewing one is a membership change (3 October decision 7).
+ */
+export const invitationChangeDetailsSchema = z.discriminatedUnion('action', [
+  z.strictObject({
+    action: z.literal('create'),
+    email: z.string().max(254),
+    role: z.enum(['employee', 'external']),
+    canApprove: z.boolean(),
+  }),
+  z.strictObject({ action: z.literal('renew') }),
+]);
+export type InvitationChangeDetails = z.output<typeof invitationChangeDetailsSchema>;
+
+/** The details of an invitation change, for POST /api/step-up/options; the API builds the same. */
+export function invitationChangeDetails(
+  change: InvitationFields | 'renew',
+): InvitationChangeDetails {
+  if (change === 'renew') {
+    return { action: 'renew' };
+  }
+  return {
+    action: 'create',
+    email: change.email,
+    role: change.role,
+    canApprove: change.canApprove,
+  };
+}
+
+/**
+ * POST /api/step-up/options: a challenge for one re-verification, bound to what it confirms.
+ *   approve            companyId, subjectId (the approval), details (the decision)
+ *   membership_change  companyId, subjectId (the member), details (memberChangeDetails)
+ *   invitation         companyId, subjectId (the invitation; a new one's id is chosen by the
+ *                      panel), details (invitationChangeDetails)
+ *   passkey_add        nothing else; then POST /api/passkeys/registration/options
+ *   passkey_revoke     subjectId (the passkey's id); then DELETE /api/passkeys/:id
+ * 409 no_passkey when the person has no passkey.
+ */
+export const stepUpOptionsRequestSchema = z
+  .strictObject({
+    purpose: stepUpPurposeSchema,
+    companyId: z.uuid().optional(),
+    subjectId: z.uuid().optional(),
+    details: stepUpDetailsSchema.optional(),
+  })
+  .superRefine((body, ctx) => {
+    const forCompany =
+      body.purpose === 'approve' ||
+      body.purpose === 'membership_change' ||
+      body.purpose === 'invitation';
+    if (forCompany !== (body.companyId !== undefined)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['companyId'],
+        message: forCompany ? 'Required for this purpose' : 'Not allowed for this purpose',
+      });
+    }
+    const hasSubject = body.purpose !== 'passkey_add';
+    if (hasSubject !== (body.subjectId !== undefined)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['subjectId'],
+        message: hasSubject ? 'Required for this purpose' : 'Not allowed for this purpose',
+      });
+    }
+    if (
+      body.purpose === 'membership_change' &&
+      !memberChangeDetailsSchema.safeParse(body.details).success
+    ) {
+      ctx.addIssue({ code: 'custom', path: ['details'], message: 'Must be a member change' });
+    }
+    if (
+      body.purpose === 'invitation' &&
+      !invitationChangeDetailsSchema.safeParse(body.details).success
+    ) {
+      ctx.addIssue({ code: 'custom', path: ['details'], message: 'Must be an invitation change' });
+    }
+    if (
+      (body.purpose === 'passkey_add' || body.purpose === 'passkey_revoke') &&
+      body.details !== undefined
+    ) {
+      ctx.addIssue({ code: 'custom', path: ['details'], message: 'Not allowed for this purpose' });
+    }
+  });
+export type StepUpOptionsRequest = z.input<typeof stepUpOptionsRequestSchema>;
+
+/** Options for startAuthentication (optionsJSON). The challenge is valid for 5 minutes. */
+export const stepUpOptionsResponseSchema = z.object({
+  challengeId: z.uuid(),
+  options: z.looseObject({
+    challenge: z.string(),
+    rpId: z.string().optional(),
+    allowCredentials: z
+      .array(z.looseObject({ id: z.string(), type: z.literal('public-key') }))
+      .optional(),
+    userVerification: z.enum(['required', 'preferred', 'discouraged']).optional(),
+    timeout: z.number().optional(),
+  }),
+});
+export type StepUpOptionsResponse = z.output<typeof stepUpOptionsResponseSchema>;
+
+// Control characters, line and paragraph separators and bidirectional overrides; the database
+// refuses them too.
+function hasHiddenCharacter(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (
+      code <= 0x1f ||
+      (code >= 0x7f && code <= 0x9f) ||
+      (code >= 0x2028 && code <= 0x202e) ||
+      (code >= 0x2066 && code <= 0x2069)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** The person's own label for a passkey, shown in the passkey list. */
+export const passkeyNameSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(60)
+  .refine((name) => !hasHiddenCharacter(name), { message: 'Must not contain hidden characters' });
+
+/** A passkey of the signed-in person. `id` is the passkey's reference, not the credential id. */
+export const passkeySchema = z.object({
+  id: z.uuid(),
+  name: z.string(),
+  createdAt: z.iso.datetime({ offset: true }),
+  lastUsedAt: z.iso.datetime({ offset: true }).nullable(),
+  deviceType: z.enum(['singleDevice', 'multiDevice']),
+  backedUp: z.boolean(),
+});
+export type Passkey = z.output<typeof passkeySchema>;
+
+/** GET /api/passkeys: the person's active passkeys. Registering on two devices is recommended. */
+export const passkeyListSchema = z.object({ passkeys: z.array(passkeySchema) });
+
+/**
+ * POST /api/passkeys/registration/options. The first passkey only within 10 minutes of a Google
+ * sign-in (403 passkey_not_allowed after that); every further one with a passkey_add
+ * re-verification in stepUp (403 step_up_required without it). 409 passkey_limit at 10 passkeys.
+ */
+export const registrationOptionsRequestSchema = z.strictObject({
+  name: passkeyNameSchema,
+  stepUp: stepUpSchema.optional(),
+});
+export type RegistrationOptionsRequest = z.input<typeof registrationOptionsRequestSchema>;
+
+/** Options for startRegistration (optionsJSON). The challenge is valid for 5 minutes. */
+export const registrationOptionsResponseSchema = z.object({
+  challengeId: z.uuid(),
+  options: z.looseObject({
+    challenge: z.string(),
+    rp: z.looseObject({ name: z.string(), id: z.string().optional() }),
+    user: z.looseObject({ id: z.string(), name: z.string(), displayName: z.string() }),
+    pubKeyCredParams: z.array(z.looseObject({ alg: z.number(), type: z.literal('public-key') })),
+  }),
+});
+export type RegistrationOptionsResponse = z.output<typeof registrationOptionsResponseSchema>;
+
+/**
+ * POST /api/passkeys/registration: 201 with the passkey. `name` must be the one the options were
+ * made for (the challenge is bound to it).
+ */
+export const registrationRequestSchema = z.strictObject({
+  challengeId: z.uuid(),
+  name: passkeyNameSchema,
+  response: registrationResponseSchema,
+});
+export type RegistrationRequest = z.input<typeof registrationRequestSchema>;
+
+/**
+ * DELETE /api/passkeys/:id: 204. Needs a passkey_revoke re-verification naming that passkey; the
+ * last passkey can be removed too (a new first passkey then needs a fresh Google sign-in).
+ */
+export const revokePasskeyRequestSchema = z.strictObject({ stepUp: stepUpSchema.optional() });
+
+// Invitations -----------------------------------------------------------------------------------
+
+/**
+ * POST /api/invitations. 201 with the invitation; 409 invitation_exists when the address already
+ * has an invitation that is neither accepted nor cancelled, expired ones included (cancel it first).
+ * `id` is the new invitation's id, chosen by the panel (a random version 4 UUID), so that the
+ * invitation re-verification in stepUp can name it, with invitationChangeDetails of exactly these
+ * fields (403 step_up_required without it).
+ */
+export const createInvitationRequestSchema = invitationFieldsSchema.extend({
+  id: z.uuid(),
+  stepUp: stepUpSchema.optional(),
+});
 export type CreateInvitationRequest = z.input<typeof createInvitationRequestSchema>;
+
+/**
+ * POST /api/invitations/:id/renew (JSON body): seven more days, never beyond 30 days after the
+ * invitation was created. Needs an invitation re-verification in stepUp for this invitation and
+ * invitationChangeDetails('renew') (403 step_up_required without it). Cancelling needs none.
+ */
+export const renewInvitationRequestSchema = z.strictObject({ stepUp: stepUpSchema.optional() });
+
+// Members ---------------------------------------------------------------------------------------
 
 export const memberSchema = z.object({
   userId: z.uuid(),
@@ -120,14 +453,23 @@ export type Member = z.output<typeof memberSchema>;
 export const memberListSchema = z.object({ members: z.array(memberSchema) });
 
 /**
- * PATCH /api/members/:userId. At least one field. The founder role is neither granted nor taken
- * through the panel: a founder's membership cannot be changed or removed (409 founder_membership).
+ * PATCH /api/members/:userId. At least one of role and canApprove. The founder role is neither
+ * granted nor taken through the panel: a founder's membership cannot be changed or removed
+ * (409 founder_membership). Needs a membership_change re-verification in stepUp for this member and
+ * memberChangeDetails({ role, canApprove }) (403 step_up_required without it).
  */
 export const updateMemberRequestSchema = z
   .strictObject({
     role: z.enum(['employee', 'external']).optional(),
     canApprove: z.boolean().optional(),
+    stepUp: stepUpSchema.optional(),
   })
   .refine((body) => body.role !== undefined || body.canApprove !== undefined, {
     message: 'At least one field is required',
   });
+
+/**
+ * DELETE /api/members/:userId (JSON body): 204. Needs a membership_change re-verification in stepUp
+ * for this member and memberChangeDetails('remove') (403 step_up_required without it).
+ */
+export const removeMemberRequestSchema = z.strictObject({ stepUp: stepUpSchema.optional() });

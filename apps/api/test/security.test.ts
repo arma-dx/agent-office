@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { COMPANY_HEADER, apiErrorSchema } from '@agent-office/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DEFAULT_RATE_LIMITS } from '../src/security.ts';
@@ -90,13 +91,17 @@ describe.skipIf(noDatabase)('request forgery protection', () => {
   });
 
   it('accepts the panel: Sec-Fetch-Site same-origin, or the panel origin without it', async () => {
-    const first = await invite(SAME_ORIGIN, { email: 'csrf.one@example.test', role: 'external' });
-    expect(first.statusCode).toBe(201);
-    const second = await invite(
-      { origin: PANEL_ORIGIN },
-      { email: 'csrf.two@example.test', role: 'external' },
-    );
-    expect(second.statusCode).toBe(201);
+    // Past the forgery check the invitation still needs the founder's passkey; that answer shows
+    // the request was let through.
+    for (const headers of [SAME_ORIGIN, { origin: PANEL_ORIGIN }]) {
+      const res = await invite(headers, {
+        id: randomUUID(),
+        email: 'csrf.one@example.test',
+        role: 'external',
+      });
+      expect(res.statusCode).toBe(403);
+      expect(errorCode(res)).toBe('step_up_required');
+    }
   });
 
   it('accepts JSON bodies only', async () => {

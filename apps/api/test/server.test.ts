@@ -18,6 +18,14 @@ describe('GET /api/health', () => {
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ status: 'ok', service: 'api' });
   });
+
+  it('forbids every other page to show an answer in a frame', async () => {
+    for (const url of ['/api/health', '/api/unknown']) {
+      const res = await app.inject({ method: 'GET', url });
+      expect(res.headers['content-security-policy'], url).toBe("frame-ancestors 'none'");
+      expect(res.headers['x-frame-options'], url).toBe('DENY');
+    }
+  });
 });
 
 describe('log redaction', () => {

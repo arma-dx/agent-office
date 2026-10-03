@@ -1,4 +1,4 @@
-import type { LoginStatus } from '@agent-office/shared';
+import { loginReturnPathSchema, type LoginStatus } from '@agent-office/shared';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { checkClaims, type AcceptedIdentity } from '../auth/claims.ts';
 import { recordLoginEvent, rejectionReason, type RejectionReason } from '../auth/events.ts';
@@ -30,6 +30,16 @@ const MAX_CALLBACK_QUERY_LENGTH = 4096;
 function toLogin(reply: FastifyReply, status: LoginStatus): FastifyReply {
   // The same address for every rejection: the page never learns why (rule 3).
   return reply.redirect(`/login?status=${status}`, 302);
+}
+
+/**
+ * The panel page the sign-in was started for (?next=/c/<company>/...), or undefined. Anything that
+ * is not such a page is dropped: the sign-in then opens the start page, never another site.
+ */
+function returnPath(request: FastifyRequest): string | undefined {
+  const query = callbackQuery(request);
+  const next = loginReturnPathSchema.safeParse(query?.get('next'));
+  return next.success ? next.data : undefined;
 }
 
 function callbackQuery(request: FastifyRequest): URLSearchParams | null {
@@ -149,12 +159,13 @@ export function registerAuthRoutes(app: FastifyInstance, deps: RouteDeps): void 
       request.log.warn({ failure: loggableError(error) }, 'Google sign-in could not start');
       return toLogin(reply, 'unavailable');
     }
-    setLoginCookie(reply, config, checks);
+    setLoginCookie(reply, config, checks, returnPath(request));
     return reply.redirect(url.href, 302);
   });
 
   app.get('/api/auth/google/callback', PAGE_ROUTE, async (request, reply) => {
-    const checks = readLoginCookie(request, config);
+    const cookie = readLoginCookie(request, config);
+    const checks = cookie?.checks;
     // The one-time values are used once, whatever happens next.
     clearLoginCookie(reply, config);
     if (await callbackLimit(request)) {
@@ -205,7 +216,8 @@ export function registerAuthRoutes(app: FastifyInstance, deps: RouteDeps): void 
       // Not a company of this person (any more, or another person's choice on this browser).
       clearCompanyCookie(reply, config);
     }
-    return reply.redirect('/', 302);
+    // The page the sign-in was started for; the panel checks the company there itself.
+    return reply.redirect(cookie.returnTo ?? '/', 302);
   });
 
   // Logout answers 204 even for a session that has already ended; the cookie is cleared either way.

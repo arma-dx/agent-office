@@ -1,6 +1,8 @@
 import {
+  memberChangeDetails,
   memberListSchema,
   memberSchema,
+  removeMemberRequestSchema,
   updateMemberRequestSchema,
   type Member,
 } from '@agent-office/shared';
@@ -8,6 +10,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import type { DbClient } from '../db.ts';
 import { ApiError, databaseErrorCode, invalidRequest, notFound } from '../errors.ts';
+import { stepUpRequired, verifyStepUp } from '../passkeys.ts';
 import type { RouteDeps } from '../services.ts';
 
 /**
@@ -15,6 +18,10 @@ import type { RouteDeps } from '../services.ts';
  * here: a founder's membership (another founder's too) cannot be changed or removed through the
  * API, so a stolen founder session cannot lock the other founders out. The database also keeps at
  * least one active founder per company and the founder space's founder.
+ *
+ * Changing a role or the approval right and removing a membership need a passkey re-verification
+ * for exactly that change (3 October decision 7), recorded in the same transaction; the database
+ * refuses the change without it.
  */
 
 const FOUNDER = { founderOnly: true } as const;
@@ -98,7 +105,21 @@ async function readMember(client: DbClient, companyId: string, userId: string): 
   return toMember(row);
 }
 
-export function registerMemberRoutes(app: FastifyInstance, { runner }: RouteDeps): void {
+/** The answer to a membership change the database refused. */
+function membershipError(error: unknown): unknown {
+  const code = databaseErrorCode(error);
+  // check_violation: the founder guard (last founder, founder space).
+  if (code === '23514') {
+    return lastFounder();
+  }
+  // invalid_authorization_specification: no re-verification for this change in the transaction.
+  if (code === '28000') {
+    return stepUpRequired();
+  }
+  return error;
+}
+
+export function registerMemberRoutes(app: FastifyInstance, { runner, config }: RouteDeps): void {
   app.get('/api/members', async (request, reply) =>
     runner.withCompany(request, reply, FOUNDER, async ({ client, companyId }) => {
       const { rows } = await client.query<MemberRow>(
@@ -118,7 +139,7 @@ export function registerMemberRoutes(app: FastifyInstance, { runner }: RouteDeps
    * becoming external drops it, and a role change starts without it unless the request grants it.
    */
   app.patch('/api/members/:userId', async (request, reply) =>
-    runner.withCompany(request, reply, FOUNDER, async ({ client, companyId }) => {
+    runner.withCompany(request, reply, FOUNDER, async ({ client, session, companyId }) => {
       const userId = memberId(request);
       const body = updateMemberRequestSchema.safeParse(request.body);
       if (!body.success) {
@@ -135,6 +156,12 @@ export function registerMemberRoutes(app: FastifyInstance, { runner }: RouteDeps
       }
       const keptRight = member.role === 'employee' && member.can_approve;
       const canApprove = role === 'employee' && (body.data.canApprove ?? keptRight);
+      await verifyStepUp({ client, session }, config.relyingParty, body.data.stepUp, {
+        purpose: 'membership_change',
+        companyId,
+        subjectId: userId,
+        details: memberChangeDetails(body.data),
+      });
       try {
         await client.query(
           `update office.memberships set role = $3, can_approve = $4
@@ -142,11 +169,7 @@ export function registerMemberRoutes(app: FastifyInstance, { runner }: RouteDeps
           [companyId, userId, role, canApprove],
         );
       } catch (error) {
-        // check_violation: the founder guard (last founder, founder space).
-        if (databaseErrorCode(error) === '23514') {
-          throw lastFounder();
-        }
-        throw error;
+        throw membershipError(error);
       }
       return readMember(client, companyId, userId);
     }),
@@ -154,9 +177,19 @@ export function registerMemberRoutes(app: FastifyInstance, { runner }: RouteDeps
 
   // Removing the last membership closes the person's sessions; the database does that.
   app.delete('/api/members/:userId', async (request, reply) => {
-    await runner.withCompany(request, reply, FOUNDER, async ({ client, companyId }) => {
+    await runner.withCompany(request, reply, FOUNDER, async ({ client, session, companyId }) => {
       const userId = memberId(request);
+      const body = removeMemberRequestSchema.safeParse(request.body ?? {});
+      if (!body.success) {
+        throw invalidRequest();
+      }
       await lockMembership(client, companyId, userId);
+      await verifyStepUp({ client, session }, config.relyingParty, body.data.stepUp, {
+        purpose: 'membership_change',
+        companyId,
+        subjectId: userId,
+        details: memberChangeDetails('remove'),
+      });
       let removed: number;
       try {
         const result = await client.query(
@@ -166,9 +199,6 @@ export function registerMemberRoutes(app: FastifyInstance, { runner }: RouteDeps
         removed = result.rowCount ?? 0;
       } catch (error) {
         const code = databaseErrorCode(error);
-        if (code === '23514') {
-          throw lastFounder();
-        }
         if (code === '23503') {
           throw new ApiError(
             409,
@@ -176,7 +206,7 @@ export function registerMemberRoutes(app: FastifyInstance, { runner }: RouteDeps
             'Bu kişiye bağlı kayıtlar olduğu için üyelik kaldırılamadı. Kayıtları başka birine aktarıp yeniden deneyin.',
           );
         }
-        throw error;
+        throw membershipError(error);
       }
       if (removed === 0) {
         throw notFound();

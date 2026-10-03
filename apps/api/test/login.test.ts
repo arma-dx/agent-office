@@ -90,6 +90,36 @@ describe.skipIf(noDatabase)('Google sign-in', () => {
     expect(open?.limit_ok).toBe(true);
   });
 
+  it('returns to the panel page the sign-in was started for, and only to a panel page', async () => {
+    const start = (next: string) => `/api/auth/google?next=${encodeURIComponent(next)}`;
+    const security = '/c/armadx/settings/security';
+    const back = await signIn(server, claimsOf(accounts.founder), undefined, {}, start(security));
+    expect(back.callback.headers.location).toBe(security);
+    expect(back.session).toBeDefined();
+
+    for (const next of [
+      '//evil.example/c/armadx',
+      'https://evil.example/c/armadx',
+      '/c/armadx/../../login',
+      '/c/armadx/settings/security?x=1',
+      '/c/ArmaDX',
+      '/login',
+      `/c/${'a'.repeat(300)}`,
+    ]) {
+      const other = await signIn(server, claimsOf(accounts.founder), undefined, {}, start(next));
+      expect(other.callback.headers.location, next).toBe('/');
+    }
+    // A refused sign-in still goes to the login page.
+    const refused = await signIn(
+      server,
+      claimsOf(accounts.stranger),
+      undefined,
+      {},
+      start(security),
+    );
+    expect(refused.callback.headers.location).toBe('/login?status=denied');
+  });
+
   it('lets an invited person in on the first login and turns the invitation into a membership', async () => {
     const { callback, session } = await signIn(server, claimsOf(accounts.invitee));
     expect(callback.headers.location).toBe('/');

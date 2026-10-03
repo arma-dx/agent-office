@@ -60,14 +60,31 @@ export async function verifySession(client: DbClient, keyHash: Buffer): Promise<
     : null;
 }
 
-type Outcome<T> = { kind: 'ok'; value: T } | { kind: 'no_session' };
+/**
+ * Thrown by a handler whose writes must stay although the request fails: a failed passkey attempt
+ * is counted against its challenge, and rolling the count back would allow unlimited attempts. The
+ * runner commits the transaction and then answers with the error. The transaction must be usable
+ * when it is thrown (a failed statement rolled back to a savepoint first).
+ */
+export class CommitThenFail extends Error {
+  readonly error: ApiError;
+
+  constructor(error: ApiError) {
+    super(error.message);
+    this.name = 'CommitThenFail';
+    this.error = error;
+  }
+}
+
+type Outcome<T> =
+  { kind: 'ok'; value: T } | { kind: 'no_session' } | { kind: 'failed'; error: ApiError };
 
 /**
  * Runs every signed-in request as ONE transaction (rule 9): BEGIN, verify the session, set the
  * context (person, and for company routes the company), run the handler, COMMIT. The context is set
  * with set_config(..., true), so it ends with the transaction and never stays on a pooled
- * connection. A thrown error rolls the transaction back; a dead session is answered with 401 after
- * the commit that records its closing.
+ * connection. A thrown error rolls the transaction back, except CommitThenFail, which is answered
+ * after the commit; a dead session is answered with 401 after the commit that records its closing.
  */
 export class RequestRunner {
   readonly #pool: Pool;
@@ -141,11 +158,21 @@ export class RequestRunner {
       if (!session) {
         return { kind: 'no_session' };
       }
-      return { kind: 'ok', value: await handler(client, session) };
+      try {
+        return { kind: 'ok', value: await handler(client, session) };
+      } catch (error) {
+        if (error instanceof CommitThenFail) {
+          return { kind: 'failed', error: error.error };
+        }
+        throw error;
+      }
     });
     if (outcome.kind === 'no_session') {
       clearSessionCookie(reply, this.#config);
       throw unauthenticated();
+    }
+    if (outcome.kind === 'failed') {
+      throw outcome.error;
     }
     return outcome.value;
   }
