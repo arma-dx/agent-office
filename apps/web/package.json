@@ -13,6 +13,7 @@
     "@agent-office/shared": "workspace:*",
     "@fontsource-variable/ibm-plex-sans": "catalog:",
     "@hookform/resolvers": "catalog:",
+    "@simplewebauthn/browser": "catalog:",
     "@tanstack/react-query": "catalog:",
     "@tanstack/react-router": "catalog:",
     "class-variance-authority": "catalog:",
