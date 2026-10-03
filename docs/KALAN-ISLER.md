@@ -174,9 +174,9 @@ Roller ve şirket:
 
 Passkey:
 
-- [ ] Passkey kaydı (telefonun parmak izi ya da yüz tanıması)
-- [ ] Önemli onaylarda yeniden doğrulama; hangi onayların önemli sayılacağı (Karar: R7)
-- [ ] Passkey yoksa izlenecek yol
+- [x] Passkey kaydı (telefonun parmak izi ya da yüz tanıması) (Ayarlar, Güvenlik; ilk passkey Google girişinden sonraki 10 dakika içinde)
+- [ ] Önemli onaylarda yeniden doğrulama; hangi onayların önemli sayılacağı (Karar: R7) (3 Ekim karar 7; veritabanı ve API hazır, üye ve davet işlemlerinde çalışıyor; onay kararı ekranı Onay Masası ile bağlanacak)
+- [ ] Passkey yoksa izlenecek yol (passkey'i olmayan önemli işlemi yapamaz ve Güvenlik sayfasına yönlendirilir; kaybolan passkey'in kurtarma yolu kurucu kararı bekliyor, `docs/SONRA.md`)
 
 Ekranlar:
 
