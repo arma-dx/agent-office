@@ -66,7 +66,17 @@ export const ids = {
 
   invitationA: id(101),
   invitationP: id(102),
+
+  // The founder's closed session and passkey re-verifications used by the fixtures.
+  founderSession: id(111),
+  stepUpA: id(112),
+  stepUpP: id(113),
+  stepUpInvitationA: id(114),
+  stepUpInvitationP: id(115),
 } as const;
+
+/** The credential id of the founder's passkey in the fixtures. */
+export const FOUNDER_PASSKEY = 'fixture-passkey-founder-0001';
 
 export const TOOL = {
   read: 'read_task',
@@ -212,6 +222,26 @@ export async function loadFixtures(client: pg.Client): Promise<void> {
       ('${ids.arma}', '${ids.externalA}', 'note', '${ids.noteAShared}'),
       ('${ids.pillika}', '${ids.externalP}', 'task', '${ids.taskP}');
 
+    -- Important approvals and invitations need the founder's passkey re-verification in the same
+    -- transaction (3 October decision 7); the fixtures run in one transaction. The session is
+    -- closed already.
+    insert into office.sessions
+        (id, key_hash, user_id, absolute_expires_at, closed_at, close_reason)
+      values ('${ids.founderSession}', decode(repeat('5a', 32), 'hex'), '${ids.founder}',
+        now() + interval '1 hour', now(), 'logout');
+    insert into office.passkeys (id, user_id, public_key, transports, device_type, backed_up, name)
+      values ('${FOUNDER_PASSKEY}', '${ids.founder}', decode(repeat('01', 77), 'hex'),
+        '{internal,hybrid}', 'multiDevice', true, 'Founder phone');
+    insert into office.step_ups
+        (id, user_id, session_id, passkey_id, purpose, company_id, subject_id, context_hash)
+      values
+        ('${ids.stepUpInvitationA}', '${ids.founder}', '${ids.founderSession}',
+          '${FOUNDER_PASSKEY}', 'invitation', '${ids.arma}', '${ids.invitationA}',
+          decode(repeat('cc', 32), 'hex')),
+        ('${ids.stepUpInvitationP}', '${ids.founder}', '${ids.founderSession}',
+          '${FOUNDER_PASSKEY}', 'invitation', '${ids.pillika}', '${ids.invitationP}',
+          decode(repeat('dd', 32), 'hex'));
+
     ${contextSql(ids.arma, ids.founder)}
     insert into office.task_comments (company_id, task_id, body) values
       ('${ids.arma}', '${ids.taskA}', 'General comment'),
@@ -272,12 +302,13 @@ export async function loadFixtures(client: pg.Client): Promise<void> {
       values ('${ids.arma}', '${ids.runA}', 'report.pdf', 'application/pdf', 10,
         '${ids.arma}/report.pdf');
     insert into office.approvals (id, company_id, run_id, task_id, agent_code, title, payload,
-        basis_type, basis_id, basis_version)
+        basis_type, basis_id, basis_version, involves_money)
       values ('${ids.approvalA}', '${ids.arma}', '${ids.runA}', '${ids.taskA}', 'KOR-1',
-        'Note change', '{}', 'note', '${ids.noteA}', 1);
-    insert into office.approvals (id, company_id, run_id, agent_code, title, payload, tool_name)
+        'Note change', '{}', 'note', '${ids.noteA}', 1, false);
+    insert into office.approvals (id, company_id, run_id, agent_code, title, payload, tool_name,
+        involves_money)
       values ('${ids.approvalAApproved}', '${ids.arma}', '${ids.runA}', 'KOR-1', 'Email', '{}',
-        '${TOOL.externalEffect}');
+        '${TOOL.externalEffect}', false);
 
     ${contextSql(ids.arma, ids.founder, 'KOR-1', ids.projectA)}
     insert into office.runs
@@ -286,9 +317,10 @@ export async function loadFixtures(client: pg.Client): Promise<void> {
         'request', 'test-model');
     insert into office.tool_calls (company_id, run_id, seq, tool_name, status)
       values ('${ids.arma}', '${ids.runAProject}', 1, '${TOOL.read}', 'succeeded');
-    insert into office.approvals (id, company_id, run_id, task_id, agent_code, title, payload)
+    insert into office.approvals (id, company_id, run_id, task_id, agent_code, title, payload,
+        involves_money)
       values ('${ids.approvalAProject}', '${ids.arma}', '${ids.runAProject}', '${ids.taskAProject}',
-        'KOR-1', 'Project output', '{}');
+        'KOR-1', 'Project output', '{}', false);
 
     ${contextSql(ids.pillika, ids.founder, 'KOR-1')}
     insert into office.runs
@@ -300,11 +332,25 @@ export async function loadFixtures(client: pg.Client): Promise<void> {
     insert into office.files (company_id, run_id, name, mime_type, size_bytes, storage_path)
       values ('${ids.pillika}', '${ids.runP}', 'image.png', 'image/png', 10,
         '${ids.pillika}/image.png');
-    insert into office.approvals (id, company_id, run_id, agent_code, title, payload)
-      values ('${ids.approvalP}', '${ids.pillika}', '${ids.runP}', 'KOR-1', 'Pillika output', '{}');
-    insert into office.approvals (id, company_id, run_id, agent_code, title, payload)
+    insert into office.approvals (id, company_id, run_id, agent_code, title, payload,
+        involves_money)
+      values ('${ids.approvalP}', '${ids.pillika}', '${ids.runP}', 'KOR-1', 'Pillika output', '{}',
+        false);
+    insert into office.approvals (id, company_id, run_id, agent_code, title, payload,
+        involves_money)
       values ('${ids.approvalPApproved}', '${ids.pillika}', '${ids.runP}', 'KOR-1',
-        'Pillika approved', '{}');
+        'Pillika approved', '{}', false);
+
+    -- Approving an important approval (approvalAApproved has an external effect tool) needs the
+    -- founder's passkey re-verification in the same transaction; the re-verification for the
+    -- Pillika approval is not needed (that approval is not important) and stays unused.
+    insert into office.step_ups
+        (id, user_id, session_id, passkey_id, purpose, company_id, subject_id, context_hash)
+      values
+        ('${ids.stepUpA}', '${ids.founder}', '${ids.founderSession}', '${FOUNDER_PASSKEY}',
+          'approve', '${ids.arma}', '${ids.approvalAApproved}', decode(repeat('aa', 32), 'hex')),
+        ('${ids.stepUpP}', '${ids.founder}', '${ids.founderSession}', '${FOUNDER_PASSKEY}',
+          'approve', '${ids.pillika}', '${ids.approvalPApproved}', decode(repeat('bb', 32), 'hex'));
 
     ${contextSql(ids.arma, ids.founder)}
     update office.approvals set status = 'approved' where id = '${ids.approvalAApproved}';

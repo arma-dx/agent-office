@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { afterAll, describe, expect, it } from 'vitest';
 import type { ContextInput } from '../src/context.ts';
 import { ids } from './fixtures.ts';
@@ -11,6 +11,7 @@ import {
   noDatabase,
   type Tx,
 } from './helpers.ts';
+import { stepUp } from './step-up.ts';
 
 // Login, sessions, invitations and login events (KALAN-ISLER 0.3; CLAUDE.md rules 3, 9;
 // 3 October decisions 6 and 9-11). inTransaction runs with the API's privileges (office_app and
@@ -92,6 +93,10 @@ async function completeLogin(
   return row;
 }
 
+/**
+ * The founder's invitation, confirmed with a passkey re-verification for it in the same transaction
+ * (3 October decision 7); the API gives a new invitation its id.
+ */
 async function invite(
   tx: Tx,
   context: ContextInput,
@@ -99,16 +104,31 @@ async function invite(
   role: string,
   canApprove = false,
 ): Promise<string> {
-  await tx.setContext(context);
+  const id = randomUUID();
+  await stepUp(tx, context, 'invitation', id);
   const [row] = await tx.rows<{ id: string }>(
-    `insert into office.invitations (company_id, email, role, can_approve)
-     values ($1, $2, $3, $4) returning id`,
-    [context.companyId, email, role, canApprove],
+    `insert into office.invitations (id, company_id, email, role, can_approve)
+     values ($1, $2, $3, $4, $5) returning id`,
+    [id, context.companyId, email, role, canApprove],
   );
   if (!row) {
     throw new Error('Invitation could not be created');
   }
   return row.id;
+}
+
+/**
+ * Activates or deactivates an account, confirmed with the passkey re-verification it needs (a
+ * membership change of the account in the context company). Returns the number of rows changed.
+ */
+async function setActive(
+  tx: Tx,
+  context: ContextInput,
+  userId: string,
+  active: boolean,
+): Promise<number> {
+  await stepUp(tx, context, 'membership_change', userId);
+  return tx.exec('update office.users set active = $2 where id = $1', [userId, active]);
 }
 
 /** An expired invitation can only be prepared by the privileged role with the trigger off. */
@@ -314,6 +334,8 @@ describe.skipIf(noDatabase)('memberships and accounts', () => {
       ]) {
         expect((await tx.expectError(sql, [ids.employeeA, ids.pillika])).code, sql).toBe('42501');
       }
+      // A membership change needs the founder's passkey re-verification (3 October decision 7).
+      await stepUp(tx, founderA, 'membership_change', ids.employeeA);
       expect(
         await tx.exec(`update office.memberships set can_approve = true ${MEMBERSHIP}`, [
           ids.arma,
@@ -349,21 +371,19 @@ describe.skipIf(noDatabase)('memberships and accounts', () => {
       expect((await tx.expectError(demote, [ids.arma, ids.founder])).code).toBe('23514');
 
       // A second founder who is deactivated does not count.
+      await stepUp(tx, founderA, 'membership_change', ids.approverA);
       expect(
         await tx.exec(`update office.memberships set role = 'founder' ${MEMBERSHIP}`, [
           ids.arma,
           ids.approverA,
         ]),
       ).toBe(1);
-      expect(
-        await tx.exec('update office.users set active = false where id = $1', [ids.approverA]),
-      ).toBe(1);
+      expect(await setActive(tx, founderA, ids.approverA, false)).toBe(1);
       expect((await tx.expectError(demote, [ids.arma, ids.founder])).code).toBe('23514');
 
       // With an active second founder the first one can step down; the second is then the last.
-      expect(
-        await tx.exec('update office.users set active = true where id = $1', [ids.approverA]),
-      ).toBe(1);
+      expect(await setActive(tx, founderA, ids.approverA, true)).toBe(1);
+      await stepUp(tx, founderA, 'membership_change', ids.founder);
       expect(await tx.exec(demote, [ids.arma, ids.founder])).toBe(1);
       await tx.setContext(approverA);
       expect((await tx.expectError(demote, [ids.arma, ids.approverA])).code).toBe('23514');
@@ -392,13 +412,12 @@ describe.skipIf(noDatabase)('memberships and accounts', () => {
       ).toBe('42501');
       expect(await tx.rows('select office.my_role() as role')).toEqual([{ role: 'founder' }]);
       // Another founder of the same company can be deactivated while the founder stays active.
+      await stepUp(tx, founderA, 'membership_change', ids.approverA);
       await tx.exec(`update office.memberships set role = 'founder' ${MEMBERSHIP}`, [
         ids.arma,
         ids.approverA,
       ]);
-      expect(
-        await tx.exec('update office.users set active = false where id = $1', [ids.approverA]),
-      ).toBe(1);
+      expect(await setActive(tx, founderA, ids.approverA, false)).toBe(1);
     });
     // The context of a second founder who was deactivated in the meantime (two founders
     // deactivating each other; here the privileged role): the other company would be left without
@@ -408,10 +427,7 @@ describe.skipIf(noDatabase)('memberships and accounts', () => {
         `insert into office.memberships (company_id, user_id, role) values ($1, $2, 'founder')`,
         [ids.otherCompany, ids.formerEmployee],
       );
-      await tx.setContext(otherFounder);
-      expect(
-        await tx.exec('update office.users set active = false where id = $1', [ids.formerEmployee]),
-      ).toBe(1);
+      expect(await setActive(tx, otherFounder, ids.formerEmployee, false)).toBe(1);
       await tx.setContext({ companyId: ids.otherCompany, userId: ids.formerEmployee });
       expect(
         (
@@ -430,10 +446,7 @@ describe.skipIf(noDatabase)('memberships and accounts', () => {
       expect(await tx.rows(roleSql)).toEqual([{ role: 'employee', approve: true }]);
       expect(await tx.count('tasks')).toBeGreaterThan(0);
 
-      await tx.setContext(founderA);
-      expect(
-        await tx.exec('update office.users set active = false where id = $1', [ids.approverA]),
-      ).toBe(1);
+      expect(await setActive(tx, founderA, ids.approverA, false)).toBe(1);
 
       await tx.setContext(approverA);
       expect(await tx.rows(roleSql)).toEqual([{ role: null, approve: false }]);
@@ -506,8 +519,9 @@ describe.skipIf(noDatabase)('invitations', () => {
       expect(
         (await tx.expectError(sql, [ids.arma, 'Upper@example.test', 'external', false])).code,
       ).toBe('23514');
-      // One pending invitation per address and company.
-      await tx.exec(sql, [ids.arma, 'twice@example.test', 'external', false]);
+      // One pending invitation per address and company (refused before any re-verification is
+      // asked for).
+      await invite(tx, founderA, 'twice@example.test', 'external');
       expect(
         (await tx.expectError(sql, [ids.arma, 'twice@example.test', 'employee', false])).code,
       ).toBe('23505');
@@ -560,6 +574,7 @@ describe.skipIf(noDatabase)('invitations', () => {
   it('the founder renews within 30 days of creation or cancels; a closed invitation never changes', async () => {
     await inTransaction(async (tx) => {
       const id = await invite(tx, founderA, 'renew@example.test', 'external');
+      await stepUp(tx, founderA, 'invitation', id);
       expect(
         await tx.exec(
           `update office.invitations set expires_at = created_at + interval '20 days' where id = $1`,
@@ -630,13 +645,14 @@ describe.skipIf(noDatabase)('invitations', () => {
       const sql = `insert into office.invitations (company_id, email, role)
                    values ($1, 'late@example.test', 'external')`;
       expect((await tx.expectError(sql, [ids.arma])).code).toBe('23505');
+      await stepUp(tx, founderA, 'invitation', expired);
       await tx.exec(
         `update office.invitations set expires_at = now() + interval '1 day' where id = $1`,
         [expired],
       );
       expect((await tx.expectError(sql, [ids.arma])).code).toBe('23505');
       await tx.exec('update office.invitations set cancelled_at = now() where id = $1', [expired]);
-      expect(await tx.exec(sql, [ids.arma])).toBe(1);
+      await invite(tx, founderA, 'late@example.test', 'external');
     });
   });
 });
@@ -711,8 +727,7 @@ describe.skipIf(noDatabase)('completing a login', () => {
     await inTransaction(async (tx) => {
       // A pending invitation made before the deactivation is cancelled with it.
       const before = await invite(tx, founderP, 'employee.a@example.test', 'external');
-      await tx.setContext(founderA);
-      await tx.exec('update office.users set active = false where id = $1', [ids.employeeA]);
+      await setActive(tx, founderA, ids.employeeA, false);
       await tx.setContext(founderP);
       expect(
         await tx.rows(
@@ -742,9 +757,12 @@ describe.skipIf(noDatabase)('completing a login', () => {
       const first = await completeLogin(tx, 'ali@example.test', 'google-sub-ali', 'Ali');
       expect(first.result).toBe('ok');
       const ali = first.user_id;
+      if (ali === null) {
+        throw new Error('The login created no account');
+      }
 
-      await tx.setContext(founderA);
-      expect(await tx.exec('update office.users set active = false where id = $1', [ali])).toBe(1);
+      expect(await setActive(tx, founderA, ali, false)).toBe(1);
+      await stepUp(tx, founderA, 'membership_change', ali);
       expect(await tx.exec(`delete from office.memberships ${MEMBERSHIP}`, [ids.arma, ali])).toBe(
         1,
       );
@@ -835,7 +853,7 @@ describe.skipIf(noDatabase)('completing a login', () => {
         await tx.rows('select accepted_at from office.invitations where id = $1', [id]),
       ).toEqual([{ accepted_at: null }]);
 
-      await tx.setContext(founderA);
+      await stepUp(tx, founderA, 'invitation', id);
       await tx.exec(
         `update office.invitations set expires_at = now() + interval '7 days' where id = $1`,
         [id],
@@ -847,7 +865,7 @@ describe.skipIf(noDatabase)('completing a login', () => {
   it('an invitation is accepted only while its inviter is an active founder of the company', async () => {
     for (const end of ['demoted', 'deactivated']) {
       await inTransaction(async (tx) => {
-        await tx.setContext(founderA);
+        await stepUp(tx, founderA, 'membership_change', ids.approverA);
         await tx.exec(`update office.memberships set role = 'founder' ${MEMBERSHIP}`, [
           ids.arma,
           ids.approverA,
@@ -855,12 +873,13 @@ describe.skipIf(noDatabase)('completing a login', () => {
         const id = await invite(tx, approverA, 'friend@example.test', 'employee', true);
         await tx.setContext(founderA);
         if (end === 'demoted') {
+          await stepUp(tx, founderA, 'membership_change', ids.approverA);
           await tx.exec(`update office.memberships set role = 'employee' ${MEMBERSHIP}`, [
             ids.arma,
             ids.approverA,
           ]);
         } else {
-          await tx.exec('update office.users set active = false where id = $1', [ids.approverA]);
+          await setActive(tx, founderA, ids.approverA, false);
         }
         expect(await completeLogin(tx, 'friend@example.test', 'google-sub-friend'), end).toEqual({
           result: 'not_allowed',
@@ -898,6 +917,7 @@ describe.skipIf(noDatabase)('completing a login', () => {
       expect(await tx.rows(state, [upgrade])).toEqual([{ accepted_at: null, cancelled: false }]);
 
       // Removing the member cancels it, so it never brings the person back with the higher role.
+      await stepUp(tx, founderA, 'membership_change', ids.externalA);
       expect(
         await tx.exec(`delete from office.memberships ${MEMBERSHIP}`, [ids.arma, ids.externalA]),
       ).toBe(1);
@@ -999,8 +1019,7 @@ describe.skipIf(noDatabase)('sessions', () => {
       expect((await completeLogin(tx, 'employee.a@example.test', 'google-sub-a')).result).toBe(
         'ok',
       );
-      await tx.setContext(founderA);
-      await tx.exec('update office.users set active = false where id = $1', [ids.employeeA]);
+      await setActive(tx, founderA, ids.employeeA, false);
       await tx.setContext({ email: 'employee.a@example.test' });
       expect((await tx.expectError(open, [keyHash(), 'google-sub-a', 8])).code).toBe('42501');
     });
@@ -1213,13 +1232,12 @@ describe.skipIf(noDatabase)('sessions', () => {
   it('deactivating an account closes its sessions at once; reactivating it does not reopen them', async () => {
     await inAdminTransaction(async (tx) => {
       const session = await loginAndOpen(tx, 'employee.a@example.test', 'google-sub-a');
-      await tx.setContext(founderA);
-      await tx.exec('update office.users set active = false where id = $1', [ids.employeeA]);
+      await setActive(tx, founderA, ids.employeeA, false);
       // Closed before any request arrives with the key.
       expect(await sessionEnd(tx, session.id)).toEqual([
         { close_reason: 'account_closed', reason: 'account_inactive' },
       ]);
-      await tx.exec('update office.users set active = true where id = $1', [ids.employeeA]);
+      await setActive(tx, founderA, ids.employeeA, true);
       expect(await verify(tx, session.key)).toEqual([]);
     });
   });
@@ -1229,9 +1247,9 @@ describe.skipIf(noDatabase)('sessions', () => {
       // The shared employee is also a member of the other company.
       const shared = await loginAndOpen(tx, 'shared@example.test', 'google-sub-shared');
       const single = await loginAndOpen(tx, 'employee.p@example.test', 'google-sub-p');
-      await tx.setContext(founderA);
+      await stepUp(tx, founderA, 'membership_change', ids.sharedEmployee);
       await tx.exec(`delete from office.memberships ${MEMBERSHIP}`, [ids.arma, ids.sharedEmployee]);
-      await tx.setContext(founderP);
+      await stepUp(tx, founderP, 'membership_change', ids.employeeP);
       await tx.exec(`delete from office.memberships ${MEMBERSHIP}`, [ids.pillika, ids.employeeP]);
       expect(await verify(tx, shared.key)).toHaveLength(1);
       expect(await sessionEnd(tx, single.id)).toEqual([

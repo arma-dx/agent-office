@@ -10,6 +10,7 @@ import {
   noDatabase,
   type Tx,
 } from './helpers.ts';
+import { stepUp } from './step-up.ts';
 
 // Tenant isolation and visibility tests (CLAUDE.md rules 2, 9, 12; PLAN Tests). All run with
 // restricted roles: a person's context with the API's privileges (inTransaction), an agent run's
@@ -19,11 +20,30 @@ import {
 const GLOBAL = ['agent_definitions', 'card_versions', 'tools', 'units'];
 // Identity tables: a person can be a member of several companies. Login events belong to no
 // company either (a rejected login has no company).
-const WITHOUT_COMPANY_ID = ['companies', 'login_events', 'sessions', 'user_emails', 'users'];
+const WITHOUT_COMPANY_ID = [
+  'companies',
+  'login_events',
+  'passkey_challenges',
+  'passkeys',
+  'sessions',
+  'user_emails',
+  'users',
+];
+// Tables whose rows carry company_id when they hold company data and none otherwise (a check
+// constraint decides): a re-verification for an approval or a membership change names its company,
+// one for a passkey change does not. They take part in every isolation test below.
+const OPTIONAL_COMPANY_ID = ['step_ups'];
 // Tables no application role can read yet (only written through a function).
-const NOT_READABLE = ['login_events'];
+const NOT_READABLE = ['login_events', 'passkey_challenges'];
 // Tables only the API reaches (office_api_private); the worker has no privilege on them at all.
-const API_ONLY = ['invitations', 'login_events', 'sessions'];
+const API_ONLY = [
+  'invitations',
+  'login_events',
+  'passkey_challenges',
+  'passkeys',
+  'sessions',
+  'step_ups',
+];
 
 function person(companyId: string, userId: string, projectId: string | null = null): ContextInput {
   return { companyId, userId, projectId };
@@ -70,10 +90,11 @@ describe.skipIf(noDatabase)('tenant isolation', () => {
            not (c.relrowsecurity and c.relforcerowsecurity)
            or (c.relname <> all ($2::text[]) and not exists (
              select 1 from pg_attribute a
-             where a.attrelid = c.oid and a.attname = 'company_id' and a.attnotnull
+             where a.attrelid = c.oid and a.attname = 'company_id' and not a.attisdropped
+               and (a.attnotnull or c.relname = any ($3::text[]))
            ))
          )`,
-      [GLOBAL, WITHOUT_COMPANY_ID],
+      [GLOBAL, WITHOUT_COMPANY_ID, OPTIONAL_COMPANY_ID],
     );
     expect(missing).toEqual([]);
   });
@@ -537,6 +558,8 @@ describe.skipIf(noDatabase)('tenant isolation', () => {
       expect(
         await tx.exec(`update office.users set name = 'Çalışan A2' where id = $1`, [ids.employeeA]),
       ).toBe(1);
+      // Deactivating needs the founder's passkey re-verification (3 October decision 7).
+      await stepUp(tx, person(ids.arma, ids.founder), 'membership_change', ids.employeeA);
       expect(
         await tx.exec('update office.users set active = false where id = $1', [ids.employeeA]),
       ).toBe(1);
@@ -617,7 +640,8 @@ describe.skipIf(noDatabase)('tenant isolation', () => {
       ).toBe(0);
       await tx.setContext(agent(ids.arma, 'KOR-1'));
       expect(await tx.exec(`update office.memberships set can_approve = true`)).toBe(0);
-      await tx.setContext(person(ids.arma, ids.founder));
+      // The founder's change needs a passkey re-verification (3 October decision 7).
+      await stepUp(tx, person(ids.arma, ids.founder), 'membership_change', ids.employeeA);
       expect(
         await tx.exec(`update office.memberships set can_approve = true where user_id = $1`, [
           ids.employeeA,

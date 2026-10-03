@@ -2,6 +2,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 import type { ContextInput } from '../src/context.ts';
 import { ids, TOOL } from './fixtures.ts';
 import { closePools, inAdminTransaction, inTransaction, noDatabase, type Tx } from './helpers.ts';
+import { stepUp } from './step-up.ts';
 
 // Business rules the database enforces itself: approval, note, run, task, audit log.
 // The rules come from CLAUDE.md rules 4, 5, 9 and the 2 October decisions 7-13.
@@ -18,6 +19,7 @@ async function openApproval(tx: Tx, fields: Record<string, unknown> = {}): Promi
     agent_code: 'KOR-1',
     title: 'Test',
     payload: {},
+    involves_money: false,
     ...fields,
   };
   const names = Object.keys(all);
@@ -149,8 +151,8 @@ describe.skipIf(noDatabase)('approval rules', () => {
     await inTransaction(async (tx) => {
       await tx.setContext(korA);
       const result = await tx.expectError(
-        `insert into office.approvals (company_id, run_id, agent_code, title, payload, basis_type, basis_id, basis_version)
-         values ($1, $2, 'KOR-1', 'Second', '{}', 'note', $3, 1)`,
+        `insert into office.approvals (company_id, run_id, agent_code, title, payload, basis_type, basis_id, basis_version, involves_money)
+         values ($1, $2, 'KOR-1', 'Second', '{}', 'note', $3, 1, false)`,
         [ids.arma, ids.runA, ids.noteA],
       );
       expect(result.code).toBe('23505');
@@ -178,7 +180,7 @@ describe.skipIf(noDatabase)('approval rules', () => {
       expect(
         (
           await tx.expectError(
-            `insert into office.approvals (company_id, run_id, agent_code, title, payload, basis_type, basis_id, basis_version) values ($1, $2, 'KOR-1', 'x', '{}', 'note', $3, 1)`,
+            `insert into office.approvals (company_id, run_id, agent_code, title, payload, basis_type, basis_id, basis_version, involves_money) values ($1, $2, 'KOR-1', 'x', '{}', 'note', $3, 1, false)`,
             [ids.arma, ids.runA, ids.noteA],
           )
         ).message,
@@ -225,7 +227,7 @@ describe.skipIf(noDatabase)('approval rules', () => {
       expect(
         (
           await tx.expectError(
-            `insert into office.approvals (company_id, run_id, agent_code, title, payload, task_id, previous_approval_id) values ($1, $2, 'KOR-1', 'x', '{}', $3, $4)`,
+            `insert into office.approvals (company_id, run_id, agent_code, title, payload, task_id, previous_approval_id, involves_money) values ($1, $2, 'KOR-1', 'x', '{}', $3, $4, false)`,
             [ids.arma, ids.runA, ids.taskA, second],
           )
         ).code,
@@ -238,7 +240,7 @@ describe.skipIf(noDatabase)('approval rules', () => {
       );
       await tx.setContext(korA);
       const third = await tx.expectError(
-        `insert into office.approvals (company_id, run_id, agent_code, title, payload, task_id, previous_approval_id) values ($1, $2, 'KOR-1', 'x', '{}', $3, $4)`,
+        `insert into office.approvals (company_id, run_id, agent_code, title, payload, task_id, previous_approval_id, involves_money) values ($1, $2, 'KOR-1', 'x', '{}', $3, $4, false)`,
         [ids.arma, ids.runA, ids.taskA, second],
       );
       expect(third.message).toMatch(/falls to a person/);
@@ -402,7 +404,8 @@ describe.skipIf(noDatabase)('approval rules', () => {
         basis_id: ids.taskA,
         basis_version: 1,
       });
-      await tx.setContext(founderA);
+      // An external effect approval is important: it needs a passkey re-verification.
+      await stepUp(tx, founderA, 'approve', id);
       await tx.exec(`update office.approvals set status = 'approved' where id = $1`, [id]);
       await tx.exec(`update office.tasks set description = 'Changed' where id = $1`, [ids.taskA]);
       await tx.setContext(korA);
