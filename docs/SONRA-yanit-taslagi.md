@@ -1,5 +1,7 @@
 # SONRA.md yanıt taslağı
 
+Not (3 Ekim, karar 4): bu taslak eski Türkçe veritabanı ve kod adlarıyla yazıldı; yeni İngilizce karşılıkları `docs/ad-sozlugu.md` içinde. Öneri kabul edilip işlenirken yeni adlar İngilizce verilir.
+
 Tarih: 1 Ekim 2026; tasarım raporuna, 1 Ekim ikinci tur ve 2 Ekim kararlarına göre güncellendi. Durum: 1 Ekim ikinci tur ve 2 Ekim kararlarıyla karara bağlanan kısımlar dışında kurucunun onayını bekliyor, depoya henüz işlenmedi.
 
 Bu dosya `docs/SONRA.md` içindeki açık sorulara önerilen yanıtları içerir. Öneriler `docs/agent-office-tasarım-raporu.md` ile karşılaştırıldı; raporun açıkça yanıtladığı yerlerde "Rapor:" diye belirtildi. Her maddede önce öneri, gerekiyorsa seçenekler var. "Senden" diye işaretli yerler kurucunun vermesi gereken bilgi ya da karardır; bunlar olmadan madde kapanmaz. Kurucu onayladıktan sonra Claude Code kararları CLAUDE.md, PLAN.md ve kartlara işler, SONRA.md'den siler.
