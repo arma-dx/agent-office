@@ -1,7 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { EmptyState } from '@/components/states';
 
-export const Route = createFileRoute('/notes')({
+export const Route = createFileRoute('/_authed/c/$company/notes')({
   component: NotesScreen,
 });
 

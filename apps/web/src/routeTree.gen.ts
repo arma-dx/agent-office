@@ -9,122 +9,277 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as IndexRouteImport } from './routes/index'
-import { Route as AgentsRouteImport } from './routes/agents'
-import { Route as ApprovalsRouteImport } from './routes/approvals'
-import { Route as NotesRouteImport } from './routes/notes'
-import { Route as TasksRouteImport } from './routes/tasks'
+import { Route as AuthedRouteImport } from './routes/_authed'
+import { Route as LoginRouteImport } from './routes/login'
+import { Route as AuthedIndexRouteImport } from './routes/_authed/index'
+import { Route as AuthedCompaniesRouteImport } from './routes/_authed/companies'
+import { Route as AuthedCCompanyRouteImport } from './routes/_authed/c/$company'
+import { Route as AuthedCCompanyIndexRouteImport } from './routes/_authed/c/$company/index'
+import { Route as AuthedCCompanyAgentsRouteImport } from './routes/_authed/c/$company/agents'
+import { Route as AuthedCCompanyApprovalsRouteImport } from './routes/_authed/c/$company/approvals'
+import { Route as AuthedCCompanyNotesRouteImport } from './routes/_authed/c/$company/notes'
+import { Route as AuthedCCompanyTasksRouteImport } from './routes/_authed/c/$company/tasks'
+import { Route as AuthedCCompanySettingsUsersRouteImport } from './routes/_authed/c/$company/settings/users'
 
-const IndexRoute = IndexRouteImport.update({
+const AuthedRoute = AuthedRouteImport.update({
+  id: '/_authed',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LoginRoute = LoginRouteImport.update({
+  id: '/login',
+  path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AuthedIndexRoute = AuthedIndexRouteImport.update({
   id: '/',
   path: '/',
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => AuthedRoute,
 } as any)
-const AgentsRoute = AgentsRouteImport.update({
+const AuthedCompaniesRoute = AuthedCompaniesRouteImport.update({
+  id: '/companies',
+  path: '/companies',
+  getParentRoute: () => AuthedRoute,
+} as any)
+const AuthedCCompanyRoute = AuthedCCompanyRouteImport.update({
+  id: '/c/$company',
+  path: '/c/$company',
+  getParentRoute: () => AuthedRoute,
+} as any)
+const AuthedCCompanyIndexRoute = AuthedCCompanyIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AuthedCCompanyRoute,
+} as any)
+const AuthedCCompanyAgentsRoute = AuthedCCompanyAgentsRouteImport.update({
   id: '/agents',
   path: '/agents',
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => AuthedCCompanyRoute,
 } as any)
-const ApprovalsRoute = ApprovalsRouteImport.update({
+const AuthedCCompanyApprovalsRoute = AuthedCCompanyApprovalsRouteImport.update({
   id: '/approvals',
   path: '/approvals',
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => AuthedCCompanyRoute,
 } as any)
-const NotesRoute = NotesRouteImport.update({
+const AuthedCCompanyNotesRoute = AuthedCCompanyNotesRouteImport.update({
   id: '/notes',
   path: '/notes',
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => AuthedCCompanyRoute,
 } as any)
-const TasksRoute = TasksRouteImport.update({
+const AuthedCCompanyTasksRoute = AuthedCCompanyTasksRouteImport.update({
   id: '/tasks',
   path: '/tasks',
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => AuthedCCompanyRoute,
 } as any)
+const AuthedCCompanySettingsUsersRoute =
+  AuthedCCompanySettingsUsersRouteImport.update({
+    id: '/settings/users',
+    path: '/settings/users',
+    getParentRoute: () => AuthedCCompanyRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
-  '/': typeof IndexRoute
-  '/agents': typeof AgentsRoute
-  '/approvals': typeof ApprovalsRoute
-  '/notes': typeof NotesRoute
-  '/tasks': typeof TasksRoute
+  '/': typeof AuthedIndexRoute
+  '/login': typeof LoginRoute
+  '/companies': typeof AuthedCompaniesRoute
+  '/c/$company': typeof AuthedCCompanyRouteWithChildren
+  '/c/$company/agents': typeof AuthedCCompanyAgentsRoute
+  '/c/$company/approvals': typeof AuthedCCompanyApprovalsRoute
+  '/c/$company/notes': typeof AuthedCCompanyNotesRoute
+  '/c/$company/tasks': typeof AuthedCCompanyTasksRoute
+  '/c/$company/': typeof AuthedCCompanyIndexRoute
+  '/c/$company/settings/users': typeof AuthedCCompanySettingsUsersRoute
 }
 export interface FileRoutesByTo {
-  '/': typeof IndexRoute
-  '/agents': typeof AgentsRoute
-  '/approvals': typeof ApprovalsRoute
-  '/notes': typeof NotesRoute
-  '/tasks': typeof TasksRoute
+  '/login': typeof LoginRoute
+  '/companies': typeof AuthedCompaniesRoute
+  '/': typeof AuthedIndexRoute
+  '/c/$company/agents': typeof AuthedCCompanyAgentsRoute
+  '/c/$company/approvals': typeof AuthedCCompanyApprovalsRoute
+  '/c/$company/notes': typeof AuthedCCompanyNotesRoute
+  '/c/$company/tasks': typeof AuthedCCompanyTasksRoute
+  '/c/$company': typeof AuthedCCompanyIndexRoute
+  '/c/$company/settings/users': typeof AuthedCCompanySettingsUsersRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
-  '/': typeof IndexRoute
-  '/agents': typeof AgentsRoute
-  '/approvals': typeof ApprovalsRoute
-  '/notes': typeof NotesRoute
-  '/tasks': typeof TasksRoute
+  '/_authed': typeof AuthedRouteWithChildren
+  '/login': typeof LoginRoute
+  '/_authed/companies': typeof AuthedCompaniesRoute
+  '/_authed/': typeof AuthedIndexRoute
+  '/_authed/c/$company': typeof AuthedCCompanyRouteWithChildren
+  '/_authed/c/$company/agents': typeof AuthedCCompanyAgentsRoute
+  '/_authed/c/$company/approvals': typeof AuthedCCompanyApprovalsRoute
+  '/_authed/c/$company/notes': typeof AuthedCCompanyNotesRoute
+  '/_authed/c/$company/tasks': typeof AuthedCCompanyTasksRoute
+  '/_authed/c/$company/': typeof AuthedCCompanyIndexRoute
+  '/_authed/c/$company/settings/users': typeof AuthedCCompanySettingsUsersRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/agents' | '/approvals' | '/notes' | '/tasks'
+  fullPaths:
+    | '/'
+    | '/login'
+    | '/companies'
+    | '/c/$company'
+    | '/c/$company/agents'
+    | '/c/$company/approvals'
+    | '/c/$company/notes'
+    | '/c/$company/tasks'
+    | '/c/$company/'
+    | '/c/$company/settings/users'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/agents' | '/approvals' | '/notes' | '/tasks'
-  id: '__root__' | '/' | '/agents' | '/approvals' | '/notes' | '/tasks'
+  to:
+    | '/login'
+    | '/companies'
+    | '/'
+    | '/c/$company/agents'
+    | '/c/$company/approvals'
+    | '/c/$company/notes'
+    | '/c/$company/tasks'
+    | '/c/$company'
+    | '/c/$company/settings/users'
+  id:
+    | '__root__'
+    | '/_authed'
+    | '/login'
+    | '/_authed/companies'
+    | '/_authed/'
+    | '/_authed/c/$company'
+    | '/_authed/c/$company/agents'
+    | '/_authed/c/$company/approvals'
+    | '/_authed/c/$company/notes'
+    | '/_authed/c/$company/tasks'
+    | '/_authed/c/$company/'
+    | '/_authed/c/$company/settings/users'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
-  IndexRoute: typeof IndexRoute
-  AgentsRoute: typeof AgentsRoute
-  ApprovalsRoute: typeof ApprovalsRoute
-  NotesRoute: typeof NotesRoute
-  TasksRoute: typeof TasksRoute
+  AuthedRoute: typeof AuthedRouteWithChildren
+  LoginRoute: typeof LoginRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/': {
-      id: '/'
+    '/_authed': {
+      id: '/_authed'
+      path: ''
+      fullPath: '/'
+      preLoaderRoute: typeof AuthedRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/login': {
+      id: '/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/_authed/': {
+      id: '/_authed/'
       path: '/'
       fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
-      parentRoute: typeof rootRouteImport
+      preLoaderRoute: typeof AuthedIndexRouteImport
+      parentRoute: typeof AuthedRoute
     }
-    '/agents': {
-      id: '/agents'
+    '/_authed/companies': {
+      id: '/_authed/companies'
+      path: '/companies'
+      fullPath: '/companies'
+      preLoaderRoute: typeof AuthedCompaniesRouteImport
+      parentRoute: typeof AuthedRoute
+    }
+    '/_authed/c/$company': {
+      id: '/_authed/c/$company'
+      path: '/c/$company'
+      fullPath: '/c/$company'
+      preLoaderRoute: typeof AuthedCCompanyRouteImport
+      parentRoute: typeof AuthedRoute
+    }
+    '/_authed/c/$company/': {
+      id: '/_authed/c/$company/'
+      path: '/'
+      fullPath: '/c/$company/'
+      preLoaderRoute: typeof AuthedCCompanyIndexRouteImport
+      parentRoute: typeof AuthedCCompanyRoute
+    }
+    '/_authed/c/$company/agents': {
+      id: '/_authed/c/$company/agents'
       path: '/agents'
-      fullPath: '/agents'
-      preLoaderRoute: typeof AgentsRouteImport
-      parentRoute: typeof rootRouteImport
+      fullPath: '/c/$company/agents'
+      preLoaderRoute: typeof AuthedCCompanyAgentsRouteImport
+      parentRoute: typeof AuthedCCompanyRoute
     }
-    '/approvals': {
-      id: '/approvals'
+    '/_authed/c/$company/approvals': {
+      id: '/_authed/c/$company/approvals'
       path: '/approvals'
-      fullPath: '/approvals'
-      preLoaderRoute: typeof ApprovalsRouteImport
-      parentRoute: typeof rootRouteImport
+      fullPath: '/c/$company/approvals'
+      preLoaderRoute: typeof AuthedCCompanyApprovalsRouteImport
+      parentRoute: typeof AuthedCCompanyRoute
     }
-    '/notes': {
-      id: '/notes'
+    '/_authed/c/$company/notes': {
+      id: '/_authed/c/$company/notes'
       path: '/notes'
-      fullPath: '/notes'
-      preLoaderRoute: typeof NotesRouteImport
-      parentRoute: typeof rootRouteImport
+      fullPath: '/c/$company/notes'
+      preLoaderRoute: typeof AuthedCCompanyNotesRouteImport
+      parentRoute: typeof AuthedCCompanyRoute
     }
-    '/tasks': {
-      id: '/tasks'
+    '/_authed/c/$company/tasks': {
+      id: '/_authed/c/$company/tasks'
       path: '/tasks'
-      fullPath: '/tasks'
-      preLoaderRoute: typeof TasksRouteImport
-      parentRoute: typeof rootRouteImport
+      fullPath: '/c/$company/tasks'
+      preLoaderRoute: typeof AuthedCCompanyTasksRouteImport
+      parentRoute: typeof AuthedCCompanyRoute
+    }
+    '/_authed/c/$company/settings/users': {
+      id: '/_authed/c/$company/settings/users'
+      path: '/settings/users'
+      fullPath: '/c/$company/settings/users'
+      preLoaderRoute: typeof AuthedCCompanySettingsUsersRouteImport
+      parentRoute: typeof AuthedCCompanyRoute
     }
   }
 }
 
+interface AuthedCCompanyRouteChildren {
+  AuthedCCompanyAgentsRoute: typeof AuthedCCompanyAgentsRoute
+  AuthedCCompanyApprovalsRoute: typeof AuthedCCompanyApprovalsRoute
+  AuthedCCompanyNotesRoute: typeof AuthedCCompanyNotesRoute
+  AuthedCCompanyTasksRoute: typeof AuthedCCompanyTasksRoute
+  AuthedCCompanyIndexRoute: typeof AuthedCCompanyIndexRoute
+  AuthedCCompanySettingsUsersRoute: typeof AuthedCCompanySettingsUsersRoute
+}
+
+const AuthedCCompanyRouteChildren: AuthedCCompanyRouteChildren = {
+  AuthedCCompanyAgentsRoute: AuthedCCompanyAgentsRoute,
+  AuthedCCompanyApprovalsRoute: AuthedCCompanyApprovalsRoute,
+  AuthedCCompanyNotesRoute: AuthedCCompanyNotesRoute,
+  AuthedCCompanyTasksRoute: AuthedCCompanyTasksRoute,
+  AuthedCCompanyIndexRoute: AuthedCCompanyIndexRoute,
+  AuthedCCompanySettingsUsersRoute: AuthedCCompanySettingsUsersRoute,
+}
+
+const AuthedCCompanyRouteWithChildren = AuthedCCompanyRoute._addFileChildren(
+  AuthedCCompanyRouteChildren,
+)
+
+interface AuthedRouteChildren {
+  AuthedCompaniesRoute: typeof AuthedCompaniesRoute
+  AuthedIndexRoute: typeof AuthedIndexRoute
+  AuthedCCompanyRoute: typeof AuthedCCompanyRouteWithChildren
+}
+
+const AuthedRouteChildren: AuthedRouteChildren = {
+  AuthedCompaniesRoute: AuthedCompaniesRoute,
+  AuthedIndexRoute: AuthedIndexRoute,
+  AuthedCCompanyRoute: AuthedCCompanyRouteWithChildren,
+}
+
+const AuthedRouteWithChildren =
+  AuthedRoute._addFileChildren(AuthedRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
-  IndexRoute: IndexRoute,
-  AgentsRoute: AgentsRoute,
-  ApprovalsRoute: ApprovalsRoute,
-  NotesRoute: NotesRoute,
-  TasksRoute: TasksRoute,
+  AuthedRoute: AuthedRouteWithChildren,
+  LoginRoute: LoginRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

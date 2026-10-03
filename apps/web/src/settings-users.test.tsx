@@ -1,0 +1,510 @@
+import { COMPANY_HEADER, type Invitation, type Member } from '@agent-office/shared';
+import { screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { describe, expect, it } from 'vitest';
+import {
+  apiError,
+  ARMADX,
+  type Handler,
+  json,
+  mockApi,
+  noContent,
+  PILLIKA,
+  sessionBody,
+  sessionHandler,
+  USER_ID,
+} from './test/mock-api.ts';
+import { currentLocation, renderApp } from './test/render-app.tsx';
+import { formatDateTime } from './lib/users.ts';
+
+const FOUNDER: Member = {
+  userId: USER_ID,
+  name: 'Ömer Kadıoğlu',
+  role: 'founder',
+  canApprove: true,
+  active: true,
+};
+const EMPLOYEE: Member = {
+  userId: '1d2e3f4a-5b6c-4d7e-8f90-a1b2c3d4e5f6',
+  name: 'Ayşe Demir',
+  role: 'employee',
+  canApprove: false,
+  active: true,
+};
+const EXTERNAL: Member = {
+  userId: '2e3f4a5b-6c7d-4e8f-9a01-b2c3d4e5f6a7',
+  name: 'Mali Müşavir',
+  role: 'external',
+  canApprove: false,
+  active: false,
+};
+
+// Invitation times are relative to now: what can be done with one depends on its age.
+const DAY_MS = 24 * 60 * 60 * 1000;
+const daysFromNow = (days: number) => new Date(Date.now() + days * DAY_MS).toISOString();
+
+const PENDING: Invitation = {
+  id: '3f4a5b6c-7d8e-4f90-a112-c3d4e5f6a7b8',
+  email: 'yeni@armadx.com',
+  role: 'employee',
+  canApprove: true,
+  createdAt: daysFromNow(-1),
+  expiresAt: daysFromNow(6),
+  status: 'pending',
+};
+// Expired, still within 30 days of its creation: its time can be extended.
+const EXPIRED: Invitation = {
+  id: '4a5b6c7d-8e9f-4a01-b223-d4e5f6a7b8c9',
+  email: 'avukat@example.com',
+  role: 'external',
+  canApprove: false,
+  createdAt: daysFromNow(-10),
+  expiresAt: daysFromNow(-3),
+  status: 'expired',
+};
+// Expired and older than 30 days: it can only be cancelled, which frees the address.
+const PAST_LIMIT: Invitation = {
+  id: '7e8f9a0b-1c2d-4e3f-8a4b-5c6d7e8f9a0b',
+  email: 'eski@example.com',
+  role: 'external',
+  canApprove: false,
+  createdAt: daysFromNow(-40),
+  expiresAt: daysFromNow(-10),
+  status: 'expired',
+};
+const ACCEPTED: Invitation = {
+  ...PENDING,
+  id: '5b6c7d8e-9fa0-4b12-8334-e5f6a7b8c9d0',
+  email: 'ayse@armadx.com',
+  status: 'accepted',
+};
+
+const EMPLOYEE_MEMBERSHIP = { ...ARMADX, role: 'employee' as const, canApprove: false };
+
+function founderApi(extra: Record<string, Handler> = {}) {
+  return mockApi({
+    'GET /session': sessionHandler(),
+    'GET /members': () => json({ members: [FOUNDER, EMPLOYEE, EXTERNAL] }),
+    'GET /invitations': () => json({ invitations: [PENDING, EXPIRED, PAST_LIMIT, ACCEPTED] }),
+    ...extra,
+  });
+}
+
+function row(name: string) {
+  return screen.getByRole('group', { name });
+}
+
+async function inviteForm() {
+  return within(await screen.findByRole('region', { name: 'Yeni davet' }));
+}
+
+describe('settings, users: visibility', () => {
+  it('is in the user menu of the founder and opens the users page', async () => {
+    founderApi();
+    const { router } = renderApp('/c/armadx');
+    await userEvent.click(await screen.findByRole('button', { name: 'Hesap: Ömer Kadıoğlu' }));
+    await userEvent.click(await screen.findByRole('menuitem', { name: 'Kullanıcılar' }));
+    expect(await screen.findByRole('heading', { level: 1, name: 'Kullanıcılar' })).toBeVisible();
+    expect(currentLocation(router).pathname).toBe('/c/armadx/settings/users');
+    // Settings are not in the bottom menu.
+    const bottomMenu = screen.getByRole('navigation', { name: 'Alt menü' });
+    expect(within(bottomMenu).queryByRole('link', { name: 'Kullanıcılar' })).toBeNull();
+  });
+
+  it('is not offered to an employee', async () => {
+    mockApi({ 'GET /session': sessionHandler({ memberships: [EMPLOYEE_MEMBERSHIP] }) });
+    renderApp('/c/armadx');
+    await userEvent.click(await screen.findByRole('button', { name: 'Hesap: Ömer Kadıoğlu' }));
+    const menu = await screen.findByRole('menu');
+    expect(within(menu).queryByRole('menuitem', { name: 'Kullanıcılar' })).toBeNull();
+    expect(within(menu).getByRole('menuitem', { name: 'Çıkış yap' })).toBeVisible();
+  });
+
+  it('answers an employee who opens the address with the 403 message', async () => {
+    const api = mockApi({ 'GET /session': sessionHandler({ memberships: [EMPLOYEE_MEMBERSHIP] }) });
+    renderApp('/c/armadx/settings/users');
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Bu işlem için yetkiniz yok. Kullanıcıları ve davetleri kurucu yönetir.',
+    );
+    expect(api.callsTo('GET /members')).toEqual([]);
+    expect(api.callsTo('GET /invitations')).toEqual([]);
+  });
+
+  it('is not offered in the private space', async () => {
+    founderApi();
+    renderApp('/c/founder_space');
+    await userEvent.click(await screen.findByRole('button', { name: 'Hesap: Ömer Kadıoğlu' }));
+    const menu = await screen.findByRole('menu');
+    expect(within(menu).queryByRole('menuitem', { name: 'Kullanıcılar' })).toBeNull();
+  });
+});
+
+describe('settings, users: members', () => {
+  it('lists members with Turkish roles, approval rights and state', async () => {
+    founderApi();
+    renderApp('/c/armadx/settings/users');
+    expect(await screen.findByText('Kurucu, onay yetkisi var, etkin')).toBeVisible();
+    expect(screen.getByText('Çalışan, onay yetkisi yok, etkin')).toBeVisible();
+    expect(screen.getByText('Dış kişi, onay yetkisi yok, devre dışı')).toBeVisible();
+    // The founder's own row cannot be edited from the panel.
+    expect(within(row('Ömer Kadıoğlu')).queryByRole('combobox')).toBeNull();
+    expect(within(row('Ömer Kadıoğlu')).queryByRole('button')).toBeNull();
+    // The approval toggle is only for employees.
+    expect(within(row('Ayşe Demir')).getByRole('switch', { name: 'Onay yetkisi' })).toBeVisible();
+    expect(within(row('Mali Müşavir')).queryByRole('switch')).toBeNull();
+  });
+
+  it('changes the role; approval rights go with a change to external', async () => {
+    const api = founderApi({
+      'PATCH /members/1d2e3f4a-5b6c-4d7e-8f90-a1b2c3d4e5f6': () =>
+        json({ ...EMPLOYEE, role: 'external' }),
+    });
+    renderApp('/c/armadx/settings/users');
+    await screen.findByText('Çalışan, onay yetkisi yok, etkin');
+    const select = within(row('Ayşe Demir')).getByRole('combobox', { name: 'Rol' });
+    expect(
+      within(select)
+        .getAllByRole('option')
+        .map((o) => o.textContent),
+    ).toEqual(['Çalışan', 'Dış kişi']);
+    await userEvent.selectOptions(select, 'external');
+    expect(await screen.findByText('Dış kişi, onay yetkisi yok, etkin')).toBeVisible();
+    const [call] = api.callsTo(`PATCH /members/${EMPLOYEE.userId}`);
+    expect(call?.body).toEqual({ role: 'external', canApprove: false });
+    expect(call?.headers.get(COMPANY_HEADER)).toBe(ARMADX.companyId);
+  });
+
+  it('turns approval rights on for an employee', async () => {
+    const api = founderApi({
+      [`PATCH /members/${EMPLOYEE.userId}`]: () => json({ ...EMPLOYEE, canApprove: true }),
+    });
+    renderApp('/c/armadx/settings/users');
+    await screen.findByText('Çalışan, onay yetkisi yok, etkin');
+    await userEvent.click(within(row('Ayşe Demir')).getByRole('switch', { name: 'Onay yetkisi' }));
+    expect(await screen.findByText('Çalışan, onay yetkisi var, etkin')).toBeVisible();
+    expect(api.callsTo(`PATCH /members/${EMPLOYEE.userId}`).map((c) => c.body)).toEqual([
+      { canApprove: true },
+    ]);
+  });
+
+  it('removes a member only after confirmation', async () => {
+    let members = [FOUNDER, EMPLOYEE, EXTERNAL];
+    const api = founderApi({
+      'GET /members': () => json({ members }),
+      [`DELETE /members/${EMPLOYEE.userId}`]: () => {
+        members = members.filter((m) => m.userId !== EMPLOYEE.userId);
+        return noContent();
+      },
+    });
+    renderApp('/c/armadx/settings/users');
+    await screen.findByText('Çalışan, onay yetkisi yok, etkin');
+
+    await userEvent.click(
+      within(row('Ayşe Demir')).getByRole('button', { name: 'Üyelikten çıkar' }),
+    );
+    let dialog = await screen.findByRole('alertdialog', {
+      name: 'Ayşe Demir üyelikten çıkarılsın mı?',
+    });
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Vazgeç' }));
+    expect(api.callsTo(`DELETE /members/${EMPLOYEE.userId}`)).toEqual([]);
+
+    await userEvent.click(
+      within(row('Ayşe Demir')).getByRole('button', { name: 'Üyelikten çıkar' }),
+    );
+    dialog = await screen.findByRole('alertdialog');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Üyelikten çıkar' }));
+    expect(await screen.findByText('Ayşe Demir üyelikten çıkarıldı.')).toBeVisible();
+    await waitFor(() => {
+      expect(screen.queryByRole('group', { name: 'Ayşe Demir' })).toBeNull();
+    });
+    expect(api.callsTo(`DELETE /members/${EMPLOYEE.userId}`)).toHaveLength(1);
+    // The removed row took its button with it; the keyboard focus stays in the list's section.
+    expect(screen.getByRole('heading', { level: 2, name: 'Üyeler' })).toHaveFocus();
+  });
+
+  it('keeps the focus on a control while its change is on the way', async () => {
+    const api = founderApi({
+      // The answer never comes: the row stays busy.
+      [`PATCH /members/${EMPLOYEE.userId}`]: () => new Promise<Response>(() => undefined),
+    });
+    renderApp('/c/armadx/settings/users');
+    await screen.findByText('Çalışan, onay yetkisi yok, etkin');
+    const toggle = within(row('Ayşe Demir')).getByRole('switch', { name: 'Onay yetkisi' });
+    await userEvent.click(toggle);
+    expect(toggle).toHaveFocus();
+    expect(toggle).toBeEnabled();
+    expect(toggle).toHaveAttribute('aria-disabled', 'true');
+    // While busy, more input sends nothing.
+    await userEvent.click(toggle);
+    await userEvent.selectOptions(
+      within(row('Ayşe Demir')).getByRole('combobox', { name: 'Rol' }),
+      'external',
+    );
+    expect(api.callsTo(`PATCH /members/${EMPLOYEE.userId}`)).toHaveLength(1);
+  });
+
+  it('sends the person to the login screen when a change finds the session closed', async () => {
+    let signedIn = true;
+    const unauthenticated = () =>
+      apiError(401, 'unauthenticated', 'Oturumunuz kapalı. Yeniden giriş yapın.');
+    founderApi({
+      'GET /session': () => (signedIn ? json(sessionBody()) : unauthenticated()),
+      [`PATCH /members/${EMPLOYEE.userId}`]: () => {
+        // The session closed on the server (30 minutes idle) before this change.
+        signedIn = false;
+        return unauthenticated();
+      },
+    });
+    const { router } = renderApp('/c/armadx/settings/users');
+    await screen.findByText('Çalışan, onay yetkisi yok, etkin');
+    await userEvent.click(within(row('Ayşe Demir')).getByRole('switch', { name: 'Onay yetkisi' }));
+    await waitFor(() => {
+      expect(currentLocation(router)).toEqual({
+        pathname: '/login',
+        search: { status: 'expired' },
+      });
+    });
+  });
+
+  it('fetches the session again when the founder role is gone, and updates page and menu', async () => {
+    let membership = ARMADX;
+    const api = founderApi({
+      'GET /session': () => json(sessionBody({ memberships: [membership] })),
+      'GET /members': () => {
+        // Another founder session changed this person's role after the panel loaded.
+        membership = EMPLOYEE_MEMBERSHIP;
+        return apiError(403, 'founder_only', 'Bu işlemi yalnızca şirketin kurucusu yapabilir.');
+      },
+    });
+    renderApp('/c/armadx/settings/users');
+    expect(
+      await screen.findByText(
+        'Bu işlem için yetkiniz yok. Kullanıcıları ve davetleri kurucu yönetir.',
+      ),
+    ).toBeVisible();
+    expect(api.callsTo('GET /session').length).toBeGreaterThan(1);
+    await userEvent.click(screen.getByRole('button', { name: 'Hesap: Ömer Kadıoğlu' }));
+    const menu = await screen.findByRole('menu');
+    expect(within(menu).queryByRole('menuitem', { name: 'Kullanıcılar' })).toBeNull();
+  });
+
+  it("shows the API's message when a change is refused", async () => {
+    founderApi({
+      [`PATCH /members/${EMPLOYEE.userId}`]: () =>
+        apiError(400, 'approval_only_employee', 'Onay yetkisi yalnızca çalışana verilebilir.'),
+    });
+    renderApp('/c/armadx/settings/users');
+    await screen.findByText('Çalışan, onay yetkisi yok, etkin');
+    await userEvent.click(within(row('Ayşe Demir')).getByRole('switch', { name: 'Onay yetkisi' }));
+    expect(await screen.findByText('Onay yetkisi yalnızca çalışana verilebilir.')).toBeVisible();
+    expect(screen.getByText('Çalışan, onay yetkisi yok, etkin')).toBeVisible();
+  });
+});
+
+describe('settings, users: invitations', () => {
+  it('lists invitations with their Turkish status, end time and the actions that fit', async () => {
+    founderApi();
+    renderApp('/c/armadx/settings/users');
+    const pending = await screen.findByRole('group', { name: 'yeni@armadx.com' });
+    expect(pending).toHaveTextContent('Bekliyor');
+    expect(pending).toHaveTextContent('Çalışan, onay yetkisi var');
+    // An invitation ends at the hour it was created, so the time is shown with the day.
+    expect(pending).toHaveTextContent(`Geçerlilik sonu: ${formatDateTime(PENDING.expiresAt)}`);
+    expect(within(pending).getByRole('button', { name: 'Süreyi uzat' })).toBeVisible();
+    expect(within(pending).getByRole('button', { name: 'İptal et' })).toBeVisible();
+
+    // An expired invitation still holds its address, so it can be cancelled as well.
+    const expired = row('avukat@example.com');
+    expect(expired).toHaveTextContent('Süresi doldu');
+    expect(expired).toHaveTextContent('Dış kişi');
+    expect(within(expired).getByRole('button', { name: 'Süreyi uzat' })).toBeVisible();
+    expect(within(expired).getByRole('button', { name: 'İptal et' })).toBeVisible();
+
+    // Past the 30-day limit its time cannot be extended; cancelling is the way out.
+    const pastLimit = row('eski@example.com');
+    expect(pastLimit).toHaveTextContent('Süresi doldu');
+    expect(within(pastLimit).queryByRole('button', { name: 'Süreyi uzat' })).toBeNull();
+    expect(within(pastLimit).getByRole('button', { name: 'İptal et' })).toBeVisible();
+
+    const accepted = row('ayse@armadx.com');
+    expect(accepted).toHaveTextContent('Kabul edildi');
+    expect(within(accepted).queryByRole('button')).toBeNull();
+  });
+
+  it('extends the time of an invitation and cancels one', async () => {
+    const extendedTo = daysFromNow(7);
+    const api = founderApi({
+      [`POST /invitations/${EXPIRED.id}/renew`]: () =>
+        json({ ...EXPIRED, status: 'pending', expiresAt: extendedTo }),
+      [`POST /invitations/${PENDING.id}/cancel`]: () => noContent(),
+    });
+    renderApp('/c/armadx/settings/users');
+    const expired = await screen.findByRole('group', { name: 'avukat@example.com' });
+    await userEvent.click(within(expired).getByRole('button', { name: 'Süreyi uzat' }));
+    expect(
+      await screen.findByText(
+        `Davetin süresi uzatıldı. Geçerlilik sonu: ${formatDateTime(extendedTo)}.`,
+      ),
+    ).toBeVisible();
+    expect(row('avukat@example.com')).toHaveTextContent('Bekliyor');
+
+    await userEvent.click(within(row('yeni@armadx.com')).getByRole('button', { name: 'İptal et' }));
+    expect(await screen.findByText('Davet iptal edildi.')).toBeVisible();
+    expect(api.callsTo(`POST /invitations/${EXPIRED.id}/renew`)).toHaveLength(1);
+    expect(api.callsTo(`POST /invitations/${PENDING.id}/cancel`)).toHaveLength(1);
+  });
+
+  it('cancels an invitation past the 30-day limit so the address can be invited again', async () => {
+    let pastLimit = PAST_LIMIT;
+    const api = founderApi({
+      'GET /invitations': () => json({ invitations: [PENDING, pastLimit] }),
+      [`POST /invitations/${PAST_LIMIT.id}/cancel`]: () => {
+        pastLimit = { ...PAST_LIMIT, status: 'cancelled' };
+        return noContent();
+      },
+    });
+    renderApp('/c/armadx/settings/users');
+    const group = await screen.findByRole('group', { name: 'eski@example.com' });
+    await userEvent.click(within(group).getByRole('button', { name: 'İptal et' }));
+    await waitFor(() => {
+      expect(row('eski@example.com')).toHaveTextContent('İptal edildi');
+    });
+    expect(within(row('eski@example.com')).queryByRole('button')).toBeNull();
+    expect(api.callsTo(`POST /invitations/${PAST_LIMIT.id}/cancel`)).toHaveLength(1);
+    // The row's buttons are gone; the keyboard focus stays in the list's section.
+    expect(screen.getByRole('heading', { level: 2, name: 'Davetler' })).toHaveFocus();
+  });
+
+  it('shows the first step when there is no invitation', async () => {
+    founderApi({ 'GET /invitations': () => json({ invitations: [] }) });
+    renderApp('/c/armadx/settings/users');
+    expect(await screen.findByText('Henüz davet yok')).toBeVisible();
+  });
+});
+
+describe('settings, users: invite form', () => {
+  it('checks the address in Turkish and sends nothing while it is wrong', async () => {
+    const api = founderApi();
+    renderApp('/c/armadx/settings/users');
+    const submit = await screen.findByRole('button', { name: 'Davet oluştur' });
+    await userEvent.click(submit);
+    expect(await screen.findByText('E-posta adresini yazın.')).toBeVisible();
+    await userEvent.type(screen.getByLabelText('E-posta'), 'ayse.armadx.com');
+    await userEvent.click(submit);
+    expect(
+      await screen.findByText('Geçerli bir e-posta adresi yazın, örneğin ad@sirket.com.'),
+    ).toBeVisible();
+    expect(screen.getByLabelText('E-posta')).toHaveAttribute('aria-invalid', 'true');
+    expect(api.callsTo('POST /invitations')).toEqual([]);
+  });
+
+  it('creates an invitation and says it is not emailed', async () => {
+    const created: Invitation = {
+      ...PENDING,
+      id: '6c7d8e9f-a0b1-4c23-9445-f6a7b8c9d0e1',
+      email: 'ali@armadx.com',
+      canApprove: true,
+    };
+    const api = founderApi({ 'POST /invitations': () => json(created, 201) });
+    renderApp('/c/armadx/settings/users');
+    const form = await inviteForm();
+    await userEvent.type(form.getByLabelText('E-posta'), '  Ali@ArmaDX.com ');
+    await userEvent.click(form.getByRole('switch', { name: 'Onay yetkisi' }));
+    await userEvent.click(form.getByRole('button', { name: 'Davet oluştur' }));
+
+    const note = await screen.findByText(
+      'Davet oluşturuldu ama e-postayla gönderilmez. Kişiye panel adresini iletin ve bu e-posta adresiyle Google ile girmesini söyleyin.',
+    );
+    expect(note).toBeVisible();
+    const result = screen.getByRole('status', { name: 'Davet sonucu' });
+    expect(result).toContainElement(note);
+    expect(result).toHaveTextContent('ali@armadx.com');
+    expect(result).toHaveTextContent(`Geçerlilik sonu${formatDateTime(created.expiresAt)}`);
+    const [call] = api.callsTo('POST /invitations');
+    expect(call?.body).toEqual({ email: 'ali@armadx.com', role: 'employee', canApprove: true });
+    expect(call?.headers.get(COMPANY_HEADER)).toBe(ARMADX.companyId);
+    // The form is ready for the next invitation; the list is fetched again.
+    expect(screen.getByLabelText('E-posta')).toHaveValue('');
+    await waitFor(() => {
+      expect(api.callsTo('GET /invitations').length).toBeGreaterThan(1);
+    });
+  });
+
+  it('invites an external person without approval rights', async () => {
+    const api = founderApi({
+      'POST /invitations': () => json({ ...EXPIRED, status: 'pending' }, 201),
+    });
+    renderApp('/c/armadx/settings/users');
+    const form = await inviteForm();
+    await userEvent.type(form.getByLabelText('E-posta'), 'avukat@example.com');
+    await userEvent.click(form.getByRole('switch', { name: 'Onay yetkisi' }));
+    await userEvent.selectOptions(form.getByRole('combobox', { name: 'Rol' }), 'external');
+    expect(form.queryByRole('switch', { name: 'Onay yetkisi' })).toBeNull();
+    expect(form.getByRole('combobox', { name: 'Rol' })).toHaveAccessibleDescription(
+      'Dış kişi yalnızca kendisine açılan görev ve notları görür.',
+    );
+    await userEvent.click(form.getByRole('button', { name: 'Davet oluştur' }));
+    await screen.findByText(/^Davet oluşturuldu/);
+    expect(api.callsTo('POST /invitations').map((c) => c.body)).toEqual([
+      { email: 'avukat@example.com', role: 'external', canApprove: false },
+    ]);
+  });
+
+  it("shows the API's message when an open invitation exists", async () => {
+    const message =
+      'Bu adrese kabul edilmemiş bir davet zaten var; süresi dolmuş olabilir. Davetler listesinden süresini uzatın ya da daveti iptal edip yeniden oluşturun.';
+    founderApi({ 'POST /invitations': () => apiError(409, 'invitation_exists', message) });
+    renderApp('/c/armadx/settings/users');
+    await userEvent.type(await screen.findByLabelText('E-posta'), 'avukat@example.com');
+    await userEvent.click(screen.getByRole('button', { name: 'Davet oluştur' }));
+    expect(await screen.findByText(message)).toBeVisible();
+    expect(screen.queryByText(/^Davet oluşturuldu/)).toBeNull();
+  });
+
+  it('uses the same words as the list when the 409 has no agreed body', async () => {
+    founderApi({ 'POST /invitations': () => new Response('Conflict', { status: 409 }) });
+    renderApp('/c/armadx/settings/users');
+    await userEvent.type(await screen.findByLabelText('E-posta'), 'avukat@example.com');
+    await userEvent.click(screen.getByRole('button', { name: 'Davet oluştur' }));
+    const alert = await screen.findByText(/^Bu adrese kabul edilmemiş bir davet zaten var/);
+    // The list offers "Süreyi uzat" and "İptal et"; the message names those actions.
+    expect(alert).toHaveTextContent(/süresini uzatın/);
+    expect(alert).not.toHaveTextContent(/yenile/i);
+  });
+
+  it('keeps the result region in the page and the focus on the button while sending', async () => {
+    let answer: (response: Response) => void = () => undefined;
+    const api = founderApi({
+      'POST /invitations': () =>
+        new Promise<Response>((resolve) => {
+          answer = resolve;
+        }),
+    });
+    renderApp('/c/armadx/settings/users');
+    // The live region exists before anything is announced in it.
+    const result = await screen.findByRole('status', { name: 'Davet sonucu' });
+    expect(result).toBeEmptyDOMElement();
+    const form = await inviteForm();
+    await userEvent.type(form.getByLabelText('E-posta'), 'ali@armadx.com');
+    const submit = form.getByRole('button', { name: 'Davet oluştur' });
+    await userEvent.click(submit);
+    expect(submit).toHaveFocus();
+    expect(submit).toHaveAttribute('aria-disabled', 'true');
+    // A second press while sending sends nothing.
+    await userEvent.click(submit);
+    expect(api.callsTo('POST /invitations')).toHaveLength(1);
+    answer(json({ ...PENDING, email: 'ali@armadx.com' }, 201));
+    expect(await within(result).findByText(/^Davet oluşturuldu/)).toBeVisible();
+    expect(screen.getByRole('status', { name: 'Davet sonucu' })).toBe(result);
+  });
+
+  it('starts empty in another company', async () => {
+    founderApi({ 'PUT /session/company': () => noContent() });
+    renderApp('/c/armadx/settings/users');
+    await userEvent.type(await screen.findByLabelText('E-posta'), 'yarim@armadx.com');
+    await userEvent.click(screen.getByRole('button', { name: /Şirket: Arma DX/ }));
+    await userEvent.click(await screen.findByRole('menuitemradio', { name: PILLIKA.name }));
+    await screen.findByRole('button', { name: /Şirket: Pillika/ });
+    expect(await screen.findByLabelText('E-posta')).toHaveValue('');
+  });
+});

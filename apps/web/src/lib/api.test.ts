@@ -1,6 +1,7 @@
+import { COMPANY_HEADER } from '@agent-office/shared';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { ApiError, apiRequest, isPermanentError, userMessage } from './api.ts';
+import { ApiError, apiRequest, isAccessChanged, isPermanentError, userMessage } from './api.ts';
 
 const schema = z.object({ status: z.literal('ok') });
 
@@ -80,6 +81,60 @@ describe('apiRequest', () => {
     ).rejects.not.toBeInstanceOf(ApiError);
   });
 
+  it('sends the selected company in the x-company-id header only when asked', async () => {
+    const fetchMock = fetchResponse({ status: 'ok' });
+    vi.stubGlobal('fetch', fetchMock);
+    const companyId = '6f1c2a3b-4d5e-4f60-8a71-0b2c3d4e5f60';
+    await apiRequest('/members', { schema, companyId });
+    await apiRequest('/session', { schema });
+    const headers = fetchMock.mock.calls.map(
+      (call) => new Headers((call as unknown as [string, RequestInit])[1].headers),
+    );
+    expect(headers[0]?.get(COMPANY_HEADER)).toBe(companyId);
+    expect(headers[1]?.has(COMPANY_HEADER)).toBe(false);
+  });
+
+  it('carries the Turkish message and code of an error body in the agreed shape', async () => {
+    vi.stubGlobal(
+      'fetch',
+      fetchResponse(
+        { error: { code: 'invitation_exists', message: 'Bu adrese bekleyen bir davet var.' } },
+        409,
+      ),
+    );
+    const error = await apiRequest('/invitations', { method: 'POST', body: {}, schema }).catch(
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error).toMatchObject({
+      status: 409,
+      code: 'invitation_exists',
+      message: 'Bu adrese bekleyen bir davet var.',
+    });
+    expect(userMessage(error)).toBe('Bu adrese bekleyen bir davet var.');
+  });
+
+  it('falls back to the status message when the error body has another shape', async () => {
+    vi.stubGlobal('fetch', fetchResponse({ message: 'relation "users" does not exist' }, 500));
+    const error = await apiRequest('/members', { schema }).catch((e: unknown) => e);
+    expect(error).toMatchObject({ status: 500, code: undefined });
+    expect(userMessage(error)).toBe('Sunucuda bir sorun oluştu. Biraz sonra yeniden deneyin.');
+    expect(userMessage(error)).not.toMatch(/relation/);
+  });
+
+  it('falls back when the error message is empty or the body is not JSON', async () => {
+    vi.stubGlobal('fetch', fetchResponse({ error: { code: 'forbidden', message: ' ' } }, 403));
+    expect(userMessage(await apiRequest('/members', { schema }).catch((e: unknown) => e))).toBe(
+      'Bu işlem için yetkiniz yok.',
+    );
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(new Response('<html>Bad gateway</html>', { status: 502 }))),
+    );
+    const error = await apiRequest('/members', { schema }).catch((e: unknown) => e);
+    expect(error).toMatchObject({ status: 502, code: undefined });
+  });
+
   it('does not send a request to an absolute URL', async () => {
     await expect(apiRequest('https://example.com/x', { schema })).rejects.toThrow(
       /must start with/,
@@ -95,6 +150,15 @@ describe('userMessage', () => {
     expect(userMessage(new ApiError(429, ''))).toMatch(/Biraz bekleyip/);
     expect(userMessage(new ApiError(409, 'internal detail'))).toMatch(/kontrol edip/);
     expect(userMessage(new Error('internal detail'))).not.toMatch(/internal detail/);
+  });
+
+  it('recognises a 403 that means the access changed, and only that', () => {
+    expect(isAccessChanged(new ApiError(403, 'x', 'forbidden'))).toBe(true);
+    expect(isAccessChanged(new ApiError(403, 'x', 'founder_only'))).toBe(true);
+    // Request forgery protection and a 403 without the agreed body are not about the session.
+    expect(isAccessChanged(new ApiError(403, 'x', 'cross_site_request'))).toBe(false);
+    expect(isAccessChanged(new ApiError(403, 'x'))).toBe(false);
+    expect(isAccessChanged(new ApiError(401, 'x', 'forbidden'))).toBe(false);
   });
 
   it('treats 4xx errors as permanent, but not network and server errors', () => {
