@@ -7,6 +7,11 @@ import { defineConfig, loadEnv } from 'vite';
 
 const rootDir = fileURLToPath(new URL('../..', import.meta.url));
 
+const FRAME_HEADERS = {
+  'Content-Security-Policy': "frame-ancestors 'none'",
+  'X-Frame-Options': 'DENY',
+};
+
 export default defineConfig(({ mode }) => {
   // Only PORT is read from the root .env; it is for the dev server's API address and does not enter the bundle.
   const apiPort = loadEnv(mode, rootDir, 'PORT').PORT ?? '3000';
@@ -25,11 +30,14 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 5173,
       strictPort: true,
+      // Like the web server in production: no other page may show the panel in a frame.
+      headers: FRAME_HEADERS,
       proxy: {
         // The browser only calls the relative /api/; in development it is forwarded to the local Fastify.
         '/api/': { target: `http://127.0.0.1:${apiPort}` },
       },
     },
+    preview: { headers: FRAME_HEADERS },
     test: {
       environment: 'jsdom',
       setupFiles: ['./src/test-setup.ts'],

@@ -1,5 +1,6 @@
 import '@testing-library/jest-dom/vitest';
 import { cleanup } from '@testing-library/react';
+import { toast } from 'sonner';
 import { afterEach, beforeEach, vi } from 'vitest';
 
 beforeEach(() => {
@@ -40,7 +41,10 @@ beforeEach(() => {
 
 // globals are off, so Testing Library does not clean up automatically. The rendered tree is removed
 // first, then every stubbed global (fetch in the app tests) goes back to its original value.
+// sonner keeps its toasts in module state and shows them to the next Toaster; they are dismissed so
+// that a test never sees the message of the one before.
 afterEach(() => {
   cleanup();
+  toast.dismiss();
   vi.unstubAllGlobals();
 });

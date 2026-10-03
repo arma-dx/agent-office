@@ -1,7 +1,9 @@
 import { COMPANY_HEADER, type Invitation, type Member } from '@agent-office/shared';
+import { startAuthentication } from '@simplewebauthn/browser';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 import {
   apiError,
   ARMADX,
@@ -14,8 +16,19 @@ import {
   sessionHandler,
   USER_ID,
 } from './test/mock-api.ts';
+import { ASSERTION, challengeId, signed, STEP_UP_OPTIONS, stepUpIssuer } from './test/passkeys.ts';
 import { currentLocation, renderApp } from './test/render-app.tsx';
 import { formatDateTime } from './lib/users.ts';
+
+vi.mock('@simplewebauthn/browser', () => ({
+  startAuthentication: vi.fn(),
+  startRegistration: vi.fn(),
+  browserSupportsWebAuthn: vi.fn(() => true),
+}));
+
+beforeEach(() => {
+  vi.mocked(startAuthentication).mockReset().mockResolvedValue(ASSERTION);
+});
 
 const FOUNDER: Member = {
   userId: USER_ID,
@@ -154,10 +167,11 @@ describe('settings, users: members', () => {
     expect(within(row('Mali Müşavir')).queryByRole('switch')).toBeNull();
   });
 
-  it('changes the role; approval rights go with a change to external', async () => {
+  it('changes the role after a passkey confirmation; approval rights go with a change to external', async () => {
+    const stepUp = stepUpIssuer();
     const api = founderApi({
-      'PATCH /members/1d2e3f4a-5b6c-4d7e-8f90-a1b2c3d4e5f6': () =>
-        json({ ...EMPLOYEE, role: 'external' }),
+      'POST /step-up/options': stepUp.handler,
+      [`PATCH /members/${EMPLOYEE.userId}`]: () => json({ ...EMPLOYEE, role: 'external' }),
     });
     renderApp('/c/armadx/settings/users');
     await screen.findByText('Çalışan, onay yetkisi yok, etkin');
@@ -168,29 +182,79 @@ describe('settings, users: members', () => {
         .map((o) => o.textContent),
     ).toEqual(['Çalışan', 'Dış kişi']);
     await userEvent.selectOptions(select, 'external');
+
+    const dialog = await screen.findByRole('alertdialog', {
+      name: 'Ayşe Demir dış kişi olsun mu?',
+    });
+    // Nothing changes before the confirmation; the control keeps the saved value.
+    expect(select).toHaveValue('employee');
+    expect(api.callsTo(`PATCH /members/${EMPLOYEE.userId}`)).toEqual([]);
+    await waitFor(() => {
+      expect(stepUp.issued).toHaveLength(1);
+    });
+    // The re-verification names this company, this member and exactly this change.
+    expect(stepUp.issued[0]?.body).toEqual({
+      purpose: 'membership_change',
+      companyId: ARMADX.companyId,
+      subjectId: EMPLOYEE.userId,
+      details: { action: 'update', role: 'external', canApprove: false },
+    });
+
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Rolü değiştir' }));
     expect(await screen.findByText('Dış kişi, onay yetkisi yok, etkin')).toBeVisible();
+    expect(screen.queryByRole('alertdialog')).toBeNull();
     const [call] = api.callsTo(`PATCH /members/${EMPLOYEE.userId}`);
-    expect(call?.body).toEqual({ role: 'external', canApprove: false });
+    expect(call?.body).toEqual({
+      role: 'external',
+      canApprove: false,
+      stepUp: signed(challengeId(1)),
+    });
     expect(call?.headers.get(COMPANY_HEADER)).toBe(ARMADX.companyId);
+    expect(startAuthentication).toHaveBeenCalledWith({ optionsJSON: STEP_UP_OPTIONS });
+    // The dialog had no trigger of its own; the focus goes back to the control.
+    await waitFor(() => {
+      expect(within(row('Ayşe Demir')).getByRole('combobox', { name: 'Rol' })).toHaveFocus();
+    });
   });
 
-  it('turns approval rights on for an employee', async () => {
+  it('turns approval rights on for an employee after a passkey confirmation', async () => {
+    const stepUp = stepUpIssuer();
     const api = founderApi({
+      'POST /step-up/options': stepUp.handler,
       [`PATCH /members/${EMPLOYEE.userId}`]: () => json({ ...EMPLOYEE, canApprove: true }),
     });
     renderApp('/c/armadx/settings/users');
     await screen.findByText('Çalışan, onay yetkisi yok, etkin');
-    await userEvent.click(within(row('Ayşe Demir')).getByRole('switch', { name: 'Onay yetkisi' }));
+    const toggle = within(row('Ayşe Demir')).getByRole('switch', { name: 'Onay yetkisi' });
+    await userEvent.click(toggle);
+    const dialog = await screen.findByRole('alertdialog', {
+      name: 'Ayşe Demir için onay yetkisi açılsın mı?',
+    });
+    expect(toggle).not.toBeChecked();
+    await userEvent.click(await within(dialog).findByRole('button', { name: 'Yetkiyi aç' }));
     expect(await screen.findByText('Çalışan, onay yetkisi var, etkin')).toBeVisible();
-    expect(api.callsTo(`PATCH /members/${EMPLOYEE.userId}`).map((c) => c.body)).toEqual([
-      { canApprove: true },
+    expect(stepUp.issued.map((i) => i.body)).toEqual([
+      {
+        purpose: 'membership_change',
+        companyId: ARMADX.companyId,
+        subjectId: EMPLOYEE.userId,
+        details: { action: 'update', canApprove: true },
+      },
     ]);
+    expect(api.callsTo(`PATCH /members/${EMPLOYEE.userId}`).map((c) => c.body)).toEqual([
+      { canApprove: true, stepUp: signed(challengeId(1)) },
+    ]);
+    await waitFor(() => {
+      expect(within(row('Ayşe Demir')).getByRole('switch', { name: 'Onay yetkisi' })).toHaveFocus();
+    });
   });
 
-  it('removes a member only after confirmation', async () => {
+  it('removes a member only after a passkey confirmation', async () => {
     let members = [FOUNDER, EMPLOYEE, EXTERNAL];
+    const stepUp = stepUpIssuer();
     const api = founderApi({
       'GET /members': () => json({ members }),
+      'POST /step-up/options': stepUp.handler,
       [`DELETE /members/${EMPLOYEE.userId}`]: () => {
         members = members.filter((m) => m.userId !== EMPLOYEE.userId);
         return noContent();
@@ -206,40 +270,66 @@ describe('settings, users: members', () => {
       name: 'Ayşe Demir üyelikten çıkarılsın mı?',
     });
     await userEvent.click(within(dialog).getByRole('button', { name: 'Vazgeç' }));
+    expect(screen.queryByRole('alertdialog')).toBeNull();
     expect(api.callsTo(`DELETE /members/${EMPLOYEE.userId}`)).toEqual([]);
+    expect(startAuthentication).not.toHaveBeenCalled();
 
     await userEvent.click(
       within(row('Ayşe Demir')).getByRole('button', { name: 'Üyelikten çıkar' }),
     );
     dialog = await screen.findByRole('alertdialog');
-    await userEvent.click(within(dialog).getByRole('button', { name: 'Üyelikten çıkar' }));
+    const confirm = within(dialog).getByRole('button', { name: 'Üyelikten çıkar' });
+    await waitFor(() => {
+      expect(confirm).not.toHaveAttribute('aria-disabled');
+    });
+    await userEvent.click(confirm);
     expect(await screen.findByText('Ayşe Demir üyelikten çıkarıldı.')).toBeVisible();
     await waitFor(() => {
       expect(screen.queryByRole('group', { name: 'Ayşe Demir' })).toBeNull();
     });
-    expect(api.callsTo(`DELETE /members/${EMPLOYEE.userId}`)).toHaveLength(1);
+    const removal = stepUp.issued.at(-1);
+    expect(removal?.body).toEqual({
+      purpose: 'membership_change',
+      companyId: ARMADX.companyId,
+      subjectId: EMPLOYEE.userId,
+      details: { action: 'remove' },
+    });
+    const calls = api.callsTo(`DELETE /members/${EMPLOYEE.userId}`);
+    expect(calls.map((c) => c.body)).toEqual([{ stepUp: signed(removal!.challengeId) }]);
+    expect(calls[0]?.headers.get(COMPANY_HEADER)).toBe(ARMADX.companyId);
     // The removed row took its button with it; the keyboard focus stays in the list's section.
-    expect(screen.getByRole('heading', { level: 2, name: 'Üyeler' })).toHaveFocus();
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { level: 2, name: 'Üyeler' })).toHaveFocus();
+    });
   });
 
-  it('keeps the focus on a control while its change is on the way', async () => {
+  it('keeps the dialog open and sends nothing more while the change is on the way', async () => {
+    const stepUp = stepUpIssuer();
     const api = founderApi({
-      // The answer never comes: the row stays busy.
+      'POST /step-up/options': stepUp.handler,
+      // The answer never comes: the dialog stays busy.
       [`PATCH /members/${EMPLOYEE.userId}`]: () => new Promise<Response>(() => undefined),
     });
     renderApp('/c/armadx/settings/users');
     await screen.findByText('Çalışan, onay yetkisi yok, etkin');
-    const toggle = within(row('Ayşe Demir')).getByRole('switch', { name: 'Onay yetkisi' });
-    await userEvent.click(toggle);
-    expect(toggle).toHaveFocus();
-    expect(toggle).toBeEnabled();
-    expect(toggle).toHaveAttribute('aria-disabled', 'true');
-    // While busy, more input sends nothing.
-    await userEvent.click(toggle);
-    await userEvent.selectOptions(
-      within(row('Ayşe Demir')).getByRole('combobox', { name: 'Rol' }),
-      'external',
-    );
+    await userEvent.click(within(row('Ayşe Demir')).getByRole('switch', { name: 'Onay yetkisi' }));
+    const dialog = await screen.findByRole('alertdialog');
+    const confirm = within(dialog).getByRole('button', { name: 'Yetkiyi aç' });
+    await waitFor(() => {
+      expect(confirm).not.toHaveAttribute('aria-disabled');
+    });
+    await userEvent.click(confirm);
+    await waitFor(() => {
+      expect(api.callsTo(`PATCH /members/${EMPLOYEE.userId}`)).toHaveLength(1);
+    });
+    expect(confirm).toHaveFocus();
+    expect(confirm).toHaveAttribute('aria-disabled', 'true');
+    // While busy, more presses send nothing and the dialog does not close.
+    await userEvent.click(confirm);
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Vazgeç' }));
+    await userEvent.keyboard('{Escape}');
+    expect(screen.getByRole('alertdialog')).toBe(dialog);
+    expect(startAuthentication).toHaveBeenCalledTimes(1);
     expect(api.callsTo(`PATCH /members/${EMPLOYEE.userId}`)).toHaveLength(1);
   });
 
@@ -249,6 +339,7 @@ describe('settings, users: members', () => {
       apiError(401, 'unauthenticated', 'Oturumunuz kapalı. Yeniden giriş yapın.');
     founderApi({
       'GET /session': () => (signedIn ? json(sessionBody()) : unauthenticated()),
+      'POST /step-up/options': stepUpIssuer().handler,
       [`PATCH /members/${EMPLOYEE.userId}`]: () => {
         // The session closed on the server (30 minutes idle) before this change.
         signedIn = false;
@@ -258,6 +349,12 @@ describe('settings, users: members', () => {
     const { router } = renderApp('/c/armadx/settings/users');
     await screen.findByText('Çalışan, onay yetkisi yok, etkin');
     await userEvent.click(within(row('Ayşe Demir')).getByRole('switch', { name: 'Onay yetkisi' }));
+    const dialog = await screen.findByRole('alertdialog');
+    const confirm = within(dialog).getByRole('button', { name: 'Yetkiyi aç' });
+    await waitFor(() => {
+      expect(confirm).not.toHaveAttribute('aria-disabled');
+    });
+    await userEvent.click(confirm);
     await waitFor(() => {
       expect(currentLocation(router)).toEqual({
         pathname: '/login',
@@ -288,15 +385,24 @@ describe('settings, users: members', () => {
     expect(within(menu).queryByRole('menuitem', { name: 'Kullanıcılar' })).toBeNull();
   });
 
-  it("shows the API's message when a change is refused", async () => {
+  it("shows the API's message in the dialog when a change is refused", async () => {
     founderApi({
+      'POST /step-up/options': stepUpIssuer().handler,
       [`PATCH /members/${EMPLOYEE.userId}`]: () =>
         apiError(400, 'approval_only_employee', 'Onay yetkisi yalnızca çalışana verilebilir.'),
     });
     renderApp('/c/armadx/settings/users');
     await screen.findByText('Çalışan, onay yetkisi yok, etkin');
     await userEvent.click(within(row('Ayşe Demir')).getByRole('switch', { name: 'Onay yetkisi' }));
-    expect(await screen.findByText('Onay yetkisi yalnızca çalışana verilebilir.')).toBeVisible();
+    const dialog = await screen.findByRole('alertdialog');
+    const confirm = within(dialog).getByRole('button', { name: 'Yetkiyi aç' });
+    await waitFor(() => {
+      expect(confirm).not.toHaveAttribute('aria-disabled');
+    });
+    await userEvent.click(confirm);
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(
+      'Onay yetkisi yalnızca çalışana verilebilir.',
+    );
     expect(screen.getByText('Çalışan, onay yetkisi yok, etkin')).toBeVisible();
   });
 });
@@ -331,27 +437,72 @@ describe('settings, users: invitations', () => {
     expect(within(accepted).queryByRole('button')).toBeNull();
   });
 
-  it('extends the time of an invitation and cancels one', async () => {
+  it('extends the time of an invitation after a passkey confirmation, and cancels one without', async () => {
     const extendedTo = daysFromNow(7);
+    const stepUp = stepUpIssuer();
     const api = founderApi({
+      'POST /step-up/options': stepUp.handler,
       [`POST /invitations/${EXPIRED.id}/renew`]: () =>
         json({ ...EXPIRED, status: 'pending', expiresAt: extendedTo }),
       [`POST /invitations/${PENDING.id}/cancel`]: () => noContent(),
     });
     renderApp('/c/armadx/settings/users');
     const expired = await screen.findByRole('group', { name: 'avukat@example.com' });
-    await userEvent.click(within(expired).getByRole('button', { name: 'Süreyi uzat' }));
+    const extend = within(expired).getByRole('button', { name: 'Süreyi uzat' });
+    await userEvent.click(extend);
+    const dialog = await screen.findByRole('alertdialog', {
+      name: 'Davetin süresi uzatılsın mı?',
+    });
+    expect(dialog).toHaveTextContent('avukat@example.com için davet 7 gün daha geçerli olur');
+    expect(api.callsTo(`POST /invitations/${EXPIRED.id}/renew`)).toEqual([]);
+    await waitFor(() => {
+      expect(stepUp.issued).toHaveLength(1);
+    });
+    // The re-verification names this company, this invitation and the renewal.
+    expect(stepUp.issued[0]?.body).toEqual({
+      purpose: 'invitation',
+      companyId: ARMADX.companyId,
+      subjectId: EXPIRED.id,
+      details: { action: 'renew' },
+    });
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Süreyi uzat' }));
     expect(
       await screen.findByText(
         `Davetin süresi uzatıldı. Geçerlilik sonu: ${formatDateTime(extendedTo)}.`,
       ),
     ).toBeVisible();
     expect(row('avukat@example.com')).toHaveTextContent('Bekliyor');
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(api.callsTo(`POST /invitations/${EXPIRED.id}/renew`).map((c) => c.body)).toEqual([
+      { stepUp: signed(challengeId(1)) },
+    ]);
+    await waitFor(() => {
+      expect(
+        within(row('avukat@example.com')).getByRole('button', { name: 'Süreyi uzat' }),
+      ).toHaveFocus();
+    });
 
+    // Cancelling takes access away: no passkey.
     await userEvent.click(within(row('yeni@armadx.com')).getByRole('button', { name: 'İptal et' }));
     expect(await screen.findByText('Davet iptal edildi.')).toBeVisible();
-    expect(api.callsTo(`POST /invitations/${EXPIRED.id}/renew`)).toHaveLength(1);
     expect(api.callsTo(`POST /invitations/${PENDING.id}/cancel`)).toHaveLength(1);
+    expect(stepUp.issued).toHaveLength(1);
+  });
+
+  it('closes the renewal without a change when it is not confirmed', async () => {
+    const stepUp = stepUpIssuer();
+    const api = founderApi({ 'POST /step-up/options': stepUp.handler });
+    renderApp('/c/armadx/settings/users');
+    const expired = await screen.findByRole('group', { name: 'avukat@example.com' });
+    await userEvent.click(within(expired).getByRole('button', { name: 'Süreyi uzat' }));
+    const dialog = await screen.findByRole('alertdialog', {
+      name: 'Davetin süresi uzatılsın mı?',
+    });
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Vazgeç' }));
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(row('avukat@example.com')).toHaveTextContent('Süresi doldu');
+    expect(api.callsTo(`POST /invitations/${EXPIRED.id}/renew`)).toEqual([]);
+    expect(startAuthentication).not.toHaveBeenCalled();
   });
 
   it('cancels an invitation past the 30-day limit so the address can be invited again', async () => {
@@ -398,19 +549,45 @@ describe('settings, users: invite form', () => {
     expect(api.callsTo('POST /invitations')).toEqual([]);
   });
 
-  it('creates an invitation and says it is not emailed', async () => {
+  it('creates an invitation after a passkey confirmation and says it is not emailed', async () => {
     const created: Invitation = {
       ...PENDING,
       id: '6c7d8e9f-a0b1-4c23-9445-f6a7b8c9d0e1',
       email: 'ali@armadx.com',
       canApprove: true,
     };
-    const api = founderApi({ 'POST /invitations': () => json(created, 201) });
+    const stepUp = stepUpIssuer();
+    const api = founderApi({
+      'POST /step-up/options': stepUp.handler,
+      'POST /invitations': () => json(created, 201),
+    });
     renderApp('/c/armadx/settings/users');
     const form = await inviteForm();
     await userEvent.type(form.getByLabelText('E-posta'), '  Ali@ArmaDX.com ');
     await userEvent.click(form.getByRole('switch', { name: 'Onay yetkisi' }));
     await userEvent.click(form.getByRole('button', { name: 'Davet oluştur' }));
+
+    // Nothing is sent before the confirmation.
+    const dialog = await screen.findByRole('alertdialog', { name: 'Davet oluşturulsun mu?' });
+    expect(dialog).toHaveTextContent(
+      'ali@armadx.com adresi çalışan olarak, onay yetkisiyle davet edilir.',
+    );
+    expect(api.callsTo('POST /invitations')).toEqual([]);
+    await waitFor(() => {
+      expect(stepUp.issued).toHaveLength(1);
+    });
+    // The re-verification names this company, the new invitation's id and exactly these fields.
+    const options = z
+      .object({ subjectId: z.uuid({ version: 'v4' }) })
+      .loose()
+      .parse(stepUp.issued[0]?.body);
+    expect(stepUp.issued[0]?.body).toEqual({
+      purpose: 'invitation',
+      companyId: ARMADX.companyId,
+      subjectId: options.subjectId,
+      details: { action: 'create', email: 'ali@armadx.com', role: 'employee', canApprove: true },
+    });
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Davet oluştur' }));
 
     const note = await screen.findByText(
       'Davet oluşturuldu ama e-postayla gönderilmez. Kişiye panel adresini iletin ve bu e-posta adresiyle Google ile girmesini söyleyin.',
@@ -421,8 +598,15 @@ describe('settings, users: invite form', () => {
     expect(result).toHaveTextContent('ali@armadx.com');
     expect(result).toHaveTextContent(`Geçerlilik sonu${formatDateTime(created.expiresAt)}`);
     const [call] = api.callsTo('POST /invitations');
-    expect(call?.body).toEqual({ email: 'ali@armadx.com', role: 'employee', canApprove: true });
+    expect(call?.body).toEqual({
+      id: options.subjectId,
+      email: 'ali@armadx.com',
+      role: 'employee',
+      canApprove: true,
+      stepUp: signed(challengeId(1)),
+    });
     expect(call?.headers.get(COMPANY_HEADER)).toBe(ARMADX.companyId);
+    expect(screen.queryByRole('alertdialog')).toBeNull();
     // The form is ready for the next invitation; the list is fetched again.
     expect(screen.getByLabelText('E-posta')).toHaveValue('');
     await waitFor(() => {
@@ -431,7 +615,9 @@ describe('settings, users: invite form', () => {
   });
 
   it('invites an external person without approval rights', async () => {
+    const stepUp = stepUpIssuer();
     const api = founderApi({
+      'POST /step-up/options': stepUp.handler,
       'POST /invitations': () => json({ ...EXPIRED, status: 'pending' }, 201),
     });
     renderApp('/c/armadx/settings/users');
@@ -444,37 +630,93 @@ describe('settings, users: invite form', () => {
       'Dış kişi yalnızca kendisine açılan görev ve notları görür.',
     );
     await userEvent.click(form.getByRole('button', { name: 'Davet oluştur' }));
+    const dialog = await screen.findByRole('alertdialog', { name: 'Davet oluşturulsun mu?' });
+    expect(dialog).toHaveTextContent('avukat@example.com adresi dış kişi olarak davet edilir.');
+    await userEvent.click(await within(dialog).findByRole('button', { name: 'Davet oluştur' }));
     await screen.findByText(/^Davet oluşturuldu/);
+    expect(stepUp.issued.map((i) => (i.body as { details: unknown }).details)).toEqual([
+      { action: 'create', email: 'avukat@example.com', role: 'external', canApprove: false },
+    ]);
     expect(api.callsTo('POST /invitations').map((c) => c.body)).toEqual([
-      { email: 'avukat@example.com', role: 'external', canApprove: false },
+      {
+        id: (stepUp.issued[0]?.body as { subjectId: string }).subjectId,
+        email: 'avukat@example.com',
+        role: 'external',
+        canApprove: false,
+        stepUp: signed(challengeId(1)),
+      },
     ]);
   });
 
-  it("shows the API's message when an open invitation exists", async () => {
+  it('sends no invitation when the confirmation is cancelled; the next try gets a new id', async () => {
+    const stepUp = stepUpIssuer();
+    const api = founderApi({
+      'POST /step-up/options': stepUp.handler,
+      'POST /invitations': () => json({ ...PENDING, email: 'ali@armadx.com' }, 201),
+    });
+    renderApp('/c/armadx/settings/users');
+    const form = await inviteForm();
+    await userEvent.type(form.getByLabelText('E-posta'), 'ali@armadx.com');
+    const submit = form.getByRole('button', { name: 'Davet oluştur' });
+    await userEvent.click(submit);
+    const dialog = await screen.findByRole('alertdialog', { name: 'Davet oluşturulsun mu?' });
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Vazgeç' }));
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(api.callsTo('POST /invitations')).toEqual([]);
+    expect(startAuthentication).not.toHaveBeenCalled();
+    // The address stays in the form, and the focus goes back to its button.
+    expect(form.getByLabelText('E-posta')).toHaveValue('ali@armadx.com');
+    await waitFor(() => {
+      expect(submit).toHaveFocus();
+    });
+
+    await userEvent.click(submit);
+    await screen.findByRole('alertdialog', { name: 'Davet oluşturulsun mu?' });
+    await waitFor(() => {
+      expect(stepUp.issued).toHaveLength(2);
+    });
+    const subjects = stepUp.issued.map((i) => (i.body as { subjectId: string }).subjectId);
+    expect(subjects[0]).not.toBe(subjects[1]);
+  });
+
+  async function confirmInvitation(email: string) {
+    await userEvent.type(await screen.findByLabelText('E-posta'), email);
+    await userEvent.click(screen.getByRole('button', { name: 'Davet oluştur' }));
+    const dialog = await screen.findByRole('alertdialog', { name: 'Davet oluşturulsun mu?' });
+    await userEvent.click(await within(dialog).findByRole('button', { name: 'Davet oluştur' }));
+    return dialog;
+  }
+
+  it("shows the API's message in the confirmation when an open invitation exists", async () => {
     const message =
       'Bu adrese kabul edilmemiş bir davet zaten var; süresi dolmuş olabilir. Davetler listesinden süresini uzatın ya da daveti iptal edip yeniden oluşturun.';
-    founderApi({ 'POST /invitations': () => apiError(409, 'invitation_exists', message) });
+    founderApi({
+      'POST /step-up/options': stepUpIssuer().handler,
+      'POST /invitations': () => apiError(409, 'invitation_exists', message),
+    });
     renderApp('/c/armadx/settings/users');
-    await userEvent.type(await screen.findByLabelText('E-posta'), 'avukat@example.com');
-    await userEvent.click(screen.getByRole('button', { name: 'Davet oluştur' }));
-    expect(await screen.findByText(message)).toBeVisible();
+    const dialog = await confirmInvitation('avukat@example.com');
+    expect(await within(dialog).findByText(message)).toBeVisible();
     expect(screen.queryByText(/^Davet oluşturuldu/)).toBeNull();
   });
 
   it('uses the same words as the list when the 409 has no agreed body', async () => {
-    founderApi({ 'POST /invitations': () => new Response('Conflict', { status: 409 }) });
+    founderApi({
+      'POST /step-up/options': stepUpIssuer().handler,
+      'POST /invitations': () => new Response('Conflict', { status: 409 }),
+    });
     renderApp('/c/armadx/settings/users');
-    await userEvent.type(await screen.findByLabelText('E-posta'), 'avukat@example.com');
-    await userEvent.click(screen.getByRole('button', { name: 'Davet oluştur' }));
-    const alert = await screen.findByText(/^Bu adrese kabul edilmemiş bir davet zaten var/);
+    const dialog = await confirmInvitation('avukat@example.com');
+    const alert = await within(dialog).findByText(/^Bu adrese kabul edilmemiş bir davet zaten var/);
     // The list offers "Süreyi uzat" and "İptal et"; the message names those actions.
     expect(alert).toHaveTextContent(/süresini uzatın/);
     expect(alert).not.toHaveTextContent(/yenile/i);
   });
 
-  it('keeps the result region in the page and the focus on the button while sending', async () => {
+  it('keeps the result region in the page, the dialog open while sending, then the focus on the button', async () => {
     let answer: (response: Response) => void = () => undefined;
     const api = founderApi({
+      'POST /step-up/options': stepUpIssuer().handler,
       'POST /invitations': () =>
         new Promise<Response>((resolve) => {
           answer = resolve;
@@ -488,14 +730,26 @@ describe('settings, users: invite form', () => {
     await userEvent.type(form.getByLabelText('E-posta'), 'ali@armadx.com');
     const submit = form.getByRole('button', { name: 'Davet oluştur' });
     await userEvent.click(submit);
-    expect(submit).toHaveFocus();
     expect(submit).toHaveAttribute('aria-disabled', 'true');
+    const dialog = await screen.findByRole('alertdialog', { name: 'Davet oluşturulsun mu?' });
+    const confirm = await within(dialog).findByRole('button', { name: 'Davet oluştur' });
+    await waitFor(() => {
+      expect(confirm).not.toHaveAttribute('aria-disabled');
+    });
+    await userEvent.click(confirm);
+    await waitFor(() => {
+      expect(api.callsTo('POST /invitations')).toHaveLength(1);
+    });
     // A second press while sending sends nothing.
-    await userEvent.click(submit);
+    expect(confirm).toHaveAttribute('aria-disabled', 'true');
+    await userEvent.click(confirm);
     expect(api.callsTo('POST /invitations')).toHaveLength(1);
     answer(json({ ...PENDING, email: 'ali@armadx.com' }, 201));
     expect(await within(result).findByText(/^Davet oluşturuldu/)).toBeVisible();
     expect(screen.getByRole('status', { name: 'Davet sonucu' })).toBe(result);
+    await waitFor(() => {
+      expect(form.getByRole('button', { name: 'Davet oluştur' })).toHaveFocus();
+    });
   });
 
   it('starts empty in another company', async () => {

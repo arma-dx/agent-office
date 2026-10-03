@@ -4,10 +4,13 @@ import {
   invitationSchema,
   memberListSchema,
   memberSchema,
+  removeMemberRequestSchema,
+  renewInvitationRequestSchema,
   updateMemberRequestSchema,
   type Invitation,
   type Member,
   type Role,
+  type StepUp,
 } from '@agent-office/shared';
 import { queryOptions } from '@tanstack/react-query';
 import { z } from 'zod';
@@ -32,18 +35,29 @@ export function invitationsQueryOptions(companyId: string) {
   });
 }
 
+/**
+ * POST /api/invitations. `id` is the new invitation's id, chosen by the panel; the invitation goes
+ * with an invitation re-verification naming that id and invitationChangeDetails of these fields.
+ */
 export function createInvitation(
   companyId: string,
-  values: z.output<typeof createInvitationRequestSchema>,
+  request: z.input<typeof createInvitationRequestSchema>,
 ): Promise<Invitation> {
-  const body = createInvitationRequestSchema.parse(values);
+  const body = createInvitationRequestSchema.parse(request);
   return apiRequest('/invitations', { method: 'POST', body, schema: invitationSchema, companyId });
 }
 
-export function renewInvitation(companyId: string, invitationId: string): Promise<Invitation> {
+/** POST /api/invitations/:id/renew with an invitation re-verification of invitationChangeDetails('renew'). */
+export function renewInvitation(
+  companyId: string,
+  invitationId: string,
+  stepUp: StepUp,
+): Promise<Invitation> {
   const id = z.uuid().parse(invitationId);
+  const body = renewInvitationRequestSchema.parse({ stepUp });
   return apiRequest(`/invitations/${id}/renew`, {
     method: 'POST',
+    body,
     schema: invitationSchema,
     companyId,
   });
@@ -58,6 +72,10 @@ export function cancelInvitation(companyId: string, invitationId: string): Promi
   });
 }
 
+/**
+ * PATCH /api/members/:userId. The change goes with a membership_change re-verification for this
+ * member and memberChangeDetails of exactly this change.
+ */
 export function updateMember(
   companyId: string,
   userId: string,
@@ -68,9 +86,20 @@ export function updateMember(
   return apiRequest(`/members/${id}`, { method: 'PATCH', body, schema: memberSchema, companyId });
 }
 
-export function removeMember(companyId: string, userId: string): Promise<undefined> {
+/** DELETE /api/members/:userId with a membership_change re-verification of memberChangeDetails('remove'). */
+export function removeMember(
+  companyId: string,
+  userId: string,
+  stepUp: StepUp,
+): Promise<undefined> {
   const id = z.uuid().parse(userId);
-  return apiRequest(`/members/${id}`, { method: 'DELETE', schema: z.undefined(), companyId });
+  const body = removeMemberRequestSchema.parse({ stepUp });
+  return apiRequest(`/members/${id}`, {
+    method: 'DELETE',
+    body,
+    schema: z.undefined(),
+    companyId,
+  });
 }
 
 export const ROLE_LABELS: Record<Role, string> = {

@@ -38,7 +38,8 @@ function UsersSettingsScreen() {
       <div className="flex flex-col gap-1">
         <h1 className="text-xl font-semibold">Kullanıcılar</h1>
         <p className="text-sm text-ink-secondary">
-          {companyLabel(company)} için davetler, roller ve onay yetkisi.
+          {companyLabel(company)} için davetler, roller ve onay yetkisi. Davetleri ve üye
+          değişikliklerini passkey ile onaylarsınız.
         </p>
       </div>
       <div className="grid gap-6 md:grid-cols-[minmax(0,1fr)_22rem] md:items-start">

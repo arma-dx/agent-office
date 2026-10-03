@@ -1,6 +1,9 @@
 import {
-  createInvitationRequestSchema,
+  invitationChangeDetails,
+  invitationFieldsSchema,
+  memberChangeDetails,
   type Invitation,
+  type InvitationFields,
   type Member,
   type Role,
 } from '@agent-office/shared';
@@ -12,16 +15,7 @@ import { toast } from 'sonner';
 import { z } from 'zod';
 import { TextField } from '@/components/form-field';
 import { EmptyState, ErrorMessage, LoadingRows } from '@/components/states';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from '@/components/ui/alert-dialog';
+import { StepUpDialog } from '@/components/step-up';
 import { Button } from '@/components/ui/button';
 import { Field, FieldContent, FieldDescription, FieldLabel } from '@/components/ui/field';
 import { NativeSelect } from '@/components/ui/native-select';
@@ -42,20 +36,11 @@ import {
   ROLE_LABELS,
   updateMember,
 } from '@/lib/users';
-import { cn } from '@/lib/utils';
+import { busyProps, cn } from '@/lib/utils';
 
 type InvitableRole = Exclude<Role, 'founder'>;
 
 const sectionHeadingClass = 'text-base font-semibold';
-
-/**
- * A control that is busy with a request stays focusable: `disabled` would drop the keyboard focus
- * to the page (and a screen reader's place with it), so the control is marked aria-disabled and its
- * handler ignores input while busy.
- */
-function busyProps(busy: boolean): { 'aria-disabled'?: true } {
-  return busy ? { 'aria-disabled': true } : {};
-}
 
 function focusHeading(heading: RefObject<HTMLHeadingElement | null>) {
   heading.current?.focus();
@@ -77,6 +62,118 @@ function memberSummary(member: Member): string {
   ].join(', ');
 }
 
+/** A membership change waiting for its confirmation: exactly what PATCH or DELETE sends. */
+type MemberChange = { role?: InvitableRole; canApprove?: boolean } | 'remove';
+
+function changeText(
+  member: Member,
+  change: MemberChange,
+): { title: string; description: string; confirmLabel: string; destructive?: boolean } {
+  if (change === 'remove') {
+    return {
+      title: `${member.name} üyelikten çıkarılsın mı?`,
+      description:
+        'Bu şirketin paneline ve kayıtlarına artık erişemez. Gerekirse yeniden davet edebilirsiniz.',
+      confirmLabel: 'Üyelikten çıkar',
+      destructive: true,
+    };
+  }
+  if (change.role === 'external') {
+    return {
+      title: `${member.name} dış kişi olsun mu?`,
+      description: member.canApprove
+        ? 'Dış kişi yalnızca kendisine açılan görev ve notları görür. Onay yetkisi de kalkar.'
+        : 'Dış kişi yalnızca kendisine açılan görev ve notları görür.',
+      confirmLabel: 'Rolü değiştir',
+    };
+  }
+  if (change.role === 'employee') {
+    return {
+      title: `${member.name} çalışan olsun mu?`,
+      description: 'Çalışan şirketin görev ve notlarıyla çalışır.',
+      confirmLabel: 'Rolü değiştir',
+    };
+  }
+  return change.canApprove
+    ? {
+        title: `${member.name} için onay yetkisi açılsın mı?`,
+        description: "Onay Masası'nda onay verebilir.",
+        confirmLabel: 'Yetkiyi aç',
+      }
+    : {
+        title: `${member.name} için onay yetkisi kapatılsın mı?`,
+        description: "Onay Masası'nda artık onay veremez.",
+        confirmLabel: 'Yetkiyi kapat',
+      };
+}
+
+/**
+ * Confirms a membership change with a passkey (3 October decision 7). The re-verification names
+ * this company, this member and this exact change; the API refuses any other.
+ */
+function MemberChangeDialog({
+  companyId,
+  member,
+  change,
+  onClose,
+  returnFocus,
+  sectionHeading,
+}: {
+  companyId: string;
+  member: Member;
+  change: MemberChange;
+  onClose: () => void;
+  /** The control that asked for the change; it takes the focus back. */
+  returnFocus: RefObject<HTMLElement | null>;
+  /** Takes the focus when the member is removed; the row and its controls go away. */
+  sectionHeading: RefObject<HTMLHeadingElement | null>;
+}) {
+  const queryClient = useQueryClient();
+  const removed = useRef(false);
+  const membersKey = membersQueryOptions(companyId).queryKey;
+  return (
+    <StepUpDialog<Member | undefined>
+      open
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+      request={{
+        purpose: 'membership_change',
+        companyId,
+        subjectId: member.userId,
+        details: memberChangeDetails(change),
+      }}
+      action={(stepUp) =>
+        change === 'remove'
+          ? removeMember(companyId, member.userId, stepUp)
+          : updateMember(companyId, member.userId, { ...change, stepUp })
+      }
+      onSuccess={(updated) => {
+        if (updated === undefined) {
+          removed.current = true;
+          toast.success(`${member.name} üyelikten çıkarıldı.`);
+          void queryClient.invalidateQueries({ queryKey: membersKey });
+        } else {
+          queryClient.setQueryData(membersKey, (previous) =>
+            previous?.map((m) => (m.userId === updated.userId ? updated : m)),
+          );
+        }
+        onClose();
+      }}
+      onCloseAutoFocus={(event) => {
+        // The dialog has no trigger of its own: the focus goes back to the control by hand.
+        event.preventDefault();
+        if (removed.current) {
+          focusHeading(sectionHeading);
+        } else {
+          returnFocus.current?.focus();
+        }
+      }}
+      {...changeText(member, change)}
+    />
+  );
+}
+
 function MemberRow({
   companyId,
   member,
@@ -84,42 +181,22 @@ function MemberRow({
 }: {
   companyId: string;
   member: Member;
-  /** Takes the focus when this row's removal is confirmed; the row and its button go away. */
   sectionHeading: RefObject<HTMLHeadingElement | null>;
 }) {
-  const queryClient = useQueryClient();
-  const removalConfirmed = useRef(false);
+  const [pending, setPending] = useState<MemberChange | null>(null);
+  const returnFocus = useRef<HTMLElement | null>(null);
+  const switchRef = useRef<HTMLButtonElement>(null);
   const nameId = useId();
   const roleId = useId();
   const approveId = useId();
-  const membersKey = membersQueryOptions(companyId).queryKey;
-
-  const update = useMutation({
-    mutationFn: (changes: { role?: InvitableRole; canApprove?: boolean }) =>
-      updateMember(companyId, member.userId, changes),
-    onSuccess: (updated) => {
-      queryClient.setQueryData(membersKey, (previous) =>
-        previous?.map((m) => (m.userId === updated.userId ? updated : m)),
-      );
-    },
-    onError: notifyError,
-  });
-  const remove = useMutation({
-    mutationFn: () => removeMember(companyId, member.userId),
-    onSuccess: () => {
-      toast.success(`${member.name} üyelikten çıkarıldı.`);
-      void queryClient.invalidateQueries({ queryKey: membersKey });
-    },
-    onError: notifyError,
-  });
-
-  const busy = update.isPending || remove.isPending;
-  // While a change is on its way, the controls show the chosen value instead of jumping back.
-  const role = (update.isPending ? update.variables.role : undefined) ?? member.role;
-  const canApprove =
-    (update.isPending ? update.variables.canApprove : undefined) ?? member.canApprove;
   // The founder role is not given or taken through the panel.
   const editable = member.role !== 'founder';
+
+  // Every change waits in a confirmation dialog; the controls keep showing the saved value.
+  function ask(change: MemberChange, control: HTMLElement | null) {
+    returnFocus.current = control;
+    setPending(change);
+  }
 
   return (
     <li className={rowClass}>
@@ -138,14 +215,14 @@ function MemberRow({
               </label>
               <NativeSelect
                 id={roleId}
-                value={role}
-                {...busyProps(busy)}
+                value={member.role}
                 onChange={(event) => {
-                  if (busy) return;
                   const next = z.enum(['employee', 'external']).parse(event.target.value);
+                  if (next === member.role) return;
                   // Approval rights belong to employees only; they go with the change to external.
-                  update.mutate(
+                  ask(
                     next === 'external' ? { role: next, canApprove: false } : { role: next },
+                    event.currentTarget,
                   );
                 }}
               >
@@ -153,15 +230,14 @@ function MemberRow({
                 <option value="external">{ROLE_LABELS.external}</option>
               </NativeSelect>
             </div>
-            {role === 'employee' ? (
+            {member.role === 'employee' ? (
               <div className="flex items-center gap-2">
                 <Switch
+                  ref={switchRef}
                   id={approveId}
-                  checked={canApprove}
-                  {...busyProps(busy)}
+                  checked={member.canApprove}
                   onCheckedChange={(checked) => {
-                    if (busy) return;
-                    update.mutate({ canApprove: checked });
+                    ask({ canApprove: checked }, switchRef.current);
                   }}
                 />
                 <label htmlFor={approveId} className="text-sm">
@@ -169,51 +245,30 @@ function MemberRow({
                 </label>
               </div>
             ) : null}
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <Button
-                  variant="outline"
-                  size="lg"
-                  {...busyProps(busy)}
-                  onClick={(event) => {
-                    // Radix skips opening the dialog when the click is prevented.
-                    if (busy) event.preventDefault();
-                  }}
-                >
-                  Üyelikten çıkar
-                </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent
-                onCloseAutoFocus={(event) => {
-                  if (!removalConfirmed.current) return;
-                  // The row and its button are about to go; the section heading keeps the place.
-                  removalConfirmed.current = false;
-                  event.preventDefault();
-                  focusHeading(sectionHeading);
-                }}
-              >
-                <AlertDialogTitle>{member.name} üyelikten çıkarılsın mı?</AlertDialogTitle>
-                <AlertDialogDescription>
-                  Bu şirketin paneline ve kayıtlarına artık erişemez. Gerekirse yeniden davet
-                  edebilirsiniz.
-                </AlertDialogDescription>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>Vazgeç</AlertDialogCancel>
-                  <AlertDialogAction
-                    variant="destructive"
-                    onClick={() => {
-                      removalConfirmed.current = true;
-                      remove.mutate();
-                    }}
-                  >
-                    Üyelikten çıkar
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
+            <Button
+              variant="outline"
+              size="lg"
+              onClick={(event) => {
+                ask('remove', event.currentTarget);
+              }}
+            >
+              Üyelikten çıkar
+            </Button>
           </div>
         ) : null}
       </div>
+      {pending !== null ? (
+        <MemberChangeDialog
+          companyId={companyId}
+          member={member}
+          change={pending}
+          onClose={() => {
+            setPending(null);
+          }}
+          returnFocus={returnFocus}
+          sectionHeading={sectionHeading}
+        />
+      ) : null}
     </li>
   );
 }
@@ -273,6 +328,9 @@ function InvitationRow({
 }) {
   const queryClient = useQueryClient();
   const emailId = useId();
+  const [extending, setExtending] = useState(false);
+  // The extension reached the 30-day limit: the button goes away with it.
+  const extendGone = useRef(false);
   const invitationsKey = invitationsQueryOptions(companyId).queryKey;
   const replace = (updated: Invitation) => {
     queryClient.setQueryData(invitationsKey, (previous) =>
@@ -280,18 +338,6 @@ function InvitationRow({
     );
   };
 
-  const extend = useMutation({
-    mutationFn: () => renewInvitation(companyId, invitation.id),
-    onSuccess: (updated) => {
-      replace(updated);
-      toast.success(
-        `Davetin süresi uzatıldı. Geçerlilik sonu: ${formatDateTime(updated.expiresAt)}.`,
-      );
-      // At the 30-day limit the button goes away with the extension.
-      if (!invitationActions(updated).canExtend) focusHeading(sectionHeading);
-    },
-    onError: notifyError,
-  });
   const cancel = useMutation({
     mutationFn: () => cancelInvitation(companyId, invitation.id),
     onSuccess: () => {
@@ -303,7 +349,7 @@ function InvitationRow({
     onError: notifyError,
   });
 
-  const busy = extend.isPending || cancel.isPending;
+  const busy = cancel.isPending;
   const { canExtend, canCancel } = invitationActions(invitation);
   const open = invitation.status === 'pending' || invitation.status === 'expired';
   const details = [ROLE_LABELS[invitation.role], invitation.canApprove ? 'onay yetkisi var' : null]
@@ -328,16 +374,48 @@ function InvitationRow({
             {INVITATION_STATUS_LABELS[invitation.status]}
           </span>
           {canExtend ? (
-            <Button
-              variant="outline"
-              size="lg"
-              {...busyProps(busy)}
-              onClick={() => {
-                if (!busy) extend.mutate();
+            // An invitation becomes a membership at the first sign-in, so renewing an expired
+            // grant is confirmed with a passkey (3 October decision 7).
+            <StepUpDialog<Invitation>
+              open={extending}
+              onOpenChange={setExtending}
+              trigger={
+                <Button
+                  variant="outline"
+                  size="lg"
+                  {...busyProps(busy)}
+                  onClick={(event) => {
+                    if (busy) event.preventDefault();
+                  }}
+                >
+                  Süreyi uzat
+                </Button>
+              }
+              request={{
+                purpose: 'invitation',
+                companyId,
+                subjectId: invitation.id,
+                details: invitationChangeDetails('renew'),
               }}
-            >
-              Süreyi uzat
-            </Button>
+              action={(stepUp) => renewInvitation(companyId, invitation.id, stepUp)}
+              onSuccess={(updated) => {
+                replace(updated);
+                toast.success(
+                  `Davetin süresi uzatıldı. Geçerlilik sonu: ${formatDateTime(updated.expiresAt)}.`,
+                );
+                extendGone.current = !invitationActions(updated).canExtend;
+                setExtending(false);
+              }}
+              onCloseAutoFocus={(event) => {
+                if (!extendGone.current) return;
+                extendGone.current = false;
+                event.preventDefault();
+                focusHeading(sectionHeading);
+              }}
+              title="Davetin süresi uzatılsın mı?"
+              description={`${invitation.email} için davet 7 gün daha geçerli olur; oluşturulduktan sonra en çok 30 gün.`}
+              confirmLabel="Süreyi uzat"
+            />
           ) : null}
           {canCancel ? (
             <Button
@@ -398,8 +476,8 @@ export function InvitationsSection({ companyId }: { companyId: string }) {
 
 // New invitation
 
-type InviteInput = z.input<typeof createInvitationRequestSchema>;
-type InviteOutput = z.output<typeof createInvitationRequestSchema>;
+type InviteInput = z.input<typeof invitationFieldsSchema>;
+type InviteOutput = z.output<typeof invitationFieldsSchema>;
 
 /** Turkish messages for the shared schema, whose own messages are for developers. */
 const inviteErrors: z.core.$ZodErrorMap = (issue) => {
@@ -413,17 +491,33 @@ const inviteErrors: z.core.$ZodErrorMap = (issue) => {
   return 'Bu alanı kontrol edin.';
 };
 
-const schemaResolver = zodResolver(createInvitationRequestSchema, { error: inviteErrors });
+const schemaResolver = zodResolver(invitationFieldsSchema, { error: inviteErrors });
 
 // Spaces around a pasted address are dropped before the check; the schema lowercases it.
 const inviteResolver: Resolver<InviteInput, unknown, InviteOutput> = (values, context, options) =>
   schemaResolver({ ...values, email: values.email.trim() }, context, options);
 
-function inviteErrorMessage(error: unknown): string {
+const INVITATION_EXISTS_TEXT =
+  'Bu adrese kabul edilmemiş bir davet zaten var; süresi dolmuş olabilir. Davetler listesinden süresini uzatın ya da daveti iptal edip yeniden oluşturun.';
+
+/** A 409 without the agreed body (a proxy, say) gets the same words as the API's own answer. */
+function inviteError(error: unknown): unknown {
   if (error instanceof ApiError && error.code === undefined && error.status === 409) {
-    return 'Bu adrese kabul edilmemiş bir davet zaten var; süresi dolmuş olabilir. Davetler listesinden süresini uzatın ya da daveti iptal edip yeniden oluşturun.';
+    return new ApiError(409, INVITATION_EXISTS_TEXT, 'invitation_exists');
   }
-  return userMessage(error);
+  return error;
+}
+
+function inviteText(values: InvitationFields): string {
+  const role = values.role === 'employee' ? 'çalışan' : 'dış kişi';
+  const right = values.canApprove ? ', onay yetkisiyle' : '';
+  return `${values.email} adresi ${role} olarak${right} davet edilir. Kişi bu adresle Google ile ilk girdiğinde üye olur.`;
+}
+
+/** A new invitation waiting for its confirmation; the panel gives it its id. */
+interface PendingInvitation {
+  id: string;
+  values: InviteOutput;
 }
 
 export function InviteForm({ companyId, className }: { companyId: string; className?: string }) {
@@ -433,24 +527,15 @@ export function InviteForm({ companyId, className }: { companyId: string; classN
   const roleDescriptionId = useId();
   const approveId = useId();
   const approveDescriptionId = useId();
+  const submitRef = useRef<HTMLButtonElement>(null);
   const [created, setCreated] = useState<Invitation | null>(null);
+  const [pending, setPending] = useState<PendingInvitation | null>(null);
 
   const form = useForm<InviteInput, unknown, InviteOutput>({
     resolver: inviteResolver,
     defaultValues: { email: '', role: 'employee', canApprove: false },
   });
   const role = useWatch({ control: form.control, name: 'role' });
-
-  const create = useMutation({
-    mutationFn: (values: InviteOutput) => createInvitation(companyId, values),
-    onSuccess: (invitation) => {
-      setCreated(invitation);
-      form.reset();
-      void queryClient.invalidateQueries({
-        queryKey: invitationsQueryOptions(companyId).queryKey,
-      });
-    },
-  });
 
   return (
     <section
@@ -464,13 +549,14 @@ export function InviteForm({ companyId, className }: { companyId: string; classN
         noValidate
         className="flex flex-col gap-4"
         onSubmit={(event) => {
-          if (create.isPending) {
+          if (pending !== null) {
             event.preventDefault();
             return;
           }
           void form.handleSubmit((values) => {
             setCreated(null);
-            create.mutate(values);
+            // The re-verification names the new invitation, so it gets its id here.
+            setPending({ id: crypto.randomUUID(), values });
           })(event);
         }}
       >
@@ -536,16 +622,50 @@ export function InviteForm({ companyId, className }: { companyId: string; classN
           />
         ) : null}
         <div>
-          <Button type="submit" size="lg" {...busyProps(create.isPending)}>
+          <Button ref={submitRef} type="submit" size="lg" {...busyProps(pending !== null)}>
             Davet oluştur
           </Button>
         </div>
-        {create.isError ? (
-          <p role="alert" className="text-sm text-error">
-            {inviteErrorMessage(create.error)}
-          </p>
-        ) : null}
       </form>
+      {pending !== null ? (
+        // An invitation becomes a membership, with its role and approval right, at the first
+        // sign-in: it is confirmed with a passkey (3 October decision 7).
+        <StepUpDialog<Invitation>
+          open
+          onOpenChange={(open) => {
+            if (!open) setPending(null);
+          }}
+          request={{
+            purpose: 'invitation',
+            companyId,
+            subjectId: pending.id,
+            details: invitationChangeDetails(pending.values),
+          }}
+          action={(stepUp) =>
+            createInvitation(companyId, { ...pending.values, id: pending.id, stepUp }).catch(
+              (error: unknown) => {
+                throw inviteError(error);
+              },
+            )
+          }
+          onSuccess={(invitation) => {
+            setCreated(invitation);
+            form.reset();
+            void queryClient.invalidateQueries({
+              queryKey: invitationsQueryOptions(companyId).queryKey,
+            });
+            setPending(null);
+          }}
+          onCloseAutoFocus={(event) => {
+            // The dialog has no trigger of its own: the focus goes back to the form's button.
+            event.preventDefault();
+            submitRef.current?.focus();
+          }}
+          title="Davet oluşturulsun mu?"
+          description={inviteText(pending.values)}
+          confirmLabel="Davet oluştur"
+        />
+      ) : null}
       {/* The live region is always in the page, so that screen readers announce what enters it. */}
       <div role="status" aria-label="Davet sonucu" className="empty:-mt-4">
         {created ? (

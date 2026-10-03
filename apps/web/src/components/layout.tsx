@@ -88,7 +88,7 @@ function useSignOut() {
   });
 }
 
-/** The person's menu: name, settings for the founder, sign out. */
+/** The person's menu: name, settings (users for the founder, security for everyone), sign out. */
 export function UserMenu({ company }: { company?: MembershipSummary }) {
   const session = useSession();
   const signOutMutation = useSignOut();
@@ -112,13 +112,21 @@ export function UserMenu({ company }: { company?: MembershipSummary }) {
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-auto min-w-56">
         <DropdownMenuLabel className="text-sm text-ink">{name}</DropdownMenuLabel>
-        {usersCompany ? (
+        {company ? (
           <>
             <DropdownMenuSeparator />
             <DropdownMenuLabel>Ayarlar</DropdownMenuLabel>
+            {usersCompany ? (
+              <DropdownMenuItem asChild>
+                <Link to="/c/$company/settings/users" params={{ company: usersCompany.code }}>
+                  Kullanıcılar
+                </Link>
+              </DropdownMenuItem>
+            ) : null}
+            {/* Passkeys belong to the person; the page opens under the company in the URL. */}
             <DropdownMenuItem asChild>
-              <Link to="/c/$company/settings/users" params={{ company: usersCompany.code }}>
-                Kullanıcılar
+              <Link to="/c/$company/settings/security" params={{ company: company.code }}>
+                Güvenlik
               </Link>
             </DropdownMenuItem>
           </>

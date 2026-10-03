@@ -1,4 +1,5 @@
 import {
+  loginReturnPathSchema,
   sessionResponseSchema,
   setCompanyRequestSchema,
   type MembershipSummary,
@@ -11,6 +12,18 @@ import { API_ROOT, apiRequest, isUnauthorized } from './api.ts';
 
 /** Full page navigation to the API, which sends the browser on to Google. */
 export const GOOGLE_SIGN_IN_HREF = `${API_ROOT}/auth/google`;
+
+/**
+ * A Google sign-in that comes back to a page of the panel (/c/<company>/...), for example the
+ * Güvenlik page, where the first passkey is added within 10 minutes of the sign-in. Any other path
+ * signs in to the start page.
+ */
+export function googleSignInHref(returnTo: string): string {
+  const next = loginReturnPathSchema.safeParse(returnTo);
+  return next.success
+    ? `${GOOGLE_SIGN_IN_HREF}?next=${encodeURIComponent(next.data)}`
+    : GOOGLE_SIGN_IN_HREF;
+}
 
 export const SESSION_QUERY_KEY = ['session'] as const;
 
