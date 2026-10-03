@@ -63,6 +63,9 @@ export const ids = {
   approvalP: id(93),
   approvalAApproved: id(94),
   approvalPApproved: id(95),
+
+  invitationA: id(101),
+  invitationP: id(102),
 } as const;
 
 export const TOOL = {
@@ -233,6 +236,8 @@ export async function loadFixtures(client: pg.Client): Promise<void> {
       values ('${ids.arma}', 'google', 'arma-account', '\\x00');
     insert into office.audit_log (company_id, event, record_type, record_id)
       values ('${ids.arma}', 'task_created', 'task', '${ids.taskA}');
+    insert into office.invitations (id, company_id, email, role, can_approve)
+      values ('${ids.invitationA}', '${ids.arma}', 'invitee.a@example.test', 'employee', true);
 
     ${contextSql(ids.pillika, ids.founder)}
     insert into office.task_comments (company_id, task_id, body) values
@@ -249,6 +254,8 @@ export async function loadFixtures(client: pg.Client): Promise<void> {
     insert into office.integrations (company_id, provider, account, encrypted_token)
       values ('${ids.pillika}', 'google', 'pillika-account', '\\x00');
     insert into office.audit_log (company_id, event) values ('${ids.pillika}', 'login');
+    insert into office.invitations (id, company_id, email, role)
+      values ('${ids.invitationP}', '${ids.pillika}', 'invitee.p@example.test', 'external');
 
     insert into office.documents (company_id, drive_file_id, name, source_note_id) values
       ('${ids.arma}', 'drive_file_arma_1', 'Contract', '${ids.noteA}'),

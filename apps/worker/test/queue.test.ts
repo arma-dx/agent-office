@@ -31,7 +31,8 @@ const database = inject('database');
 describe.skipIf(database === null)('queue in the database', () => {
   it('starts with the restricted application role, sends and fetches a job', async () => {
     const errors: unknown[] = [];
-    const queue = createQueue(database?.app ?? '', (error) => errors.push(error));
+    // The worker's privileges: office_app only, without the API-only ones.
+    const queue = createQueue(database?.worker ?? '', (error) => errors.push(error));
     await queue.start();
     try {
       await queue.createQueue('test_queue');

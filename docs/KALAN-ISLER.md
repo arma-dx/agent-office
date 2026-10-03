@@ -162,7 +162,7 @@ Sunucu tarafı:
 - [ ] Çıkış ve bütün oturumları kapatma
 - [ ] İstek sahteciliğine karşı koruma
 - [ ] Giriş denemelerinde hız sınırı
-- [ ] Giriş, çıkış ve reddedilen denemelerin `audit_log`'a yazılması
+- [ ] Giriş, çıkış ve reddedilen denemelerin kaydı: şirketten bağımsız `login_events` tablosunda, e-posta ve IP olmadan (3 Ekim, karar 10; tablo ve yazma işlevi hazır, API'den yazılması kalıyor)
 
 Roller ve şirket:
 

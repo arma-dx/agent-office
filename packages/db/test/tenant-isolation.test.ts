@@ -6,16 +6,24 @@ import {
   closePools,
   inAdminTransaction,
   inTransaction,
+  inWorkerTransaction,
   noDatabase,
+  type Tx,
 } from './helpers.ts';
 
-// Tenant isolation and visibility tests (CLAUDE.md rules 2, 9, 12; PLAN Tests). All run with the
-// restricted application role; the table list is read from the database, so a new table enters the
-// tests on its own.
+// Tenant isolation and visibility tests (CLAUDE.md rules 2, 9, 12; PLAN Tests). All run with
+// restricted roles: a person's context with the API's privileges (inTransaction), an agent run's
+// context with the worker's (inWorkerTransaction). The table list is read from the database, so a
+// new table enters the tests on its own.
 
 const GLOBAL = ['agent_definitions', 'card_versions', 'tools', 'units'];
-// Identity tables: a person can be a member of several companies.
-const WITHOUT_COMPANY_ID = ['companies', 'user_emails', 'users'];
+// Identity tables: a person can be a member of several companies. Login events belong to no
+// company either (a rejected login has no company).
+const WITHOUT_COMPANY_ID = ['companies', 'login_events', 'sessions', 'user_emails', 'users'];
+// Tables no application role can read yet (only written through a function).
+const NOT_READABLE = ['login_events'];
+// Tables only the API reaches (office_api_private); the worker has no privilege on them at all.
+const API_ONLY = ['invitations', 'login_events', 'sessions'];
 
 function person(companyId: string, userId: string, projectId: string | null = null): ContextInput {
   return { companyId, userId, projectId };
@@ -28,6 +36,11 @@ function agent(
 ): ContextInput {
   // The identity is the founder: shows that the narrowing does not depend on the identity.
   return { companyId, userId: ids.founder, agentCode, projectId };
+}
+
+/** An agent run's context runs with the worker's privileges, a person's with the API's. */
+function runAs<T>(context: ContextInput, fn: (tx: Tx) => Promise<T>): Promise<T> {
+  return context.agentCode ? inWorkerTransaction(fn) : inTransaction(fn);
 }
 
 describe.skipIf(noDatabase)('tenant isolation', () => {
@@ -80,12 +93,26 @@ describe.skipIf(noDatabase)('tenant isolation', () => {
 
   it('no row can be read without a context', async () => {
     await inTransaction(async (tx) => {
-      for (const table of tables.filter((t) => !GLOBAL.includes(t))) {
+      const readable = tables.filter((t) => !GLOBAL.includes(t) && !NOT_READABLE.includes(t));
+      for (const table of readable) {
         expect(await tx.count(table), table).toBe(0);
       }
       await tx.setContext({});
-      for (const table of tables.filter((t) => !GLOBAL.includes(t))) {
+      for (const table of readable) {
         expect(await tx.count(table), table).toBe(0);
+      }
+      for (const table of NOT_READABLE) {
+        expect((await tx.expectError(`select 1 from office.${table}`)).code, table).toBe('42501');
+      }
+    });
+    // The worker's privileges: the API-only tables cannot be read at all.
+    await inWorkerTransaction(async (tx) => {
+      const readable = tables.filter((t) => !GLOBAL.includes(t) && !API_ONLY.includes(t));
+      for (const table of readable) {
+        expect(await tx.count(table), table).toBe(0);
+      }
+      for (const table of API_ONLY) {
+        expect((await tx.expectError(`select 1 from office.${table}`)).code, table).toBe('42501');
       }
     });
   });
@@ -119,9 +146,16 @@ describe.skipIf(noDatabase)('tenant isolation', () => {
   it.each(pillikaContexts)(
     'with a Pillika context (%s) no Arma DX row can be read',
     async (_name, context) => {
-      await inTransaction(async (tx) => {
+      await runAs(context, async (tx) => {
         await tx.setContext(context);
         for (const table of companyTables) {
+          // An agent run (the worker) cannot read the API-only tables at all.
+          if (context.agentCode && API_ONLY.includes(table)) {
+            expect((await tx.expectError(`select 1 from office.${table}`)).code, table).toBe(
+              '42501',
+            );
+            continue;
+          }
           // The only exception: a person sees their own memberships in every company (company
           // picker).
           const condition =
@@ -153,7 +187,7 @@ describe.skipIf(noDatabase)('tenant isolation', () => {
   it.each(pillikaContexts)(
     'with a Pillika context (%s) no Arma DX row can be changed or deleted',
     async (_name, context) => {
-      await inTransaction(async (tx) => {
+      await runAs(context, async (tx) => {
         await tx.setContext(context);
         for (const table of companyTables) {
           for (const sql of [
@@ -252,7 +286,7 @@ describe.skipIf(noDatabase)('tenant isolation', () => {
   });
 
   it('an agent run without a project context cannot read project rows, even if its identity is the founder', async () => {
-    await inTransaction(async (tx) => {
+    await inWorkerTransaction(async (tx) => {
       await tx.setContext(agent(ids.arma, 'KOR-1'));
       expect(await tx.count('tasks', 'id = $1', [ids.taskA])).toBe(1);
       for (const table of ['tasks', 'notes', 'runs', 'approvals', 'task_comments']) {
@@ -264,7 +298,7 @@ describe.skipIf(noDatabase)('tenant isolation', () => {
   });
 
   it('an agent run with a project context sees only the rows of its own project', async () => {
-    await inTransaction(async (tx) => {
+    await inWorkerTransaction(async (tx) => {
       await tx.setContext(agent(ids.arma, 'KOR-1', ids.projectA));
       expect(await tx.count('projects')).toBe(1);
       expect(await tx.count('tasks', 'project_id is not null')).toBe(1);
@@ -276,7 +310,7 @@ describe.skipIf(noDatabase)('tenant isolation', () => {
   });
 
   it('an agent run inherits the limits of its identity', async () => {
-    await inTransaction(async (tx) => {
+    await inWorkerTransaction(async (tx) => {
       // approverA is not a member of projectA: a run on their behalf sees no project row even in
       // the projectA context.
       await tx.setContext({
@@ -438,12 +472,14 @@ describe.skipIf(noDatabase)('tenant isolation', () => {
       ]);
 
       // The founder sees the members of their own company, not the members of the other company.
+      // The founder does not read the members' addresses either (only their own).
       await tx.setContext(person(ids.arma, ids.founder));
       expect(await tx.count('memberships', 'company_id = $1', [ids.arma])).toBe(5);
       expect(await tx.count('memberships', 'user_id = $1', [ids.employeeP])).toBe(0);
       expect(await tx.count('users', 'id = $1', [ids.employeeP])).toBe(0);
       expect(await tx.count('user_emails', 'user_id = $1', [ids.employeeP])).toBe(0);
-      expect(await tx.count('user_emails', 'user_id = $1', [ids.employeeA])).toBe(1);
+      expect(await tx.count('user_emails', 'user_id = $1', [ids.employeeA])).toBe(0);
+      expect(await tx.count('user_emails', 'user_id = $1', [ids.founder])).toBe(2);
       expect(await tx.count('companies')).toBe(3);
       // The shared employee's membership in another company is not visible.
       expect(await tx.count('memberships', 'user_id = $1', [ids.sharedEmployee])).toBe(1);
@@ -656,6 +692,21 @@ describe.skipIf(noDatabase)('tenant isolation', () => {
     await inTransaction(async (tx) => {
       await tx.setContext(person(ids.founderSpace, ids.founder));
       expect(await tx.count('tasks')).toBe(1);
+      // The application cannot add members at all (only an accepted invitation does).
+      expect(
+        (
+          await tx.expectError(
+            `insert into office.memberships (company_id, user_id, role) values ($1, $2, 'employee')`,
+            [ids.founderSpace, ids.employeeA],
+          )
+        ).code,
+      ).toBe('42501');
+      await tx.setContext(person(ids.founderSpace, ids.employeeA));
+      expect(await tx.count('tasks')).toBe(0);
+      expect(await tx.count('companies', 'id = $1', [ids.founderSpace])).toBe(0);
+    });
+    // The rule holds for the privileged role too.
+    await inAdminTransaction(async (tx) => {
       expect(
         (
           await tx.expectError(
@@ -664,9 +715,6 @@ describe.skipIf(noDatabase)('tenant isolation', () => {
           )
         ).code,
       ).toBe('23514');
-      await tx.setContext(person(ids.founderSpace, ids.employeeA));
-      expect(await tx.count('tasks')).toBe(0);
-      expect(await tx.count('companies', 'id = $1', [ids.founderSpace])).toBe(0);
     });
   });
 
@@ -680,7 +728,8 @@ describe.skipIf(noDatabase)('tenant isolation', () => {
       expect(role).toEqual({ superuser: false, bypass: false, app: true });
       const privileged = await tx.rows(
         `select rolname from pg_roles
-         where rolname in ('office_app', 'office_auth_reader', 'office_trigger', 'office_queue')
+         where rolname in ('office_app', 'office_auth_reader', 'office_trigger', 'office_queue',
+                           'office_identity', 'office_api_private')
            and (rolbypassrls or rolsuper or rolcanlogin)`,
       );
       expect(privileged).toEqual([]);

@@ -329,6 +329,12 @@ Skill klasörü: `skills/<ad>/SKILL.md` ve yanında `templates/`, `examples/`, `
 
 `/ajanlar` → `/agents`, `/gorevler` → `/tasks`, `/notlar` → `/notes`, `/onaylar` → `/approvals`. Menüdeki etiketler Türkçe kalır.
 
+## 0.3 ile eklenen adlar (karşılığı olan eski Türkçe ad yok)
+
+- Roller: `office_identity` (giriş, oturum ve davet işlevlerinin sahibi), `office_api_private` (yalnızca API'nin üyesi olduğu grup)
+- Tablolar: `sessions`, `invitations`, `login_events`; `user_emails.google_sub`, `memberships.invitation_id`
+- İşlevler: `complete_login`, `open_session`, `verify_session`, `close_session`, `close_all_sessions`, `set_last_company`, `record_login_event`, `is_active_founder`, `company_kind`
+
 ## Notlar
 
 - Hata metinleri (veritabanı tetikleyicilerinin `raise exception` metinleri, geliştiriciye dönük iletiler) İngilizcedir. Kullanıcıya gösterilecek Türkçe metni API üretir; API hata metnine göre değil SQLSTATE koduna göre dallanır.

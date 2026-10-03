@@ -7,7 +7,7 @@ const database = inject('database');
 /** Without a database connection string (locally) the database tests are skipped. */
 export const noDatabase = database === null;
 
-function connectionString(kind: 'app' | 'admin'): string {
+function connectionString(kind: 'app' | 'worker' | 'admin'): string {
   if (!database) {
     throw new Error('No test database');
   }
@@ -15,16 +15,28 @@ function connectionString(kind: 'app' | 'admin'): string {
 }
 
 let sharedAppPool: pg.Pool | undefined;
+let sharedWorkerPool: pg.Pool | undefined;
 
-/** Pool of the restricted application role (member of office_app, no BYPASSRLS). */
+/**
+ * Pool of the restricted role with the API's privileges (member of office_app and
+ * office_api_private, no BYPASSRLS).
+ */
 export function appPool(): pg.Pool {
   sharedAppPool ??= new pg.Pool({ connectionString: connectionString('app'), max: 4 });
   return sharedAppPool;
 }
 
+/** Pool of the restricted role with the worker's privileges (member of office_app only). */
+export function workerPool(): pg.Pool {
+  sharedWorkerPool ??= new pg.Pool({ connectionString: connectionString('worker'), max: 2 });
+  return sharedWorkerPool;
+}
+
 export async function closePools(): Promise<void> {
   await sharedAppPool?.end();
+  await sharedWorkerPool?.end();
   sharedAppPool = undefined;
+  sharedWorkerPool = undefined;
 }
 
 export interface QueryError {
@@ -80,15 +92,27 @@ export class Tx {
   }
 }
 
-/** Runs the work with the restricted role inside a single transaction that is rolled back. */
-export async function inTransaction<T>(fn: (tx: Tx) => Promise<T>): Promise<T> {
-  const client = await appPool().connect();
+async function inPoolTransaction<T>(pool: pg.Pool, fn: (tx: Tx) => Promise<T>): Promise<T> {
+  const client = await pool.connect();
   try {
     await client.query('begin');
     return await fn(new Tx(client));
   } finally {
     await rollbackAndRelease(client);
   }
+}
+
+/**
+ * Runs the work with the restricted role that has the API's privileges inside a single transaction
+ * that is rolled back.
+ */
+export async function inTransaction<T>(fn: (tx: Tx) => Promise<T>): Promise<T> {
+  return inPoolTransaction(appPool(), fn);
+}
+
+/** Same with the worker's privileges (agent runs). */
+export async function inWorkerTransaction<T>(fn: (tx: Tx) => Promise<T>): Promise<T> {
+  return inPoolTransaction(workerPool(), fn);
 }
 
 // If the rollback fails the connection does not go back to the pool and the original error is not

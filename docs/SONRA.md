@@ -184,3 +184,23 @@ Kartların şirketten ve modelden bağımsızlığı denetlendi. Model adları y
 - Modellere göre istek parametreleri farklı (düşünme ve çaba ayarları); çalıştırıcının model katmanı modeli değiştiren kartlarda (KOR-1, P-IST-1) bunu karşılamalı (X2-5).
 - A-TEK-2'deki "Fiyat onayı kurucuda kalır" ifadesi bilinçli mi?
 - Pillika uygulamasının yeniden tasarımı TAS-3 kartından çıkarıldı (3 Ekim, karar 5); görev modülü gelince Pillika'da görev olarak açılacak.
+
+## Giriş, oturum ve davet (0.3 veritabanı, 3 Ekim)
+
+Veritabanı kısmı (oturumlar, davetler, giriş tamamlama, giriş olayları) yazıldı ve incelemede bulunan 15 açık kapatıldı. Kurucu onayı bekleyen uygulama yorumları:
+
+- Pasif ve hiçbir şirkete üye olmayan bir hesap, yeni bir davetle girişte yeniden açılır (karar 9 ve 11'e en yakın yol). Alternatif: pasif hesabın son üyeliğinin silinmesini engellemek.
+- Kişi kendi hesabını pasif yapamaz; kurucu da dahil (kurucunun kendini kalıcı olarak dışarıda bırakmasını önler). Son aktif kurucu ne silinebilir ne pasif yapılabilir.
+- Zaten üyesi olunan şirkete gönderilen davet kabul edilmiş sayılmaz, bekler; ekranda "zaten üye" diye gösterilir. Rol yükseltmesi davetle değil, üyelik ekranından yapılır.
+- Hareketsizlik süresi: oturum son istekten 30 dakika geçmeden kapanmaz, en geç 31. dakikada kapanır (son görülme zamanı dakikada bir yazılır).
+- Bir Google hesabı aynı kişinin birden çok adresine bağlanabilir; iki ayrı kişiye bağlanamaz.
+
+Sonraya kalanlar:
+
+- `sessions` ve `login_events` için saklama süresi ve temizlik (öneri: kapanan oturum ve giriş olayı 90 gün sonra silinir; kurucu kararı).
+- `login_events`'i okuyacak ekran.
+- Kurucunun bir kişinin oturumlarını, hesabını pasif yapmadan kapatabileceği ayrı bir işlem (şimdilik pasif yapıp yeniden açmak oturumları kapatır).
+- Davet kabulünün şirketin `audit_log`'una da yazılması (şimdilik iz `invitations.accepted_*` ve `memberships.invitation_id` alanlarında).
+- Workspace'te adı değişmiş ve önceden eklenmemiş bir adres aynı Google hesabından gelirse giriş reddedilir; adresin kişiye otomatik eklenmesi kurucu kararı ister.
+- Üye çıkarma akışı (aynı şirketteki bekleyen davetler kendiliğinden iptal olur; bildirimlerin akıbeti M17 ile birlikte).
+
