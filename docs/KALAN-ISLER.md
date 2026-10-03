@@ -60,7 +60,7 @@ Altyapı:
 - [ ] API isteği başına tek transaction; ajan çalışmasında adım başına kısa transaction (yardımcılar hazır: `withContext`, `agentStep`; API'ye ilk veri isteğiyle 0.3'te bağlanır)
 - [x] pg-boss kurulumu, ayrı şemada; işlere yalnızca kimlik konması
 - [x] Veritabanı ve kod adlarının İngilizceye geçirilmesi (3 Ekim, karar 4; `docs/ad-sozlugu.md`)
-- [ ] Test projesinin sıfırlanıp İngilizce göçlerle yeniden kurulması ve eski `ofis_*` rollerinin silinmesi (kurucunun onayıyla, 3 Ekim karar 4)
+- [x] Test projesinin sıfırlanıp İngilizce göçlerle yeniden kurulması ve eski `ofis_*` rollerinin silinmesi (3 Ekim, kurucunun onayıyla; 11 göç ve başlangıç verisi, denetimde hata yok)
 
 Tablolar:
 
