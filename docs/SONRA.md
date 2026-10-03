@@ -204,3 +204,21 @@ Sonraya kalanlar:
 - Workspace'te adı değişmiş ve önceden eklenmemiş bir adres aynı Google hesabından gelirse giriş reddedilir; adresin kişiye otomatik eklenmesi kurucu kararı ister.
 - Üye çıkarma akışı (aynı şirketteki bekleyen davetler kendiliğinden iptal olur; bildirimlerin akıbeti M17 ile birlikte).
 
+## Giriş, sunucu ve panel (0.3, 3 Ekim)
+
+Kurucu onayı bekleyen uygulama yorumları:
+
+- Kurucu üyeliği panelden ya da API'den değiştirilemez ve kaldırılamaz; başka bir kurucu tarafından da. Kurucu ekleme ve çıkarma veritabanı yönetimiyle yapılır.
+- Varsayılan şirket tarayıcı başına bir çerezle hatırlanır: aynı tarayıcıda sonraki girişte (örneğin 30 dakika hareketsizlikten sonra) şirket seçici atlanır. "Şirket girişten sonra seçilir" her girişte seçici gösterilmesi olarak okunursa bu geri alınır.
+- Kurucu alanında Kullanıcılar sayfası yok; oraya kimse davet edilmez.
+- Bir üye Dış kişi yapılınca onay yetkisi kalkar (onay yetkisi yalnızca çalışanlarda).
+- Google'ın tüketici adreslerinden yalnızca `@gmail.com` kabul edilir; `@googlemail.com` gibi adresler ve Google hesabına bağlı başka kişisel adresler reddedilir (Google o adresin sahibini doğrulamıyor).
+- Önemli onaylarda passkey (3 Ekim karar 7) passkey işiyle gelecek; o güne kadar üyelik ve rol değişiklikleri yalnızca onay penceresiyle yapılır.
+
+Yayın notları (0.7):
+
+- `TRUST_PROXY`'ye Caddy ağı ve Cloudflare'in yayımladığı IP aralıkları yazılır; Caddy de aynı aralıklara güvenir (`trusted_proxies`). Cloudflare aralıkları zaman zaman değişir.
+- API açılışta veritabanına bağlanıp rolün kısıtlı olduğunu denetler; veritabanına ulaşamazsa açılmaz. Docker Compose'ta yeniden başlatma politikası buna göre ayarlanır.
+- Hız sınırı sayaçları süreç belleğinde; birden çok API örneğinde paylaşılan depo gerekir.
+- Google düğmesi kılavuzu belirli bir yazı tipi istiyor (Roboto ya da Google Sans); arayüz baştan ele alınırken eklenebilir.
+

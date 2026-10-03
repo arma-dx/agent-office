@@ -107,7 +107,7 @@ Rapor neyin ve neden yapılacağını, PLAN ve bu dosya nasıl yapılacağını 
 Gerekenler: Node 24.15 ya da üstü bir 24.x sürümü (`engines`: `^24.15.0`; `.nvmrc` en güncel 24'ü seçer) ve pnpm 12.8.1 (`packageManager`).
 
 - `pnpm install`: bağımlılıkları kurar
-- `pnpm dev`: bütün uygulamaları yerelde çalıştırır; panel `http://localhost:5173`, API `http://127.0.0.1:3000` (`.env`'deki `PORT`). Panel `/api/` isteklerini API'ye aktarır. Ortam değişkenleri kökteki `.env` dosyasından okunur (`.env.example`'dan kopyala).
+- `pnpm dev`: bütün uygulamaları yerelde çalıştırır; panel `http://localhost:5173`, API `http://127.0.0.1:3000` (`.env`'deki `PORT`). Panel `/api/` isteklerini API'ye aktarır. Ortam değişkenleri kökteki `.env` dosyasından okunur (`.env.example`'dan kopyala); API açılmak için `DATABASE_URL` (kısıtlı `office_api` rolü), `PANEL_ORIGIN` ve `COOKIE_SECRET` ister.
 - `pnpm test`: bütün paketlerin testleri (Vitest). Veritabanı testleri `TEST_DATABASE_URL` ister (yerel PostgreSQL 17'nin yetkili adresi): `TEST_DATABASE_URL=postgresql://... pnpm test`. Testler o sunucuda kendi veritabanını açar, `supabase/migrations` göçlerini uygular ve kısıtlı uygulama rolüyle bağlanır. Adres yoksa yerelde veritabanı testleri atlanır; CI'da zorunludur
 - `pnpm lint`, `pnpm typecheck`, `pnpm format:check` (`pnpm format` düzeltir)
 - `pnpm smoke`: api modüllerini (dinlemeye başlayan `main.ts` hariç) ve worker'ın giriş dosyasını Node ile doğrudan yükler; tsc ve Vitest'in kaçırdığı içe aktarma hatalarını yakalar

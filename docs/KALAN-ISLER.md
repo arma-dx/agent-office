@@ -57,7 +57,7 @@ Altyapı:
 - [x] Yerel veritabanı: `supabase start` ve `supabase db reset` çalışır durumda (göçler ve testler yerel Supabase'de, süper kullanıcı olmayan `postgres` rolüyle geçiyor)
 - [x] Yetkili göç rolü ile kısıtlı uygulama rolünün ayrılması; uygulama rolünde `BYPASSRLS` yok
 - [x] `packages/db` içinde bağlam kuran yardımcı: `app.company_id`, `app.user_id`, `app.project_id`, `app.email`, `app.agent_code`
-- [ ] API isteği başına tek transaction; ajan çalışmasında adım başına kısa transaction (yardımcılar hazır: `withContext`, `agentStep`; API'ye ilk veri isteğiyle 0.3'te bağlanır)
+- [x] API isteği başına tek transaction; ajan çalışmasında adım başına kısa transaction (`withContext`, `agentStep`; API 0.3'te bağlandı, oturum doğrulama ve bağlam aynı transaction'da)
 - [x] pg-boss kurulumu, ayrı şemada; işlere yalnızca kimlik konması
 - [x] Veritabanı ve kod adlarının İngilizceye geçirilmesi (3 Ekim, karar 4; `docs/ad-sozlugu.md`)
 - [x] Test projesinin sıfırlanıp İngilizce göçlerle yeniden kurulması ve eski `ofis_*` rollerinin silinmesi (3 Ekim, kurucunun onayıyla; 11 göç ve başlangıç verisi, denetimde hata yok)
@@ -152,24 +152,24 @@ Google tarafı:
 
 Sunucu tarafı:
 
-- [ ] Giriş akışının API'de yürümesi (tarayıcıda değil); durum değeri ve tek kullanımlık değer denetimi
-- [ ] Kimlik belirtecinin doğrulanması
-- [ ] Yalnızca geçerli daveti ya da üyeliği olan, Google'ın doğruladığı adresin kabulü; diğerlerinin anlaşılır ve genel bir mesajla reddi
+- [x] Giriş akışının API'de yürümesi (tarayıcıda değil); durum değeri ve tek kullanımlık değer denetimi (gerçek Google istemcisiyle deneme kurulumdan sonra)
+- [x] Kimlik belirtecinin doğrulanması
+- [x] Yalnızca geçerli daveti ya da üyeliği olan, Google'ın doğruladığı adresin kabulü; diğerlerinin anlaşılır ve genel bir mesajla reddi
 - [ ] `amr` alanının denenmesi: kuruluş hesabında ve dış kişinin kişisel hesabında
-- [ ] İki adımlı doğrulamanın girişte kodla denetlenmesi; alan gelmezse izlenecek yol (Karar: G1)
-- [ ] Oturum çerezi: `office.armadx.com` üzerinde, yalnızca sunucunun okuyabildiği, güvenli
-- [ ] Oturum süresi ve hareketsizlik süresi (Karar: R7)
-- [ ] Çıkış ve bütün oturumları kapatma
-- [ ] İstek sahteciliğine karşı koruma
-- [ ] Giriş denemelerinde hız sınırı
-- [ ] Giriş, çıkış ve reddedilen denemelerin kaydı: şirketten bağımsız `login_events` tablosunda, e-posta ve IP olmadan (3 Ekim, karar 10; tablo ve yazma işlevi hazır, API'den yazılması kalıyor)
+- [x] İki adımlı doğrulamanın girişte kodla denetlenmesi; alan gelmezse izlenecek yol (Karar: G1) (3 Ekim karar 8; `amr` gerçek hesaplarla denenince gözden geçirilecek)
+- [x] Oturum çerezi: `office.armadx.com` üzerinde, yalnızca sunucunun okuyabildiği, güvenli
+- [x] Oturum süresi ve hareketsizlik süresi (Karar: R7) (30 dakika, 10 saat)
+- [x] Çıkış ve bütün oturumları kapatma
+- [x] İstek sahteciliğine karşı koruma
+- [x] Giriş denemelerinde hız sınırı
+- [x] Giriş, çıkış ve reddedilen denemelerin kaydı: şirketten bağımsız `login_events` tablosunda, e-posta ve IP olmadan (3 Ekim, karar 10)
 
 Roller ve şirket:
 
-- [ ] Girişten sonra şirket seçimi; tek üyeliği olanın doğrudan geçmesi
-- [ ] Üst çubukta şirket seçici; kurucu için holding görünümü ve Kurucu özel alanı
-- [ ] Şirket seçicideki geçici örnek listenin (`apps/web/src/placeholder-data.ts`) kaldırılması; liste kullanıcının üyeliklerinden gelir
-- [ ] Her API ucunda rol denetimi: `founder`, `employee`, `external`
+- [x] Girişten sonra şirket seçimi; tek üyeliği olanın doğrudan geçmesi
+- [ ] Üst çubukta şirket seçici; kurucu için holding görünümü ve Kurucu özel alanı (şirket seçici ve Kurucu alanı hazır; holding görünümü kalıyor)
+- [x] Şirket seçicideki geçici örnek listenin (`apps/web/src/placeholder-data.ts`) kaldırılması; liste kullanıcının üyeliklerinden gelir
+- [x] Her API ucunda rol denetimi: `founder`, `employee`, `external` (bugünkü uçlarda; yeni uçlar aynı yardımcıyı kullanır)
 - [ ] Holding görünümü için API'de salt okunur birleştirme
 
 Passkey:
@@ -180,16 +180,16 @@ Passkey:
 
 Ekranlar:
 
-- [ ] Giriş ekranı
-- [ ] Ayarlar, Kullanıcılar: davet etme, rol verme, üyeliği kaldırma
+- [x] Giriş ekranı
+- [x] Ayarlar, Kullanıcılar: davet etme, rol verme, üyeliği kaldırma (passkey adımı passkey işiyle eklenecek)
 - [ ] Ayarlar, Şirketler
 
 Testler:
 
-- [ ] Davetsiz e-posta giremez
-- [ ] Çalışan öteki şirketi seçemez
-- [ ] Dış kişi yalnızca kendisine açılanı görür
-- [ ] Süresi dolan oturum reddedilir
+- [x] Davetsiz e-posta giremez
+- [x] Çalışan öteki şirketi seçemez
+- [x] Dış kişi yalnızca kendisine açılanı görür
+- [x] Süresi dolan oturum reddedilir
 
 ### 0.4 Görev kaydı ve pano (M2)
 
