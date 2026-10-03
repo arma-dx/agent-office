@@ -171,3 +171,16 @@ Arayüz temeli kuruldu (KALAN-ISLER 0.1). Kurucunun 2 Ekim kararıyla arayüz ge
 - Canlı Supabase planı: canlı projede yedek ve yeni projeye geri yükleme için Pro plan gerekiyor (aylık yaklaşık 25 dolar, bir Micro işlem birimi dahil). Kararı kurucunun.
 - Supabase güvenlik denetimi (3 Ekim, test projesi): hata yok. Uyarılar: pg-boss'un kendi işlevlerinde `search_path` sabit değil (işlevler çağıranın yetkisiyle çalışıyor, pg-boss'un kodu olduğu için dokunulmadı); birden çok izin veren satır kuralı (dış kişi ve şirket içi kurallar bilerek ayrı, yalnızca başarım uyarısı).
 - pg-boss yükseltmesi: kuyruk şeması göçle kuruluyor ve worker şemayı değiştirmiyor. pg-boss sürümü yükseltilince `getMigrationPlans` çıktısı yeni bir göç olarak eklenir.
+
+## Kart denetimi (KALAN-ISLER 0.2, 3 Ekim)
+
+Kartların şirketten ve modelden bağımsızlığı denetlendi. Model adları yalnızca `model` ve `model_hard` alanlarında; şirkete özel değerler `company_agents.settings` alanında ya da şirket notlarında. Şirket adı geçen küçük ifadeler ayrıca düzeltilecek. Karar isteyen noktalar:
+
+- Zamanlamalar (M28): KOR-2, KOR-3, KOR-4, HAF-1, A-PRJ-2 ve P-IST-1'deki saatler düz metin; şirketin saat dilimi ve çalışma takvimi yok. Öneri: kartta yapılandırılmış varsayılan zamanlama, şirket ayarında üzerine yazma.
+- "Kurucu" sözcüğü kartlarda üç anlamda geçiyor: eskalasyonun gittiği kişi (sorumlu), onaylayan kişi, talep sahibi (M18, M29). Sorumlunun şirket başına ayrılması bunu da belirler.
+- Sorumlu ve etkin yetki seviyesi yalnızca global kartta (N12, R15): bir şirketteki kritik hata ajanın seviyesini her şirkette düşürür. Öneri: kart varsayılan sorumluyu ve tavan seviyeyi tutar, şirket başına sorumlu ve etkin seviye `company_agents` satırına taşınır.
+- Ortak birim kartlarındaki şirket listesi (`companies`): üçüncü bir şirket kart değişikliği ister. Öneri: listeler açık kalsın.
+- `model_hard`'a geçiş koşulu ve bazı notlar yalnızca YAML yorumunda; kart senkronizasyonunda kaybolur (M42). Öneri: alan olarak yazılsın.
+- Modellere göre istek parametreleri farklı (düşünme ve çaba ayarları); çalıştırıcının model katmanı modeli değiştiren kartlarda (KOR-1, P-IST-1) bunu karşılamalı (X2-5).
+- A-TEK-2'deki "Fiyat onayı kurucuda kalır" ifadesi bilinçli mi?
+
