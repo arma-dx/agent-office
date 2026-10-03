@@ -10,8 +10,12 @@
     "smoke": "node --input-type=module -e \"await import('./src/env.ts'); await import('./src/server.ts')\""
   },
   "dependencies": {
+    "@agent-office/db": "workspace:*",
     "@agent-office/shared": "workspace:*",
+    "@fastify/cookie": "catalog:",
+    "@fastify/rate-limit": "catalog:",
     "fastify": "catalog:",
+    "openid-client": "catalog:",
     "zod": "catalog:"
   },
   "devDependencies": {
