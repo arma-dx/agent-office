@@ -14,7 +14,7 @@ triggers:
   - type: scheduled
     description: Her iş günü 07.30 günlük özet (varsayılan)
   - type: event
-    description: Toplantıdan 30 dakika önce brif; öncelikli bir göndericiden gelen e-posta
+    description: Toplantıdan 30 dakika önce (varsayılan) brif; öncelikli bir göndericiden gelen e-posta
   - type: request
     description: Kurucunun isteği
 

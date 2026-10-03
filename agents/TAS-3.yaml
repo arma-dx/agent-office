@@ -8,7 +8,6 @@ owner: founder
 
 purpose: >
   Ürünler için kullanıcı akışları, tel kafesler ve ekran tasarımları hazırlar.
-  İlk işi Pillika uygulamasının yeniden tasarımıdır.
 
 triggers:
   - type: request
@@ -33,7 +32,7 @@ skills: [ui-ux-design, design-system]
 tools: [read_figma, write_figma, search_notes, read_note, write_note, update_task, submit_for_approval]
 
 knowledge_sources:
-  - Pillika ve Arma DX marka kitleri
+  - Şirketin marka kiti
   - Tasarım sistemi notu
   - Ürün gereksinim notları
 

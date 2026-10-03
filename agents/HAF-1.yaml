@@ -51,7 +51,7 @@ escalation:
 
 prohibitions:
   - Kaynakta olmayan bilgi eklemez
-  - Bir şirketin belgesini diğer şirketin notlarına bağlamaz
+  - Bir şirketin belgesini başka bir şirketin notlarına bağlamaz
   - Kimlik numarası ve kart bilgisi gibi hassas kişisel veriyi nota taşımaz
 
 model: claude-sonnet-5-5

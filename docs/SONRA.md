@@ -28,7 +28,7 @@ Kapsam dışı fikirler ve karar bekleyen açık sorular burada tutulur. Bir mad
 ### Giriş görevi (modül M1)
 
 - M54: Karar 5a'ya göre dış kişiler panele kendi Google hesaplarıyla giriyor; kural 8'deki ofis ağı ve VPN geçişinde bu kişiler panele nasıl erişecek (ör. Cloudflare Access ile ağa değil yalnızca panele, kimlik tabanlı) ve giriş yapısı buna şimdiden hazırlanacak mı? Kural 8'in hedefi de raporla ayrışıyor (N30): rapor paneli her cihazdan erişilebilir tasarlıyor ve internete açıklığın riskini başka önlemlerle karşılıyor; PLAN seçenek olarak kimlik tabanlı Cloudflare Access'i de sayıyor. Soru: kural 8'deki "ileride yalnızca ofis ağından ve VPN ile" gerçek bir ağ kısıtı mı, kimlik tabanlı erişim mi? İkincisiyse kural 8 buna göre yazılır ve bu madde de kapanır.
-- G1 (kural 3, PLAN Kimlik satırı): İki adımlı doğrulamanın yolu ikinci tur karar 6 ile kapandı: giriş görevinde önce Google'ın kimlik belirtecindeki amr alanının dış kişilerin kişisel hesaplarında da geldiği denenir, geliyorsa iki adımlı doğrulama girişte kodla denetlenir; önemli onaylarda yeniden doğrulama panelde passkey ile yapılır. Açık kalan: amr dış kişilerin kişisel hesaplarında gelmezse onlar için iki adımlı doğrulama nasıl sağlansın (panelde ek doğrulama adımı, yalnızca kuruluş hesaplarına zorunluluk, sözleşmede taahhüt, ya da `external` rolündeki kişi pilotta panele girmez)?
+- G1 (kural 3): 3 Ekim karar 8 ile kapandı. Şirket hesaplarında iki adımlı doğrulama Workspace yönetici ayarıyla zorlanır; dış kişilerin hesaplarında `amr` iki adımlı doğrulama göstermiyorsa giriş reddedilir. `amr` yalnızca yayında ve doğrulanmış bir istemcide gelir; o güne kadar test ve yerel ortamda bu denetim bir ortam ayarıyla kapatılabilir. Test sonucu (kuruluş ve kişisel hesap, iki adımlı doğrulama açık ve kapalı, güvenilir cihaz) gelince karar yeniden gözden geçirilir.
 
 ### Onay Masası (modül M3) ve bildirimler (modül M9)
 
@@ -126,7 +126,7 @@ Kapsam dışı fikirler ve karar bekleyen açık sorular burada tutulur. Bir mad
 
 ### Yeni kurallar için ayrıntı
 
-- R7 (modül M1, modül M3): Rapor kısa oturum süresi ve önemli onaylarda yeniden doğrulama istiyor; yeniden doğrulamanın panelde passkey ile yapılacağı ikinci tur karar 6 ile kapandı. Soru: oturum kaç saat sürsün, hangi onaylar "önemli" sayılsın (ör. fiyat ya da tutar içeren, dış alıcılı, tek doğru kaynak değiştiren)?
+- R7 (modül M1, modül M3): 3 Ekim kararları 6 ve 7 ile kapandı (oturum süreleri; önemli onaylar ve passkey).
 - R8 (projects, customers): AI izni (CLAUDE.md kural 12) ikinci tur karar 1 ile proje düzeyinin yanında müşteri düzeyinde de tutuluyor. Varsayılan ne olsun: yeni müşteride ve projede kapalı mı, açık mı? İzni kim işaretler? Mevcut müşteri sözleşmelerinde AI kullanımına dair madde var mı?
 - R9 (kural 11): Ajana bırakılmayan işlerin listesi kodla uygulanacak. Hangi araç hangi gruba girer (ör. `send_email` taahhüt içerebilir), bu işaret katalogda araç başına mı tutulsun?
 - R10 (Ölçütler): "Kritik hata" tanımı ve kaydı yok. Kim, nerede işaretler (iz kaydında olay, onaydan sonra kurucunun işareti)? Yükseltme kuralı ve kapı ölçütü buna dayanıyor. Onaydan geçmeyen Y2 çıktıları N11'de, seviyenin nerede düşeceği N12'de.
@@ -183,4 +183,4 @@ Kartların şirketten ve modelden bağımsızlığı denetlendi. Model adları y
 - `model_hard`'a geçiş koşulu ve bazı notlar yalnızca YAML yorumunda; kart senkronizasyonunda kaybolur (M42). Öneri: alan olarak yazılsın.
 - Modellere göre istek parametreleri farklı (düşünme ve çaba ayarları); çalıştırıcının model katmanı modeli değiştiren kartlarda (KOR-1, P-IST-1) bunu karşılamalı (X2-5).
 - A-TEK-2'deki "Fiyat onayı kurucuda kalır" ifadesi bilinçli mi?
-
+- Pillika uygulamasının yeniden tasarımı TAS-3 kartından çıkarıldı (3 Ekim, karar 5); görev modülü gelince Pillika'da görev olarak açılacak.

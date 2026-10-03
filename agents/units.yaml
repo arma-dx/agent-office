@@ -1,5 +1,5 @@
 # Birimler (2 Ekim karar 6, M39). Kaynak: docs/agent-office-tasarım-raporu.md, 37 birim.
-# Ajan kodunun öneki birim kodudur. company: boşsa iki şirkette ortak birim, doluysa o şirketin kısa kodu.
+# Ajan kodunun öneki birim kodudur. company: boşsa bütün şirketlerde ortak birim, doluysa o şirketin kısa kodu.
 # pilot_enabled: pilotta ajanı olan birimler. Kart senkronizasyonu (KALAN-ISLER 1.2) bu dosyayı da
 # units tablosuna yazar; o güne kadar supabase/seed.sql aynı listeyi yükler.
 

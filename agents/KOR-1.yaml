@@ -26,7 +26,7 @@ inputs:
 
 outputs:
   - Sınıflandırma: şirket, birim, öncelik
-  - Görev ya da alt görevler ve atamaları; iki şirketi kapsayan talepte açıldığı şirkette yürütür, diğer şirket için kurucuya görev önerisi bırakır
+  - Görev ya da alt görevler ve atamaları; birden çok şirketi kapsayan talepte açıldığı şirkette yürütür, diğer şirketler için kurucuya görev önerisi bırakır
   - Talep sahibine kısa durum mesajı
   - Alt görevler bitince birleşik sonuç
 
@@ -52,7 +52,7 @@ escalation:
 
 prohibitions:
   - Talebi kendisi yanıtlamaya çalışmaz, yönlendirir
-  - Bir şirketin işine diğer şirketin verisini katmaz
+  - Bir şirketin işine başka bir şirketin verisini katmaz
   - Talep sahibinin yetkisi olmayan bir işi başlatmaz
 
 model: claude-haiku-4-5-20251001

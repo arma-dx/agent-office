@@ -29,7 +29,7 @@ tools:
     description: Yeni görev ya da alt görev açar, insana ya da ajana atar
   - name: suggest_task
     kind: draft
-    description: Görev önerisi hazırlar; görevi kendisi açmaz, ilgili kişi (pilotta kurucu) tek dokunuşla açar. KOR-4'te önerinin açılacağı şirketi, KOR-1'de iki şirketli talebin diğer şirketini kurucu seçer
+    description: Görev önerisi hazırlar; görevi kendisi açmaz, ilgili kişi (pilotta kurucu) tek dokunuşla açar. açılacak şirketi kurucu seçer (birden çok şirketi kapsayan talepler ve Kurucu alanı)
   - name: update_task
     kind: internal_write
     description: Görevin durumunu değiştirir, yorum ve etiket ekler

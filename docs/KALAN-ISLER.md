@@ -84,7 +84,7 @@ Tablolar:
 - [x] `integrations`: şifreli token alanı
 - [x] Bildirim kaydı tablosu (Karar: M46) (kimin hatırlatacağı M46'da açık; tablo yalnızca kaydı tutar)
 - [x] (Rapor) Şirket adlarının koda gömülmemesi: yeni bir şirket kod değişmeden, kayıt ve ayarla açılabilmeli (Ürünleşme ön koşulu)
-- [ ] (Rapor) Kartların şirketten ve modelden bağımsız yazıldığının denetimi
+- [x] (Rapor) Kartların şirketten ve modelden bağımsız yazıldığının denetimi (3 Ekim, karar 5; açık sorular `docs/SONRA.md`, Kart denetimi)
 
 Ölçüt verisi (Rapor: ölçüm ilk günden başlar; pano Sprint 4'te gelse de veri pilot açılışından itibaren kaydedilmeli):
 
@@ -154,7 +154,7 @@ Sunucu tarafı:
 
 - [ ] Giriş akışının API'de yürümesi (tarayıcıda değil); durum değeri ve tek kullanımlık değer denetimi
 - [ ] Kimlik belirtecinin doğrulanması
-- [ ] Yalnızca `memberships` tablosunda kaydı olan e-postanın kabulü; diğerlerinin anlaşılır mesajla reddi
+- [ ] Yalnızca geçerli daveti ya da üyeliği olan, Google'ın doğruladığı adresin kabulü; diğerlerinin anlaşılır ve genel bir mesajla reddi
 - [ ] `amr` alanının denenmesi: kuruluş hesabında ve dış kişinin kişisel hesabında
 - [ ] İki adımlı doğrulamanın girişte kodla denetlenmesi; alan gelmezse izlenecek yol (Karar: G1)
 - [ ] Oturum çerezi: `office.armadx.com` üzerinde, yalnızca sunucunun okuyabildiği, güvenli
