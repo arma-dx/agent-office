@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from 'vitest';
-import { loadApiEnv } from '../src/env.ts';
+import { loadApiEnv, serverConfig } from '../src/env.ts';
 import { isSecretKey } from '../src/log.ts';
 import { buildServer } from '../src/server.ts';
 
@@ -63,12 +63,132 @@ describe('log redaction', () => {
   });
 });
 
+const REQUIRED = {
+  DATABASE_URL: 'postgresql://office_api@127.0.0.1:54322/postgres',
+  PANEL_ORIGIN: 'https://office.example.test',
+  COOKIE_SECRET: 'x'.repeat(32),
+};
+
+function envError(source: Record<string, string>): string {
+  try {
+    loadApiEnv(source);
+  } catch (error) {
+    return String(error);
+  }
+  throw new Error('expected an invalid environment');
+}
+
 describe('loadApiEnv', () => {
   it('listens only on 127.0.0.1 locally', () => {
-    expect(loadApiEnv({ PORT: '8080' })).toMatchObject({ HOST: '127.0.0.1', PORT: 8080 });
+    expect(loadApiEnv({ ...REQUIRED, PORT: '8080' })).toMatchObject({
+      HOST: '127.0.0.1',
+      PORT: 8080,
+    });
   });
 
   it('rejects an empty HOST value', () => {
-    expect(() => loadApiEnv({ HOST: ' ' })).toThrow(/HOST/);
+    expect(() => loadApiEnv({ ...REQUIRED, HOST: ' ' })).toThrow(/HOST/);
+  });
+
+  it('requires the database, the panel origin and a long cookie secret', () => {
+    const message = envError({ COOKIE_SECRET: 'SECRET-short' });
+    for (const name of ['DATABASE_URL', 'PANEL_ORIGIN', 'COOKIE_SECRET']) {
+      expect(message).toContain(name);
+    }
+    expect(message).not.toContain('SECRET-short');
+    expect(envError({ ...REQUIRED, DATABASE_URL: 'https://db.example.test' })).toContain(
+      'DATABASE_URL',
+    );
+  });
+
+  it('accepts an https origin, or exactly the local panel', () => {
+    for (const origin of ['https://office.armadx.com', 'http://localhost:5173']) {
+      expect(loadApiEnv({ ...REQUIRED, PANEL_ORIGIN: origin }).PANEL_ORIGIN).toBe(origin);
+    }
+    for (const origin of [
+      'http://office.armadx.com',
+      'https://office.armadx.com/',
+      'https://office.armadx.com/panel',
+      'http://localhost:3000',
+    ]) {
+      expect(envError({ ...REQUIRED, PANEL_ORIGIN: origin })).toContain('PANEL_ORIGIN');
+    }
+    expect(
+      envError({ ...REQUIRED, NODE_ENV: 'production', PANEL_ORIGIN: 'http://localhost:5173' }),
+    ).toContain('PANEL_ORIGIN');
+  });
+
+  it('takes the three Google values together, with the callback under the panel origin', () => {
+    const google = {
+      GOOGLE_CLIENT_ID: 'client-id.apps.example.test',
+      GOOGLE_CLIENT_SECRET: 'client-secret-placeholder',
+      GOOGLE_REDIRECT_URI: 'https://office.example.test/api/auth/google/callback',
+    };
+    const config = serverConfig(loadApiEnv({ ...REQUIRED, ...google }));
+    expect(config.google).toEqual({
+      clientId: google.GOOGLE_CLIENT_ID,
+      clientSecret: google.GOOGLE_CLIENT_SECRET,
+      redirectUri: google.GOOGLE_REDIRECT_URI,
+    });
+    // Empty values count as missing: Google sign-in is then not configured.
+    const empty = { GOOGLE_CLIENT_ID: '', GOOGLE_CLIENT_SECRET: '', GOOGLE_REDIRECT_URI: '' };
+    expect(serverConfig(loadApiEnv({ ...REQUIRED, ...empty })).google).toBeNull();
+    expect(envError({ ...REQUIRED, GOOGLE_CLIENT_ID: google.GOOGLE_CLIENT_ID })).toContain(
+      'GOOGLE_CLIENT_ID',
+    );
+    for (const uri of [
+      'https://evil.example.test/api/auth/google/callback',
+      'https://office.example.test.evil.test/api/auth/google/callback',
+      'https://office.example.test/api/auth/google/callback?next=/',
+      'https://office.example.test/callback',
+    ]) {
+      expect(envError({ ...REQUIRED, ...google, GOOGLE_REDIRECT_URI: uri })).toContain(
+        'GOOGLE_REDIRECT_URI',
+      );
+    }
+  });
+
+  it('requires the amr check in production', () => {
+    expect(serverConfig(loadApiEnv(REQUIRED)).requireAmr).toBe(true);
+    expect(serverConfig(loadApiEnv({ ...REQUIRED, AUTH_REQUIRE_AMR: 'false' })).requireAmr).toBe(
+      false,
+    );
+    expect(envError({ ...REQUIRED, NODE_ENV: 'production', AUTH_REQUIRE_AMR: 'false' })).toContain(
+      'AUTH_REQUIRE_AMR',
+    );
+  });
+
+  it('requires the trusted proxies in production', () => {
+    const production = {
+      ...REQUIRED,
+      NODE_ENV: 'production',
+      PANEL_ORIGIN: 'https://office.example.test',
+    };
+    expect(envError(production)).toContain('TRUST_PROXY');
+    expect(envError({ ...production, TRUST_PROXY: '' })).toContain('TRUST_PROXY');
+    const config = serverConfig(
+      loadApiEnv({ ...production, TRUST_PROXY: '172.18.0.0/16, 173.245.48.0/20' }),
+    );
+    expect(config.trustProxy).toEqual(['172.18.0.0/16', '173.245.48.0/20']);
+  });
+
+  it('reads the company domains and the trusted proxies as lists', () => {
+    const config = serverConfig(
+      loadApiEnv({
+        ...REQUIRED,
+        COMPANY_EMAIL_DOMAINS: ' ArmaDX.com, pillika.com ',
+        TRUST_PROXY: '127.0.0.1, 10.0.0.0/8, ::1',
+      }),
+    );
+    expect(config.companyEmailDomains).toEqual(['armadx.com', 'pillika.com']);
+    expect(config.trustProxy).toEqual(['127.0.0.1', '10.0.0.0/8', '::1']);
+    expect(config.localCookies).toBe(false);
+    expect(serverConfig(loadApiEnv(REQUIRED)).trustProxy).toBeNull();
+    for (const value of ['true', '*', 'proxy.example.test', ',']) {
+      expect(envError({ ...REQUIRED, TRUST_PROXY: value })).toContain('TRUST_PROXY');
+    }
+    expect(envError({ ...REQUIRED, COMPANY_EMAIL_DOMAINS: 'not a domain' })).toContain(
+      'COMPANY_EMAIL_DOMAINS',
+    );
   });
 });

@@ -7,7 +7,7 @@
     "dev": "node --watch --env-file-if-exists=../../.env src/main.ts",
     "start": "node src/main.ts",
     "typecheck": "tsc -p tsconfig.json",
-    "smoke": "node --input-type=module -e \"await import('./src/env.ts'); await import('./src/server.ts')\""
+    "smoke": "node --input-type=module -e \"import { globSync } from 'node:fs'; import { pathToFileURL } from 'node:url'; for (const file of globSync('src/**/*.ts')) { if (!file.endsWith('main.ts')) await import(pathToFileURL(file).href); }\""
   },
   "dependencies": {
     "@agent-office/db": "workspace:*",

@@ -13,6 +13,33 @@ export type Role = z.output<typeof roleSchema>;
 
 export const companyKindSchema = z.enum(['company', 'private_space']);
 
+/**
+ * Every error code the API sends. The API may only use these; the panel's test doubles use them
+ * too, so a test cannot invent a code the API never sends. The body schema below still accepts any
+ * string, so a newer API code does not break an older panel.
+ */
+export const apiErrorCodeSchema = z.enum([
+  'unauthenticated',
+  'forbidden',
+  'founder_only',
+  'cross_site_request',
+  'invalid_request',
+  'not_found',
+  'unsupported_media_type',
+  'payload_too_large',
+  'rate_limited',
+  'internal_error',
+  'invitation_exists',
+  'invitation_closed',
+  'invitation_limit',
+  'approval_only_employee',
+  'private_space',
+  'last_founder',
+  'founder_membership',
+  'member_in_use',
+]);
+export type ApiErrorCode = z.output<typeof apiErrorCodeSchema>;
+
 /** Error body for every 4xx and 5xx response. `message` is Turkish and safe to show to the user. */
 export const apiErrorSchema = z.object({
   error: z.object({
@@ -40,7 +67,10 @@ export const sessionResponseSchema = z.object({
 });
 export type SessionResponse = z.output<typeof sessionResponseSchema>;
 
-/** PUT /api/session/company: remembers the default company for the next sign-in. 204. */
+/**
+ * PUT /api/session/company: remembers the default company for this session and, in this browser,
+ * for the next sign-in (only while the person is still a member). 204.
+ */
 export const setCompanyRequestSchema = z.strictObject({ companyId: z.uuid() });
 
 /** Query value of /login?status=... after the Google callback. */
@@ -63,7 +93,10 @@ export type Invitation = z.output<typeof invitationSchema>;
 /** GET /api/invitations (founder of the selected company). */
 export const invitationListSchema = z.object({ invitations: z.array(invitationSchema) });
 
-/** POST /api/invitations. 201 with the invitation; 409 when a pending one exists for the address. */
+/**
+ * POST /api/invitations. 201 with the invitation; 409 invitation_exists when the address already
+ * has an invitation that is neither accepted nor cancelled, expired ones included (cancel it first).
+ */
 export const createInvitationRequestSchema = z.strictObject({
   email: z
     .email()
@@ -86,7 +119,10 @@ export type Member = z.output<typeof memberSchema>;
 /** GET /api/members (founder of the selected company). */
 export const memberListSchema = z.object({ members: z.array(memberSchema) });
 
-/** PATCH /api/members/:userId. At least one field. Founder role is not granted through the panel. */
+/**
+ * PATCH /api/members/:userId. At least one field. The founder role is neither granted nor taken
+ * through the panel: a founder's membership cannot be changed or removed (409 founder_membership).
+ */
 export const updateMemberRequestSchema = z
   .strictObject({
     role: z.enum(['employee', 'external']).optional(),
