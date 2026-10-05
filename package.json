@@ -14,7 +14,8 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "vitest run",
-    "smoke": "pnpm -r --if-present run smoke"
+    "smoke": "pnpm -r --if-present run smoke",
+    "db:local-role": "node --env-file=.env packages/db/scripts/local-login-role.ts"
   },
   "devDependencies": {
     "@eslint/js": "catalog:",

@@ -69,14 +69,17 @@ export const apiEnvSchema = baseEnvSchema
     TRUST_PROXY: optional(commaList(proxyAddress)),
   })
   .superRefine((env, ctx) => {
-    const google = [env.GOOGLE_CLIENT_ID, env.GOOGLE_CLIENT_SECRET, env.GOOGLE_REDIRECT_URI];
-    const given = google.filter((value) => value !== undefined).length;
-    if (given !== 0 && given !== google.length) {
+    // The redirect URI is not a secret and may be filled in ahead of the client values; on its
+    // own it leaves Google sign-in "not configured". A client id or secret needs all three.
+    const hasId = env.GOOGLE_CLIENT_ID !== undefined;
+    const hasSecret = env.GOOGLE_CLIENT_SECRET !== undefined;
+    const complete = hasId && hasSecret && env.GOOGLE_REDIRECT_URI !== undefined;
+    if ((hasId || hasSecret) && !complete) {
       ctx.addIssue({
         code: 'custom',
         path: ['GOOGLE_CLIENT_ID'],
         message:
-          'GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET and GOOGLE_REDIRECT_URI are set together or not at all',
+          'GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET are set together, with GOOGLE_REDIRECT_URI',
       });
     }
     if (

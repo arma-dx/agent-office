@@ -145,10 +145,10 @@ Testler (kısıtlı rolle):
 
 Google tarafı:
 
-- [ ] Google Cloud projesi (Senden: erişim)
-- [ ] Giriş istemcisi: kullanıcı türü External; kapsamlar `openid`, `email`, `profile`
-- [ ] İzin ekranının ayarlanması
-- [ ] Yönlendirme adresleri: yerel, test ve canlı
+- [x] Google Cloud projesi (5 Ekim: `arma-dx-agent-office` ve `arma-dx-agent-office-test`)
+- [x] Giriş istemcisi: kullanıcı türü External; kapsamlar `openid`, `email`, `profile`
+- [x] İzin ekranının ayarlanması (şimdilik Testing durumunda; pilot öncesi yayın ve doğrulama `docs/google-kurulum.md` 3. bölüm)
+- [x] Yönlendirme adresleri: yerel, test ve canlı
 
 Sunucu tarafı:
 

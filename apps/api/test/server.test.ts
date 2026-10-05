@@ -144,6 +144,13 @@ describe('loadApiEnv', () => {
     expect(envError({ ...REQUIRED, GOOGLE_CLIENT_ID: google.GOOGLE_CLIENT_ID })).toContain(
       'GOOGLE_CLIENT_ID',
     );
+    // The redirect URI alone (filled in before the client values) leaves it not configured;
+    // a client id and secret without it are refused.
+    const uriOnly = { GOOGLE_REDIRECT_URI: google.GOOGLE_REDIRECT_URI };
+    expect(serverConfig(loadApiEnv({ ...REQUIRED, ...uriOnly })).google).toBeNull();
+    expect(envError({ ...REQUIRED, ...google, GOOGLE_REDIRECT_URI: '' })).toContain(
+      'GOOGLE_CLIENT_ID',
+    );
     for (const uri of [
       'https://evil.example.test/api/auth/google/callback',
       'https://office.example.test.evil.test/api/auth/google/callback',

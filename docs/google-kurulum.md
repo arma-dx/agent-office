@@ -4,7 +4,7 @@ Bu adımları kurucu Google Cloud Console'da ve Google Workspace yönetici panel
 
 ## 1. Proje
 
-1. console.cloud.google.com'a `omer@armadx.com` ile girin. Arma DX kuruluşunun altında iki proje açın: `armadx-agent-office` (canlı) ve `armadx-agent-office-test` (test ve yerel). Proje kimliği sonradan değişmez. Faturalama hesabı bağlamayın; girişte gerekmez.
+1. console.cloud.google.com'a `omer@armadx.com` ile girin. Arma DX kuruluşunun altında iki proje açın: `arma-dx-agent-office` (canlı) ve `arma-dx-agent-office-test` (test ve yerel). (5 Ekim: kurucu iki projeyi bu kimliklerle açtı.) Proje kimliği sonradan değişmez. Faturalama hesabı bağlamayın; girişte gerekmez.
 2. IAM: projelerin sahibi siz olun; ileride ikinci bir Arma DX yöneticisi eklenmesi önerilir. Geliştiriciye yalnızca OAuth ayarlarını düzenleme yetkisi verilir.
 
 ## 2. Giriş ekranı ve istemci (iki projede de)
@@ -25,3 +25,29 @@ Bu adımları kurucu Google Cloud Console'da ve Google Workspace yönetici panel
    - Security > Authentication > 2-step verification: zorunlu yapın ve "Allow user to trust the device" seçeneğini kapatın.
    - Security > Access and data control > API controls: "Sign in with Google" için temel bilgi erişimine izin verin ya da iki istemci kimliğini güvenilir olarak ekleyin.
 4. Altı ay kullanılmayan istemciyi Google siler (30 gün önce uyarır); test istemcisinde buna dikkat edin.
+
+## 4. Şifreler ve dosyalar nereye konur
+
+- İndirilen istemci JSON dosyası projeye konmaz. Parola yöneticisinde saklanır ya da silinir; içindeki iki değer aşağıdaki gibi kullanılır.
+- Yerel deneme: test projesinin (`arma-dx-agent-office-test`) istemci kimliği ve gizli anahtarı, proje klasöründeki `.env` dosyasında `GOOGLE_CLIENT_ID=` ve `GOOGLE_CLIENT_SECRET=` satırlarına yapıştırılır. `.env` git'e girmez (`.gitignore`).
+- Test ve canlı sunucu: değerler sunucu kurulurken sunucunun gizli ayarlarına girilir (0.7); depoya ve sohbete yazılmaz.
+- Supabase veritabanı şifresi hiçbir dosyaya konmaz; yalnızca parola yöneticisinde durur.
+
+## 5. Yerelde deneme
+
+`.env` hazırsa (yerel değerler ve iki Google değeri), proje klasöründe sırayla:
+
+```bash
+supabase start
+```
+
+```bash
+pnpm db:local-role
+```
+
+```bash
+pnpm dev
+```
+
+Sonra tarayıcıda `http://localhost:5173` açılır ve "Google ile giriş yap" ile test kullanıcısı olarak eklenen bir adresle girilir. Deneme bitince `supabase stop` ile yerel veritabanı kapatılır. `pnpm db:local-role`, `supabase db reset` sonrasında yeniden çalıştırılır (sıfırlama yerel rol şifresini siler).
+
