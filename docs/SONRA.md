@@ -226,9 +226,9 @@ Yayın notları (0.7):
 
 Passkey kaydı, yönetimi ve önemli işlemlerde yeniden doğrulama yazıldı; kural veritabanında da uygulanıyor. Kurucu kararı bekleyenler:
 
-- Dışarı giden onaylar: tek `external_effect` araç `send_email` ve pilotta kapalı. Pilotta dışarı çıkan işler (sosyal medya gönderisi, dış katılımcılara tutanak, müşteriye paylaşılan rapor, teklif) taslak olarak onaya gelir ve onaydan sonra insan eliyle gönderilir; bu onaylar şu an "önemli" sayılmıyor. Soru: bu onaylar da passkey istesin mi (M21 ile birlikte)? Teklif gibi fiyat içeren işler çalıştırıcı "para içeriyor" işaretini koyunca zaten passkey ister.
-- Passkey kurtarma: tek passkey'i olan kişi cihazını kaybederse önemli işlem yapamaz ve kendi passkey'ini de kaldıramaz. Seçenekler: (a) kurucunun, kendi passkey doğrulamasıyla bir kişinin passkey'lerini sıfırlayabilmesi (kayıt ve bildirimle); (b) yönetici eliyle veritabanından sıfırlama yönergesi; (c) yeni Google girişinden sonra bekleme süresiyle (örneğin 24 saat) yeni passkey. Kurucunun kendisi için de bir yol gerekir. Öneri: (a) ve kurucu için (b).
-- Uygulama yorumları (onay bekliyor): davet oluşturma ve uzatma, hesabı açma ve kapatma üyelik değişikliği sayılır ve passkey ister. Proje üyeliği ve dış kişiye kayıt açma (`access_grants`) değişiklikleri de üyelik değişikliği sayılsın mı? Tek doğru kaynak notunu kurucunun doğrudan düzenlemesi passkey istesin mi (şu an yalnızca onay yoluyla istiyor)?
+- Dışarı giden onaylar: 5 Ekim karar 2 ile kapandı (elle dışarı gönderilen işlerin onayı da passkey ister).
+- Passkey kurtarma: 5 Ekim karar 3 ile kapandı (kurucu başkalarının passkey'lerini sıfırlar; kurucununki veritabanı yöneticisi eliyle).
+- Uygulama yorumları (onay bekliyor): davet oluşturma ve uzatma, hesabı açma ve kapatma üyelik değişikliği sayılır ve passkey ister. Dış kişiye kayıt açma passkey ister, proje üyeliği değişiklikleri istemez (5 Ekim karar 4). Açık kalan: tek doğru kaynak notunu kurucunun doğrudan düzenlemesi passkey istesin mi (şu an yalnızca onay yoluyla istiyor)?
 - Passkey ekleme, kaldırma ve başarısız doğrulamalar şu an yalnızca kendi tablolarında; şirket `audit_log`'una ya da bildirime yazılmıyor (kimlik verisi, şirketten bağımsız). Nereye yazılacağı kurucu kararı.
 
 Notlar:
