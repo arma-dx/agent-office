@@ -20,6 +20,10 @@ export const ids = {
   // Passkey tests (id 19 is the members test's second founder).
   holder: id(20),
   newcomer: id(21),
+  // Passkey reset tests: a person whose passkeys a founder resets, and a person who is also a
+  // member of a company the Arma DX founder does not run.
+  resettee: id(22),
+  shared: id(23),
 
   invitation: id(101),
 } as const;
@@ -47,6 +51,7 @@ export const accounts = {
   otherFounder: { email: 'founder@other.test', sub: 'sub-other-founder', hd: 'other.test' },
   holder: { email: 'holder@armadx.test', sub: 'sub-holder', hd: 'armadx.test' },
   newcomer: { email: 'newcomer@armadx.test', sub: 'sub-newcomer', hd: 'armadx.test' },
+  resettee: { email: 'resettee@armadx.test', sub: 'sub-resettee', hd: 'armadx.test' },
   // Has the pending invitation of the fixtures; no account yet.
   invitee: { email: 'invitee@gmail.com', sub: 'sub-invitee' },
   // Neither invited nor a member.
@@ -76,7 +81,9 @@ export async function loadFixtures(client: Client): Promise<void> {
       ('${ids.traveller}', 'Gezgin Çalışan'),
       ('${ids.otherFounder}', 'Başka Kurucu'),
       ('${ids.holder}', 'Passkey Sahibi'),
-      ('${ids.newcomer}', 'Yeni Çalışan');
+      ('${ids.newcomer}', 'Yeni Çalışan'),
+      ('${ids.resettee}', 'Passkey Kaybeden Çalışan'),
+      ('${ids.shared}', 'İki Şirketin Danışmanı');
 
     insert into office.user_emails (email, user_id) values
       ('${accounts.founder.email}', '${ids.founder}'),
@@ -88,7 +95,8 @@ export async function loadFixtures(client: Client): Promise<void> {
       ('${accounts.traveller.email}', '${ids.traveller}'),
       ('${accounts.otherFounder.email}', '${ids.otherFounder}'),
       ('${accounts.holder.email}', '${ids.holder}'),
-      ('${accounts.newcomer.email}', '${ids.newcomer}');
+      ('${accounts.newcomer.email}', '${ids.newcomer}'),
+      ('${accounts.resettee.email}', '${ids.resettee}');
 
     insert into office.memberships (company_id, user_id, role, can_approve) values
       ('${ids.arma}', '${ids.founder}', 'founder', true),
@@ -102,6 +110,9 @@ export async function loadFixtures(client: Client): Promise<void> {
       ('${ids.arma}', '${ids.traveller}', 'employee', false),
       ('${ids.arma}', '${ids.holder}', 'employee', false),
       ('${ids.arma}', '${ids.newcomer}', 'employee', false),
+      ('${ids.arma}', '${ids.resettee}', 'employee', false),
+      ('${ids.arma}', '${ids.shared}', 'external', false),
+      ('${ids.otherCompany}', '${ids.shared}', 'external', false),
       ('${ids.otherCompany}', '${ids.otherFounder}', 'founder', true);
 
     -- The founder's invitation, prepared without the passkey re-verification an invitation needs

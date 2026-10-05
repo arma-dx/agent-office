@@ -6,6 +6,7 @@ import {
   memberSchema,
   removeMemberRequestSchema,
   renewInvitationRequestSchema,
+  resetPasskeysRequestSchema,
   updateMemberRequestSchema,
   type Invitation,
   type Member,
@@ -96,6 +97,25 @@ export function removeMember(
   const body = removeMemberRequestSchema.parse({ stepUp });
   return apiRequest(`/members/${id}`, {
     method: 'DELETE',
+    body,
+    schema: z.undefined(),
+    companyId,
+  });
+}
+
+/**
+ * POST /api/members/:userId/passkeys/reset with a passkey_reset re-verification naming the member
+ * (5 October decision 3): every passkey of the person is removed and their sessions close.
+ */
+export function resetMemberPasskeys(
+  companyId: string,
+  userId: string,
+  stepUp: StepUp,
+): Promise<undefined> {
+  const id = z.uuid().parse(userId);
+  const body = resetPasskeysRequestSchema.parse({ stepUp });
+  return apiRequest(`/members/${id}/passkeys/reset`, {
+    method: 'POST',
     body,
     schema: z.undefined(),
     companyId,

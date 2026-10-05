@@ -20,6 +20,7 @@ async function openApproval(tx: Tx, fields: Record<string, unknown> = {}): Promi
     title: 'Test',
     payload: {},
     involves_money: false,
+    goes_external: false,
     ...fields,
   };
   const names = Object.keys(all);
@@ -43,7 +44,7 @@ describe.skipIf(noDatabase)('approval rules', () => {
       expect(
         (
           await tx.expectError(
-            `insert into office.approvals (company_id, run_id, agent_code, title, payload) values ($1, $2, 'KOR-1', 'x', '{}')`,
+            `insert into office.approvals (company_id, run_id, agent_code, title, payload, involves_money, goes_external) values ($1, $2, 'KOR-1', 'x', '{}', false, false)`,
             [ids.arma, ids.runA],
           )
         ).code,
@@ -151,8 +152,8 @@ describe.skipIf(noDatabase)('approval rules', () => {
     await inTransaction(async (tx) => {
       await tx.setContext(korA);
       const result = await tx.expectError(
-        `insert into office.approvals (company_id, run_id, agent_code, title, payload, basis_type, basis_id, basis_version, involves_money)
-         values ($1, $2, 'KOR-1', 'Second', '{}', 'note', $3, 1, false)`,
+        `insert into office.approvals (company_id, run_id, agent_code, title, payload, basis_type, basis_id, basis_version, involves_money, goes_external)
+         values ($1, $2, 'KOR-1', 'Second', '{}', 'note', $3, 1, false, false)`,
         [ids.arma, ids.runA, ids.noteA],
       );
       expect(result.code).toBe('23505');
@@ -180,7 +181,7 @@ describe.skipIf(noDatabase)('approval rules', () => {
       expect(
         (
           await tx.expectError(
-            `insert into office.approvals (company_id, run_id, agent_code, title, payload, basis_type, basis_id, basis_version, involves_money) values ($1, $2, 'KOR-1', 'x', '{}', 'note', $3, 1, false)`,
+            `insert into office.approvals (company_id, run_id, agent_code, title, payload, basis_type, basis_id, basis_version, involves_money, goes_external) values ($1, $2, 'KOR-1', 'x', '{}', 'note', $3, 1, false, false)`,
             [ids.arma, ids.runA, ids.noteA],
           )
         ).message,
@@ -227,7 +228,7 @@ describe.skipIf(noDatabase)('approval rules', () => {
       expect(
         (
           await tx.expectError(
-            `insert into office.approvals (company_id, run_id, agent_code, title, payload, task_id, previous_approval_id, involves_money) values ($1, $2, 'KOR-1', 'x', '{}', $3, $4, false)`,
+            `insert into office.approvals (company_id, run_id, agent_code, title, payload, task_id, previous_approval_id, involves_money, goes_external) values ($1, $2, 'KOR-1', 'x', '{}', $3, $4, false, false)`,
             [ids.arma, ids.runA, ids.taskA, second],
           )
         ).code,
@@ -240,7 +241,7 @@ describe.skipIf(noDatabase)('approval rules', () => {
       );
       await tx.setContext(korA);
       const third = await tx.expectError(
-        `insert into office.approvals (company_id, run_id, agent_code, title, payload, task_id, previous_approval_id, involves_money) values ($1, $2, 'KOR-1', 'x', '{}', $3, $4, false)`,
+        `insert into office.approvals (company_id, run_id, agent_code, title, payload, task_id, previous_approval_id, involves_money, goes_external) values ($1, $2, 'KOR-1', 'x', '{}', $3, $4, false, false)`,
         [ids.arma, ids.runA, ids.taskA, second],
       );
       expect(third.message).toMatch(/falls to a person/);
@@ -498,8 +499,9 @@ describe.skipIf(noDatabase)('note rules', () => {
       await tx.setContext({ companyId: ids.arma, userId: ids.founder, agentCode: 'HAF-1' });
       expect(await visible()).toEqual(none);
 
-      // Even if shared with an external person, they cannot see it until approval.
-      await tx.setContext(founderA);
+      // Even if shared with an external person, they cannot see it until approval. Opening a note
+      // to an external person needs the founder's passkey re-verification (5 October decision 4).
+      await stepUp(tx, founderA, 'access_grant', ids.externalA);
       await tx.exec(
         `insert into office.access_grants (company_id, user_id, record_type, record_id) values ($1, $2, 'note', $3)`,
         [ids.arma, ids.externalA, id],

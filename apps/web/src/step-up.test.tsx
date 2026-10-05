@@ -308,7 +308,7 @@ describe('step-up: messages', () => {
     await whenReady(confirm);
     await userEvent.click(confirm);
     expect(await within(dialog).findByRole('alert')).toHaveTextContent(
-      'Passkey ile doğrulama bu tarayıcıda tamamlanamadı. Güncel bir tarayıcıyla ya da başka bir cihazla yeniden deneyin.',
+      "Passkey ile doğrulama bu tarayıcıda tamamlanamadı. Güncel bir tarayıcıyla ya da başka bir cihazla yeniden deneyin. Passkey'inizi kaybettiyseniz yapılacaklar Güvenlik sayfasında yazıyor.",
     );
     expect(api.callsTo(PATCH)).toEqual([]);
     expect(stepUp.issued).toHaveLength(1);

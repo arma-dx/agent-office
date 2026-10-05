@@ -30,9 +30,10 @@ import type { RouteDeps } from '../services.ts';
  * passkey belongs to the person, not to a company, so these routes need no company.
  *
  * Only a person without an active passkey can add a first passkey (within 10 minutes of a Google
- * sign-in). A lost passkey stays active, and only its owner can revoke it, with another passkey: a
- * person who lost every passkey cannot recover through the panel. How such a person gets back in
- * (and whether passkey changes are announced) is a founder decision that is still open.
+ * sign-in). A lost passkey stays active, and its owner revokes it with another passkey. A person
+ * who lost every passkey cannot recover here: a founder of their company resets their passkeys
+ * (POST /api/members/:userId/passkeys/reset; 5 October decision 3), and they add a first passkey
+ * after a new Google sign-in. A founder's own passkeys are reset by the database administrator.
  */
 
 interface PasskeyRow {
@@ -176,9 +177,10 @@ export function registerPasskeyRoutes(app: FastifyInstance, { runner, config }: 
   });
 
   /**
-   * A challenge for one re-verification, bound to what it confirms. The company and the subject
-   * are checked when the action runs, where the database records the re-verification only in that
-   * company's context.
+   * A challenge for one re-verification, bound to what it confirms (the shared schema says what
+   * each purpose names: a company, a subject, details). The company and the subject are checked
+   * when the action runs, where the database records the re-verification only in that company's
+   * context.
    */
   app.post('/api/step-up/options', async (request, reply) =>
     runner.withSession(request, reply, async (scope) => {

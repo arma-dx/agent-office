@@ -3,13 +3,19 @@ import type { ContextInput } from '../src/context.ts';
 import type { Tx } from './helpers.ts';
 
 /**
- * Passkey helpers for the database tests (3 October decision 7). They call the same functions the
- * API calls. The database never checks a WebAuthn signature (the API does), so a test passes the
- * values the API would pass after verifying one.
+ * Passkey helpers for the database tests (3 October decision 7; 5 October decisions 3 and 4). They
+ * call the same functions the API calls. The database never checks a WebAuthn signature (the API
+ * does), so a test passes the values the API would pass after verifying one.
  */
 
 export type StepUpPurpose =
-  'approve' | 'membership_change' | 'invitation' | 'passkey_add' | 'passkey_revoke';
+  | 'approve'
+  | 'membership_change'
+  | 'invitation'
+  | 'passkey_add'
+  | 'passkey_revoke'
+  | 'passkey_reset'
+  | 'access_grant';
 
 export interface TestSession {
   id: string;
@@ -17,7 +23,14 @@ export interface TestSession {
   key: Buffer;
 }
 
-const COMPANY_PURPOSES: StepUpPurpose[] = ['approve', 'membership_change', 'invitation'];
+// Purposes whose re-verification names a company (rule 2); the others belong to the person alone.
+const COMPANY_PURPOSES: StepUpPurpose[] = [
+  'approve',
+  'membership_change',
+  'invitation',
+  'passkey_reset',
+  'access_grant',
+];
 
 function first<T>(rows: T[], what: string): T {
   const row = rows[0];
@@ -122,8 +135,8 @@ export interface StepUpInput {
 
 /**
  * Records a re-verification with a new step_up challenge of the session, as the API does after it
- * verified the assertion. The context must be the session's person (and, for an approval or a
- * membership change, the company). Returns the re-verification's id.
+ * verified the assertion. The context must be the session's person (and, for a purpose that names a
+ * company, the company). Returns the re-verification's id.
  */
 export async function recordStepUp(
   tx: Tx,
@@ -154,28 +167,31 @@ export async function recordStepUp(
 
 /**
  * A passkey re-verification of the context person in the open transaction, for an approval, a
- * membership or account change, an invitation or a passkey change: opens a session, registers a passkey on it if the person
- * has none, and records the re-verification. Sets the given context again at the end.
+ * membership or account change, an invitation, a passkey change, a passkey reset or an access
+ * grant: opens a session (or uses the given one, for a function that checks the session of the
+ * re-verification), registers a passkey on it if the person has none, and records the
+ * re-verification. Sets the given context again at the end.
  */
 export async function stepUp(
   tx: Tx,
   context: ContextInput,
   purpose: StepUpPurpose,
   subjectId: string | null,
+  session?: TestSession,
 ): Promise<string> {
   const userId = context.userId;
   if (!userId) {
     throw new Error('A re-verification needs a person in the context');
   }
-  const session = await openTestSession(tx, userId);
+  const used = session ?? (await openTestSession(tx, userId));
   await tx.setContext(context);
   const existing = await tx.rows<{ id: string }>(
     `select id from office.passkeys where user_id = $1 and revoked_at is null
      order by created_at, id limit 1`,
     [userId],
   );
-  const credentialId = existing[0]?.id ?? (await registerPasskey(tx, session)).credentialId;
-  return recordStepUp(tx, session, context.companyId ?? null, {
+  const credentialId = existing[0]?.id ?? (await registerPasskey(tx, used)).credentialId;
+  return recordStepUp(tx, used, context.companyId ?? null, {
     purpose,
     subjectId,
     credentialId,

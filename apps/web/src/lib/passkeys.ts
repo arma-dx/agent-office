@@ -189,8 +189,9 @@ export const STEP_UP_TEXT = {
   failed: 'Doğrulama başarısız oldu. Yeniden deneyin.',
   noPasskey:
     "Bu işlem için passkey ile doğrulama gerekiyor ama kayıtlı passkey'iniz yok. Önce Güvenlik sayfasından passkey ekleyin.",
+  // The Güvenlik page says who resets lost passkeys (a founder, or the database administrator).
   unsupported:
-    'Passkey ile doğrulama bu tarayıcıda tamamlanamadı. Güncel bir tarayıcıyla ya da başka bir cihazla yeniden deneyin.',
+    "Passkey ile doğrulama bu tarayıcıda tamamlanamadı. Güncel bir tarayıcıyla ya da başka bir cihazla yeniden deneyin. Passkey'inizi kaybettiyseniz yapılacaklar Güvenlik sayfasında yazıyor.",
 } as const;
 
 export const REGISTRATION_TEXT = {

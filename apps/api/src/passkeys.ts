@@ -22,11 +22,13 @@ import type { RelyingParty } from './env.ts';
 import { ApiError, databaseErrorCode } from './errors.ts';
 
 /**
- * Passkeys and re-verification (3 October decision 7; CLAUDE.md rules 3, 4). The API runs the
- * WebAuthn ceremonies with @simplewebauthn/server and verifies every signature. The database keeps
- * the passkeys and the single-use challenges, decides when a challenge may be opened, and requires a
- * re-verification recorded in the same transaction for an important approval, a membership change
- * and removing a passkey (migrations 20261003120000_passkeys and 20261003120100_step_up).
+ * Passkeys and re-verification (3 October decision 7; 5 October decisions 2, 3, 4; CLAUDE.md rules
+ * 3, 4). The API runs the WebAuthn ceremonies with @simplewebauthn/server and verifies every
+ * signature. The database keeps the passkeys and the single-use challenges, decides when a
+ * challenge may be opened, and requires a re-verification recorded in the same transaction for an
+ * important approval, a membership change, removing a passkey, a founder's reset of a person's
+ * passkeys and opening a task or a note to a person (migrations 20261003120000_passkeys,
+ * 20261003120100_step_up and 20261005100000_outgoing_reset_grants).
  *
  * A challenge is 16 random bytes followed by a SHA-256 of what the ceremony is for (the context
  * hash): for a re-verification its purpose, company, subject and details; for a registration the
@@ -148,9 +150,11 @@ function sha256(text: string): Buffer {
 /** What a re-verification confirms. The action builds it from its own request. */
 export interface StepUpContext {
   purpose: StepUpPurpose;
-  // approve, membership_change, invitation: the company of the request; otherwise null.
+  // approve, membership_change, invitation, passkey_reset, access_grant: the company of the
+  // request; otherwise null.
   companyId: string | null;
-  // The approval, the member, the invitation or the passkey's id; null for passkey_add.
+  // The approval, the member, the invitation, the passkey's id, the person whose passkeys are
+  // reset or the person a record is opened to; null for passkey_add.
   subjectId: string | null;
   details: JsonObject | null;
 }

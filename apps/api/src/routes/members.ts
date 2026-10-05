@@ -3,6 +3,7 @@ import {
   memberListSchema,
   memberSchema,
   removeMemberRequestSchema,
+  resetPasskeysRequestSchema,
   updateMemberRequestSchema,
   type Member,
 } from '@agent-office/shared';
@@ -22,6 +23,13 @@ import type { RouteDeps } from '../services.ts';
  * Changing a role or the approval right and removing a membership need a passkey re-verification
  * for exactly that change (3 October decision 7), recorded in the same transaction; the database
  * refuses the change without it.
+ *
+ * A founder also resets every passkey of a member who lost theirs (5 October decision 3), with a
+ * passkey re-verification naming that person. The database decides who may be reset
+ * (can_reset_passkeys), revokes the passkeys, closes the person's sessions and writes the audit
+ * row and the person's notification (reset_passkeys). A founder's passkeys (their own or another
+ * founder's) are never reset here: the database administrator does that by hand
+ * (office.admin_reset_passkeys).
  */
 
 const FOUNDER = { founderOnly: true } as const;
@@ -48,6 +56,22 @@ const founderMembership = (): ApiError =>
     409,
     'founder_membership',
     'Kurucunun rolü, onay yetkisi ve üyeliği panelden değiştirilemez.',
+  );
+
+const passkeyResetSelf = (): ApiError =>
+  new ApiError(
+    409,
+    'passkey_reset_self',
+    "Kendi passkey'lerinizi buradan sıfırlayamazsınız. Passkey eklemek ya da kaldırmak için Güvenlik sayfasını kullanın.",
+  );
+
+// One answer for every person the founder may not reset, whatever the reason: the reason can be a
+// membership in a company the founder does not run, which the founder must not learn (rule 9).
+const passkeyResetNotAllowed = (): ApiError =>
+  new ApiError(
+    409,
+    'passkey_reset_not_allowed',
+    "Bu kişinin passkey'leri panelden sıfırlanamaz. Sıfırlama için veritabanı yöneticisine başvurun.",
   );
 
 /** The role of the person's membership, locked for the change; 404 when there is none. */
@@ -210,6 +234,72 @@ export function registerMemberRoutes(app: FastifyInstance, { runner, config }: R
       }
       if (removed === 0) {
         throw notFound();
+      }
+    });
+    return reply.code(204).send();
+  });
+
+  /**
+   * Resets every passkey of the member (5 October decision 3): one transaction records the
+   * passkey_reset re-verification for this person and resets the passkeys, which closes the
+   * person's sessions and writes the audit row and the person's notification.
+   *
+   * Before the passkey is asked for, the route refuses only what the founder's own member list
+   * shows: their own passkeys, a person who is no member of the company, and a founder. Whether
+   * the person may be reset at all (can_reset_passkeys: not when they are also a member of a
+   * company this founder does not run) is asked after the founder's passkey checked out, so a
+   * founder session without the passkey learns nothing about a member's other companies; the
+   * refusal rolls the re-verification back, so it is not used up.
+   */
+  app.post('/api/members/:userId/passkeys/reset', async (request, reply) => {
+    await runner.withCompany(request, reply, FOUNDER, async ({ client, session, companyId }) => {
+      const userId = memberId(request).toLowerCase();
+      const body = resetPasskeysRequestSchema.safeParse(request.body ?? {});
+      if (!body.success) {
+        throw invalidRequest();
+      }
+      if (userId === session.userId.toLowerCase()) {
+        throw passkeyResetSelf();
+      }
+      const membership = await client.query<{ role: string }>(
+        'select role from office.memberships where company_id = $1 and user_id = $2',
+        [companyId, userId],
+      );
+      const member = membership.rows[0];
+      if (!member) {
+        throw notFound();
+      }
+      // A founder's passkeys are reset by the database administrator, like their own.
+      if (member.role === 'founder') {
+        throw passkeyResetNotAllowed();
+      }
+      await verifyStepUp({ client, session }, config.relyingParty, body.data.stepUp, {
+        purpose: 'passkey_reset',
+        companyId,
+        subjectId: userId,
+        details: null,
+      });
+      const { rows } = await client.query<{ allowed: boolean }>(
+        'select office.can_reset_passkeys($1) as allowed',
+        [userId],
+      );
+      if (rows[0]?.allowed !== true) {
+        throw passkeyResetNotAllowed();
+      }
+      try {
+        await client.query('select office.reset_passkeys($1, $2)', [session.keyHash, userId]);
+      } catch (error) {
+        const code = databaseErrorCode(error);
+        // invalid_authorization_specification: no re-verification for this person in the
+        // transaction.
+        if (code === '28000') {
+          throw stepUpRequired();
+        }
+        // insufficient_privilege: the person's memberships changed meanwhile.
+        if (code === '42501') {
+          throw passkeyResetNotAllowed();
+        }
+        throw error;
       }
     });
     return reply.code(204).send();

@@ -92,6 +92,24 @@ const ACCEPTED: Invitation = {
   status: 'accepted',
 };
 
+const SECOND_FOUNDER: Member = {
+  userId: '5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c8d',
+  name: 'İkinci Kurucu',
+  role: 'founder',
+  canApprove: true,
+  active: true,
+};
+
+const RESET = `POST /members/${EMPLOYEE.userId}/passkeys/reset`;
+const RESET_TEXT =
+  "Bu kişinin bütün passkey'leri kaldırılır ve açık oturumları kapatılır. Kişi Google ile yeniden girip 10 dakika içinde yeni bir passkey ekler. Cihazı kaybolduysa önce o cihazdaki Google oturumunu kapatmasını ya da Google parolasını değiştirmesini isteyin; yoksa cihazı bulan kişi yeni passkey'i ekleyebilir.";
+// The panel sends the person nothing, so the founder is told to tell them.
+const RESET_DONE_TEXT =
+  "Ayşe Demir için passkey'ler sıfırlandı. Kişiye e-posta gitmez; kendisine haber verin: Google ile yeniden girip 10 dakika içinde Güvenlik sayfasından yeni passkey eklesin.";
+// While the confirmation dialog is open the rest of the page is hidden from assistive technology.
+const resetResult = () =>
+  screen.getByRole('status', { name: 'Passkey sıfırlama sonucu', hidden: true });
+
 const EMPLOYEE_MEMBERSHIP = { ...ARMADX, role: 'employee' as const, canApprove: false };
 
 function founderApi(extra: Record<string, Handler> = {}) {
@@ -404,6 +422,128 @@ describe('settings, users: members', () => {
       'Onay yetkisi yalnızca çalışana verilebilir.',
     );
     expect(screen.getByText('Çalışan, onay yetkisi yok, etkin')).toBeVisible();
+  });
+});
+
+describe('settings, users: passkey reset', () => {
+  /** Opens the reset confirmation of Ayşe Demir. */
+  async function openResetDialog() {
+    await screen.findByText('Çalışan, onay yetkisi yok, etkin');
+    const trigger = within(row('Ayşe Demir')).getByRole('button', {
+      name: "Passkey'leri sıfırla",
+    });
+    await userEvent.click(trigger);
+    const dialog = await screen.findByRole('alertdialog', {
+      name: "Ayşe Demir için passkey'ler sıfırlansın mı?",
+    });
+    const confirm = within(dialog).getByRole('button', { name: "Passkey'leri sıfırla" });
+    return { trigger, dialog, confirm };
+  }
+
+  it('is offered for employees and external persons, never for a founder', async () => {
+    founderApi({
+      'GET /members': () => json({ members: [FOUNDER, SECOND_FOUNDER, EMPLOYEE, EXTERNAL] }),
+    });
+    renderApp('/c/armadx/settings/users');
+    await screen.findByText('Çalışan, onay yetkisi yok, etkin');
+    for (const name of ['Ayşe Demir', 'Mali Müşavir']) {
+      expect(within(row(name)).getByRole('button', { name: "Passkey'leri sıfırla" })).toBeVisible();
+    }
+    // Neither the signed-in founder nor another founder: a founder's passkeys are reset by the
+    // database administrator.
+    for (const name of ['Ömer Kadıoğlu', 'İkinci Kurucu']) {
+      expect(within(row(name)).queryByRole('button', { name: "Passkey'leri sıfırla" })).toBeNull();
+    }
+  });
+
+  it("is not offered in the signed-in person's own row", async () => {
+    // The list answers with the signed-in person as an employee (their role changed meanwhile).
+    founderApi({
+      'GET /members': () =>
+        json({ members: [{ ...FOUNDER, role: 'employee', canApprove: false }, EMPLOYEE] }),
+    });
+    renderApp('/c/armadx/settings/users');
+    await screen.findAllByText('Çalışan, onay yetkisi yok, etkin');
+    const own = within(row('Ömer Kadıoğlu'));
+    expect(own.getByRole('button', { name: 'Üyelikten çıkar' })).toBeVisible();
+    expect(own.queryByRole('button', { name: "Passkey'leri sıfırla" })).toBeNull();
+    expect(
+      within(row('Ayşe Demir')).getByRole('button', { name: "Passkey'leri sıfırla" }),
+    ).toBeVisible();
+  });
+
+  it('resets the passkeys of a member after a passkey confirmation', async () => {
+    const stepUp = stepUpIssuer();
+    const api = founderApi({
+      'POST /step-up/options': stepUp.handler,
+      [RESET]: () => noContent(),
+    });
+    renderApp('/c/armadx/settings/users');
+    const { trigger, dialog, confirm } = await openResetDialog();
+    // The dialog says what happens to the person, and what to do first when the device is lost.
+    expect(dialog).toHaveTextContent(RESET_TEXT);
+    // Nothing is sent before the confirmation, and nothing is reported.
+    expect(api.callsTo(RESET)).toEqual([]);
+    expect(resetResult()).toBeEmptyDOMElement();
+    await waitFor(() => {
+      expect(stepUp.issued).toHaveLength(1);
+    });
+    // The re-verification names this company and this person.
+    expect(stepUp.issued[0]?.body).toEqual({
+      purpose: 'passkey_reset',
+      companyId: ARMADX.companyId,
+      subjectId: EMPLOYEE.userId,
+    });
+    await waitFor(() => {
+      expect(confirm).not.toHaveAttribute('aria-disabled');
+    });
+    await userEvent.click(confirm);
+
+    // The result stays on the page and tells the founder to tell the person.
+    await waitFor(() => {
+      expect(resetResult()).toHaveTextContent(RESET_DONE_TEXT);
+    });
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    const calls = api.callsTo(RESET);
+    expect(calls.map((c) => c.body)).toEqual([{ stepUp: signed(challengeId(1)) }]);
+    expect(calls[0]?.headers.get(COMPANY_HEADER)).toBe(ARMADX.companyId);
+    expect(startAuthentication).toHaveBeenCalledWith({ optionsJSON: STEP_UP_OPTIONS });
+    // The person stays a member; the row and its button are still there and take the focus back.
+    expect(screen.getByText('Çalışan, onay yetkisi yok, etkin')).toBeVisible();
+    await waitFor(() => {
+      expect(trigger).toHaveFocus();
+    });
+    expect(api.unexpected).toEqual([]);
+  });
+
+  it('sends nothing when the reset is not confirmed', async () => {
+    const stepUp = stepUpIssuer();
+    const api = founderApi({ 'POST /step-up/options': stepUp.handler, [RESET]: () => noContent() });
+    renderApp('/c/armadx/settings/users');
+    const { dialog } = await openResetDialog();
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Vazgeç' }));
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(api.callsTo(RESET)).toEqual([]);
+    expect(startAuthentication).not.toHaveBeenCalled();
+    expect(resetResult()).toBeEmptyDOMElement();
+  });
+
+  it("shows the API's message in the dialog when the reset is refused", async () => {
+    const message =
+      "Bu kişinin passkey'leri panelden sıfırlanamaz. Sıfırlama için veritabanı yöneticisine başvurun.";
+    const api = founderApi({
+      'POST /step-up/options': stepUpIssuer().handler,
+      [RESET]: () => apiError(409, 'passkey_reset_not_allowed', message),
+    });
+    renderApp('/c/armadx/settings/users');
+    const { dialog, confirm } = await openResetDialog();
+    await waitFor(() => {
+      expect(confirm).not.toHaveAttribute('aria-disabled');
+    });
+    await userEvent.click(confirm);
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(message);
+    expect(api.callsTo(RESET)).toHaveLength(1);
+    expect(resetResult()).toBeEmptyDOMElement();
   });
 });
 

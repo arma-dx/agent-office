@@ -37,12 +37,13 @@ import {
   type CeremonyResult,
   type Notice,
 } from '@/lib/passkeys';
-import { useCompany } from '@/lib/session';
+import { useCompany, useSession } from '@/lib/session';
 import { useStepUp } from '@/lib/step-up';
 import { formatDate, formatDateTime } from '@/lib/users';
 import { busyProps } from '@/lib/utils';
 
-// Settings, Güvenlik: the signed-in person's passkeys (3 October decision 7).
+// Settings, Güvenlik: the signed-in person's passkeys (3 October decision 7) and what to do when
+// they are lost (5 October decision 3).
 
 const listClass = '@container rounded-lg border border-line bg-surface';
 const rowClass = 'border-b border-line px-4 py-3 last:border-b-0';
@@ -333,6 +334,9 @@ function AddPasskeyDialog({ hasPasskeys }: { hasPasskeys: boolean }) {
 
 export function PasskeysSection() {
   const query = useQuery(passkeysQueryOptions);
+  const session = useSession();
+  // A founder's passkeys are not reset from the panel, in any company.
+  const founder = session.memberships.some((membership) => membership.role === 'founder');
   const headingId = useId();
   const heading = useRef<HTMLHeadingElement>(null);
   const supported = browserSupportsWebAuthn();
@@ -385,6 +389,11 @@ export function PasskeysSection() {
               onaylayamazsınız; ikinci bir cihazda da passkey ekleyin.
             </p>
           ) : null}
+          <p className="text-sm text-ink-secondary">
+            {founder
+              ? "Passkey'lerinizin hepsini kaybederseniz sıfırlamayı veritabanı yöneticisi yapar. Sonra Google ile yeniden girip yeni passkey eklersiniz."
+              : "Passkey'lerinizin hepsini kaybederseniz şirketinizin kurucusundan sıfırlamasını isteyin. Sonra Google ile yeniden girip yeni passkey eklersiniz."}
+          </p>
           {query.data.length >= MAX_PASSKEYS ? (
             <p className="text-sm text-ink-secondary">
               En fazla {MAX_PASSKEYS} passkey kaydedilebilir. Yenisini eklemek için önce

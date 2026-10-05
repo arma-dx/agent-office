@@ -46,6 +46,9 @@ export const apiErrorCodeSchema = z.enum([
   'passkey_exists',
   'passkey_registration_failed',
   'challenge_limit',
+  // Passkey reset by a founder (5 October decision 3).
+  'passkey_reset_self',
+  'passkey_reset_not_allowed',
 ]);
 export type ApiErrorCode = z.output<typeof apiErrorCodeSchema>;
 
@@ -124,12 +127,13 @@ export const invitationFieldsSchema = z.strictObject({
 });
 export type InvitationFields = z.output<typeof invitationFieldsSchema>;
 
-// Passkeys and re-verification (3 October decision 7) ------------------------------------------
+// Passkeys and re-verification (3 October decision 7; 5 October decisions 2, 3, 4) --------------
 
 /*
  * Approvals that involve money, leave the company or change a source of truth note, membership
- * changes and passkey changes need a re-verification with a passkey (WebAuthn). The panel asks for
- * a challenge (POST /api/step-up/options), lets the browser sign it (startAuthentication of
+ * changes, passkey changes, a founder's reset of a person's passkeys and opening a task or a note
+ * to an external person need a re-verification with a passkey (WebAuthn). The panel asks for a
+ * challenge (POST /api/step-up/options), lets the browser sign it (startAuthentication of
  * @simplewebauthn/browser) and sends the result as `stepUp` in the body of the action it confirms.
  * The API recomputes what was confirmed from the action's own request and refuses anything else.
  */
@@ -187,8 +191,20 @@ export const stepUpPurposeSchema = z.enum([
   'invitation',
   'passkey_add',
   'passkey_revoke',
+  // 5 October decisions 3 and 4.
+  'passkey_reset',
+  'access_grant',
 ]);
 export type StepUpPurpose = z.output<typeof stepUpPurposeSchema>;
+
+/** The purposes that belong to a company: their re-verification names the company. */
+const COMPANY_STEP_UP_PURPOSES: readonly StepUpPurpose[] = [
+  'approve',
+  'membership_change',
+  'invitation',
+  'passkey_reset',
+  'access_grant',
+];
 
 const STEP_UP_DETAIL_LIMIT = 20;
 
@@ -265,6 +281,26 @@ export function invitationChangeDetails(
 }
 
 /**
+ * What an access grant re-verification confirms beyond the person (the subject): the task or the
+ * note that is opened to them. Build it with accessGrantDetails. Opening a record to an external
+ * person opens it outside the company (5 October decision 4), so each grant is confirmed for
+ * exactly one record.
+ */
+export const accessGrantDetailsSchema = z.strictObject({
+  recordType: z.enum(['task', 'note']),
+  recordId: z.uuid(),
+});
+export type AccessGrantDetails = z.output<typeof accessGrantDetailsSchema>;
+
+/** The details of an access grant, for POST /api/step-up/options; the API builds the same. */
+export function accessGrantDetails(record: {
+  recordType: 'task' | 'note';
+  recordId: string;
+}): AccessGrantDetails {
+  return { recordType: record.recordType, recordId: record.recordId };
+}
+
+/**
  * POST /api/step-up/options: a challenge for one re-verification, bound to what it confirms.
  *   approve            companyId, subjectId (the approval), details (the decision)
  *   membership_change  companyId, subjectId (the member), details (memberChangeDetails)
@@ -272,6 +308,10 @@ export function invitationChangeDetails(
  *                      panel), details (invitationChangeDetails)
  *   passkey_add        nothing else; then POST /api/passkeys/registration/options
  *   passkey_revoke     subjectId (the passkey's id); then DELETE /api/passkeys/:id
+ *   passkey_reset      companyId, subjectId (the person whose passkeys are reset); then
+ *                      POST /api/members/:userId/passkeys/reset
+ *   access_grant       companyId, subjectId (the person the record is opened to), details
+ *                      (accessGrantDetails: the task or the note)
  * 409 no_passkey when the person has no passkey.
  */
 export const stepUpOptionsRequestSchema = z
@@ -282,10 +322,7 @@ export const stepUpOptionsRequestSchema = z
     details: stepUpDetailsSchema.optional(),
   })
   .superRefine((body, ctx) => {
-    const forCompany =
-      body.purpose === 'approve' ||
-      body.purpose === 'membership_change' ||
-      body.purpose === 'invitation';
+    const forCompany = COMPANY_STEP_UP_PURPOSES.includes(body.purpose);
     if (forCompany !== (body.companyId !== undefined)) {
       ctx.addIssue({
         code: 'custom',
@@ -314,7 +351,15 @@ export const stepUpOptionsRequestSchema = z
       ctx.addIssue({ code: 'custom', path: ['details'], message: 'Must be an invitation change' });
     }
     if (
-      (body.purpose === 'passkey_add' || body.purpose === 'passkey_revoke') &&
+      body.purpose === 'access_grant' &&
+      !accessGrantDetailsSchema.safeParse(body.details).success
+    ) {
+      ctx.addIssue({ code: 'custom', path: ['details'], message: 'Must be an access grant' });
+    }
+    if (
+      (body.purpose === 'passkey_add' ||
+        body.purpose === 'passkey_revoke' ||
+        body.purpose === 'passkey_reset') &&
       body.details !== undefined
     ) {
       ctx.addIssue({ code: 'custom', path: ['details'], message: 'Not allowed for this purpose' });
@@ -473,3 +518,17 @@ export const updateMemberRequestSchema = z
  * for this member and memberChangeDetails('remove') (403 step_up_required without it).
  */
 export const removeMemberRequestSchema = z.strictObject({ stepUp: stepUpSchema.optional() });
+
+/**
+ * POST /api/members/:userId/passkeys/reset (founder of the selected company): 204. Removes every
+ * passkey of the person and closes their open sessions (5 October decision 3); the reset is
+ * written to the company's audit log and the person gets a notification. The person signs in with
+ * Google again and adds a first passkey within 10 minutes. Needs a passkey_reset re-verification
+ * in stepUp for this member (403 step_up_required without it). 409 passkey_reset_self for the
+ * founder's own passkeys, 409 passkey_reset_not_allowed for a person whose passkeys cannot be reset
+ * from the panel (another founder, answered before the passkey is asked for; any other such person
+ * only after the passkey checked out, with the same message, which gives no reason), 404 for a
+ * person who is not a member of the selected company. A founder's passkeys are reset by the
+ * database administrator.
+ */
+export const resetPasskeysRequestSchema = z.strictObject({ stepUp: stepUpSchema.optional() });

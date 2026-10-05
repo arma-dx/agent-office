@@ -13,6 +13,7 @@ import {
   json,
   mockApi,
   noContent,
+  PILLIKA,
   sessionHandler,
   type Handler,
 } from './test/mock-api.ts';
@@ -51,6 +52,11 @@ const IPHONE = passkey({
 });
 const SECURITY_PAGE = '/c/armadx/settings/security';
 const EMPLOYEE_MEMBERSHIP = { ...ARMADX, role: 'employee' as const, canApprove: false };
+// What a person who lost every passkey does (5 October decision 3).
+const LOST_ASK_FOUNDER =
+  "Passkey'lerinizin hepsini kaybederseniz şirketinizin kurucusundan sıfırlamasını isteyin. Sonra Google ile yeniden girip yeni passkey eklersiniz.";
+const LOST_ASK_ADMINISTRATOR =
+  "Passkey'lerinizin hepsini kaybederseniz sıfırlamayı veritabanı yöneticisi yapar. Sonra Google ile yeniden girip yeni passkey eklersiniz.";
 
 /** The API with a passkey list that the handlers can change, as registration and removal do. */
 function securityApi(initial: Passkey[], extra: Record<string, Handler> = {}) {
@@ -157,6 +163,36 @@ describe('settings, security: the page', () => {
         "Yalnızca bir passkey'iniz var. Bu cihazı kaybederseniz önemli işlemleri onaylayamazsınız; ikinci bir cihazda da passkey ekleyin.",
       ),
     ).toBeVisible();
+  });
+
+  it('tells an employee who lost every passkey to ask the founder for a reset', async () => {
+    const api = securityApi([MACBOOK, IPHONE], {
+      'GET /session': sessionHandler({ memberships: [EMPLOYEE_MEMBERSHIP] }),
+    });
+    renderApp(SECURITY_PAGE);
+    expect(await screen.findByText(LOST_ASK_FOUNDER)).toBeVisible();
+    expect(screen.queryByText(LOST_ASK_ADMINISTRATOR)).toBeNull();
+    expect(api.unexpected).toEqual([]);
+  });
+
+  it('tells a founder that the database administrator resets lost passkeys', async () => {
+    // A founder's passkeys are not reset from the panel, in any company: also when the page is
+    // open in a company where they are an employee.
+    securityApi([MACBOOK], {
+      'GET /session': sessionHandler({
+        memberships: [EMPLOYEE_MEMBERSHIP, { ...PILLIKA, role: 'founder', canApprove: true }],
+      }),
+    });
+    renderApp(SECURITY_PAGE);
+    expect(await screen.findByText(LOST_ASK_ADMINISTRATOR)).toBeVisible();
+    expect(screen.queryByText(LOST_ASK_FOUNDER)).toBeNull();
+  });
+
+  it('says nothing about lost passkeys while there is none', async () => {
+    securityApi([]);
+    renderApp(SECURITY_PAGE);
+    expect(await screen.findByText('Henüz passkey yok')).toBeVisible();
+    expect(screen.queryByText(/hepsini kaybederseniz/)).toBeNull();
   });
 
   it('says so when the browser has no passkeys, and offers no adding', async () => {

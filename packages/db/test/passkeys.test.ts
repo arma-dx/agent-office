@@ -1,4 +1,5 @@
 import { randomBytes, randomUUID } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import { afterAll, describe, expect, it } from 'vitest';
 import type { ContextInput } from '../src/context.ts';
 import { FOUNDER_PASSKEY, ids, TOOL } from './fixtures.ts';
@@ -21,14 +22,16 @@ import {
 } from './step-up.ts';
 
 // Passkeys and passkey re-verification (KALAN-ISLER 0.3; CLAUDE.md rules 2, 3, 9; 3 October
-// decision 7). inTransaction runs with the API's privileges (office_app and office_api_private),
-// inWorkerTransaction with the worker's (office_app only). The database never checks a WebAuthn
-// signature; the API does, and calls these functions with what it verified.
+// decision 7; 5 October decisions 2, 3 and 4). inTransaction runs with the API's privileges
+// (office_app and office_api_private), inWorkerTransaction with the worker's (office_app only).
+// The database never checks a WebAuthn signature; the API does, and calls these functions with
+// what it verified.
 
 const founderA: ContextInput = { companyId: ids.arma, userId: ids.founder };
 const founderP: ContextInput = { companyId: ids.pillika, userId: ids.founder };
 const approverA: ContextInput = { companyId: ids.arma, userId: ids.approverA };
 const employeeA: ContextInput = { companyId: ids.arma, userId: ids.employeeA };
+const otherFounder: ContextInput = { companyId: ids.otherCompany, userId: ids.otherFounder };
 const korA: ContextInput = { companyId: ids.arma, userId: ids.founder, agentCode: 'KOR-1' };
 
 // A re-verification is missing or does not check out.
@@ -45,8 +48,10 @@ const API_FUNCTIONS = [
   'office.get_passkey_for_assertion(bytea, text)',
   'office.record_step_up(bytea, uuid, text, bigint, text, uuid, uuid, bytea)',
   'office.revoke_passkey(bytea, text)',
-  'office.approval_importance(uuid, boolean, text, text, uuid)',
-  'office.approval_is_important(uuid, boolean, text, text, uuid)',
+  'office.reset_passkeys(bytea, uuid)',
+  'office.can_reset_passkeys(uuid)',
+  'office.approval_importance(uuid, boolean, boolean, text, text, uuid)',
+  'office.approval_is_important(uuid, boolean, boolean, text, text, uuid)',
   'office.approval_needs_step_up(uuid)',
   'office.consume_step_up(text, uuid, uuid)',
 ];
@@ -57,14 +62,29 @@ const INTERNAL_FUNCTIONS = [
   'office.require_membership_step_up()',
   'office.require_account_step_up()',
   'office.require_invitation_step_up()',
+  'office.require_access_grant_step_up()',
   'office.guard_passkey()',
   'office.guard_passkey_challenge()',
   'office.keep_step_up_used()',
   'office.keep_webauthn_handle()',
 ];
 
+// The migration of 5 October decisions 2, 3 and 4.
+const OUTGOING_MIGRATION = new URL(
+  '../../../supabase/migrations/20261005100000_outgoing_reset_grants.sql',
+  import.meta.url,
+);
+
 const MEMBERSHIP = 'where company_id = $1 and user_id = $2';
 const APPROVE = `update office.approvals set status = 'approved' where id = $1`;
+const REQUEST_CHANGES = `update office.approvals
+                         set status = 'changes_requested', rejection_reason = 'incomplete'
+                         where id = $1`;
+const MARK_SENT = 'update office.approvals set sent_at = now() where id = $1';
+const ADMIN_RESET = 'select * from office.admin_reset_passkeys($1)';
+const RESET = 'select office.reset_passkeys($1, $2) as revoked';
+const GRANT = `insert into office.access_grants (company_id, user_id, record_type, record_id)
+               values ($1, $2, $3, $4)`;
 
 /** A call of the function with NULL arguments: enough to see whether the role may execute it. */
 function nullCall(signature: string): string {
@@ -115,6 +135,7 @@ async function openApproval(tx: Tx, fields: Record<string, unknown> = {}): Promi
     title: 'Test',
     payload: {},
     involves_money: false,
+    goes_external: false,
     ...fields,
   };
   const names = Object.keys(all);
@@ -184,6 +205,16 @@ describe.skipIf(noDatabase)('passkey privileges', () => {
       [INTERNAL_FUNCTIONS],
     );
     expect(internal).toEqual(INTERNAL_FUNCTIONS.map((fn) => ({ fn, api: false, worker: false })));
+    // The administrator's reset is granted to no role at all.
+    expect(
+      await adminQuery(
+        `select r as role, has_function_privilege(r, 'office.admin_reset_passkeys(text)', 'execute')
+           as runs
+         from unnest(array['office_api', 'office_worker', 'office_app', 'office_api_private',
+           'office_identity', 'office_auth_reader', 'office_trigger']) r
+         where has_function_privilege(r, 'office.admin_reset_passkeys(text)', 'execute')`,
+      ),
+    ).toEqual([]);
 
     await inWorkerTransaction(async (tx) => {
       for (const context of [korA, founderA, {}]) {
@@ -191,6 +222,59 @@ describe.skipIf(noDatabase)('passkey privileges', () => {
         for (const fn of API_FUNCTIONS) {
           expect(await errorCode(tx, nullCall(fn)), fn).toBe(DENIED);
         }
+        expect(await errorCode(tx, ADMIN_RESET, ['founder@arma.test'])).toBe(DENIED);
+      }
+    });
+    await inTransaction(async (tx) => {
+      for (const context of [founderA, {}]) {
+        await tx.setContext(context);
+        expect(await errorCode(tx, ADMIN_RESET, ['founder@arma.test'])).toBe(DENIED);
+      }
+    });
+  });
+
+  it('the reset event of the audit log and the reset notification are written by the reset alone, never by a request or an agent run', async () => {
+    const audit = `insert into office.audit_log (company_id, event, record_type, record_id)
+                   values ($1, $2, 'user', $3)`;
+    const notify = `insert into office.notifications
+                      (company_id, recipient_user_id, template, record_type, record_id)
+                    values ($1, $3, $2, 'user', $3)`;
+    const externalA: ContextInput = { companyId: ids.arma, userId: ids.externalA };
+    await inTransaction(async (tx) => {
+      for (const context of [founderA, approverA, employeeA, externalA]) {
+        await tx.setContext(context);
+        expect(
+          await errorCode(tx, audit, [ids.arma, 'passkeys_reset', ids.employeeA]),
+          JSON.stringify(context),
+        ).toBe(DENIED);
+        expect(
+          await errorCode(tx, notify, [ids.arma, 'passkeys_reset', ids.employeeA]),
+          JSON.stringify(context),
+        ).toBe(DENIED);
+        // Every other event is written as before.
+        expect(await tx.exec(audit, [ids.arma, 'member_changed', ids.employeeA])).toBe(1);
+      }
+      // So is every other notification (an external person sends none).
+      for (const context of [founderA, approverA, employeeA]) {
+        await tx.setContext(context);
+        expect(await tx.exec(notify, [ids.arma, 'task_assigned', ids.employeeA])).toBe(1);
+      }
+    });
+    // The worker neither: not in an agent run, and not with a founder's context and no agent, whose
+    // row would look like the founder's own reset.
+    await inWorkerTransaction(async (tx) => {
+      for (const context of [korA, founderA]) {
+        await tx.setContext(context);
+        expect(
+          await errorCode(tx, audit, [ids.arma, 'passkeys_reset', ids.employeeA]),
+          JSON.stringify(context),
+        ).toBe(DENIED);
+        expect(
+          await errorCode(tx, notify, [ids.arma, 'passkeys_reset', ids.employeeA]),
+          JSON.stringify(context),
+        ).toBe(DENIED);
+        expect(await tx.exec(audit, [ids.arma, 'tool_call', ids.employeeA])).toBe(1);
+        expect(await tx.exec(notify, [ids.arma, 'approval_pending', ids.employeeA])).toBe(1);
       }
     });
   });
@@ -252,6 +336,140 @@ describe.skipIf(noDatabase)('passkey privileges', () => {
       expect(await tx.rows('select id from office.passkeys')).toEqual([{ id: FOUNDER_PASSKEY }]);
     });
   });
+
+  it('for a reset the owner only revokes the passkeys of a person the context founder may reset, and writes only that audit row and that notification', async () => {
+    await inAdminTransaction(async (tx) => {
+      const passkeyOf = async (userId: string, n: number): Promise<string> => {
+        const id = `fixture-passkey-reset-${String(n)}`;
+        await tx.exec(
+          `insert into office.passkeys (id, user_id, public_key, device_type, backed_up, name)
+           values ($1, $2, decode(repeat('03', 77), 'hex'), 'multiDevice', true, 'Phone')`,
+          [id, userId],
+        );
+        return id;
+      };
+      const approver = await passkeyOf(ids.approverA, 1);
+      const shared = await passkeyOf(ids.sharedEmployee, 2);
+      const pillika = await passkeyOf(ids.employeeP, 3);
+      // An open challenge of the approver and one of the shared employee.
+      const challengeOf = async (userId: string): Promise<string> => {
+        const [row] = await tx.rows<{ id: string }>(
+          `with s as (
+             insert into office.sessions (key_hash, user_id, absolute_expires_at)
+             values ($2, $1, now() + interval '8 hours') returning id
+           )
+           insert into office.passkey_challenges
+             (user_id, session_id, purpose, challenge, context_hash, expires_at)
+           select $1, s.id, 'step_up', $3, $4, now() + interval '5 minutes' from s
+           returning id`,
+          [userId, randomBytes(32), randomBytes(48), hash()],
+        );
+        return row?.id ?? '';
+      };
+      const approverChallenge = await challengeOf(ids.approverA);
+      const sharedChallenge = await challengeOf(ids.sharedEmployee);
+      // A person the founder may reset from either of their two companies.
+      await tx.exec(
+        `insert into office.memberships (company_id, user_id, role) values ($1, $2, 'employee')`,
+        [ids.pillika, ids.employeeA],
+      );
+      await tx.exec('set local role office_identity');
+      const visible = async () =>
+        (await tx.rows<{ id: string }>('select id from office.passkeys order by id')).map(
+          (row) => row.id,
+        );
+      const revoke = 'update office.passkeys set revoked_at = now() where id = $1';
+      const close = 'update office.passkey_challenges set consumed_at = now() where id = $1';
+      const audit = `insert into office.audit_log (company_id, event, record_type, record_id)
+                     values ($1, $2, 'user', $3)`;
+      // company, recipient, template, record
+      const notify = `insert into office.notifications
+                        (company_id, recipient_user_id, template, record_type, record_id)
+                      values ($1, $2, $3, 'user', $4)`;
+
+      // An employee, an agent run, a founder of another company and a request without a person
+      // reach nothing of the person.
+      for (const context of [employeeA, korA, otherFounder, {}]) {
+        await tx.setContext(context);
+        expect(await visible(), JSON.stringify(context)).not.toContain(approver);
+        expect(await tx.exec(revoke, [approver]), JSON.stringify(context)).toBe(0);
+        expect(await tx.count('passkey_challenges'), JSON.stringify(context)).toBe(0);
+        expect(await tx.exec(close, [approverChallenge]), JSON.stringify(context)).toBe(0);
+        expect(
+          await errorCode(tx, audit, [ids.arma, 'passkeys_reset', ids.approverA]),
+          JSON.stringify(context),
+        ).toBe(DENIED);
+        expect(
+          await errorCode(tx, notify, [ids.arma, ids.approverA, 'passkeys_reset', ids.approverA]),
+          JSON.stringify(context),
+        ).toBe(DENIED);
+      }
+      // The founder of Arma DX: the member they may reset, not the person who also works at
+      // another company, and nobody of Pillika from the Arma DX context.
+      await tx.setContext(founderA);
+      expect(await visible()).toEqual([FOUNDER_PASSKEY, approver]);
+      expect(await tx.exec(revoke, [shared])).toBe(0);
+      expect(await tx.exec(revoke, [pillika])).toBe(0);
+      // Only revoking: nothing else of the passkey changes.
+      expect(
+        await errorCode(tx, 'update office.passkeys set counter = 7 where id = $1', [approver]),
+      ).toBe(DENIED);
+      expect(
+        await errorCode(tx, 'update office.passkeys set name = $2 where id = $1', [approver, 'x']),
+      ).toBe(DENIED);
+      // The same for the person's open challenges: it closes them and does nothing else.
+      expect(await tx.rows('select id from office.passkey_challenges')).toEqual([
+        { id: approverChallenge },
+      ]);
+      expect(await tx.exec(close, [sharedChallenge])).toBe(0);
+      expect(
+        await errorCode(
+          tx,
+          'update office.passkey_challenges set failed_attempts = 1 where id = $1',
+          [approverChallenge],
+        ),
+      ).toBe(DENIED);
+      expect(
+        await tx.exec('delete from office.passkey_challenges where id = $1', [approverChallenge]),
+      ).toBe(0);
+      expect(await tx.exec(close, [approverChallenge])).toBe(1);
+      // Only the reset row, only in the context company and only for such a person.
+      for (const [company, event, user] of [
+        [ids.arma, 'login', ids.approverA],
+        [ids.pillika, 'passkeys_reset', ids.approverA],
+        [ids.pillika, 'passkeys_reset', ids.employeeA],
+        [ids.arma, 'passkeys_reset', ids.sharedEmployee],
+        [ids.arma, 'passkeys_reset', ids.founder],
+      ] as const) {
+        expect(await errorCode(tx, audit, [company, event, user]), `${event} ${user}`).toBe(DENIED);
+      }
+      expect(await errorCode(tx, 'select 1 from office.audit_log')).toBe(DENIED);
+      expect(await tx.exec(audit, [ids.arma, 'passkeys_reset', ids.approverA])).toBe(1);
+      // Only the reset's notification, only in the context company, only to such a person and only
+      // about themselves.
+      for (const [company, recipient, template, record] of [
+        [ids.arma, ids.approverA, 'task_assigned', ids.approverA],
+        [ids.pillika, ids.employeeA, 'passkeys_reset', ids.employeeA],
+        [ids.pillika, ids.employeeP, 'passkeys_reset', ids.employeeP],
+        [ids.arma, ids.sharedEmployee, 'passkeys_reset', ids.sharedEmployee],
+        [ids.arma, ids.founder, 'passkeys_reset', ids.founder],
+        [ids.arma, ids.approverA, 'passkeys_reset', ids.employeeA],
+      ] as const) {
+        expect(
+          await errorCode(tx, notify, [company, recipient, template, record]),
+          `${template} ${recipient}`,
+        ).toBe(DENIED);
+      }
+      expect(await errorCode(tx, 'select 1 from office.notifications')).toBe(DENIED);
+      expect(
+        await tx.exec(notify, [ids.arma, ids.approverA, 'passkeys_reset', ids.approverA]),
+      ).toBe(1);
+      expect(await tx.exec(revoke, [approver])).toBe(1);
+      // In the Pillika context the Pillika member is reached, the Arma DX member is not.
+      await tx.setContext(founderP);
+      expect(await visible()).toEqual([FOUNDER_PASSKEY, pillika]);
+    });
+  });
 });
 
 describe.skipIf(noDatabase)('passkey sessions', () => {
@@ -308,6 +526,7 @@ describe.skipIf(noDatabase)('passkey sessions', () => {
           (key) => [key, ids.taskA, FOUNDER_PASSKEY, hash()],
         ],
         ['select office.revoke_passkey($1, $2)', (key) => [key, FOUNDER_PASSKEY]],
+        [RESET, (key) => [key, ids.approverA]],
       ];
       const deadKeys: [string, Buffer][] = [
         ['closed', closed.key],
@@ -922,10 +1141,16 @@ describe.skipIf(noDatabase)('passkey challenges and re-verification', () => {
       expect(await attempt('passkey_add', null, ids.employeeA)).toBe(INVALID);
       expect(await attempt('passkey_revoke', null, null)).toBe(INVALID);
       expect(await attempt('passkey_revoke', null, ids.employeeA)).toBe(INVALID);
+      expect(await attempt('passkey_reset', null, ids.employeeA)).toBe(INVALID);
+      expect(await attempt('passkey_reset', ids.arma, null)).toBe(INVALID);
+      expect(await attempt('access_grant', null, ids.externalA)).toBe(INVALID);
+      expect(await attempt('access_grant', ids.arma, null)).toBe(INVALID);
       expect(await attempt('login', null, null)).toBe(INVALID);
       // Only for the context company, and only where the person is a member.
       expect(await attempt('approve', ids.pillika, ids.approvalP)).toBe(DENIED);
       expect(await attempt('invitation', ids.pillika, ids.invitationP)).toBe(DENIED);
+      expect(await attempt('passkey_reset', ids.pillika, ids.employeeP)).toBe(DENIED);
+      expect(await attempt('access_grant', ids.pillika, ids.externalP)).toBe(DENIED);
       await tx.setContext({ companyId: ids.otherCompany, userId: ids.founder });
       expect(await attempt('membership_change', ids.otherCompany, ids.otherFounder)).toBe(DENIED);
     });
@@ -1090,28 +1315,35 @@ describe.skipIf(noDatabase)('revoking passkeys', () => {
 describe.skipIf(noDatabase)('important approvals', () => {
   afterAll(closePools);
 
-  it('an approval that involves money, has an external effect or changes a source of truth note is important', async () => {
+  it('an approval that involves money, goes outside, has an external effect or changes a source of truth note is important', async () => {
     await inTransaction(async (tx) => {
       await tx.setContext(founderA);
-      const rule = 'select office.approval_importance($1, $2, $3, $4, $5) as important';
+      // company, involves money, goes outside, tool, basis type, basis id
+      const rule = 'select office.approval_importance($1, $2, $3, $4, $5, $6) as important';
       const cases: [unknown[], boolean][] = [
-        [[ids.arma, false, null, null, null], false],
-        [[ids.arma, true, null, null, null], true],
-        [[ids.arma, false, TOOL.externalEffect, null, null], true],
-        [[ids.arma, false, TOOL.read, null, null], false],
-        [[ids.arma, false, null, 'note', ids.noteASourceOfTruth], true],
-        [[ids.arma, false, null, 'note', ids.noteA], false],
-        [[ids.arma, false, null, 'task', ids.taskA], false],
+        [[ids.arma, false, false, null, null, null], false],
+        [[ids.arma, true, false, null, null, null], true],
+        // Work a person sends outside by hand after the approval (5 October decision 2).
+        [[ids.arma, false, true, null, null, null], true],
+        [[ids.arma, false, true, TOOL.read, 'task', ids.taskA], true],
+        // A statement that is missing counts as yes.
+        [[ids.arma, null, false, null, null, null], true],
+        [[ids.arma, false, null, null, null, null], true],
+        [[ids.arma, false, false, TOOL.externalEffect, null, null], true],
+        [[ids.arma, false, false, TOOL.read, null, null], false],
+        [[ids.arma, false, false, null, 'note', ids.noteASourceOfTruth], true],
+        [[ids.arma, false, false, null, 'note', ids.noteA], false],
+        [[ids.arma, false, false, null, 'task', ids.taskA], false],
         // A tool that changes a note: important when its note is a source of truth, and when the
         // approval names no note (the target is unknown).
-        [[ids.arma, false, TOOL.internalWrite, 'note', ids.noteA], false],
-        [[ids.arma, false, TOOL.internalWrite, 'note', ids.noteASourceOfTruth], true],
-        [[ids.arma, false, TOOL.internalWrite, null, null], true],
-        [[ids.arma, false, TOOL.internalWrite, 'task', ids.taskA], true],
-        [[ids.arma, false, 'link_notes', null, null], true],
-        [[ids.arma, false, 'import_document', null, null], true],
+        [[ids.arma, false, false, TOOL.internalWrite, 'note', ids.noteA], false],
+        [[ids.arma, false, false, TOOL.internalWrite, 'note', ids.noteASourceOfTruth], true],
+        [[ids.arma, false, false, TOOL.internalWrite, null, null], true],
+        [[ids.arma, false, false, TOOL.internalWrite, 'task', ids.taskA], true],
+        [[ids.arma, false, false, 'link_notes', null, null], true],
+        [[ids.arma, false, false, 'import_document', null, null], true],
         // The note must belong to the approval's company.
-        [[ids.pillika, false, null, 'note', ids.noteASourceOfTruth], false],
+        [[ids.pillika, false, false, null, 'note', ids.noteASourceOfTruth], false],
       ];
       for (const [values, expected] of cases) {
         expect(await tx.rows(rule, values), JSON.stringify(values)).toEqual([
@@ -1123,6 +1355,7 @@ describe.skipIf(noDatabase)('important approvals', () => {
       const needs = 'select office.approval_needs_step_up($1) as needs';
       const external = await openApproval(tx, { tool_name: TOOL.externalEffect });
       const money = await openApproval(tx, { involves_money: true });
+      const outgoing = await openApproval(tx, { goes_external: true });
       const truth = await openApproval(tx, {
         basis_type: 'note',
         basis_id: ids.noteASourceOfTruth,
@@ -1139,6 +1372,7 @@ describe.skipIf(noDatabase)('important approvals', () => {
       for (const [id, expected] of [
         [external, true],
         [money, true],
+        [outgoing, true],
         [truth, true],
         [unknownTarget, true],
         [plain, false],
@@ -1164,17 +1398,18 @@ describe.skipIf(noDatabase)('important approvals', () => {
       for (const context of [{}, founderP, founderA]) {
         await tx.setContext(context);
         expect(
-          await errorCode(tx, 'select office.approval_is_important($1, false, null, $2, $3)', [
-            ids.arma,
-            'note',
-            ids.noteASourceOfTruth,
-          ]),
+          await errorCode(
+            tx,
+            'select office.approval_is_important($1, false, false, null, $2, $3)',
+            [ids.arma, 'note', ids.noteASourceOfTruth],
+          ),
           JSON.stringify(context),
         ).toBe(DENIED);
       }
       // The rule itself runs with the caller's rights: a note the caller cannot read is never a
       // source of truth to them.
-      const rule = `select office.approval_importance($1, false, null, 'note', $2) as important`;
+      const rule = `select office.approval_importance($1, false, false, null, 'note', $2)
+                      as important`;
       for (const context of [{}, founderP, { companyId: ids.arma, userId: ids.employeeP }]) {
         await tx.setContext(context);
         expect(
@@ -1189,25 +1424,254 @@ describe.skipIf(noDatabase)('important approvals', () => {
     });
   });
 
-  it('an approval is opened only with the money decision made', async () => {
+  it('an approval is opened only with the money decision and the outgoing statement made', async () => {
     await inTransaction(async (tx) => {
+      await tx.setContext(korA);
+      // Neither, only the outgoing statement, only the money decision: all refused.
+      for (const [columns, values] of [
+        ['', ''],
+        [', goes_external', ', false'],
+        [', involves_money', ', false'],
+        [', involves_money, goes_external', ', true, null'],
+      ] as const) {
+        const refused = await tx.expectError(
+          `insert into office.approvals (company_id, run_id, agent_code, title, payload${columns})
+           values ($1, $2, 'KOR-1', 'Teklif', '{"price": 480000}'${values})`,
+          [ids.arma, ids.runA],
+        );
+        expect(refused.code, columns).toBe('23502');
+      }
+      // The agent that opens the approval said nothing about the work going outside.
+      expect(
+        (
+          await tx.expectError(
+            `insert into office.approvals (company_id, run_id, agent_code, title, payload,
+               involves_money)
+             values ($1, $2, 'KOR-1', 'Sosyal medya', '{}', false)`,
+            [ids.arma, ids.runA],
+          )
+        ).message,
+      ).toMatch(/goes_external/);
+      const [row] = await tx.rows<{ involves_money: boolean; goes_external: boolean }>(
+        `insert into office.approvals (company_id, run_id, agent_code, title, payload,
+           involves_money, goes_external)
+         values ($1, $2, 'KOR-1', 'Teklif', '{"price": 480000}', true, true)
+         returning involves_money, goes_external`,
+        [ids.arma, ids.runA],
+      );
+      expect(row).toEqual({ involves_money: true, goes_external: true });
+    });
+  });
+
+  it('work that goes outside is approved only with a re-verification; rejecting it needs none; the statement never changes', async () => {
+    await inTransaction(async (tx) => {
+      // A social media post a person publishes by hand after the approval: no tool, no money.
+      const post = await openApproval(tx, { title: 'Sosyal medya', goes_external: true });
+      const report = await openApproval(tx, { title: 'Rapor', goes_external: true });
+      const minutes = await openApproval(tx, { title: 'Tutanak', goes_external: true });
+      const internal = await openApproval(tx, { title: 'İç not' });
+
+      await tx.setContext(founderA);
+      expect(await errorCode(tx, APPROVE, [post])).toBe(REAUTH);
+      // Rejecting and asking for changes need no re-verification.
+      expect(
+        await tx.exec(
+          `update office.approvals set status = 'rejected', rejection_reason = 'language_and_tone'
+           where id = $1`,
+          [report],
+        ),
+      ).toBe(1);
+      expect(
+        await tx.exec(
+          `update office.approvals set status = 'changes_requested', rejection_reason = 'incomplete'
+           where id = $1`,
+          [minutes],
+        ),
+      ).toBe(1);
+      // Work that stays inside needs none.
+      expect(await tx.exec(APPROVE, [internal])).toBe(1);
+
+      // A re-verification for another approval does not count; its own does, once.
+      await stepUp(tx, founderA, 'approve', internal);
+      expect(await errorCode(tx, APPROVE, [post])).toBe(REAUTH);
+      const own = await stepUp(tx, founderA, 'approve', post);
+      expect(await tx.exec(APPROVE, [post])).toBe(1);
+      expect(
+        await tx.rows('select consumed_at = now() as used from office.step_ups where id = $1', [
+          own,
+        ]),
+      ).toEqual([{ used: true }]);
+
+      // The statement is fixed when the approval is opened: neither a person nor the agent that
+      // opened it changes it.
+      const pending = await openApproval(tx, { goes_external: true });
+      const change = 'update office.approvals set goes_external = false where id = $1';
+      expect(await errorCode(tx, change, [pending])).toBe(DENIED);
+      await tx.setContext(founderA);
+      expect(await errorCode(tx, change, [pending])).toBe(DENIED);
+      expect(await errorCode(tx, APPROVE, [pending])).toBe(REAUTH);
+    });
+    // For the privileged role too, in both directions.
+    await inAdminTransaction(async (tx) => {
+      const outgoing = await openApproval(tx, { goes_external: true });
+      expect(
+        await errorCode(tx, 'update office.approvals set goes_external = false where id = $1', [
+          outgoing,
+        ]),
+      ).toBe('23514');
+      expect(
+        await errorCode(tx, 'update office.approvals set goes_external = true where id = $1', [
+          ids.approvalA,
+        ]),
+      ).toBe('23514');
+      // An update that leaves it as it is passes.
+      expect(
+        await tx.exec('update office.approvals set goes_external = goes_external where id = $1', [
+          outgoing,
+        ]),
+      ).toBe(1);
+    });
+  });
+
+  it('only work that goes outside is marked as sent', async () => {
+    await inTransaction(async (tx) => {
+      const internal = await openApproval(tx, { title: 'İç not' });
+      const outgoing = await openApproval(tx, { title: 'Rapor', goes_external: true });
+      await tx.setContext(founderA);
+      // Stated as staying inside, so approved without a passkey.
+      expect(await tx.exec(APPROVE, [internal])).toBe(1);
+      await stepUp(tx, founderA, 'approve', outgoing);
+      expect(await tx.exec(APPROVE, [outgoing])).toBe(1);
+
+      // Nobody records work that was approved as staying inside as sent outside.
+      for (const context of [employeeA, approverA, founderA]) {
+        await tx.setContext(context);
+        const refused = await tx.expectError(MARK_SENT, [internal]);
+        expect(refused.code, JSON.stringify(context)).toBe('23514');
+        expect(refused.message).toMatch(/staying inside the company/);
+      }
+      // Work that was stated as going outside, and the work of an external effect tool (important
+      // whatever was stated), is marked as sent by a person.
+      await tx.setContext(employeeA);
+      expect(await tx.exec(MARK_SENT, [outgoing])).toBe(1);
+      expect(await tx.exec(MARK_SENT, [ids.approvalAApproved])).toBe(1);
+      const mark = (id: string) =>
+        tx.rows(
+          `select goes_external, sent_at = now() as sent_now, sent_by_user_id
+           from office.approvals where id = $1`,
+          [id],
+        );
+      expect(await mark(internal)).toEqual([
+        { goes_external: false, sent_now: null, sent_by_user_id: null },
+      ]);
+      expect(await mark(outgoing)).toEqual([
+        { goes_external: true, sent_now: true, sent_by_user_id: ids.employeeA },
+      ]);
+      expect(await mark(ids.approvalAApproved)).toEqual([
+        { goes_external: false, sent_now: true, sent_by_user_id: ids.employeeA },
+      ]);
+    });
+  });
+
+  it('a new attempt after a change request does not take back that the work involves money or goes outside', async () => {
+    await inTransaction(async (tx) => {
+      const retry = `insert into office.approvals (company_id, run_id, agent_code, title, payload,
+                       previous_approval_id, involves_money, goes_external)
+                     values ($1, $2, 'KOR-1', 'İkinci deneme', '{}', $3, $4, $5)
+                     returning id, attempt`;
+      /** An approval the founder sent back for changes; the context is the agent's again. */
+      const sentBack = async (fields: Record<string, unknown>): Promise<string> => {
+        const id = await openApproval(tx, fields);
+        await tx.setContext(founderA);
+        expect(await tx.exec(REQUEST_CHANGES, [id])).toBe(1);
+        await tx.setContext(korA);
+        return id;
+      };
+      const outgoing = await sentBack({ goes_external: true });
+      const priced = await sentBack({ involves_money: true });
+      const both = await sentBack({ involves_money: true, goes_external: true });
+      const plain = await sentBack({});
+
+      // previous attempt, involves money, goes outside: each states less than the attempt before.
+      for (const [previous, money, external] of [
+        [outgoing, false, false],
+        [outgoing, true, false],
+        [priced, false, false],
+        [priced, false, true],
+        [both, true, false],
+        [both, false, true],
+      ] as const) {
+        const refused = await tx.expectError(retry, [
+          ids.arma,
+          ids.runA,
+          previous,
+          money,
+          external,
+        ]);
+        expect(refused.code, `${previous} ${String(money)} ${String(external)}`).toBe('23514');
+        expect(refused.message).toMatch(/cannot take back/);
+      }
+
+      // Stating the same, or more, is accepted; the new attempt needs the passkey like the first.
+      const second: string[] = [];
+      for (const [previous, money, external] of [
+        [outgoing, false, true],
+        [priced, true, false],
+        [both, true, true],
+        [plain, true, true],
+      ] as const) {
+        const [row] = await tx.rows<{ id: string; attempt: number }>(retry, [
+          ids.arma,
+          ids.runA,
+          previous,
+          money,
+          external,
+        ]);
+        expect(row?.attempt, previous).toBe(2);
+        second.push(row?.id ?? '');
+      }
+      await tx.setContext(founderA);
+      for (const id of second) {
+        expect(await errorCode(tx, APPROVE, [id]), id).toBe(REAUTH);
+      }
+    });
+  });
+
+  it('approvals opened before the outgoing statement existed count as going outside', async () => {
+    // The two statements of the migration that add the column, run again on the table as it was
+    // before (with the fixtures' approvals in it).
+    const migration = await readFile(OUTGOING_MIGRATION, 'utf8');
+    const statements =
+      migration.match(
+        /^alter table office\.approvals (?:add|alter) column goes_external[^;]*;$/gm,
+      ) ?? [];
+    expect(statements).toHaveLength(2);
+    await inAdminTransaction(async (tx) => {
+      expect(await tx.count('approvals', 'not goes_external')).toBeGreaterThanOrEqual(5);
+      await tx.exec('alter table office.approvals drop column goes_external');
+      for (const statement of statements) {
+        await tx.exec(statement);
+      }
+      expect(await tx.rows('select distinct goes_external from office.approvals')).toEqual([
+        { goes_external: true },
+      ]);
+      // A pending one is approved only with a passkey now: nothing was stated for it.
+      await tx.setContext(founderA);
+      expect(
+        await tx.rows('select office.approval_needs_step_up($1) as needs', [ids.approvalA]),
+      ).toEqual([{ needs: true }]);
+      expect(await errorCode(tx, APPROVE, [ids.approvalA])).toBe(REAUTH);
+      // The column keeps no default: a new approval still has to state it.
       await tx.setContext(korA);
       expect(
         await errorCode(
           tx,
-          `insert into office.approvals (company_id, run_id, agent_code, title, payload)
-           values ($1, $2, 'KOR-1', 'Teklif', '{"price": 480000}')`,
+          `insert into office.approvals (company_id, run_id, agent_code, title, payload,
+             involves_money)
+           values ($1, $2, 'KOR-1', 'Rapor', '{}', false)`,
           [ids.arma, ids.runA],
         ),
       ).toBe('23502');
-      const [row] = await tx.rows<{ involves_money: boolean }>(
-        `insert into office.approvals (company_id, run_id, agent_code, title, payload,
-           involves_money)
-         values ($1, $2, 'KOR-1', 'Teklif', '{"price": 480000}', true)
-         returning involves_money`,
-        [ids.arma, ids.runA],
-      );
-      expect(row).toEqual({ involves_money: true });
     });
   });
 
@@ -1545,6 +2009,663 @@ describe.skipIf(noDatabase)('invitations and accounts', () => {
       expect(await errorCode(tx, deactivate, [ids.employeeA])).toBe(REAUTH);
       await insertStepUp(tx, base);
       expect(await tx.exec(deactivate, [ids.employeeA])).toBe(1);
+    });
+  });
+});
+
+describe.skipIf(noDatabase)('resetting passkeys', () => {
+  afterAll(closePools);
+
+  const CAN_RESET = 'select office.can_reset_passkeys($1) as can';
+
+  it('only an active founder resets the passkeys of another person whose every company they run, with a re-verification for that person', async () => {
+    await inTransaction(async (tx) => {
+      // The approver signed in and has a passkey.
+      const approverSession = await openTestSession(tx, ids.approverA);
+      await tx.setContext(approverA);
+      await registerPasskey(tx, approverSession);
+      const session = await openTestSession(tx, ids.founder);
+      await tx.setContext(founderA);
+
+      // The question the API asks before it opens the ceremony.
+      for (const [userId, expected] of [
+        [ids.approverA, true],
+        [ids.employeeA, true],
+        [ids.externalA, true],
+        // Not their own.
+        [ids.founder, false],
+        // Also works at a company the founder does not run; a member of no company; a member of
+        // another company only.
+        [ids.sharedEmployee, false],
+        [ids.formerEmployee, false],
+        [ids.employeeP, false],
+        [ids.otherFounder, false],
+        [null, false],
+      ] as const) {
+        expect(await tx.rows(CAN_RESET, [userId]), String(userId)).toEqual([{ can: expected }]);
+      }
+      for (const context of [approverA, employeeA, korA, { userId: ids.founder }, {}]) {
+        await tx.setContext(context);
+        expect(await tx.rows(CAN_RESET, [ids.employeeA]), JSON.stringify(context)).toEqual([
+          { can: false },
+        ]);
+      }
+
+      // A stolen founder session alone resets nothing.
+      await tx.setContext(founderA);
+      expect(await errorCode(tx, RESET, [session.key, ids.approverA])).toBe(REAUTH);
+      expect(await errorCode(tx, RESET, [session.key, null])).toBe(INVALID);
+
+      // Never their own, a person who also belongs to a company they do not run, or a person
+      // outside the context company: refused even with a re-verification that names the person,
+      // by the function's own rule (before it reaches the row policies).
+      const OWN = /their own passkeys/;
+      const NOT_THEIRS = /every company they run/;
+      for (const [userId, reason] of [
+        [ids.founder, OWN],
+        [ids.sharedEmployee, NOT_THEIRS],
+        [ids.formerEmployee, NOT_THEIRS],
+        [ids.employeeP, NOT_THEIRS],
+        [ids.otherFounder, NOT_THEIRS],
+      ] as const) {
+        await stepUp(tx, founderA, 'passkey_reset', userId, session);
+        const refused = await tx.expectError(RESET, [session.key, userId]);
+        expect(refused.code, userId).toBe(DENIED);
+        expect(refused.message, userId).toMatch(reason);
+      }
+
+      // A re-verification for another person, in another company, for another purpose or of
+      // another session of the founder does not count.
+      await stepUp(tx, founderA, 'passkey_reset', ids.employeeA, session);
+      expect(await errorCode(tx, RESET, [session.key, ids.approverA])).toBe(REAUTH);
+      await stepUp(tx, founderP, 'passkey_reset', ids.approverA, session);
+      expect(await errorCode(tx, RESET, [session.key, ids.approverA])).toBe(DENIED);
+      await tx.setContext(founderA);
+      expect(await errorCode(tx, RESET, [session.key, ids.approverA])).toBe(REAUTH);
+      await stepUp(tx, founderA, 'membership_change', ids.approverA, session);
+      expect(await errorCode(tx, RESET, [session.key, ids.approverA])).toBe(REAUTH);
+      await stepUp(tx, founderA, 'passkey_reset', ids.approverA);
+      expect(await errorCode(tx, RESET, [session.key, ids.approverA])).toBe(REAUTH);
+
+      // An employee, even one who can approve and re-verified with their own passkey, resets
+      // nobody; neither does an agent run with the founder's identity.
+      await stepUp(tx, approverA, 'passkey_reset', ids.employeeA, approverSession);
+      const byEmployee = await tx.expectError(RESET, [approverSession.key, ids.employeeA]);
+      expect(byEmployee.code).toBe(DENIED);
+      expect(byEmployee.message).toMatch(NOT_THEIRS);
+      await stepUp(tx, founderA, 'passkey_reset', ids.approverA, session);
+      await tx.setContext(korA);
+      expect(await errorCode(tx, RESET, [session.key, ids.approverA])).toBe(DENIED);
+
+      // The founder, with the re-verification of this session for this person: once.
+      await tx.setContext(founderA);
+      expect(await tx.rows(RESET, [session.key, ids.approverA])).toEqual([{ revoked: 1 }]);
+      expect(
+        await tx.count(
+          'step_ups',
+          `purpose = 'passkey_reset' and subject_id = $1 and session_id = $2 and consumed_at = now()`,
+          [ids.approverA, session.id],
+        ),
+      ).toBe(1);
+      expect(await errorCode(tx, RESET, [session.key, ids.approverA])).toBe(REAUTH);
+      // The person's session is closed and their passkey is gone.
+      await tx.setContext(approverA);
+      expect(await tx.count('passkeys')).toBe(0);
+      expect(
+        await errorCode(tx, 'select * from office.get_passkey_for_assertion($1, $2)', [
+          approverSession.key,
+          FOUNDER_PASSKEY,
+        ]),
+      ).toBe(DENIED);
+      // The founder's own passkey and session are untouched.
+      await tx.setContext(founderA);
+      expect(await tx.rows('select id from office.passkeys')).toEqual([{ id: FOUNDER_PASSKEY }]);
+      expect(await tx.rows('select id from office.sessions where id = $1', [session.id])).toEqual([
+        { id: session.id },
+      ]);
+    });
+
+    // The worker cannot call it at all.
+    await inWorkerTransaction(async (tx) => {
+      for (const context of [founderA, korA]) {
+        await tx.setContext(context);
+        expect(await errorCode(tx, RESET, [randomBytes(32), ids.approverA])).toBe(DENIED);
+        expect(await errorCode(tx, CAN_RESET, [ids.approverA])).toBe(DENIED);
+      }
+    });
+  });
+
+  it('a reset revokes every passkey, closes the sessions, is written to the audit log, and a new sign-in registers a first passkey again', async () => {
+    await inAdminTransaction(async (tx) => {
+      // The person also works at Pillika, which the same founder runs.
+      await tx.exec(
+        `insert into office.memberships (company_id, user_id, role) values ($1, $2, 'employee')`,
+        [ids.pillika, ids.employeeA],
+      );
+      // The person: two passkeys, two open sessions and one they closed themselves.
+      const phone = await openTestSession(tx, ids.employeeA);
+      await tx.setContext(employeeA);
+      const first = await registerPasskey(tx, phone, undefined, 'Phone');
+      await recordStepUp(tx, phone, null, {
+        purpose: 'passkey_add',
+        subjectId: null,
+        credentialId: first.credentialId,
+      });
+      await registerPasskey(tx, phone, await createChallenge(tx, phone, 'register'), 'Laptop');
+      const laptop = await openTestSession(tx, ids.employeeA);
+      const loggedOut = await openTestSession(tx, ids.employeeA);
+      // A ceremony the person has under way on the laptop.
+      await tx.setContext(employeeA);
+      const underWay = await createChallenge(tx, laptop, 'step_up');
+      await tx.setContext({});
+      await tx.rows('select office.close_session($1)', [loggedOut.key]);
+
+      const session = await openTestSession(tx, ids.founder);
+      await tx.setContext(founderA);
+      const foundersOwn = await createChallenge(tx, session, 'step_up');
+      // A re-verification from an earlier transaction does not count.
+      const base = {
+        userId: ids.founder,
+        sessionId: session.id,
+        passkeyId: FOUNDER_PASSKEY,
+        purpose: 'passkey_reset',
+        companyId: ids.arma,
+        subjectId: ids.employeeA,
+      };
+      await insertStepUp(tx, { ...base, verifiedAt: '1 minute' });
+      expect(await errorCode(tx, RESET, [session.key, ids.employeeA])).toBe(REAUTH);
+      await insertStepUp(tx, { ...base, verifiedXact: '1' });
+      expect(await errorCode(tx, RESET, [session.key, ids.employeeA])).toBe(REAUTH);
+      expect(
+        await tx.count('passkeys', 'user_id = $1 and revoked_at is null', [ids.employeeA]),
+      ).toBe(2);
+
+      await stepUp(tx, founderA, 'passkey_reset', ids.employeeA, session);
+      expect(await tx.rows(RESET, [session.key, ids.employeeA])).toEqual([{ revoked: 2 }]);
+
+      // Every passkey of the person is revoked; nobody else's.
+      expect(
+        await tx.rows(
+          `select name, revoked_at = now() as revoked_now from office.passkeys
+           where user_id = $1 order by name`,
+          [ids.employeeA],
+        ),
+      ).toEqual([
+        { name: 'Laptop', revoked_now: true },
+        { name: 'Phone', revoked_now: true },
+      ]);
+      expect(await tx.count('passkeys', 'revoked_at is null')).toBe(1);
+      expect(await tx.count('passkeys', 'id = $1 and revoked_at is null', [FOUNDER_PASSKEY])).toBe(
+        1,
+      );
+      // The person's open challenge is closed, so nothing under way finishes after the reset; the
+      // founder's own stays open.
+      expect(
+        await tx.rows(
+          `select id, consumed_at = now() as closed_now from office.passkey_challenges
+           where id = any($1) order by user_id`,
+          [[underWay, foundersOwn]],
+        ),
+      ).toEqual([
+        { id: foundersOwn, closed_now: null },
+        { id: underWay, closed_now: true },
+      ]);
+
+      // The open sessions are closed with the new reason and each has its login event; the session
+      // the person closed keeps its own reason; the founder's session stays open.
+      const ended = (id: string) =>
+        tx.rows(
+          `select s.close_reason, s.closed_at = now() as closed_now, e.event, e.reason, e.user_id
+           from office.sessions s left join office.login_events e on e.session_id = s.id
+           where s.id = $1`,
+          [id],
+        );
+      const reset = {
+        close_reason: 'passkeys_reset',
+        closed_now: true,
+        event: 'session_expired',
+        reason: 'passkeys_reset',
+        user_id: ids.employeeA,
+      };
+      expect(await ended(phone.id)).toEqual([reset]);
+      expect(await ended(laptop.id)).toEqual([reset]);
+      expect(await ended(loggedOut.id)).toEqual([
+        { close_reason: 'logout', closed_now: true, event: null, reason: null, user_id: null },
+      ]);
+      expect(await ended(session.id)).toEqual([
+        { close_reason: null, closed_now: null, event: null, reason: null, user_id: null },
+      ]);
+      await tx.setContext({});
+      expect(await tx.rows('select * from office.verify_session($1, 1800)', [phone.key])).toEqual(
+        [],
+      );
+      expect(
+        await tx.rows('select * from office.verify_session($1, 1800)', [session.key]),
+      ).toHaveLength(1);
+
+      // One audit row, by the founder, naming the person: in the company the founder acted in,
+      // although the reset reaches the person's Pillika sessions too (where the row of a person of
+      // several companies belongs is not decided; this is the behaviour until it is).
+      expect(
+        await tx.rows(
+          `select company_id, user_id, agent_code, run_id, record_type, record_id,
+                  occurred_at = now() as now
+           from office.audit_log where event = 'passkeys_reset'`,
+        ),
+      ).toEqual([
+        {
+          company_id: ids.arma,
+          user_id: ids.founder,
+          agent_code: null,
+          run_id: null,
+          record_type: 'user',
+          record_id: ids.employeeA,
+          now: true,
+        },
+      ]);
+
+      // The person is told: one notification in that company, sent by the founder, naming the
+      // event and the person, without free text. The person reads it after the next sign-in.
+      expect(
+        await tx.rows(
+          `select company_id, project_id, recipient_user_id, record_type, record_id, channel,
+                  sender_user_id, sender_agent_code, read_at, created_at = now() as now
+           from office.notifications where template = 'passkeys_reset'`,
+        ),
+      ).toEqual([
+        {
+          company_id: ids.arma,
+          project_id: null,
+          recipient_user_id: ids.employeeA,
+          record_type: 'user',
+          record_id: ids.employeeA,
+          channel: 'panel',
+          sender_user_id: ids.founder,
+          sender_agent_code: null,
+          read_at: null,
+          now: true,
+        },
+      ]);
+
+      // The old sessions register nothing; after a new Google sign-in the person registers a
+      // first passkey again and re-verifies with it. The revoked ones never come back.
+      await tx.setContext(employeeA);
+      const register = `select office.create_passkey_challenge($1, 'register', $2, null)`;
+      for (const old of [phone, laptop]) {
+        expect(await errorCode(tx, register, [old.key, randomBytes(32)])).toBe(DENIED);
+      }
+      const fresh = await openTestSession(tx, ids.employeeA);
+      await tx.setContext(employeeA);
+      const again = await registerPasskey(tx, fresh, undefined, 'New phone');
+      expect(
+        await tx.rows(
+          'select name from office.passkeys where user_id = $1 and revoked_at is null',
+          [ids.employeeA],
+        ),
+      ).toEqual([{ name: 'New phone' }]);
+      await recordStepUp(tx, fresh, null, {
+        purpose: 'passkey_add',
+        subjectId: null,
+        credentialId: again.credentialId,
+      });
+      const contextHash = hash();
+      const challenge = await createChallenge(tx, fresh, 'step_up', contextHash);
+      expect(
+        await errorCode(tx, recordSql(), [
+          fresh.key,
+          challenge,
+          first.credentialId,
+          0,
+          null,
+          null,
+          contextHash,
+        ]),
+      ).toBe(REAUTH);
+      expect(
+        await errorCode(tx, 'update office.passkeys set revoked_at = null where id = $1', [
+          first.credentialId,
+        ]),
+      ).toBe('23514');
+    });
+  });
+
+  it('a person without a passkey is reset too; a deactivated founder resets nobody', async () => {
+    await inAdminTransaction(async (tx) => {
+      // The external person signed in but never registered a passkey.
+      const waiting = await openTestSession(tx, ids.externalA);
+      const session = await openTestSession(tx, ids.founder);
+      await stepUp(tx, founderA, 'passkey_reset', ids.externalA, session);
+      expect(await tx.rows(RESET, [session.key, ids.externalA])).toEqual([{ revoked: 0 }]);
+      expect(
+        await tx.rows('select close_reason from office.sessions where id = $1', [waiting.id]),
+      ).toEqual([{ close_reason: 'passkeys_reset' }]);
+      expect(
+        await tx.count('audit_log', `event = 'passkeys_reset' and record_id = $1`, [ids.externalA]),
+      ).toBe(1);
+
+      // A second founder of Arma DX resets its members, but not the founder who also runs
+      // companies the second one does not; once deactivated, nobody.
+      await tx.setContext({});
+      await tx.exec(`update office.memberships set role = 'founder' ${MEMBERSHIP}`, [
+        ids.arma,
+        ids.employeeA,
+      ]);
+      await tx.setContext(employeeA);
+      expect(await tx.rows(CAN_RESET, [ids.approverA])).toEqual([{ can: true }]);
+      expect(await tx.rows(CAN_RESET, [ids.founder])).toEqual([{ can: false }]);
+
+      // A founder's passkeys are never reset by another founder, not even by one who runs every
+      // company of theirs: the database administrator resets them.
+      const secondFounder = await openTestSession(tx, ids.employeeA);
+      await tx.setContext(employeeA);
+      await registerPasskey(tx, secondFounder);
+      await tx.setContext(founderA);
+      expect(await tx.rows(CAN_RESET, [ids.employeeA])).toEqual([{ can: false }]);
+      await stepUp(tx, founderA, 'passkey_reset', ids.employeeA, session);
+      const refused = await tx.expectError(RESET, [session.key, ids.employeeA]);
+      expect(refused.code).toBe(DENIED);
+      expect(refused.message).toMatch(/every company they run/);
+      expect(
+        await tx.count('passkeys', 'user_id = $1 and revoked_at is null', [ids.employeeA]),
+      ).toBe(1);
+      expect(await tx.count('sessions', 'id = $1 and closed_at is null', [secondFounder.id])).toBe(
+        1,
+      );
+      // A founder of another company who is only an employee here is not reset either.
+      await tx.setContext({});
+      await tx.exec(`update office.memberships set role = 'employee' ${MEMBERSHIP}`, [
+        ids.arma,
+        ids.employeeA,
+      ]);
+      await tx.exec(
+        `insert into office.memberships (company_id, user_id, role) values ($1, $2, 'founder')`,
+        [ids.pillika, ids.employeeA],
+      );
+      await tx.setContext(founderA);
+      expect(await tx.rows(CAN_RESET, [ids.employeeA])).toEqual([{ can: false }]);
+      await tx.setContext({});
+      await tx.exec(`delete from office.memberships ${MEMBERSHIP}`, [ids.pillika, ids.employeeA]);
+      await tx.exec(`update office.memberships set role = 'founder' ${MEMBERSHIP}`, [
+        ids.arma,
+        ids.employeeA,
+      ]);
+
+      await stepUp(tx, founderA, 'membership_change', ids.employeeA);
+      await tx.exec('update office.users set active = false where id = $1', [ids.employeeA]);
+      await tx.setContext(employeeA);
+      expect(await tx.rows(CAN_RESET, [ids.approverA])).toEqual([{ can: false }]);
+    });
+  });
+});
+
+describe.skipIf(noDatabase)("the database administrator's passkey reset", () => {
+  afterAll(closePools);
+
+  it("resets a founder's passkeys by hand, as a role that owns the tables and bypasses row security", async () => {
+    await inAdminTransaction(async (tx) => {
+      // The founder: the fixtures' passkey, two open sessions and a ceremony under way.
+      const phone = await openTestSession(tx, ids.founder);
+      const laptop = await openTestSession(tx, ids.founder);
+      await tx.setContext(founderA);
+      const underWay = await createChallenge(tx, laptop, 'step_up');
+      // A member keeps their passkey and session.
+      const member = await openTestSession(tx, ids.approverA);
+      await tx.setContext(approverA);
+      const memberPasskey = await registerPasskey(tx, member);
+
+      // Never inside a request or an agent run, even as the privileged role.
+      for (const context of [founderA, korA, { userId: ids.founder }]) {
+        await tx.setContext(context);
+        const refused = await tx.expectError(ADMIN_RESET, ['founder@arma.test']);
+        expect(refused.code, JSON.stringify(context)).toBe(DENIED);
+        expect(refused.message).toMatch(/outside a request/);
+      }
+      await tx.setContext({});
+      const unknown = await tx.expectError(ADMIN_RESET, ['nobody@example.test']);
+      expect(unknown.code).toBe('P0002');
+      // The address is not repeated in the message.
+      expect(unknown.message).not.toMatch(/nobody@/);
+
+      // The administrator on Supabase is the role that ran the migrations: not a superuser, owner of
+      // the tables, bypasses row security. A superuser (the local test server) plays that role
+      // through one created here and rolled back with the transaction; a server like Supabase runs
+      // the reset as its own administrator, since nobody can grant that role there.
+      const [server] = await tx.rows<{ superuser: boolean }>(
+        'select rolsuper as superuser from pg_catalog.pg_roles where rolname = current_user',
+      );
+      const superuser = server?.superuser === true;
+      if (superuser) {
+        const suffix = randomBytes(6).toString('hex');
+        const createRole = async (name: string, bypass: 'bypassrls' | 'nobypassrls') => {
+          const [row] = await tx.rows<{ sql: string }>(
+            `select format('create role %I nosuperuser %s in role %I', $1::text, $2::text,
+               current_user::text) as sql`,
+            [name, bypass],
+          );
+          await tx.exec(row?.sql ?? '');
+        };
+        const administrator = `admin_reset_${suffix}`;
+        const withoutBypass = `admin_reset_rls_${suffix}`;
+        await createRole(administrator, 'bypassrls');
+        await createRole(withoutBypass, 'nobypassrls');
+
+        // Without the right to bypass row security nothing would be found: it says so instead.
+        await tx.exec(`set local role ${withoutBypass}`);
+        const blind = await tx.expectError(ADMIN_RESET, ['founder@arma.test']);
+        expect(blind.code).toBe(DENIED);
+        expect(blind.message).toMatch(/bypasses row security/);
+        await tx.exec(`set local role ${administrator}`);
+      }
+
+      // By any of the account's sign-in addresses, whatever its case.
+      expect(await tx.rows(ADMIN_RESET, ['  Founder@Pillika.test '])).toEqual([
+        { passkeys_revoked: 1, sessions_closed: 2 },
+      ]);
+      if (superuser) await tx.exec('reset role');
+
+      expect(await tx.count('passkeys', 'user_id = $1 and revoked_at is null', [ids.founder])).toBe(
+        0,
+      );
+      expect(
+        await tx.rows(
+          'select consumed_at = now() as closed_now from office.passkey_challenges where id = $1',
+          [underWay],
+        ),
+      ).toEqual([{ closed_now: true }]);
+      expect(
+        await tx.rows(
+          `select s.close_reason, e.event, e.reason
+           from office.sessions s left join office.login_events e on e.session_id = s.id
+           where s.id = any($1) order by s.id`,
+          [[phone.id, laptop.id]],
+        ),
+      ).toEqual(
+        [phone, laptop].map(() => ({
+          close_reason: 'passkeys_reset',
+          event: 'session_expired',
+          reason: 'passkeys_reset',
+        })),
+      );
+      // One audit row in every company of the account, without an actor.
+      expect(
+        await tx.rows(
+          `select company_id, user_id, agent_code, record_type, record_id
+           from office.audit_log where event = 'passkeys_reset' order by company_id`,
+        ),
+      ).toEqual(
+        [ids.arma, ids.pillika, ids.founderSpace].map((company) => ({
+          company_id: company,
+          user_id: null,
+          agent_code: null,
+          record_type: 'user',
+          record_id: ids.founder,
+        })),
+      );
+      // Nobody else is touched.
+      expect(
+        await tx.count('passkeys', 'id = $1 and revoked_at is null', [memberPasskey.credentialId]),
+      ).toBe(1);
+      expect(await tx.count('sessions', 'id = $1 and closed_at is null', [member.id])).toBe(1);
+
+      // A second run finds nothing left to revoke or close.
+      expect(await tx.rows(ADMIN_RESET, ['founder@arma.test'])).toEqual([
+        { passkeys_revoked: 0, sessions_closed: 0 },
+      ]);
+
+      // The old sessions are dead; after a new Google sign-in the founder registers a first passkey
+      // again and re-verifies with it.
+      await tx.setContext(founderA);
+      expect(
+        await errorCode(tx, `select office.create_passkey_challenge($1, 'register', $2, null)`, [
+          phone.key,
+          randomBytes(32),
+        ]),
+      ).toBe(DENIED);
+      const fresh = await openTestSession(tx, ids.founder);
+      await tx.setContext(founderA);
+      const again = await registerPasskey(tx, fresh, undefined, 'New phone');
+      await recordStepUp(tx, fresh, ids.arma, {
+        purpose: 'membership_change',
+        subjectId: ids.employeeA,
+        credentialId: again.credentialId,
+      });
+    });
+  });
+});
+
+describe.skipIf(noDatabase)('access grants', () => {
+  afterAll(closePools);
+
+  const task = [ids.arma, ids.externalA, 'task', ids.taskA];
+  const note = [ids.arma, ids.externalA, 'note', ids.noteA];
+  const externalA: ContextInput = { companyId: ids.arma, userId: ids.externalA };
+
+  it('opening a task or a note to a person needs a re-verification for that person and company; taking it back needs none', async () => {
+    await inTransaction(async (tx) => {
+      // A stolen founder session alone opens nothing to an external person.
+      await tx.setContext(founderA);
+      expect(await errorCode(tx, GRANT, task)).toBe(REAUTH);
+      expect(await errorCode(tx, GRANT, note)).toBe(REAUTH);
+      expect(await tx.count('access_grants', 'record_id = any($1)', [[ids.taskA, ids.noteA]])).toBe(
+        0,
+      );
+
+      // Another grantee, another company, another purpose or another person does not count.
+      await stepUp(tx, founderA, 'access_grant', ids.employeeA);
+      expect(await errorCode(tx, GRANT, task)).toBe(REAUTH);
+      await stepUp(tx, founderP, 'access_grant', ids.externalA);
+      await tx.setContext(founderA);
+      expect(await errorCode(tx, GRANT, task)).toBe(REAUTH);
+      await stepUp(tx, founderA, 'membership_change', ids.externalA);
+      expect(await errorCode(tx, GRANT, task)).toBe(REAUTH);
+      await stepUp(tx, approverA, 'access_grant', ids.externalA);
+      await tx.setContext(founderA);
+      expect(await errorCode(tx, GRANT, task)).toBe(REAUTH);
+
+      const own = await stepUp(tx, founderA, 'access_grant', ids.externalA);
+      expect(await tx.exec(GRANT, task)).toBe(1);
+      expect(
+        await tx.rows('select consumed_at = now() as used from office.step_ups where id = $1', [
+          own,
+        ]),
+      ).toEqual([{ used: true }]);
+      // Used once: the note needs its own.
+      expect(await errorCode(tx, GRANT, note)).toBe(REAUTH);
+      await stepUp(tx, founderA, 'access_grant', ids.externalA);
+      expect(await tx.exec(GRANT, note)).toBe(1);
+      await tx.setContext(externalA);
+      expect(await tx.count('tasks', 'id = $1', [ids.taskA])).toBe(1);
+      expect(await tx.count('notes', 'id = $1', [ids.noteA])).toBe(1);
+
+      // A grant is never rewritten: that would open another record, or open this one to another
+      // person, without a re-verification.
+      await tx.setContext(founderA);
+      for (const [column, value] of [
+        ['record_id', ids.noteASourceOfTruth],
+        ['user_id', ids.employeeA],
+        ['record_type', 'task'],
+      ]) {
+        expect(
+          await errorCode(
+            tx,
+            `update office.access_grants set ${String(column)} = $2 where record_id = $1`,
+            [ids.noteA, value],
+          ),
+          column,
+        ).toBe('23514');
+      }
+
+      // Taking a grant back needs no re-verification.
+      expect(
+        await tx.exec('delete from office.access_grants where user_id = $1 and record_id = $2', [
+          ids.externalA,
+          ids.taskA,
+        ]),
+      ).toBe(1);
+      await tx.setContext(externalA);
+      expect(await tx.count('tasks', 'id = $1', [ids.taskA])).toBe(0);
+
+      // Project membership changes need none either (5 October decision 4).
+      await tx.setContext(founderA);
+      expect(
+        await tx.exec(
+          'insert into office.project_members (company_id, project_id, user_id) values ($1, $2, $3)',
+          [ids.arma, ids.projectA, ids.approverA],
+        ),
+      ).toBe(1);
+      expect(
+        await tx.exec('delete from office.project_members where project_id = $1 and user_id = $2', [
+          ids.projectA,
+          ids.approverA,
+        ]),
+      ).toBe(1);
+    });
+  });
+
+  it('only the founder grants access, even when another person re-verified for it', async () => {
+    await inTransaction(async (tx) => {
+      for (const context of [approverA, employeeA, externalA]) {
+        await stepUp(tx, context, 'access_grant', ids.externalA);
+        expect(await errorCode(tx, GRANT, task), JSON.stringify(context)).toBe(DENIED);
+      }
+      await tx.setContext(founderA);
+      expect(await tx.count('access_grants', 'record_id = $1', [ids.taskA])).toBe(0);
+    });
+    await inWorkerTransaction(async (tx) => {
+      await tx.setContext(korA);
+      expect(await errorCode(tx, GRANT, task)).toBe(DENIED);
+    });
+  });
+
+  it('an access grant re-verification from an earlier transaction does not count; an insert without a person needs none', async () => {
+    await inAdminTransaction(async (tx) => {
+      const base = {
+        userId: ids.founder,
+        sessionId: ids.founderSession,
+        passkeyId: FOUNDER_PASSKEY,
+        purpose: 'access_grant',
+        companyId: ids.arma,
+        subjectId: ids.externalA,
+      };
+      await tx.setContext(founderA);
+      await insertStepUp(tx, { ...base, verifiedAt: '1 minute' });
+      expect(await errorCode(tx, GRANT, task)).toBe(REAUTH);
+      await insertStepUp(tx, { ...base, verifiedXact: '1' });
+      expect(await errorCode(tx, GRANT, task)).toBe(REAUTH);
+      // An agent run cannot use a re-verification even if one exists.
+      await insertStepUp(tx, base);
+      await tx.setContext(korA);
+      expect(await errorCode(tx, GRANT, task)).toBe(REAUTH);
+      await tx.setContext(founderA);
+      expect(await tx.exec(GRANT, task)).toBe(1);
+
+      // Without a person in the context (the seed, an administrator) no re-verification is needed;
+      // the fixtures' grants were written this way.
+      await tx.setContext({});
+      expect(await tx.exec(GRANT, note)).toBe(1);
+      expect(await tx.count('step_ups', `purpose = 'access_grant' and consumed_at is null`)).toBe(
+        2,
+      );
     });
   });
 });

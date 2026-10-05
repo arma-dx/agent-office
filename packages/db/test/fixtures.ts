@@ -97,6 +97,13 @@ function contextSql(
     set_config('app.project_id', '${project ?? ''}', true);`;
 }
 
+// No person in the context: the way the seed and an administrator write.
+const NO_CONTEXT_SQL = `select
+    set_config('app.company_id', '', true),
+    set_config('app.user_id', '', true),
+    set_config('app.agent_code', '', true),
+    set_config('app.project_id', '', true);`;
+
 /**
  * Fixtures with at least one row per table for both companies (and the founder space).
  * Loaded with the privileged role; triggers need a context, so the context is set step by step.
@@ -217,6 +224,10 @@ export async function loadFixtures(client: pg.Client): Promise<void> {
       ('${ids.taskPProject}', '${ids.pillika}', '${ids.projectP}', 'Project task P', 'P-IST'),
       ('${ids.taskFounderSpace}', '${ids.founderSpace}', null, 'Founder space task', 'KOR');
 
+    -- A person who opens a task or a note to an external person needs a passkey re-verification
+    -- for each grant (5 October decision 4); the fixtures' grants are written without a person in
+    -- the context, as an administrator would.
+    ${NO_CONTEXT_SQL}
     insert into office.access_grants (company_id, user_id, record_type, record_id) values
       ('${ids.arma}', '${ids.externalA}', 'task', '${ids.taskAShared}'),
       ('${ids.arma}', '${ids.externalA}', 'note', '${ids.noteAShared}'),
@@ -302,13 +313,13 @@ export async function loadFixtures(client: pg.Client): Promise<void> {
       values ('${ids.arma}', '${ids.runA}', 'report.pdf', 'application/pdf', 10,
         '${ids.arma}/report.pdf');
     insert into office.approvals (id, company_id, run_id, task_id, agent_code, title, payload,
-        basis_type, basis_id, basis_version, involves_money)
+        basis_type, basis_id, basis_version, involves_money, goes_external)
       values ('${ids.approvalA}', '${ids.arma}', '${ids.runA}', '${ids.taskA}', 'KOR-1',
-        'Note change', '{}', 'note', '${ids.noteA}', 1, false);
+        'Note change', '{}', 'note', '${ids.noteA}', 1, false, false);
     insert into office.approvals (id, company_id, run_id, agent_code, title, payload, tool_name,
-        involves_money)
+        involves_money, goes_external)
       values ('${ids.approvalAApproved}', '${ids.arma}', '${ids.runA}', 'KOR-1', 'Email', '{}',
-        '${TOOL.externalEffect}', false);
+        '${TOOL.externalEffect}', false, false);
 
     ${contextSql(ids.arma, ids.founder, 'KOR-1', ids.projectA)}
     insert into office.runs
@@ -318,9 +329,9 @@ export async function loadFixtures(client: pg.Client): Promise<void> {
     insert into office.tool_calls (company_id, run_id, seq, tool_name, status)
       values ('${ids.arma}', '${ids.runAProject}', 1, '${TOOL.read}', 'succeeded');
     insert into office.approvals (id, company_id, run_id, task_id, agent_code, title, payload,
-        involves_money)
+        involves_money, goes_external)
       values ('${ids.approvalAProject}', '${ids.arma}', '${ids.runAProject}', '${ids.taskAProject}',
-        'KOR-1', 'Project output', '{}', false);
+        'KOR-1', 'Project output', '{}', false, false);
 
     ${contextSql(ids.pillika, ids.founder, 'KOR-1')}
     insert into office.runs
@@ -333,13 +344,13 @@ export async function loadFixtures(client: pg.Client): Promise<void> {
       values ('${ids.pillika}', '${ids.runP}', 'image.png', 'image/png', 10,
         '${ids.pillika}/image.png');
     insert into office.approvals (id, company_id, run_id, agent_code, title, payload,
-        involves_money)
+        involves_money, goes_external)
       values ('${ids.approvalP}', '${ids.pillika}', '${ids.runP}', 'KOR-1', 'Pillika output', '{}',
-        false);
+        false, false);
     insert into office.approvals (id, company_id, run_id, agent_code, title, payload,
-        involves_money)
+        involves_money, goes_external)
       values ('${ids.approvalPApproved}', '${ids.pillika}', '${ids.runP}', 'KOR-1',
-        'Pillika approved', '{}', false);
+        'Pillika approved', '{}', false, false);
 
     -- Approving an important approval (approvalAApproved has an external effect tool) needs the
     -- founder's passkey re-verification in the same transaction; the re-verification for the

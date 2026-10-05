@@ -22,6 +22,7 @@ import { NativeSelect } from '@/components/ui/native-select';
 import { Switch } from '@/components/ui/switch';
 import { ApiError, userMessage } from '@/lib/api';
 import { notifyError } from '@/lib/notify';
+import { useSession } from '@/lib/session';
 import {
   cancelInvitation,
   createInvitation,
@@ -33,6 +34,7 @@ import {
   membersQueryOptions,
   removeMember,
   renewInvitation,
+  resetMemberPasskeys,
   ROLE_LABELS,
   updateMember,
 } from '@/lib/users';
@@ -51,6 +53,10 @@ const rowClass = 'border-b border-line px-4 py-3 last:border-b-0';
 // Each row is a group named after the person or address; a screen reader names the row before
 // its controls ("Rol", "Onay yetkisi"), which keep short labels.
 const rowGroupClass = 'flex flex-col gap-3 @2xl:flex-row @2xl:items-center @2xl:justify-between';
+// A member row has up to four controls (role, approval right, passkey reset, removal): they go
+// beside the name only in a list wide enough to keep them on one line.
+const memberRowGroupClass =
+  'flex flex-col gap-3 @4xl:flex-row @4xl:items-center @4xl:justify-between';
 
 // Members
 
@@ -174,15 +180,59 @@ function MemberChangeDialog({
   );
 }
 
+/**
+ * Resets every passkey of a member who lost theirs (5 October decision 3), confirmed with the
+ * founder's own passkey. The re-verification names this company and this person. The person is
+ * signed out everywhere and adds a first passkey again after a new Google sign-in: whoever signs in
+ * to the account first adds it, so the dialog asks for the Google session on a lost device to be
+ * closed before the reset.
+ */
+function PasskeyResetButton({
+  companyId,
+  member,
+  onReset,
+}: {
+  companyId: string;
+  member: Member;
+  /** Runs when the API reset the passkeys; the section then says what the founder does next. */
+  onReset: (member: Member) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <StepUpDialog<undefined>
+      open={open}
+      onOpenChange={setOpen}
+      trigger={
+        <Button variant="outline" size="lg">
+          Passkey'leri sıfırla
+        </Button>
+      }
+      request={{ purpose: 'passkey_reset', companyId, subjectId: member.userId }}
+      action={(stepUp) => resetMemberPasskeys(companyId, member.userId, stepUp)}
+      onSuccess={() => {
+        onReset(member);
+        setOpen(false);
+      }}
+      title={`${member.name} için passkey'ler sıfırlansın mı?`}
+      description="Bu kişinin bütün passkey'leri kaldırılır ve açık oturumları kapatılır. Kişi Google ile yeniden girip 10 dakika içinde yeni bir passkey ekler. Cihazı kaybolduysa önce o cihazdaki Google oturumunu kapatmasını ya da Google parolasını değiştirmesini isteyin; yoksa cihazı bulan kişi yeni passkey'i ekleyebilir."
+      confirmLabel="Passkey'leri sıfırla"
+      destructive
+    />
+  );
+}
+
 function MemberRow({
   companyId,
   member,
   sectionHeading,
+  onPasskeysReset,
 }: {
   companyId: string;
   member: Member;
   sectionHeading: RefObject<HTMLHeadingElement | null>;
+  onPasskeysReset: (member: Member) => void;
 }) {
+  const session = useSession();
   const [pending, setPending] = useState<MemberChange | null>(null);
   const returnFocus = useRef<HTMLElement | null>(null);
   const switchRef = useRef<HTMLButtonElement>(null);
@@ -191,6 +241,8 @@ function MemberRow({
   const approveId = useId();
   // The founder role is not given or taken through the panel.
   const editable = member.role !== 'founder';
+  // A founder's passkeys are not reset from the panel, and nobody resets their own.
+  const resettable = editable && member.userId !== session.user.id;
 
   // Every change waits in a confirmation dialog; the controls keep showing the saved value.
   function ask(change: MemberChange, control: HTMLElement | null) {
@@ -200,7 +252,7 @@ function MemberRow({
 
   return (
     <li className={rowClass}>
-      <div role="group" aria-labelledby={nameId} className={rowGroupClass}>
+      <div role="group" aria-labelledby={nameId} className={memberRowGroupClass}>
         <div className="flex min-w-0 flex-col">
           <span id={nameId} className="truncate text-sm font-medium">
             {member.name}
@@ -245,6 +297,9 @@ function MemberRow({
                 </label>
               </div>
             ) : null}
+            {resettable ? (
+              <PasskeyResetButton companyId={companyId} member={member} onReset={onPasskeysReset} />
+            ) : null}
             <Button
               variant="outline"
               size="lg"
@@ -277,6 +332,8 @@ export function MembersSection({ companyId }: { companyId: string }) {
   const query = useQuery(membersQueryOptions(companyId));
   const headingId = useId();
   const heading = useRef<HTMLHeadingElement>(null);
+  // The member whose passkeys were reset last; the note below stays until the page is left.
+  const [passkeysReset, setPasskeysReset] = useState<Member | null>(null);
   return (
     <section aria-labelledby={headingId} className="flex flex-col gap-3">
       <h2 id={headingId} ref={heading} tabIndex={-1} className={sectionHeadingClass}>
@@ -299,10 +356,25 @@ export function MembersSection({ companyId }: { companyId: string }) {
               companyId={companyId}
               member={member}
               sectionHeading={heading}
+              onPasskeysReset={setPasskeysReset}
             />
           ))}
         </ul>
       )}
+      {/*
+        The panel sends the person no e-mail and their sessions are closed, so the founder tells
+        them (5 October decision 3: the person is told). The live region is always in the page, so
+        that screen readers announce what enters it.
+      */}
+      <div role="status" aria-label="Passkey sıfırlama sonucu" className="empty:-mt-3">
+        {passkeysReset ? (
+          <p className="rounded-lg border border-line bg-surface p-3 text-sm">
+            {passkeysReset.name} için passkey'ler sıfırlandı. Kişiye e-posta gitmez; kendisine haber
+            verin: Google ile yeniden girip 10 dakika içinde Güvenlik sayfasından yeni passkey
+            eklesin.
+          </p>
+        ) : null}
+      </div>
     </section>
   );
 }

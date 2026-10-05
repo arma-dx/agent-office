@@ -82,9 +82,10 @@ interface StepUpDialogProps<T> {
 
 /**
  * Confirmation dialog for an action that needs a passkey (approvals that matter, membership
- * changes, removing a passkey). The options are fetched when it opens; the confirm button starts
- * the ceremony in its click handler and sends the action with `stepUp`. The dialog stays open until
- * the API accepts, and cannot be closed while the request is on its way.
+ * changes, removing a passkey, resetting a member's passkeys). The options are fetched when it
+ * opens; the confirm button starts the ceremony in its click handler and sends the action with
+ * `stepUp`. The dialog stays open until the API accepts, and cannot be closed while the request is
+ * on its way.
  */
 export function StepUpDialog<T>({
   open,

@@ -4,7 +4,7 @@ import { InvitationsSection, InviteForm, MembersSection } from '@/components/use
 import { FORBIDDEN_MESSAGE } from '@/lib/api';
 import { companyLabel, useCompany } from '@/lib/session';
 
-/** Settings, Kullanıcılar: invitations, roles and approval rights. Founder only. */
+/** Settings, Kullanıcılar: invitations, roles, approval rights and passkey resets. Founder only. */
 export const Route = createFileRoute('/_authed/c/$company/settings/users')({
   component: UsersSettingsScreen,
 });
@@ -38,8 +38,8 @@ function UsersSettingsScreen() {
       <div className="flex flex-col gap-1">
         <h1 className="text-xl font-semibold">Kullanıcılar</h1>
         <p className="text-sm text-ink-secondary">
-          {companyLabel(company)} için davetler, roller ve onay yetkisi. Davetleri ve üye
-          değişikliklerini passkey ile onaylarsınız.
+          {companyLabel(company)} için davetler, roller ve onay yetkisi. Davetleri, üye
+          değişikliklerini ve passkey sıfırlamayı passkey ile onaylarsınız.
         </p>
       </div>
       <div className="grid gap-6 md:grid-cols-[minmax(0,1fr)_22rem] md:items-start">
