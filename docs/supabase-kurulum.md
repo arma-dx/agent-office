@@ -87,3 +87,19 @@ Göçler `office_api` ve `office_worker` giriş rollerini parolasız açar. Sunu
 ## 6. Yedek ve geri yükleme denemesi (pilot açılışından önce, Pro)
 
 Pilot açılış kontrollerindeki "geri yükleme bir kez denendi" maddesi için: göçler gönderilir, ilk günlük yedek beklenir, yedek yeni bir projeye geri yüklenir, giriş rollerine yeniden parola verilir, şirket ayrımı testleri geri yüklenen projede çalıştırılır, sonra o proje silinir.
+
+## 7. Kurucunun passkey'ini sıfırlama
+
+Bir çalışanın ya da dış kişinin kaybolan passkey'ini kurucu panelden sıfırlar (Ayarlar, Kullanıcılar, "Passkey'leri sıfırla"). Kurucunun kendi passkey'i kaybolursa sıfırlama veritabanından yapılır (5 Ekim, karar 3):
+
+1. Kayıp cihazda Google oturumu açık kalmış olabilir. Önce Google hesabından o cihazın oturumunu kapatın ya da Google parolasını değiştirin; sıfırlamadan sonra ilk passkey'i Google ile giren ilk kişi ekler.
+2. Supabase panelinde ilgili projenin SQL Editor ekranını açın (sorgular `postgres` rolüyle çalışır) ve kurucunun giriş adreslerinden biriyle şu sorguyu çalıştırın:
+
+   ```sql
+   select * from office.admin_reset_passkeys('adres@armadx.com');
+   ```
+
+3. Sorgu kaç passkey'in kaldırıldığını ve kaç oturumun kapandığını döndürür. Hesabın bütün passkey'leri kaldırılır, açık oturumları kapanır ve her şirketin iz kaydına bir satır yazılır.
+4. Kurucu Google ile yeniden girer ve 10 dakika içinde Ayarlar, Güvenlik sayfasından yeni passkey ekler. İki ayrı cihazda passkey kaydı önerilir.
+
+Bu sorgu uygulamanın kendi rolleriyle (`office_api`, `office_worker`) çalışmaz; yalnızca göçleri çalıştıran rol çağırabilir. Yerel Supabase'de `postgres` rolüyle denendi; test projesinde henüz denenmedi.

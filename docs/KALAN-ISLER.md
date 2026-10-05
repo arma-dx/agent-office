@@ -23,6 +23,8 @@ Tamamlananlar:
 
 Henüz olmayanlar: veritabanı (göç dosyası yok), giriş, işlevli ekran (yalnızca boş ekranlar var), hiçbir ajan, hiçbir skill, test ve canlı ortam.
 
+5 Ekim 2026: karar 5-9 arayüz işlerini değiştirdi (`docs/kararlar/2026-10-05.md`); karar 10 ve 11 de işlendi, ikisi kurucu onayı bekliyor. Arayüz kabuğu işi eklendi (0.3a; planı kurucu onayladı, karar 12), telefon maddeleri kaldırıldı, Ofis görünümü işi 0.3b olarak eklendi (karar 14: kabuktan hemen sonra, Görevler'den önce). Ofis görünümünden sonra işler bu dosyadaki sırayla sürer (karar 15).
+
 ## Sprint 0
 
 ### 0.1 Arayüz temeli
@@ -40,10 +42,10 @@ Giriş ekranından önce. Arayüz geçici (2 Ekim); ileride baştan ele alınaca
 - [x] IBM Plex Sans yazı tipinin kendi sunucumuzdan verilmesi; tablolarda eşit genişlikli rakamlar
 - [x] react-hook-form ve zod ile ortak form düzeni
 - [x] Ana yerleşim: üst çubuk, şirket seçici (geçici örnek liste), içerik alanı
-- [x] Telefonda alt menü: Bugün, Onaylar, Görevler, Notlar, Ofis (Ofis, Kasım'a kadar Ajanlar ekranını açar)
+- [x] Telefonda alt menü: Bugün, Onaylar, Görevler, Notlar, Ofis (Ofis, Kasım'a kadar Ajanlar ekranını açar) (5 Ekim karar 8 ile kalkıyor; 0.3a'da kaldırılır)
 - [x] Ortak bileşenler: düğme, form alanı, tablo, liste satırı, boş ekran, hata mesajı, yükleniyor durumu
 - [x] Klavye odağının görünür olması; azaltılmış hareket tercihine uyum
-- [x] Elle yazılmış PWA manifesti ve uygulama simgeleri (geçici simge)
+- [x] Elle yazılmış PWA manifesti ve uygulama simgeleri (geçici simge) (telefon uyumu 5 Ekim karar 8 ile kalktı; manifestin akıbeti Karar: U18)
 - [x] Hata sınırı ve "sayfa bulunamadı" ekranı
 
 ### 0.2 Veri modeli ve şirket ayrımı
@@ -167,7 +169,7 @@ Sunucu tarafı:
 Roller ve şirket:
 
 - [x] Girişten sonra şirket seçimi; tek üyeliği olanın doğrudan geçmesi
-- [ ] Üst çubukta şirket seçici; kurucu için holding görünümü ve Kurucu özel alanı (şirket seçici ve Kurucu alanı hazır; holding görünümü kalıyor)
+- [ ] Kenar çubuğunun başında şirket menüsü; kurucu için holding görünümü ve Kurucu özel alanı (şirket seçici ve Kurucu alanı hazır; menü 0.3a'da kenar çubuğuna taşınır; holding görünümü kalıyor)
 - [x] Şirket seçicideki geçici örnek listenin (`apps/web/src/placeholder-data.ts`) kaldırılması; liste kullanıcının üyeliklerinden gelir
 - [x] Her API ucunda rol denetimi: `founder`, `employee`, `external` (bugünkü uçlarda; yeni uçlar aynı yardımcıyı kullanır)
 - [ ] Holding görünümü için API'de salt okunur birleştirme
@@ -176,7 +178,9 @@ Passkey:
 
 - [x] Passkey kaydı (telefonun parmak izi ya da yüz tanıması) (Ayarlar, Güvenlik; ilk passkey Google girişinden sonraki 10 dakika içinde)
 - [ ] Önemli onaylarda yeniden doğrulama; hangi onayların önemli sayılacağı (Karar: R7) (3 Ekim karar 7; veritabanı ve API hazır, üye ve davet işlemlerinde çalışıyor; onay kararı ekranı Onay Masası ile bağlanacak)
-- [ ] Passkey yoksa izlenecek yol (passkey'i olmayan önemli işlemi yapamaz ve Güvenlik sayfasına yönlendirilir; kaybolan passkey'in kurtarma yolu kurucu kararı bekliyor, `docs/SONRA.md`)
+- [x] Passkey yoksa izlenecek yol (passkey'i olmayan önemli işlemi yapamaz ve Güvenlik sayfasına yönlendirilir; kaybolan passkey'i kurucu Ayarlar, Kullanıcılar'dan sıfırlar, kurucununkini veritabanı yöneticisi sıfırlar: 5 Ekim karar 3, `docs/supabase-kurulum.md` 7. bölüm)
+- [x] Dışarı giden işlerin onayında passkey: onayı açan işin dışarı gidip gitmeyeceğini belirtir (5 Ekim karar 2; veritabanında, onay ekranı Onay Masası ile bağlanacak)
+- [ ] Dış kişiye görev ya da not açmada passkey (5 Ekim karar 4; veritabanı ve doğrulama amacı hazır, düğmesi görev ve not paylaşımı yapılırken gelir)
 
 Ekranlar:
 
@@ -191,7 +195,91 @@ Testler:
 - [x] Dış kişi yalnızca kendisine açılanı görür
 - [x] Süresi dolan oturum reddedilir
 
+### 0.3a Arayüz kabuğu: Paperclip yapısı
+
+5 Ekim, karar 5, 6 ve 7; kabuk planını kurucu onayladı (karar 12). Durum dili ve liste satırı karar 11'in kapsamındadır (kurucu onayı bekliyor). Kabuk Görevler ekranından (0.4) önce kurulur; arka uçta değişiklik yok. Kaynak: `docs/paperclip-incelemesi.md` 13.2, 13.5, 13.7.
+
+Hazırlık:
+
+- [x] (Senden) Paperclip deposunun sabit commit'ten (`dd868ed`) yerelde okunması için indirme izni (5 Ekim, karar 13; depo dışında geçici klasöre indirildi)
+- [ ] `THIRD_PARTY_NOTICES.md` dosyası ve içinde Paperclip'in `LICENSE` metni, olduğu gibi
+- [ ] Taşınan her dosyanın başına kaynak yolu ve commit kimliği
+- [ ] Gereken yeni bağımlılıkların `pnpm-workspace.yaml` kataloğuna eklenmesi (yalnızca kabuğun ihtiyacı kadar)
+
+Tasarım değişkenleri:
+
+- [ ] Karar 6'ya göre renk değerleri: içerik alanı beyaz, kenar çubuğu açık gri, nötr metin ve çizgi tonları, vurgu `#127A77`
+- [ ] Durum renkleri
+- [ ] Karanlık tema (aynı yönle yeniden tanımlanır; 5 Ekim, karar 6'dan türetildi, kurucu onayı bekliyor)
+- [ ] Kontrast ölçümü; AA'yı tutmayan tonların koyulaştırılması (5 Ekim, karar 12)
+- [ ] Kenar çubuğunda seçili ve üzerine gelinen satır tonu
+- [ ] `CLAUDE.md`'deki renk değerlerinin kesinleşen değerlerle güncellenmesi
+
+Durum dili:
+
+- [ ] Görev, onay ve çalışma durumları için tek simge ve tek renk
+- [ ] Durum rozeti ve durum simgesi bileşenleri (canlı göstergenin hareketli olup olmayacağı Karar: U1)
+
+Kabuk:
+
+- [ ] Kenar çubuğu: şirket menüsü; üst satırlar (Bugün, Onaylar); "İş" grubu (Görevler, Notlar); "Ofis" grubu (Ajanlar); hesap menüsü (Ayarlar, tema, çıkış). "Yeni talep" satırı talep formuyla (0.4), "Ofis görünümü" satırı o ekranla (0.3b) menüye girer
+- [ ] Üst çubuk ve konum bilgisi
+- [ ] Özellik paneli altyapısı
+- [ ] Kenar çubuğunun daraltılması
+- [ ] Menü simgeleri (Karar: U2)
+- [ ] Telefon alt menüsünün kaldırılması (5 Ekim, karar 8)
+- [ ] 1280 piksel ve üstü için tasarım (5 Ekim, karar 12); 1024 piksele kadar kullanılabilirlik (karar 8'den türetildi, kurucu onayı bekliyor)
+
+Sayfa parçaları:
+
+- [ ] Yoğun liste satırı
+- [ ] Boş ekran
+- [ ] Sayfanın biçiminde yükleme iskeleti
+- [ ] Sekme çubuğu
+- [ ] Satır içi uyarı şeridi
+
+Mevcut ekranların taşınması (işlevleri değişmez):
+
+- [ ] Giriş ve şirket seçimi: kabuk dışı, yalnızca renkler
+- [ ] Ayarlar, Kullanıcılar
+- [ ] Ayarlar, Güvenlik
+- [ ] Beş boş ekran: Bugün, Onaylar, Görevler, Notlar, Ajanlar
+
+Testler:
+
+- [ ] Yerleşim ve gezinme
+- [ ] Klavye odağı
+- [ ] Kontrast denetimi
+- [ ] Mevcut ekran testlerinin yeni kabukta geçmesi
+
+### 0.3b Ofis görünümü (M15)
+
+5 Ekim, karar 9 ve 14: Ofis görünümü kabuktan (0.3a) hemen sonra, Görevler ekranından (0.4) önce yapılır; birimleri ve ajanları gösterir ve kenar çubuğunda "Ofis" grubunda durur (karar 12). İlk sürümde birimler ve ajanlar görünür; görev sayıları ve canlı durumlar (çalışıyor, onay bekliyor) ilgili işler bittikçe bağlanır. Örnek görsel: `docs/kararlar/ekler/2026-10-05-ofis-gorunumu-ornegi.webp`; görünüm bu örnekten yola çıkar ve Agent Office'in tasarım diline uyarlanır. Ayrıntılı plan işe başlanırken kurucuya sunulur; açık sorular Karar: U19.
+
+Sunucu:
+
+- [ ] Birimler ve ajanlar için okuma ucu (şirket bağlamıyla; `units`, `agent_definitions`, `company_agents`)
+- [ ] Kart senkronizasyonunun öne alınması gerekip gerekmediği (1.2)
+
+Arayüz:
+
+- [ ] İzometrik iki boyutlu çizim: birimler oda, ajanlar masalarında
+- [ ] Birim kartı: birim adı, ajan sayısı, görev sayıları (veri geldikçe; hangi birimlerin ve hangi sayıların gösterileceği Karar: U19)
+- [ ] Ajan durumu: çalışıyor, onay bekliyor, boşta, hata (çalıştırıcı ve Onay Masası geldikçe bağlanır)
+- [ ] Ortada Kurumsal Hafıza: not sayısı (örnek görselden; gösterilip gösterilmeyeceği Karar: U19; Not sistemi geldikçe)
+- [ ] Yakınlaştırma, kaydırma ve sığdırma
+- [ ] Ajana tıklayınca ajan sayfası
+- [ ] Klavye ile erişim ve azaltılmış hareket tercihi
+- [ ] Karanlık tema
+
+Testler:
+
+- [ ] Şirket ayrımı: öteki şirketin ajanı ve sayıları görünmez
+- [ ] Yerleşim hesabı
+
 ### 0.4 Görev kaydı ve pano (M2)
+
+Arayüz 0.3a'daki kabukta, Paperclip'in kalıplarıyla kurulur (5 Ekim, karar 7; `docs/paperclip-incelemesi.md` 13.3). Kapsam: 5 Ekim, karar 11; kurucu onayı bekliyor.
 
 Sunucu:
 
@@ -201,14 +289,20 @@ Sunucu:
 - [ ] Atama: insana ya da ajana; atama değişikliği kuralı (Karar: M17)
 - [ ] Öncelik, son tarih, proje ve birim alanları
 - [ ] Her değişikliğin `audit_log`'a yazılması
+- [ ] Arka plandaki yenileme isteğinin oturumun hareketsizlik süresini uzatmaması (inceleme 13.4, öneri; kural 3)
 
 Arayüz:
 
 - [ ] Talep formu: metin, ek, şirket, son tarih; birimi kendin seçme seçeneği (Karar: X2-4)
+- [ ] Talep formunda yarım kalan metnin saklanması (Karar: U13)
 - [ ] Liste görünümü; şirket, birim, ajan ve durum filtresi
+- [ ] Liste satırında durum simgesi ve sabit genişlikte zaman sütunu
+- [ ] Listede gruplama
+- [ ] Satır içinde durum ve atanan değiştirme (izin verilen geçişler Karar: M16; seçilebilecek ajanlar Karar: M29)
+- [ ] Tarayıcıda saklanan görünüm (Karar: U13)
+- [ ] Listelerin belirli aralıklarla yenilenmesi (5 Ekim, karar 11; kurucu onayı bekliyor)
 - [ ] Pano görünümü: duruma göre sütunlar, sürükleyip bırakma
-- [ ] Telefonda pano ve liste
-- [ ] Görev ayrıntısının temel hali: talep, durum, atanan, yorumlar
+- [ ] Görev ayrıntısının temel hali, sohbet biçimli akış olarak: talep, durum, atanan, yorumlar, yazma kutusu, özellik paneli (5 Ekim, karar 11; kurucu onayı bekliyor)
 - [ ] Boş ekran metinleri
 
 Testler:
@@ -216,8 +310,11 @@ Testler:
 - [ ] Durum geçiş kuralları
 - [ ] Görünürlük: proje kapsamı ve dış kişi
 - [ ] Filtreler
+- [ ] Arka plandaki yenileme isteği oturumun hareketsizlik süresini uzatmaz
 
 ### 0.5 Onay Masası (M3)
+
+Arayüz Paperclip'in kalıplarıyla kurulur (5 Ekim, karar 7; `docs/paperclip-incelemesi.md` 13.3). Kapsam: 5 Ekim, karar 11; kurucu onayı bekliyor.
 
 Sunucu:
 
@@ -235,11 +332,18 @@ Sunucu:
 Arayüz:
 
 - [ ] Kuyruk: önceliğe göre sıralı
+- [ ] Sabit liste sırası: kullanıcı listeyle çalışırken satırlar yer değiştirmez
 - [ ] Onay kartı: özet, risk notu, değişiklik farkı, kaynaklar
+- [ ] Onay kartında kodla hesaplanan risk işaretlerinin ve farkın ajanın metninden ayrı gösterilmesi (Karar: M21)
 - [ ] Fark görünümü: metin ve alan bazında
 - [ ] Onayla, Düzeltme iste, Reddet düğmeleri
-- [ ] Telefonda tek dokunuşla onay; onaylanan işin kuyruktan kayarak çıkması
+- [ ] Satır içinden onay; ret ve düzeltmede gerekçe penceresi (Karar: U8, M21)
+- [ ] Onaylanan işin kuyruktan kayarak çıkması
+- [ ] Aynı onay kartının Görev ayrıntısında yazma kutusunun üstünde durması (5 Ekim, karar 10; kurucu onayı bekliyor)
+- [ ] Karardan sonraki adım önerisi
+- [ ] Bekleyen onayın arşivlenememesi ve ertelenememesi; onayın sunucu yanıt vermeden ekrana yansıtılmaması (inceleme 13.4, uygulama önerisi)
 - [ ] Boş kuyruk ekranı
+- [ ] Kenar çubuğundaki Onaylar satırında bekleyen onay sayısı (PLAN, Ekranlar)
 - [ ] (Rapor) Toplu onay turu görünümü: paketlenen işleri sırayla, tek akışta onaylama
 - [ ] (Rapor) Onaylayanın kaydının her işte görünmesi: "ajan yaptı" denip sahipsiz kalmaması için
 
@@ -333,7 +437,9 @@ Araç döngüsü:
 - [ ] Araç sınıfları: okuma, iç yazma, dışa etkili
 - [ ] Onay koşullarının makinenin okuyacağı biçimde yazılması (Karar: M5)
 - [ ] Koşula takılan çağrının onay kaydına çevrilmesi ve onaydan sonra uygulanması
+- [ ] Onay beklenirken çalışmanın durumu ve süre sınırı (Karar: M5, U7)
 - [ ] Araç çağrısı sayısı ve süre sınırı; aşımda işin insana düşmesi
+- [ ] Çalışma özeti satırı: yalnızca yapılan işi yazar (inceleme 13.3; 5 Ekim, karar 5)
 - [ ] Modelin reddetmesi durumunda işin insana düşmesi (Karar: X2-5)
 - [ ] (Rapor) Araçların dış sistem başına bağlayıcı modüllerinde toplanması; ajana yalnızca kartındaki bağlayıcıların açılması (Karar: R14)
 - [ ] (Rapor) Dış içerik okuyan ajanların yazma yetkisinin dar tutulduğunun kart kart denetimi
@@ -354,6 +460,7 @@ Yetki kapıları:
 - [ ] Y1 ajanın paylaşılan kayda yazmasının onaya düşmesi
 - [ ] Görev açmanın öneri olarak gelmesi
 - [ ] "İnsana sor" yolu: soru ve eskalasyonun sorumluya ya da talep sahibine gitmesi
+- [ ] "İnsana sor" için soru kartı; seçenekli soru kaydı (Karar: X1-6, U9)
 - [ ] Yanıt gelince ajanın yeniden başlaması (Karar: X1-6)
 - [ ] Y2 ve Y3 kapıları (Karar: M19)
 - [ ] Ajana bırakılmayan işler kuralı: katalogda işaret ve kodla denetim (kural 11; Karar: R9)
@@ -372,6 +479,7 @@ Dayanıklılık:
 - [ ] Yeniden deneme ve aynı yazmanın iki kez yapılmaması (Karar: X1-5)
 - [ ] Yarıda kalan çalışmanın işaretlenmesi
 - [ ] Durdurma düğmesi: yeni iş almama ve süren çalışmanın kesilmesi
+- [ ] Ajanı durdurma, çalışmayı kesme ve görevi iptal etme ayrımı (Karar: X1-5, U15)
 - [ ] Çalışmalar arası sayaçlar: geri dönüş, hatırlatma, yanıtsız soru (Karar: M33)
 - [ ] Bütçe uyarısı (Karar: X1-4)
 
@@ -403,6 +511,8 @@ Testler:
 - [ ] Ajanlar ekranı: birimlere göre ajanlar, durum, yetki seviyesi
 - [ ] Şirket başına durdurma düğmesi ve "her yerde durdur"
 - [ ] Görev kartı ekranı: kart ve skill salt okunur, sürüm geçmişi
+- [ ] Ajan sayfasında ikinci kenar çubuğu; kart salt okunur (inceleme 13.3; 5 Ekim, karar 5)
+- [ ] "Bu ajan neye erişebiliyor ve neden" görünümü (1.8'deki izin görünümüyle birlikte; inceleme 13.3; 5 Ekim, karar 5)
 - [ ] Test setini çalıştırma ve sonuçların gösterilmesi
 - [ ] Kart ya da skill değişen PR'da test setinin otomatik çalışması (Karar: M40, M43)
 
@@ -426,12 +536,13 @@ Arayüz:
 
 - [ ] Klasör ağacı
 - [ ] Markdown editörü ve önizleme
+- [ ] Markdown gösterimi (`[[Not adı]]` desteğiyle) ve özellik paneli (inceleme 13.3; 5 Ekim, karar 5)
+- [ ] Ajandan, araçtan ve dış kaynaktan gelen içerikte resimlerin yüklenmemesi, yalnızca bağlantı olarak gösterilmesi (Karar: U20)
 - [ ] `[[` yazınca not önerisi
 - [ ] Geri bağlantılar paneli
 - [ ] Etiketler ve arama
 - [ ] Kaynak gösterme: notun hangi belgeden geldiği
 - [ ] HAF-2'ye soru kutusu: proje sayfasında o projede, genel ekranda proje seçerek
-- [ ] Telefonda okuma ve arama
 
 Testler:
 
@@ -469,6 +580,8 @@ Testler:
 ### 1.6 Görev ayrıntısı ekranının tam hali
 
 - [ ] Ajanın adımları ve araç çağrıları
+- [ ] Sohbet biçimli akış: çalışma özeti satırı ve açılan adımlar (5 Ekim, karar 11; kurucu onayı bekliyor)
+- [ ] Soru ve onay kartlarının yazma kutusunun üstünde durması (5 Ekim, karar 10; kurucu onayı bekliyor; soru kartı Karar: U9, X1-6)
 - [ ] Çıktılar ve bağlı onaylar
 - [ ] Çalışmanın maliyeti ve süresi
 - [ ] İşi ajandan devralma düğmesi
@@ -557,6 +670,7 @@ Rapora göre Ofis Yönetimi ve Denetim birimi (kalite, maliyet, iyileştirme) pi
 - [ ] (Rapor) Yükseltme önerisinin kurucuya gelmesi; karar kurucuda
 - [ ] (Rapor) Ajan izinlerinin gözden geçirilmesi için görünüm: hangi ajan hangi araca ve hangi klasöre erişiyor
 - [ ] (Rapor) Ajan bazında maliyet ve bütçe uyarısı görünümü
+- [ ] Bütçe görünümünde uyarı ile durdurmanın ayrı gösterilmesi (inceleme 13.3; Karar: X1-4)
 - [ ] (Senden, Rapor) Düzenli kalite örneklemesi: her hafta her ajandan birkaç işin elle kontrolü
 - [ ] (Senden, Rapor) Ret ve düzeltme nedenlerinden görev kartı düzeltmeleri
 
@@ -638,7 +752,8 @@ Rapora göre Ofis Yönetimi ve Denetim birimi (kalite, maliyet, iyileştirme) pi
 ### 2.6 Bildirimler (M9)
 
 - [ ] Panel içi bildirimler
-- [ ] Tarayıcı ve telefon bildirimi: yalnızca bildirim işleyen küçük service worker
+- [ ] Tarayıcı bildirimi: yalnızca bildirim işleyen küçük service worker (telefon bildirimi 5 Ekim karar 8 sonrası Karar: U17)
+- [ ] Seyrek bildirim kuralı: kullanıcının kendi işi ve ekranda açık olan kayıt için bildirim çıkmaz (inceleme 13.3; 5 Ekim, karar 5)
 - [ ] E-posta bildirimi: gönderim servisi ve alan adı kayıtları
 - [ ] Bildirim içeriği: sabit şablon ve panel bağlantısı (Karar: M53)
 - [ ] Günlük onay özeti
@@ -649,8 +764,9 @@ Rapora göre Ofis Yönetimi ve Denetim birimi (kalite, maliyet, iyileştirme) pi
 
 ### 2.7 Ekranlar ve akışlar
 
-- [ ] Bugün ekranı: bekleyen onaylar, bugünkü görevler, ajanların son işleri, uyarılar
-- [ ] İz kaydı ekranı ve filtreleri
+- [ ] Bugün ekranı: "bana düşenler" listesi (bekleyen onaylar, yanıt bekleyen sorular, görev önerileri, sınıra takılan ya da başarısız çalışmalar, bildirimler), bugünkü görevler, ajanların son işleri, uyarılar (5 Ekim, karar 10; kurucu onayı bekliyor)
+- [ ] Kenar çubuğundaki Bugün satırında bekleyenlerin sayısı (PLAN, Ekranlar; "bana düşenler" listesi 5 Ekim, karar 10; kurucu onayı bekliyor)
+- [ ] İz kaydı ekranı ve filtreleri; cümle biçiminde satır, filtreler adres çubuğunda (inceleme 13.3; 5 Ekim, karar 5)
 - [ ] "Düzeltme istendi" sonrası işin ajana geri dönmesi (Karar: M23)
 - [ ] Onaylanan işin dışarı gönderildiğinin işaretlenmesi (Karar: M22)
 - [ ] Taslak düğmelerinin onaya göre açılması (Karar: M1)
@@ -659,7 +775,6 @@ Rapora göre Ofis Yönetimi ve Denetim birimi (kalite, maliyet, iyileştirme) pi
 
 - [ ] İki şirketin verisi birbirine görünmüyor; testle doğrulandı
 - [ ] API ve worker kısıtlı rolle bağlanıyor
-- [ ] Onay telefondan tek dokunuşla veriliyor
 - [ ] Dışarı giden her iş onaydan geçiyor
 - [ ] Her ajan çalışmasının kaydı ve maliyeti panelde görünüyor
 - [ ] Her ajanın durdurma düğmesi çalışıyor

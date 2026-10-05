@@ -7,7 +7,7 @@ Rapor neyin ve neden yapılacağını, PLAN ve bu dosya nasıl yapılacağını 
 ## Yığın
 
 - TypeScript (strict), pnpm çalışma alanları
-- `apps/web`: React + Vite, TanStack Router, TanStack Query, shadcn/ui (Radix) ve Tailwind, formlarda react-hook-form ve zod. Telefona uyumlu (PWA).
+- `apps/web`: React + Vite, TanStack Router, TanStack Query, shadcn/ui (Radix) ve Tailwind, formlarda react-hook-form ve zod. Panel yalnızca dizüstü bilgisayar ekranı için tasarlanır; telefon düzeni yoktur (5 Ekim, karar 8).
 - `apps/api`: Node.js + Fastify. Tarayıcının konuştuğu tek sunucu; giriş, yetki ve bütün veri istekleri buradan geçer.
 - `apps/worker`: ajan çalıştırıcı. İş kuyruğunu tüketir, Claude API'yi araçlarla çalıştırır.
 - `packages/shared`: ortak tipler ve zod şemaları. `packages/db`: veritabanı erişimi.
@@ -82,17 +82,29 @@ Rapor neyin ve neden yapılacağını, PLAN ve bu dosya nasıl yapılacağını 
 
 ## Arayüz ve tasarım dili
 
-- Ekran listesi `docs/PLAN.md` içinde. Günlük iş listeler, pano ve Onay Masası üzerinden yürür; telefonda alt menü: Bugün, Onaylar, Görevler, Notlar, Ofis.
+- Ekran listesi `docs/PLAN.md` içinde. Günlük iş listeler, pano ve Onay Masası üzerinden yürür. Kabuk Paperclip'in arayüz yapısıyla kurulur (5 Ekim, karar 5): solda kenar çubuğu (en üstte şirket menüsü, altında menü), üstte bulunulan yeri gösteren üst çubuk, ayrıntı sayfalarında özellik paneli. Telefon alt menüsü yoktur (5 Ekim, karar 8).
 - shadcn/ui yalnızca davranış ve erişilebilirlik için kullanılır. Varsayılan teması kullanılmaz, aşağıdaki değişkenlerle değiştirilir.
-- Pilottaki arayüz geçicidir (2 Ekim kararı): ileride baştan ele alınacak; o zamana kadar aşağıdaki kurallar geçerli.
-- Renk değişkenleri: zemin (`--canvas`) `#F6F7F9`, yüzey (`--surface`) `#FFFFFF`, metin (`--ink`) `#18202E`, ikincil metin (`--ink-secondary`) `#5B6475`, çizgi (`--line`) `#DDE1E8`, form kutusu kenarlığı (`--field-border`) `#858E9E`, vurgu (`--brand`) `#127A77` (önceki `#13807D` zemin üzerinde okunabilirlik eşiğinin altındaydı), hata (`--error`) `#C2412D`, onay bekliyor (`--awaiting-approval`) `#9A6412`. Karanlık tema aynı adlarla tanımlanır; değerleri `apps/web/src/index.css` içinde.
+- Pilottaki arayüz geçicidir (2 Ekim kararı): ileride baştan ele alınacak; o zamana kadar aşağıdaki kurallar geçerli. Ekranlar Paperclip'in arayüz yapısı ve kullanım kalıplarıyla kurulur (5 Ekim, karar 5); Görevler, Onay Masası, Görev ayrıntısı ve Bugün ekranları ilk kez bu kalıplarla yapılır (5 Ekim, karar 7). 2 Ekim karar 5'teki "ileride baştan ele alma" işi bu ilk yapımla başlamış sayılır (5 Ekim, karar 7'den türetilmiş yorum; kurucu onayı bekliyor).
+- Görsel yön karmadır (5 Ekim, karar 6): içerik alanı beyaz, kenar çubuğu açık gri, metin ve çizgiler nötr gri tonlarda, durum renkleri Paperclip'ten; vurgu (`--brand`) `#127A77` değişmez, birincil düğme bu renktedir. Esas alınan, görsel yön taslağındaki c seçeneğidir (`docs/paperclip-incelemesi/gorsel-yon-taslagi.html`). Taslaktaki başlangıç değerleri: kenar çubuğu (`--canvas`) `#F2F2F2`, içerik alanı (`--surface`) `#FFFFFF`, metin (`--ink`) `#0A0A0A`, ikincil metin (`--ink-secondary`) `#737373`, çizgi (`--line`) `#E5E5E5`. Bunlar son değerler değildir: WCAG AA eşiğini tutmayan tonlar (gri kenar çubuğu üzerindeki ikincil metin, metin olarak kullanılan bazı durum renkleri, form kutusu kenarlığı `--field-border`) kabuk işinde koyulaştırılır (5 Ekim, karar 12); karanlık tema aynı yönle yeniden tanımlanır (5 Ekim, karar 6'dan türetilmiş yorum; kurucu onayı bekliyor). Son değerler ve karanlık tema kabuk işinde belirlenir ve `apps/web/src/index.css` içinde durur; o işe kadar dosya önceki değerleri taşır.
+- Durum dili tektir: her durumun bir simgesi ve bir rengi vardır, her ekranda aynısı kullanılır (5 Ekim, karar 11; kurucu onayı bekliyor). Taslaktaki başlangıç renkleri: Açık `#CC7A00`, Sürüyor `#155DFC`, Onay bekliyor (`--awaiting-approval`) `#7C3AED`, Yanıt bekliyor `#DC2626`, Tamamlandı `#16A34A`, İptal `#52585D`, hata (`--error`) `#DC2626`.
 - Yazı: IBM Plex Sans, tek aile. Tablolarda rakamlar eşit genişlikte; başlıklar cümle düzeninde.
 - Ayrım gölgeyle değil ince çizgi ve boşlukla yapılır. Köşe yuvarlaklığı küçük ve öğenin türüne göre tutarlı.
 - Hareket yalnızca kullanıcının yaptığı işin sonucunu gösterir (onaylanan iş kuyruktan kayarak çıkar). Süs amaçlı giriş animasyonu yok; azaltılmış hareket tercihine uyulur.
 - Metinler kısa ve somut Türkçe. Düğme ne yapıyorsa onu söyler (Onayla, Düzeltme iste); hata mesajı ne olduğunu ve nasıl düzeleceğini söyler; boş ekran ilk adımı gösterir.
 - Kaçınılacaklar: mor ve mavi geçişli arka planlar, cam efekti, aynı gölgeli özdeş kart ızgaraları, büyük harfli üst etiketler, süs ikonları ve emojiler, düğme metinlerine eklenen oklar, ortadan noktalı meta dizgileri.
-- Ofis görünümü (modül M15) izometrik iki boyutlu çizilir ve arayüzün tek cesur öğesidir; geri kalan her şey sade kalır.
-- Her ekran telefonda çalışır, klavye odağı görünür, renk kontrastı en az WCAG AA.
+- Ofis görünümü (modül M15) izometrik iki boyutlu çizilir ve arayüzün tek cesur öğesidir; geri kalan her şey sade kalır. Birimleri ve ajanları gösterir (5 Ekim, karar 9). Kabuktan hemen sonra, Görevler ekranından önce yapılır ve kenar çubuğunda "Ofis" grubunda durur (5 Ekim, karar 12 ve 14). Kurucunun verdiği örnek görselden (`docs/kararlar/ekler/2026-10-05-ofis-gorunumu-ornegi.webp`) yola çıkar ve bu tasarım diline uyarlanır.
+- Panel 1280 piksel ve üstü genişlik için tasarlanır (5 Ekim, karar 8 ve 12). 1024 piksele kadar kullanılabilir kalır; daha dar pencere için ayrı düzen yapılmaz (karar 8'den türetilmiş yorum; kurucu onayı bekliyor). Klavye odağı görünür, renk kontrastı en az WCAG AA.
+
+## Paperclip'ten taşınan kod
+
+Paperclip'e geçilmez, Paperclip çatallanmaz; yalnızca bağımsız arayüz parçalarının kodu MIT lisans bildirimi korunarak taşınır (5 Ekim, karar 5). Kurallar `docs/paperclip-incelemesi.md` içinde: kod alma 13.7, alınmayacaklar 13.8.
+
+- Depoya `THIRD_PARTY_NOTICES.md` eklenir; içine Paperclip'in `LICENSE` metni olduğu gibi konur, telif satırı yeniden yazılmaz.
+- Kod `github.com/paperclipai/paperclip` deposunun `dd868ed` commit'inden alınır. Taşınan her dosya, kaynak yolunu ve commit kimliğini yazan bir açıklamayla başlar.
+- Alınmaz: Paperclip adı ve logosu, ajan karakter çizimleri, üçüncü taraf marka logoları, eklenti yuvaları, bulut sürümüne ve özellik bayraklarına özgü kod.
+- Taşınan dosyalarda kod ve açıklamalar İngilizce kalır; arayüz metinleri Türkçe yeniden yazılır (3 Ekim, karar 4).
+- Taşınan kod o andan sonra bu projenin kodudur: testleri yazılır; tip kontrolünden, ESLint ve Prettier denetimlerinden geçer.
+- Alınmaz (inceleme 13.8'in ilk üç maddesi; Agent Office'in kurallarından ve mimarisinden doğar): sunucu, veri katmanı ve giriş; ajan çalıştırma tarafı; özerklik özellikleri ("her zaman izin ver", ajanların soru ve onay kartlarını yanıtlaması gibi). Sandbox sağlayıcılarının ayrıca incelenmesi `docs/SONRA.md` içinde durur.
 
 ## Kod ve adlandırma
 

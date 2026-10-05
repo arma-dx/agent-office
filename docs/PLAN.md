@@ -1,6 +1,6 @@
 # Agent Office Geliştirme Planı
 
-Kaynak: `docs/agent-office-tasarım-raporu.md` (Agentik Ofis Tasarım Raporu, 29 Eylül 2026). Raporun Notion'daki "Geliştirme Planı" sekmesinin karşılığı bu dosya, "Görev Kartları" sekmesinin karşılığı `agents/` klasörüdür; rapordaki diyagramlar md dosyasına aktarılmadı. Rapor neyin ve neden yapılacağını, bu plan nasıl ve ne zaman yapılacağını anlatır. Kurucu kararları `docs/kararlar/` altında; 1 Ekim kararları raporu pilot için daraltır ve bu daraltmalar aşağıda "pilotta" diye belirtilir. Rapor değişirse bu dosya da güncellenir.
+Kaynak: `docs/agent-office-tasarım-raporu.md` (Agentik Ofis Tasarım Raporu, 29 Eylül 2026). Raporun Notion'daki "Geliştirme Planı" sekmesinin karşılığı bu dosya, "Görev Kartları" sekmesinin karşılığı `agents/` klasörüdür; rapordaki diyagramlar md dosyasına aktarılmadı. Rapor neyin ve neden yapılacağını, bu plan nasıl ve ne zaman yapılacağını anlatır. Kurucu kararları `docs/kararlar/` altında; 1 Ekim kararları raporu pilot için daraltır ve bu daraltmalar aşağıda "pilotta" diye belirtilir; 5 Ekim karar 8 de raporun "telefon dahil her cihazdan" onay önlemini pilot için daraltır (web paneli telefona uyumlu yapılmaz). Rapor değişirse bu dosya da güncellenir.
 
 ## Hedef
 
@@ -19,7 +19,7 @@ Kapsam dışı: dış müşterilere kurulum (Ürünleşme), WhatsApp ve Uyumsoft
 | Konu | Karar |
 | --- | --- |
 | Dil ve ön yüz | TypeScript; ön yüz React + Vite, TanStack Router ve TanStack Query, shadcn/ui (Radix) ve Tailwind, react-hook-form ve zod; arka yüz Node.js + Fastify |
-| Arayüz | Telefona uyumlu web uygulaması (PWA); onaylar telefondan verilir |
+| Arayüz | Yalnızca dizüstü bilgisayar ekranı için tasarlanan web uygulaması; telefon düzeni yok, telefon için ileride ayrı bir mobil uygulama yapılacak (5 Ekim, karar 8). Arayüzün yapısı ve kullanım kalıpları Paperclip'ten uyarlanır (5 Ekim, karar 5; `docs/paperclip-incelemesi.md`) |
 | Barındırma | AWS'de tek sunucu, Docker Compose: Caddy (HTTPS ve yönlendirme), panel dosyaları, API ve çalıştırıcı; iş kuyruğu PostgreSQL üzerinde (pg-boss); Cloudflare önde DNS ve koruma |
 | Alan adları | office.armadx.com (panel ve /api, iki şirket için tek giriş), office-test.armadx.com (test), hooks.armadx.com (dış bildirimler) |
 | Veritabanı | Supabase PostgreSQL; veritabanına yalnızca sunucu tarafı (API ve worker) bağlanır, tarayıcı hiçbir zaman; API ve worker `BYPASSRLS` yetkisi olmayan kısıtlı bir rolle bağlanır, her API isteği tek bir transaction'dır ve `SET LOCAL` ile `app.company_id`, `app.user_id`, `app.project_id` ve girişte doğrulanmış `app.email` bağlamını kurar; ajan çalışmasında bağlama `app.agent_code` eklenir, her veritabanı adımı kendi kısa transaction'ında yürür ve bağlamı her adımda yeniden kurar; RLS ile şirket ve proje ayrımı; dosyalar Supabase depolamasında |
@@ -57,7 +57,7 @@ Pilotta panel internete açık; ileride yalnızca ofis ağından, dışarıdan V
 | company_agents | Şirkete özel ajan satırı: `company_id`, `agent_code`, durum (durdurma düğmesi), ayarlar (Drive klasörleri, öncelikli göndericiler, Figma çalışma dosyası, bütçe) |
 | tasks | Talep, şirket, proje, atanan (insan ya da ajan), durum, öncelik, son tarih, yorumlar |
 | runs | Ajan çalışması: girdi, çıktı, araç çağrıları, model, kart sürümü, token, maliyet, süre, iç iş ya da proje etiketi |
-| approvals | Onay bekleyen çıktı, özet, risk notu, fark, durum, gerekçe, onaylayan, zaman |
+| approvals | Onay bekleyen çıktı, özet, risk notu, fark, durum, gerekçe, onaylayan, zaman; para içerip içermediği ve onaydan sonra dışarı gönderilip gönderilmeyeceği (5 Ekim, karar 2) |
 | audit_log | Değiştirilemeyen olay kaydı: kim, ne yaptı, hangi veriye baktı, ne zaman |
 | notes, note_versions | Markdown not: klasör yolu, başlık, YAML özellikler, gövde, sürüm, arama dizini, taslak durumu (Y1 ajanın notu onaydan sonra paylaşılır); kararlar ve tutanaklar da not türü |
 | note_links | Notlardaki `[[...]]` bağlantıları; geri bağlantılar ve grafik görünümü buradan |
@@ -99,15 +99,25 @@ Rapordaki dört seviye. Ajanların çoğu Y1 ile başlar; "Y1, hedef Y2" yazan a
 
 ## Ekranlar
 
-Günlük iş listeler, pano ve Onay Masası üzerinden yürür. Üst çubukta şirket seçici var: Arma DX, Pillika; kurucu için ayrıca holding görünümü (iki şirketin API'de salt okunur birleştirmesi) ve Kurucu özel alanı. Telefonda alt menü: Bugün, Onaylar, Görevler, Notlar, Ofis. Tasarım dili CLAUDE.md içinde.
+Günlük iş listeler, pano ve Onay Masası üzerinden yürür. Aşağıdaki ekran listesi kalır; ekranlar Paperclip'in arayüz yapısıyla (kenar çubuğu, üst çubuk, özellik paneli) ve kullanım kalıplarıyla kurulur (5 Ekim, karar 5). Yerleşim `docs/paperclip-incelemesi.md` 13.2'den gelir:
+
+- Solda kenar çubuğu durur. Başında şirket menüsü var: Arma DX, Pillika; kurucu için ayrıca holding görünümü (iki şirketin API'de salt okunur birleştirmesi) ve Kurucu özel alanı.
+- Üst satırlar: Yeni talep, Bugün, Onaylar. Bugün ve Onaylar satırında bekleyenlerin sayısı görünür.
+- "İş" grubu: Görevler, Notlar, Müşteriler.
+- "Ofis" grubu: Ofis görünümü, Ajanlar, İz kaydı, Ölçümler (Ofis görünümünün yeri: 5 Ekim, karar 12).
+- Hesap menüsü: Ayarlar, tema, çıkış.
+- Üst çubuk bulunulan yeri gösterir.
+- Ayrıntı sayfalarında (Görev ayrıntısı, not, Görev kartı) özellik paneli vardır.
+
+Bir satır, ekranı yapıldığında menüye eklenir. Panel telefona uyumlu yapılmaz, telefon düzeni yoktur; telefon alt menüsü kabuk işinde kaldırılır (5 Ekim, karar 8). Tasarım dili CLAUDE.md içinde.
 
 | Ekran | Ne gösterir | Sprint |
 | --- | --- | --- |
 | Giriş | Google ile giriş | 0 |
-| Bugün | Bekleyen onaylar, bugünkü görevler, ajanların son işleri, uyarılar | 2 |
-| Onay Masası | Önceliğe göre kuyruk; özet, risk notu, değişiklik farkı; onay, düzeltme, ret; önemli onaylarda yeniden doğrulama; günde bir ya da iki toplu onay turu (paketleme KOR-3 ile Sprint 1, özet bildirimi M9 ile Sprint 2) | 0 |
+| Bugün | İlk bölüm "bana düşenler" listesi: bekleyen onaylar, yanıt bekleyen sorular, görev önerileri, sınıra takılan ya da başarısız çalışmalar, bildirimler (5 Ekim, karar 10; kurucu onayı bekliyor). Ardından bugünkü görevler, ajanların son işleri, uyarılar | 2 |
+| Onay Masası | Önceliğe göre kuyruk; özet, risk notu, değişiklik farkı; onay, düzeltme, ret; önemli onaylarda yeniden doğrulama; günde bir ya da iki toplu onay turu (paketleme KOR-3 ile Sprint 1, özet bildirimi M9 ile Sprint 2). Onay kaydı tektir: aynı onay kartı Görev ayrıntısında ve Bugün'de de görünür, karar hangi ekrandan verilirse verilsin tek bir uç noktadan geçer (5 Ekim, karar 10; kurucu onayı bekliyor) | 0 |
 | Görevler | Pano ve liste; şirket, birim, ajan ve durum filtresi | 0 |
-| Görev ayrıntısı | Talep, ajanın adımları ve araç çağrıları, çıktılar, yorumlar, maliyet; işi ajandan devralma; KOR-1'in yönlendirmesini düzeltme | 1 |
+| Görev ayrıntısı | Sohbet biçimli akış: talep, yorumlar, ajanın çalışma özeti ve açılan adımları (araç çağrıları), çıktılar, soru ve onay kartları (5 Ekim, karar 11; kurucu onayı bekliyor). Özellik paneli: durum, atanan, birim, maliyet. İşi ajandan devralma; KOR-1'in yönlendirmesini düzeltme | 1 |
 | Ajanlar | Birimlere göre ajanlar, durumları, yetki seviyeleri, şirket başına durdurma düğmesi ve "her yerde durdur" | 1 |
 | Görev kartı | Kart ve skill'ler salt okunur (değişiklik depoda PR ile), sürüm geçmişi, test sonuçları | 1 |
 | Notlar | Klasör ağacı, editör, geri bağlantılar, etiketler, arama; HAF-2'ye soru (proje sayfasından o projede; genel ekranda proje seçilerek) | 1 |
@@ -116,7 +126,7 @@ Günlük iş listeler, pano ve Onay Masası üzerinden yürür. Üst çubukta ş
 | Ayarlar | Kullanıcılar ve roller, şirketler, entegrasyonlar (Drive bağlantısı ve klasör izin listesi Sprint 1, Gmail ve Takvim Sprint 3) | 0, 1 ve 3 |
 | Ölçümler | Ofis düzeyindeki ölçütler (aşağıdaki Ölçütler bölümü) | 4 |
 | Not grafiği | Notlar arası bağlantıların grafiği | 4 |
-| Ofis görünümü | İzometrik ofis haritası: birimler oda, ajanlar masalarında; çalışıyor, onay bekliyor, boşta ve hata durumları | Kasım |
+| Ofis görünümü | Birimleri ve ajanları gösteren izometrik ofis haritası: birimler oda, ajanlar masalarında; çalışıyor, onay bekliyor, boşta ve hata durumları | 0: kabuktan hemen sonra, Görevler'den önce (5 Ekim, karar 14; KALAN-ISLER 0.3b) |
 
 ## Modüller
 
@@ -124,7 +134,7 @@ Günlük iş listeler, pano ve Onay Masası üzerinden yürür. Üst çubukta ş
 | --- | --- | --- | --- |
 | M1 | Kimlik ve kiracı | Google ile davetli giriş, şirket seçimi, roller, RLS ve proje kapsamı, Kurucu özel alanı; iki adımlı doğrulama (önce `amr` denemesi), passkey kaydı | 0 |
 | M2 | Görev kaydı | Talep, atama, durum, son tarih; pano ve liste | 0 |
-| M3 | Onay Masası | Kuyruk, özet, fark, onay, ret, düzeltme, gerekçe; telefonda tek dokunuş | 0 |
+| M3 | Onay Masası | Kuyruk, özet, fark, onay, ret, düzeltme, gerekçe | 0 |
 | M4 | İz kaydı ve maliyet | Çalışma ve onay kaydı; token ve maliyet; iç iş ve proje ayrımı | 0 |
 | M5 | Ajan çalıştırıcı | Kart ve skill yükleme, Claude ile araç döngüsü, kuyruk, zamanlayıcı, olay tetikleyici, yeniden deneme, zaman aşımı, durdurma; Y1 kapısı, "insana sor" yolu; `project_context` (proje başına zamanlanmış çalışma) ve proje özetlerinin kodla birleştirilmesi | 1 |
 | M6 | Görev kartı yönetimi | Kart görüntüleme, sürüm geçmişi, test setini çalıştırma; düzenleme depoda PR ile. | 1 |
@@ -136,7 +146,7 @@ Günlük iş listeler, pano ve Onay Masası üzerinden yürür. Üst çubukta ş
 | M12 | Google Workspace bağlantısı | Bağlantı istemcisi, salt okunur kapsamlar, şifreli token; Drive (Sprint 1); Gmail, Takvim, Meet kayıtları (Sprint 3) | 1 ve 3 |
 | M13 | Ölçüm panosu | Ölçütler bölümündeki dokuz ölçüt; iç işler ve projeler ayrı | 4 |
 | M14 | Not sistemi ek özellikleri | Grafik görünümü, günlük notlar, şablonlar, Obsidian uyumlu dışa aktarma, MCP sunucusu | 4 |
-| M15 | Ofis görünümü | İzometrik ofis haritası: birimler oda, ajanlar masalarında, durumlar renk ve hareketle | Kasım |
+| M15 | Ofis görünümü | İzometrik ofis haritası: birimler oda, ajanlar masalarında, durumlar renk ve hareketle | 0: kabuktan hemen sonra, Görevler'den önce (5 Ekim, karar 14; KALAN-ISLER 0.3b) |
 
 ## Pilot ajanları
 
@@ -178,8 +188,10 @@ Skill içeriği kurucunun verdiği gerçek dokümanlardan yazılır; bilgi uydur
 - [ ] Monorepo iskeleti, test ve canlı ortam, otomatik test ve yayın hattı
 - [ ] Veri modeli ve RLS; iki şirketin verisinin birbirine görünmediğini doğrulayan test; tarayıcı veritabanına bağlanmaz
 - [ ] Google ile giriş, roller ve şirket seçimi (M1)
+- [ ] Arayüz kabuğunun Paperclip yapısıyla yeniden kurulması (5 Ekim, karar 5-7; KALAN-ISLER 0.3a)
+- [ ] Ofis görünümü (M15): kabuktan hemen sonra, Görevler'den önce (5 Ekim, karar 9 ve 14; KALAN-ISLER 0.3b); önce Kasım işiydi
 - [ ] Görev kaydı ve pano (M2)
-- [ ] Onay Masası; telefon görünümü (M3)
+- [ ] Onay Masası (M3)
 - [ ] Claude API bağlantısı, çalışma kaydı, iz kaydı ve maliyet ölçümü (M4)
 - [ ] Pilot işlerin bugünkü sürelerini ölç: teklif, proje raporu, sosyal medya gönderisi
 
@@ -222,7 +234,6 @@ Bu sprintteki bağlantılar kişisel veri içerir; avukatın görüşü gelmeden
 - [ ] Pilot hedefte kapısını değerlendir
 - [ ] Her ajan için yetki yükseltme ya da düzeltme kararı (Yetki seviyeleri bölümündeki kurala göre)
 - [ ] Aşama 2'nin sırasını belirle
-- [ ] Ofis görünümü (M15)
 
 ## Kapılar
 
@@ -257,7 +268,6 @@ Kazanılan zamanın ölçülebilmesi için pilottan önce seçilen işlerin bug�
 
 - [ ] İki şirketin verisi birbirine görünmüyor; testle doğrulandı
 - [ ] API ve worker `BYPASSRLS` yetkisi olmayan rolle bağlanıyor; yetkili rol istek ve çalışma yolunda kullanılmıyor
-- [ ] Onay telefondan tek dokunuşla veriliyor
 - [ ] Dışarı giden her iş onaydan geçiyor; onaysız çıkış yolu yok
 - [ ] Her ajan çalışmasının kaydı ve maliyeti panelde görünüyor
 - [ ] Her ajanın durdurma düğmesi çalışıyor

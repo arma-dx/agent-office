@@ -45,7 +45,7 @@ tools:
     description: Ekip üyesine panel içi bildirim ve şirket içi e-posta; dış adreslere gönderemez; telefon bildirimi hassas bilgi taşımaz
   - name: submit_for_approval
     kind: draft
-    description: Çıktıyı gerekçe, kaynaklar ve değişiklik farkıyla Onay Masası'na koyar
+    description: Çıktıyı gerekçe, kaynaklar ve değişiklik farkıyla Onay Masası'na koyar; işin para içerip içermediğini ve onaydan sonra bir kişi eliyle şirket dışına gönderilip gönderilmeyeceğini belirtmek zorunludur (5 Ekim, karar 2)
   - name: read_approval_queue
     kind: read
     description: Bekleyen onaylar ve ayrıntıları
