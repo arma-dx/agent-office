@@ -164,7 +164,10 @@ export async function loadFixtures(client: pg.Client): Promise<void> {
     insert into office.agent_definitions (code, name, unit_code, company_codes) values
       ('KOR-1', 'Ofis Koordinatörü', 'KOR', '{armadx,pillika}'),
       ('HAF-1', 'Bilgi Düzenleme', 'HAF', '{armadx,pillika}'),
-      ('P-IST-1', 'İstasyon Veri Toplama', 'P-IST', '{pillika}');
+      ('P-IST-1', 'İstasyon Veri Toplama', 'P-IST', '{pillika}'),
+      -- The founder space has an agent of its own, so that a test of what others see of it cannot
+      -- pass on an empty answer.
+      ('KOR-4', 'Yönetici Asistanı', 'KOR', '{founder_space}');
 
     insert into office.card_versions (id, agent_code, git_commit, content, authority_level, model)
     values

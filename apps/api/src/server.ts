@@ -7,6 +7,7 @@ import { REDACTED, REDACT_PATHS, redact, stripQuery } from './log.ts';
 import { registerAuthRoutes } from './routes/auth.ts';
 import { registerInvitationRoutes } from './routes/invitations.ts';
 import { registerMemberRoutes } from './routes/members.ts';
+import { registerOfficeRoutes } from './routes/office.ts';
 import { registerPasskeyRoutes } from './routes/passkeys.ts';
 import { registerSessionRoutes } from './routes/session.ts';
 import { DEFAULT_RATE_LIMITS, registerRateLimit, sameOriginGuard } from './security.ts';
@@ -83,6 +84,7 @@ export function buildServer(opts: BuildServerOptions = {}): FastifyInstance {
       registerSessionRoutes(api, deps);
       registerInvitationRoutes(api, deps);
       registerMemberRoutes(api, deps);
+      registerOfficeRoutes(api, deps);
       registerPasskeyRoutes(api, deps);
       done();
     });

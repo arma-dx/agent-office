@@ -39,6 +39,10 @@ export const noCompanyAccess = (): ApiError =>
 export const founderOnly = (): ApiError =>
   new ApiError(403, 'founder_only', 'Bu işlemi yalnızca şirketin kurucusu yapabilir.');
 
+// Not `forbidden`: that message is about the company selection, and this person is a member.
+export const insidersOnly = (): ApiError =>
+  new ApiError(403, 'insiders_only', 'Bu ekran dış kişilere açık değil.');
+
 interface VerifiedSessionRow {
   session_id: string;
   user_id: string;
@@ -109,12 +113,13 @@ export class RequestRunner {
 
   /**
    * A member of the company named in the x-company-id header (403 otherwise); with founderOnly, its
-   * founder. The context holds the person and the company.
+   * founder; with insidersOnly, its founder or an employee, not an external person. The context
+   * holds the person and the company.
    */
   async withCompany<T>(
     request: FastifyRequest,
     reply: FastifyReply,
-    access: { founderOnly: boolean },
+    access: { founderOnly: boolean; insidersOnly?: boolean },
     handler: (ctx: CompanyContext) => Promise<T>,
   ): Promise<T> {
     return this.#run(request, reply, async (client, session) => {
@@ -134,6 +139,9 @@ export class RequestRunner {
       }
       if (access.founderOnly && role.data !== 'founder') {
         throw founderOnly();
+      }
+      if (access.insidersOnly === true && role.data === 'external') {
+        throw insidersOnly();
       }
       return handler({ client, session, companyId, role: role.data });
     });

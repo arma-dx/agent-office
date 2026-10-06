@@ -10,6 +10,7 @@ export {
   type Context,
   type ContextInput,
 } from './context.ts';
+export { readOffice, type OfficeRow } from './office.ts';
 export type { Queryable } from './queryable.ts';
 
 /**

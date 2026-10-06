@@ -115,6 +115,31 @@ export async function loadFixtures(client: Client): Promise<void> {
       ('${ids.otherCompany}', '${ids.shared}', 'external', false),
       ('${ids.otherCompany}', '${ids.otherFounder}', 'founder', true);
 
+    -- Office view. OFY has no agent; P-IST-9 names a company its unit does not belong to; HAF-1's
+    -- row carries settings and a budget, which the office must never show.
+    insert into office.units (code, name, company_code, pilot_enabled) values
+      ('KOR', 'Koordinasyon Katmanı', null, true),
+      ('HAF', 'Kurumsal Hafıza', null, true),
+      ('OFY', 'Ofis Yönetimi ve Denetim', null, false),
+      ('A-KES', 'Keşif ve Dönüşüm Danışmanlığı', 'armadx', true),
+      ('P-IST', 'İstasyon Verisi ve Şarj Operasyonları', 'pillika', true);
+
+    insert into office.agent_definitions (code, name, unit_code, company_codes) values
+      ('KOR-1', 'Ofis Koordinatörü', 'KOR', '{armadx,pillika}'),
+      ('KOR-2', 'Görev Takip Ajanı', 'KOR', '{armadx,pillika}'),
+      ('KOR-10', 'Onuncu Ajan', 'KOR', '{armadx,pillika}'),
+      ('HAF-1', 'Bilgi Tabanı Ajanı', 'HAF', '{armadx,pillika}'),
+      ('KOR-4', 'Yönetici Asistanı', 'KOR', '{founder_space}'),
+      ('A-KES-2', 'Süreç Analizi Ajanı', 'A-KES', '{armadx}'),
+      ('P-IST-1', 'İstasyon Veri Toplama Ajanı', 'P-IST', '{pillika}'),
+      ('P-IST-9', 'Yanlış Şirketli Ajan', 'P-IST', '{armadx,pillika}');
+
+    insert into office.company_agents (company_id, agent_code, status, settings, monthly_budget)
+    values
+      ('${ids.arma}', 'KOR-1', 'enabled', '{}', null),
+      ('${ids.arma}', 'HAF-1', 'stopped', '{"drive_folders": ["folder-secret"]}', 1234.50),
+      ('${ids.pillika}', 'P-IST-1', 'enabled', '{}', null);
+
     -- The founder's invitation, prepared without the passkey re-verification an invitation needs
     -- (the trigger is off for this insert only).
     select set_config('app.company_id', '${ids.arma}', true),
