@@ -81,7 +81,7 @@ export const APPROVAL_STATUS = {
   rejected: { label: 'Reddedildi', icon: CircleX, tone: 'error' },
 } as const satisfies Record<ApprovalStatus, StatusSpec>;
 
-// The run labels are proposals: no document names them yet and the founder has not answered.
+// The run labels are proposals the founder has not answered yet (docs/SONRA.md, U22).
 export const RUN_STATUS = {
   running: { label: 'Sürüyor', icon: ProgressCircle, tone: 'in-progress' },
   completed: { label: 'Tamamlandı', icon: CircleCheck, tone: 'done' },

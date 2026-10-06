@@ -255,15 +255,17 @@ Kurucu onayı bekleyen uygulama kararları ve türetilmiş yorumlar:
 - Karar 11 (kapsam; inceleme 14.6, seçenek a): çekirdek yapılır: kabuk, durum dili, liste satırı, Onay Masası kalıbı ve onay kartı, akış biçimli Görev ayrıntısı, Bugün'de "bana düşenler" listesi. Listeler belirli aralıklarla yenilenir. Görev numarası, okunmamış işareti, komut paleti, kısayollar ve anlık canlı güncelleme pilot açılışından sonraya kalır (U3, U4, U5, U6). Karar 10 gibi açık onay bekliyor.
 - Karar 6'dan türetilmiş yorum: karanlık tema aynı yönle yeniden tanımlanır. (Eşiği tutmayan tonların koyulaştırılması karar 12 ile onaylandı.)
 - Karar 6'dan türetilmiş yorum: taslaktaki c seçeneğinde olduğu gibi, CLAUDE.md'deki diğer tasarım kuralları (tek yazı ailesi, cümle düzeninde başlıklar, gölge yerine ince çizgi, kaçınılacaklar listesi) geçerli kalır; değişen yalnızca renk değerleri ve yerleşimdir.
+- Karar 6'dan türetilmiş yorum (kabuk işi, 6 Ekim): metin ve simge tonlarında kontrast eşikleri yalnızca içerik alanında ve kenar çubuğunda değil, üzerine gelinen ve seçili satır tonları dahil yedi yüzeyin hepsinde uygulanır. Bu yüzden "Açık" ve "Tamamlandı" simge tonları taslaktakinden bir ton koyu: `#B56B00` ve `#00903E` (taslakta `#CC7A00` ve `#16A34A`). Eşik yalnızca içerik alanında ve kenar çubuğunda aransaydı tonlar `#CA7900` ve `#12A148` olurdu; bu ikisi üzerine gelinen ya da seçili satırda ve kendi rozet zemininde 3:1'in altında kalıyor.
 - Karar 7'den türetilmiş yorum: 2 Ekim karar 5'teki "ileride baştan ele alma" işi bu ilk yapımla başlamış sayılır.
 - Karar 8'den türetilmiş yorum: panel 1024 piksele kadar kullanılabilir kalır; daha dar pencere için ayrı düzen yapılmaz. Elle yazılmış PWA manifesti ve uygulama simgeleri şimdilik yerinde kalır; kaldırılıp kaldırılmayacağı U18'de. (1280 piksel ve üstü için tasarım ve telefon alt menüsünün kalkması karar 12 ile onaylandı.)
 - Karar 8'den türetilmiş yorum: passkey kaydı değişmez; passkey dizüstü bilgisayarda ya da telefonda (bilgisayardaki tarayıcının gösterdiği karekodla) oluşturulabilir.
 - Karar 8'den açık kalanlar: tek kişide toplanan onay yüküne karşı telefondan onay önleminin yerine ne konacağı (U16), telefon bildirimi (U17), telefondan panele girene ne gösterileceği (U18).
+- Kabuk işinde (0.3a, 6 Ekim) sorulmadan yapılan ve ekranda görünen seçimler; kurucu itiraz ederse değişir: sayfa adı yalnızca üst çubukta yazar; hata mesajları kırmızı zeminli şerit olarak görünür; Kullanıcılar ekranında davet formu dar pencerede listelerin üstüne iner (1280 pikselde eskisi gibi sağda durur); temada üç seçenek var (Sistem, Açık, Koyu); menüler gölgesiz ve hareketsiz açılır; yükleme blokları yanıp sönmez.
 
 Açık sorular:
 
-- U1: Canlı gösterge (yanıp sönen nokta, dönen "sürüyor" simgesi) hareketli olsun mu; CLAUDE.md'deki hareket kuralına istisna yazılsın mı? İncelemenin önerisi: olsun. (inceleme 12.2, 14.7)
-- U2: Kenar çubuğundaki menü satırlarında simge olsun mu? İncelemenin önerisi: olsun; boş ekranlarda büyük simge olmasın. (inceleme 14.7)
+- U1: Canlı gösterge (yanıp sönen nokta, dönen "sürüyor" simgesi) hareketli olsun mu; CLAUDE.md'deki hareket kuralına istisna yazılsın mı? İncelemenin önerisi: olsun. Kabukta hareketsiz yapıldı. (inceleme 12.2, 14.7)
+- U2: Kenar çubuğundaki menü satırlarında simge olsun mu? İncelemenin önerisi: olsun; boş ekranlarda büyük simge olmasın. Kabukta simgeli yapıldı; kurucu onayı bekliyor. (inceleme 14.7)
 - U3: Görev numarası (ADX-12 gibi): olsun mu, ön ekler ne olsun, sayaç nerede dursun; numaralardaki boşlukların gizli proje görevini ele vermesi kabul edilir mi? Pilot açılışından sonra (5 Ekim, karar 11). (inceleme 13.4, 14.7)
 - U4: Görev ve onaylarda kullanıcıya özel okunmamış işareti. Pilot açılışından sonra (5 Ekim, karar 11). (inceleme 13.4, 14.7)
 - U5: Komut paleti ve kısayollar. İncelemenin önerisi: tuşlar Türkçe Q ve F klavyeye göre seçilir. Pilot açılışından sonra (5 Ekim, karar 11). (inceleme 14.7)
@@ -274,7 +276,7 @@ Açık sorular:
 - U10: Bir ajanın, dış kişiyle paylaşılmış göreve yazdığı yorum onaya düşer mi? Öneri yok; kurucu karar vermeli. (inceleme 13.4, 14.7)
 - U11: Dış kişinin yorumu ajan için talimat mı, veri mi? İncelemenin önerisi: veri. (inceleme 14.7)
 - U12: Göreve yazılan insan yorumu ajanı ne zaman çalıştırır? İncelemenin önerisi: yalnızca görev "Yanıt bekliyor" durumundayken ve yazan muhatapsa; yazma kutusu bunu belirtir. X1-6 ile birlikte. (inceleme 13.4)
-- U13: Tarayıcıda saklanan yarım metinler, "Son görevler" listesi ve saklanan görünümler oturum kapanınca silinsin mi? (inceleme 13.4, 14.7)
+- U13: Tarayıcıda saklanan yarım metinler, "Son görevler" listesi ve saklanan görünümler oturum kapanınca silinsin mi? Kabuğun sakladığı tema ve görünüm seçimleri için U25. (inceleme 13.4, 14.7)
 - U14: `employee` rolü Ajanlar ve Ölçümler ekranlarını ve maliyet bilgisini görür mü? Öneri yok. (inceleme 14.7)
 - U15: Süren çalışmayı kesmek için Görev ayrıntısında ayrı bir "Çalışmayı kes" düğmesi gerekir mi? X1-5 ile birlikte. (inceleme 14.7)
 - U16: Telefondan onay kalktı (5 Ekim, karar 8): onay yükünün tek kişide toplanmasına karşı tasarım raporundaki "telefon dahil her cihazdan" önleminin yerine, mobil uygulama gelene kadar ne konacak? "Onay bekleme süresi" ölçütü bundan etkilenir.
@@ -282,6 +284,22 @@ Açık sorular:
 - U18: Telefondan panel adresine girene ne gösterilecek (şimdilik hiçbir özel davranış yok); PWA manifesti ve uygulama simgeleri kalsın mı?
 - U19: Ofis görünümü (5 Ekim, karar 9): hangi birimler gösterilir (yalnızca o şirkette ajanı olanlar mı, 37 birimin hepsi mi), birim kartında hangi sayılar durur, örnek görseldeki gibi ortada Kurumsal Hafıza (not sayısı) gösterilir mi, Kurucu alanı ve holding görünümünde ofis nasıl görünür, durdurulmuş ajan nasıl görünür? Yeri ve zamanı karar 12 ve 14 ile belirlendi; kalanlar o işin planıyla kurucuya sunulur. (M39 ile birlikte.)
 - U20: Markdown gösteriminde ajandan, araçtan ve dış kaynaktan gelen içerikteki resimler yüklenmez, yalnızca bağlantı olarak gösterilir (inceleme 13.4; kural 4 ve 7'den türetilmiş güvenlik önlemi, kurucu onayı bekliyor).
+- U21: Kenar çubuğu bir düğmeyle gizlenip gösterilebilsin mi? KALAN-ISLER 0.3a'da "Kenar çubuğunun daraltılması" satırı var; onaylanan kabuk planında (5 Ekim, karar 12), Paperclip'in masaüstü düzeninde ve görsel yön taslağında böyle bir düğme yok. Öneri: üst çubuğun sağ ucundaki bir düğme kenar çubuğunu tümüyle gizler ve yeniden gösterir; seçim o tarayıcıda hatırlanır; gizliyken üst çubuk şirketin adını yazar. Dar simge şeridi ve sürükleyerek boyutlandırma yok. Yalnızca "evet" yanıtıyla eklenir; değişiklik hazırlandı, depoya girmedi.
+- U22: Durum dili (5 Ekim, karar 11'in kapsamında; kabukta öneriler uygulandı): (a) çalışma durumlarının arayüzdeki adları PLAN'da yok (görev ve onay adları var). Öneri, veritabanındaki eski Türkçe değerlerle aynı (`docs/ad-sozlugu.md`): Sürüyor, Tamamlandı, Hata, Sınıra takıldı, Durduruldu. (b) "Yanıt bekliyor" ile "Hata" aynı kırmızıdır, yalnızca simgeleri farklı; böyle kalsın mı? (c) Onayda "Bekliyor", görevdeki "Onay bekliyor" ile aynı mor işareti kullanır; onayda "Düzeltme istendi" turuncu, çalışmada "Sınıra takıldı" kırmızıdır. Yanıt farklı olursa `apps/web/src/lib/status.ts` ve testi birlikte değişir.
+- U23: Bekleyen davetin "Bekliyor" yazısı hangi renkte olsun? Turuncu `--awaiting-approval` değişkeni kalktı ("Onay bekliyor" artık mor). Kullanıcılar ekranındaki sözcük bekleyen onayla aynı: "Bekliyor". Üç seçenek: turuncu, eskisi gibi (kabukta böyle; o zaman "Bekliyor" davette turuncu, onayda mor olur); mor, durum dilindeki gibi; düz gri metin, çünkü davet görev, onay ya da çalışma değildir.
+- U24: Yeni kabukla doğru olmayan iki metin düzeltilsin mi? Ajanlar ekranındaki "Ofis görünümü Kasım'da gelecek." cümlesi kalkar (5 Ekim, karar 14: Ofis görünümü sıradaki iş); Kullanıcılar ekranındaki "şirket seçiciden" sözü "şirket menüsünden" olur. Kabukta bu metinlere dokunulmadı.
+- U25: Tema ve görünüm seçimleri (seçilen tema, özellik panelinin açık olması) tarayıcıda saklanır ve çıkış yapınca silinmez; kişi ya da şirket bilgisi saklanmaz. Uygun mu? Kenar çubuğunu gizleme eklenirse (U21) o seçim de aynı yerde durur. (U13 ile birlikte.)
+
+Kabuk işinden sonraya kalanlar (0.3a, 6 Ekim):
+
+- Tarayıcı sekmesindeki başlık her sayfada "Agent Office"; sayfa adını da yazması sonraya kaldı.
+- Araç çağrısı durumlarının adları ve simgeleri: Görev ayrıntısı ekranıyla birlikte.
+- Tarayıcının kendi çubuk rengi (`theme-color`) cihazın temasını izler, panelde seçilen temayı değil.
+- İlk boyamada temayı ayarlayan satır içi betik (`apps/web/index.html`): yayında (0.7) `script-src` içeren bir içerik güvenlik politikası gönderilirse betik ayrı bir dosyaya taşınır.
+- Geri ve ileri gidişte kaydırma konumunun hatırlanması: uzun listeler gelince açılır (0.4).
+- `tw-animate-css` paketi şu an kullanılmıyor; onaylanan işin kuyruktan kayarak çıkması (0.5) için duruyor. O iş kullanmazsa içe aktarma, bağımlılık ve katalog satırı kaldırılır.
+- Üç renk değişkeni tanımlı ama henüz kullanılmıyor: `--row-selected` (seçili liste satırı), `--sidebar-line` (kenar çubuğu içindeki çizgi), `--status-live` (canlı gösterge noktası). Renkler birlikte ölçüldüğü için yerinde duruyor.
+- Karanlık temada form kutusunun ve çerçeveli düğmenin hafif dolgusu (`dark:bg-input/30`): kenarlık bu dolguya karşı 3:1'in altında, çevresindeki yüzeye karşı üstünde ölçülüyor. Üç sınıf kaldırılırsa iki tema aynı ölçülür; isteğe bağlı temizlik.
 
 Sonraya bırakılan fikirler (inceleme 13.3 ve 13.8):
 

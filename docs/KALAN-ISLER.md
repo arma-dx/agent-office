@@ -25,6 +25,8 @@ Henüz olmayanlar: veritabanı (göç dosyası yok), giriş, işlevli ekran (yal
 
 5 Ekim 2026: karar 5-9 arayüz işlerini değiştirdi (`docs/kararlar/2026-10-05.md`); karar 10 ve 11 de işlendi, ikisi kurucu onayı bekliyor. Arayüz kabuğu işi eklendi (0.3a; planı kurucu onayladı, karar 12), telefon maddeleri kaldırıldı, Ofis görünümü işi 0.3b olarak eklendi (karar 14: kabuktan hemen sonra, Görevler'den önce). Ofis görünümünden sonra işler bu dosyadaki sırayla sürer (karar 15).
 
+6 Ekim 2026: yeni kabuk kuruldu (0.3a); sıradaki iş Ofis görünümü (0.3b).
+
 ## Sprint 0
 
 ### 0.1 Arayüz temeli
@@ -42,7 +44,7 @@ Giriş ekranından önce. Arayüz geçici (2 Ekim); ileride baştan ele alınaca
 - [x] IBM Plex Sans yazı tipinin kendi sunucumuzdan verilmesi; tablolarda eşit genişlikli rakamlar
 - [x] react-hook-form ve zod ile ortak form düzeni
 - [x] Ana yerleşim: üst çubuk, şirket seçici (geçici örnek liste), içerik alanı
-- [x] Telefonda alt menü: Bugün, Onaylar, Görevler, Notlar, Ofis (Ofis, Kasım'a kadar Ajanlar ekranını açar) (5 Ekim karar 8 ile kalkıyor; 0.3a'da kaldırılır)
+- [x] Telefonda alt menü: Bugün, Onaylar, Görevler, Notlar, Ofis (Ofis, Kasım'a kadar Ajanlar ekranını açar) (5 Ekim karar 8 ile kalktı; 0.3a'da kaldırıldı)
 - [x] Ortak bileşenler: düğme, form alanı, tablo, liste satırı, boş ekran, hata mesajı, yükleniyor durumu
 - [x] Klavye odağının görünür olması; azaltılmış hareket tercihine uyum
 - [x] Elle yazılmış PWA manifesti ve uygulama simgeleri (geçici simge) (telefon uyumu 5 Ekim karar 8 ile kalktı; manifestin akıbeti Karar: U18)
@@ -202,55 +204,55 @@ Testler:
 Hazırlık:
 
 - [x] (Senden) Paperclip deposunun sabit commit'ten (`dd868ed`) yerelde okunması için indirme izni (5 Ekim, karar 13; depo dışında geçici klasöre indirildi)
-- [ ] `THIRD_PARTY_NOTICES.md` dosyası ve içinde Paperclip'in `LICENSE` metni, olduğu gibi
-- [ ] Taşınan her dosyanın başına kaynak yolu ve commit kimliği
-- [ ] Gereken yeni bağımlılıkların `pnpm-workspace.yaml` kataloğuna eklenmesi (yalnızca kabuğun ihtiyacı kadar)
+- [x] `THIRD_PARTY_NOTICES.md` dosyası ve içinde Paperclip'in `LICENSE` metni, olduğu gibi
+- [x] Taşınan her dosyanın başına kaynak yolu ve commit kimliği
+- [x] Gereken yeni bağımlılıkların `pnpm-workspace.yaml` kataloğuna eklenmesi (yalnızca kabuğun ihtiyacı kadar) (yeni bağımlılık gerekmedi; katalog değişmedi)
 
 Tasarım değişkenleri:
 
-- [ ] Karar 6'ya göre renk değerleri: içerik alanı beyaz, kenar çubuğu açık gri, nötr metin ve çizgi tonları, vurgu `#127A77`
-- [ ] Durum renkleri
-- [ ] Karanlık tema (aynı yönle yeniden tanımlanır; 5 Ekim, karar 6'dan türetildi, kurucu onayı bekliyor)
-- [ ] Kontrast ölçümü; AA'yı tutmayan tonların koyulaştırılması (5 Ekim, karar 12)
-- [ ] Kenar çubuğunda seçili ve üzerine gelinen satır tonu
-- [ ] `CLAUDE.md`'deki renk değerlerinin kesinleşen değerlerle güncellenmesi
+- [x] Karar 6'ya göre renk değerleri: içerik alanı beyaz, kenar çubuğu açık gri, nötr metin ve çizgi tonları, vurgu `#127A77`
+- [x] Durum renkleri (her durumda üç ton: simge, rozet zemini, metin)
+- [x] Karanlık tema (aynı yönle yeniden tanımlandı; 5 Ekim, karar 6'dan türetildi, kurucu onayı bekliyor)
+- [x] Kontrast ölçümü; AA'yı tutmayan tonların koyulaştırılması (5 Ekim, karar 12) (eşikleri `apps/web/src/tokens.test.ts` denetler)
+- [x] Kenar çubuğunda seçili ve üzerine gelinen satır tonu
+- [x] `CLAUDE.md`'deki renk değerlerinin kesinleşen değerlerle güncellenmesi
 
 Durum dili:
 
-- [ ] Görev, onay ve çalışma durumları için tek simge ve tek renk
-- [ ] Durum rozeti ve durum simgesi bileşenleri (canlı göstergenin hareketli olup olmayacağı Karar: U1)
+- [x] Görev, onay ve çalışma durumları için tek simge ve tek renk (çalışma durumlarının adları ve onay renkleri öneri; Karar: U22)
+- [x] Durum rozeti ve durum simgesi bileşenleri (canlı gösterge hareketsiz yapıldı; hareketli olup olmayacağı Karar: U1)
 
 Kabuk:
 
-- [ ] Kenar çubuğu: şirket menüsü; üst satırlar (Bugün, Onaylar); "İş" grubu (Görevler, Notlar); "Ofis" grubu (Ajanlar); hesap menüsü (Ayarlar, tema, çıkış). "Yeni talep" satırı talep formuyla (0.4), "Ofis görünümü" satırı o ekranla (0.3b) menüye girer
-- [ ] Üst çubuk ve konum bilgisi
-- [ ] Özellik paneli altyapısı
-- [ ] Kenar çubuğunun daraltılması
-- [ ] Menü simgeleri (Karar: U2)
-- [ ] Telefon alt menüsünün kaldırılması (5 Ekim, karar 8)
-- [ ] 1280 piksel ve üstü için tasarım (5 Ekim, karar 12); 1024 piksele kadar kullanılabilirlik (karar 8'den türetildi, kurucu onayı bekliyor)
+- [x] Kenar çubuğu: şirket menüsü; üst satırlar (Bugün, Onaylar); "İş" grubu (Görevler, Notlar); "Ofis" grubu (Ajanlar); hesap menüsü (Ayarlar, tema, çıkış). "Yeni talep" satırı talep formuyla (0.4), "Ofis görünümü" satırı o ekranla (0.3b) menüye girer
+- [x] Üst çubuk ve konum bilgisi
+- [x] Özellik paneli altyapısı
+- [ ] Kenar çubuğunun daraltılması (yapılmadı; düğmeyle gizleme kurucunun yanıtını bekliyor, Karar: U21)
+- [x] Menü simgeleri (simgeli yapıldı; Karar: U2)
+- [x] Telefon alt menüsünün kaldırılması (5 Ekim, karar 8)
+- [x] 1280 piksel ve üstü için tasarım (5 Ekim, karar 12); 1024 piksele kadar kullanılabilirlik (karar 8'den türetildi, kurucu onayı bekliyor)
 
 Sayfa parçaları:
 
-- [ ] Yoğun liste satırı
-- [ ] Boş ekran
-- [ ] Sayfanın biçiminde yükleme iskeleti
-- [ ] Sekme çubuğu
-- [ ] Satır içi uyarı şeridi
+- [x] Yoğun liste satırı
+- [x] Boş ekran
+- [x] Sayfanın biçiminde yükleme iskeleti
+- [x] Sekme çubuğu
+- [x] Satır içi uyarı şeridi
 
 Mevcut ekranların taşınması (işlevleri değişmez):
 
-- [ ] Giriş ve şirket seçimi: kabuk dışı, yalnızca renkler
-- [ ] Ayarlar, Kullanıcılar
-- [ ] Ayarlar, Güvenlik
-- [ ] Beş boş ekran: Bugün, Onaylar, Görevler, Notlar, Ajanlar
+- [x] Giriş ve şirket seçimi: kabuk dışı, yalnızca renkler
+- [x] Ayarlar, Kullanıcılar
+- [x] Ayarlar, Güvenlik
+- [x] Beş boş ekran: Bugün, Onaylar, Görevler, Notlar, Ajanlar
 
 Testler:
 
-- [ ] Yerleşim ve gezinme
-- [ ] Klavye odağı
-- [ ] Kontrast denetimi
-- [ ] Mevcut ekran testlerinin yeni kabukta geçmesi
+- [x] Yerleşim ve gezinme
+- [x] Klavye odağı
+- [x] Kontrast denetimi
+- [x] Mevcut ekran testlerinin yeni kabukta geçmesi
 
 ### 0.3b Ofis görünümü (M15)
 
