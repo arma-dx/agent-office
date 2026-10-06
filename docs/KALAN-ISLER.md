@@ -25,7 +25,7 @@ Henüz olmayanlar: veritabanı (göç dosyası yok), giriş, işlevli ekran (yal
 
 5 Ekim 2026: karar 5-9 arayüz işlerini değiştirdi (`docs/kararlar/2026-10-05.md`); karar 10 ve 11 de işlendi, ikisi kurucu onayı bekliyor. Arayüz kabuğu işi eklendi (0.3a; planı kurucu onayladı, karar 12), telefon maddeleri kaldırıldı, Ofis görünümü işi 0.3b olarak eklendi (karar 14: kabuktan hemen sonra, Görevler'den önce). Ofis görünümünden sonra işler bu dosyadaki sırayla sürer (karar 15).
 
-6 Ekim 2026: yeni kabuk kuruldu (0.3a); sıradaki iş Ofis görünümü (0.3b).
+6 Ekim 2026: yeni kabuk kuruldu (0.3a) ve Ofis görünümünün ilk sürümü yapıldı (0.3b); sıradaki iş Görev kaydı ve pano (0.4). Ofis görünümünde açık kalan maddeler, yanlarında yazan işleri bekliyor.
 
 ## Sprint 0
 
@@ -258,26 +258,28 @@ Testler:
 
 5 Ekim, karar 9 ve 14: Ofis görünümü kabuktan (0.3a) hemen sonra, Görevler ekranından (0.4) önce yapılır; birimleri ve ajanları gösterir ve kenar çubuğunda "Ofis" grubunda durur (karar 12). İlk sürümde birimler ve ajanlar görünür; görev sayıları ve canlı durumlar (çalışıyor, onay bekliyor) ilgili işler bittikçe bağlanır. Örnek görsel: `docs/kararlar/ekler/2026-10-05-ofis-gorunumu-ornegi.webp`; görünüm bu örnekten yola çıkar ve Agent Office'in tasarım diline uyarlanır. Ayrıntılı plan işe başlanırken kurucuya sunulur; açık sorular Karar: U19.
 
+6 Ekim: plan kurucuya sunuldu ve altı soru yanıtlandı (`docs/kararlar/2026-10-06.md`, karar 3-8); ilk sürüm yapıldı. İlk sürüm birimleri, ajanları ve şirketin her ajan için düğmesini (Kapalı, Etkin, Durduruldu) gösterir; uydurma hiçbir sayı göstermez. İşaretlenmemiş maddelerin her biri yanında yazan işi bekliyor. Bu işten açık kalan sorular: `docs/SONRA.md`, U26-U36.
+
 Sunucu:
 
-- [ ] Birimler ve ajanlar için okuma ucu (şirket bağlamıyla; `units`, `agent_definitions`, `company_agents`)
-- [ ] Kart senkronizasyonunun öne alınması gerekip gerekmediği (1.2)
+- [x] Birimler ve ajanlar için okuma ucu (şirket bağlamıyla; `units`, `agent_definitions`, `company_agents`): `GET /api/office`. Kurucu ve çalışanlar görür, dış kişiler görmez (6 Ekim, karar 6)
+- [x] Kart senkronizasyonunun öne alınması gerekip gerekmediği (1.2): küçük bir parçası öne alındı (6 Ekim, karar 8). `pnpm db:sync-definitions` kartlardan birim ve ajan tanımlarını yazar; kart sürümü yazmaz, bu yüzden hiçbir ajan çalışamaz. Komut bugün yalnızca yerel veritabanına yazar; test ve canlı ortam için yayın hattının adımı olur (0.7)
 
 Arayüz:
 
-- [ ] İzometrik iki boyutlu çizim: birimler oda, ajanlar masalarında
-- [ ] Birim kartı: birim adı, ajan sayısı, görev sayıları (veri geldikçe; hangi birimlerin ve hangi sayıların gösterileceği Karar: U19)
-- [ ] Ajan durumu: çalışıyor, onay bekliyor, boşta, hata (çalıştırıcı ve Onay Masası geldikçe bağlanır)
-- [ ] Ortada Kurumsal Hafıza: not sayısı (örnek görselden; gösterilip gösterilmeyeceği Karar: U19; Not sistemi geldikçe)
-- [ ] Yakınlaştırma, kaydırma ve sığdırma
-- [ ] Ajana tıklayınca ajan sayfası
-- [ ] Klavye ile erişim ve azaltılmış hareket tercihi
-- [ ] Karanlık tema
+- [x] İzometrik iki boyutlu çizim: birimler oda, ajanlar masalarında
+- [ ] Birim kartı: birim adı, ajan sayısı, görev sayıları (birim adı, kodu ve ajan sayısı yapıldı. Görev sayıları Görev kaydını (0.4) bekliyor ve kartta değil, seçili birimin özellik panelinde gösterilecek; hangi sayılar: Karar: U27, U28)
+- [ ] Ajan durumu: çalışıyor, onay bekliyor, boşta, hata (ilk sürüm şirketin düğmesini gösterir: Kapalı, Etkin, Durduruldu; 6 Ekim, karar 5. Canlı durumlar çalışma kaydını (0.6), çalıştırıcıyı (1.1) ve Onay Masası'nı (0.5) bekliyor; nasıl türetileceği Karar: U26)
+- [ ] Ortada Kurumsal Hafıza: not sayısı (Kurumsal Hafıza odası ortada duruyor; 6 Ekim, karar 4. Not sayısı Not sistemini (1.3) bekliyor)
+- [x] Yakınlaştırma, kaydırma ve sığdırma
+- [ ] Ajana tıklayınca ajan sayfası (tıklanan ajan seçilir; adı, birimi ve durumu özellik panelinde görünür. Ajan sayfası 1.2 ile gelince panelden oraya bağlanır)
+- [x] Klavye ile erişim ve azaltılmış hareket tercihi (ilk sürümde hiçbir şey kendiliğinden hareket etmez)
+- [x] Karanlık tema
 
 Testler:
 
-- [ ] Şirket ayrımı: öteki şirketin ajanı ve sayıları görünmez
-- [ ] Yerleşim hesabı
+- [x] Şirket ayrımı: öteki şirketin ajanı ve sayıları görünmez (birimler, ajanlar ve ajan düğmeleri için yazıldı, Kurucu alanı dahil; sayılar bağlandıkça onların testi eklenir)
+- [x] Yerleşim hesabı
 
 ### 0.4 Görev kaydı ve pano (M2)
 
@@ -384,6 +386,14 @@ Testler:
 - [ ] Gizli anahtar kasası ve ortam değişkenleri; `.env.example` güncel
 - [ ] Yayın hattı: `development` dalı test ortamına (office-test.armadx.com), `main` dalı canlı ortama (office.armadx.com)
 - [ ] Göç dosyalarının yayında yetkili rolle çalışması
+- [ ] Tanım senkronizasyonu yayın hattında: göçlerden sonra, api ve worker başlamadan önce. `pnpm db:sync-definitions` bugün yalnızca yerel veritabanına yazar; bu adım olmadan test ve canlı ortamda Ofis görünümü "Burada henüz ajan yok" diye açılır (0.3b). Uzak veritabanına yazan çalıştırmanın koşulları:
+  - Dosyalar depoya girmiş olanlardır. Kartın `companies` alanı, ajanın hangi şirkette açılabileceğini ve kimin ofisinde görüneceğini belirler; PR'dan geçmemiş bir kart değişikliği ortak veritabanına ulaşmamalı. Yayın hattının kendi kopyası bunu sağlar. Elle çalıştırma, `agents/` altında commit edilmemiş değişiklik varsa ya da `HEAD`, `origin/development` (test) ya da `origin/main` (canlı) içinde değilse reddeder (dal ve ortam eşlemesi CLAUDE.md'den; bu işte teyit edilir)
+  - `HEAD` commit kimliği raporun ilk satırıdır; 1.2'deki tam senkronizasyonla `card_versions.git_commit` da bu değeri taşır
+  - Ortam adıyla verilir: `--target test` ya da `--target production`. Verilmezse uzak adres reddedilir; önceki oturumdan kalmış bir adrese yanlışlıkla yazılmaz
+  - Şifre adresin parçası olmaz: yayın hattının gizli anahtar kasasından gelir ve bağlantıya ayrı alan olarak verilir
+  - Uzak adreste TLS ve Supabase'in sertifika yetkilisine karşı sertifika doğrulaması zorunludur; sertifika yoksa betik bağlanmadan durur (`node-postgres` söylenmedikçe TLS kullanmaz). Bağlantı ayrıntısı: `docs/supabase-kurulum.md`, bölüm 5
+  - Yetkili adres ve şifre yalnızca göç ve senkronizasyon adımına verilir; api ve worker kaplarına verilmez (kural 9). `packages/shared/src/env.ts` içindeki ortak ortam şeması bu değerleri görürse api ve worker açılmayı reddedecek biçimde genişletilir
+  - Kartı depodan çıkmış bir ajan yayını durdurur; böyle bir karta ne olacağı kararlaştırılana kadar (Karar: U31)
 - [ ] Sağlık kontrolü ve yeniden başlatma
 - [ ] Log toplama ve hata bildirimi
 - [ ] Veritabanı yedeği ve bir kez geri yükleme denemesi
@@ -507,11 +517,16 @@ Testler:
 
 ### 1.2 Görev kartı yönetimi (M6)
 
-- [ ] Kart senkronizasyonu: depodaki YAML'ın git commit kimliğiyle `card_versions`'a yazılması
+Ofis görünümünden (0.3b) gelen iki bağımlılık:
+
+- `company_agents` satırlarını açan ekran, M40 yanıtlanmadan yayına alınmaz. Tam senkronizasyon `card_versions` yazana kadar veritabanı taslak kartı onaylı karttan ayıramaz (kartın `status` alanı hiçbir yerde saklanmıyor) ve bir ajanın şirkette açılıp açılamayacağına yalnızca kartın şirket listesine bakılarak karar verilir.
+- Ajanlar ekranı gerçek bir ortamda bir ajanı etkin yapabildiği gün, Ofis görünümünün canlı durumları da (çalışıyor, onay bekliyor, boşta, hata) bağlanmış olmalıdır. O günden sonra "Etkin" tek başına ajanın çalışıp çalışmadığını söylemez.
+
+- [ ] Kart senkronizasyonu: depodaki YAML'ın git commit kimliğiyle `card_versions`'a yazılması (birim ve ajan tanımlarını, yani `units` ve `agent_definitions` satırlarını `pnpm db:sync-definitions` şimdiden yazıyor: 0.3b; 6 Ekim, karar 8. Kalanlar: `card_versions` ve kartın tam içeriği, yetki seviyesi ve model, geçerli sürüm işareti, `agents/tools.yaml`'dan araç kataloğu, tam kart şeması ve "status: draft"ın anlamı (Karar: M40), depodan çıkan karta ne olacağı (Karar: U31), `supabase/seed.sql` içindeki birim listesinin kaldırılması)
 - [ ] Her çalışmanın hangi kart sürümüyle koştuğunu kaydetmesi
-- [ ] `company_agents` satırlarının açılması ve ayar ekranı
+- [ ] `company_agents` satırlarının açılması ve ayar ekranı (Karar: M40)
 - [ ] Ajanlar ekranı: birimlere göre ajanlar, durum, yetki seviyesi
-- [ ] Şirket başına durdurma düğmesi ve "her yerde durdur"
+- [ ] Şirket başına durdurma düğmesi ve "her yerde durdur" (Karar: U32)
 - [ ] Görev kartı ekranı: kart ve skill salt okunur, sürüm geçmişi
 - [ ] Ajan sayfasında ikinci kenar çubuğu; kart salt okunur (inceleme 13.3; 5 Ekim, karar 5)
 - [ ] "Bu ajan neye erişebiliyor ve neden" görünümü (1.8'deki izin görünümüyle birlikte; inceleme 13.3; 5 Ekim, karar 5)
