@@ -1,8 +1,8 @@
-import { screen, waitFor, within } from '@testing-library/react';
+import { cleanup, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createQueryClient } from './lib/query.ts';
-import { PROPERTIES_PANEL_ID } from './lib/shell.ts';
+import { PROPERTIES_PANEL_ID, SIDEBAR_STORAGE_KEY } from './lib/shell.ts';
 import { setThemeChoice, THEME_STORAGE_KEY } from './lib/theme.ts';
 import { createAppRouter } from './router.tsx';
 import { json, mockApi, sessionHandler } from './test/mock-api.ts';
@@ -36,12 +36,12 @@ describe('app shell: regions and keyboard order', () => {
     expect(main).toHaveFocus();
   });
 
-  it('walks from the skip link through the sidebar with the Tab key', async () => {
+  it('walks from the skip link through the sidebar to the top bar with the Tab key', async () => {
     mockApi({ 'GET /session': sessionHandler() });
     renderApp('/c/armadx');
     await screen.findByRole('navigation', { name: 'Ana menü' });
     const stops: string[] = [];
-    for (let i = 0; i < 8; i += 1) {
+    for (let i = 0; i < 9; i += 1) {
       await userEvent.tab();
       const element = document.activeElement;
       stops.push(element?.getAttribute('aria-label') ?? element?.textContent ?? '');
@@ -55,7 +55,41 @@ describe('app shell: regions and keyboard order', () => {
       'Notlar',
       'Ajanlar',
       'Hesap: Ömer Kadıoğlu',
+      'Kenar çubuğunu gizle',
     ]);
+  });
+
+  it('hides and shows the sidebar from the top bar and remembers the choice', async () => {
+    mockApi({ 'GET /session': sessionHandler() });
+    renderApp('/c/armadx');
+    const hide = await screen.findByRole('button', { name: 'Kenar çubuğunu gizle' });
+    expect(hide).toHaveAttribute('aria-expanded', 'true');
+    const bar = screen.getByRole('banner');
+    // The company is named by the company menu; the top bar does not repeat it.
+    expect(within(bar).queryByText('Arma DX')).toBeNull();
+
+    await userEvent.click(hide);
+    expect(screen.queryByRole('navigation', { name: 'Ana menü' })).toBeNull();
+    const show = screen.getByRole('button', { name: 'Kenar çubuğunu göster' });
+    expect(show).toHaveAttribute('aria-expanded', 'false');
+    expect(show).toHaveFocus();
+    expect(localStorage.getItem(SIDEBAR_STORAGE_KEY)).toBe('closed');
+    // Without the company menu the top bar says which company the person is in.
+    expect(within(bar).getByText('Arma DX')).toBeVisible();
+    expect(within(bar).getByRole('heading', { level: 1, name: 'Bugün' })).toBeVisible();
+
+    // The next visit starts the way the person left it.
+    cleanup();
+    renderApp('/c/armadx');
+    expect(
+      await screen.findByRole('button', { name: 'Kenar çubuğunu göster' }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('navigation', { name: 'Ana menü' })).toBeNull();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Kenar çubuğunu göster' }));
+    expect(screen.getByRole('navigation', { name: 'Ana menü' })).toBeInTheDocument();
+    expect(localStorage.getItem(SIDEBAR_STORAGE_KEY)).toBeNull();
+    expect(within(screen.getByRole('banner')).queryByText('Arma DX')).toBeNull();
   });
 });
 

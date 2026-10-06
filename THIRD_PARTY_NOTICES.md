@@ -13,14 +13,14 @@ Files in this repository that contain code ported or adapted from Paperclip:
 
 | File                                                 | Paperclip source                                                                                                              |
 | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `apps/web/src/components/shell/app-shell.tsx`        | `ui/src/components/Layout.tsx`, `ui/src/context/PanelContext.tsx`                                                             |
+| `apps/web/src/components/shell/app-shell.tsx`        | `ui/src/components/Layout.tsx`, `ui/src/context/SidebarContext.tsx`, `ui/src/context/PanelContext.tsx`                        |
 | `apps/web/src/components/shell/sidebar.tsx`          | `ui/src/components/Sidebar.tsx`, `ui/src/components/SidebarSection.tsx`, `ui/src/components/primary-sidebar-styles.ts`        |
 | `apps/web/src/components/shell/sidebar-nav-item.tsx` | `ui/src/components/SidebarNavItem.tsx`                                                                                        |
 | `apps/web/src/components/shell/company-menu.tsx`     | `ui/src/components/SidebarCompanyMenu.tsx`                                                                                    |
 | `apps/web/src/components/shell/account-menu.tsx`     | `ui/src/components/SidebarAccountMenu.tsx`                                                                                    |
 | `apps/web/src/components/shell/top-bar.tsx`          | `ui/src/components/BreadcrumbBar.tsx`                                                                                         |
 | `apps/web/src/components/shell/properties-panel.tsx` | `ui/src/components/PropertiesPanel.tsx`, `ui/src/components/side-panel/SidePanelFrame.tsx`, `ui/src/context/PanelContext.tsx` |
-| `apps/web/src/lib/shell.ts`                          | `ui/src/context/PanelContext.tsx`                                                                                             |
+| `apps/web/src/lib/shell.ts`                          | `ui/src/context/SidebarContext.tsx`, `ui/src/context/PanelContext.tsx`                                                        |
 | `apps/web/src/lib/theme.ts`                          | `ui/src/context/ThemeContext.tsx`, `ui/src/components/ThemeToggle.tsx`, `ui/index.html`                                       |
 | `apps/web/src/components/status.tsx`                 | `ui/src/components/StatusGlyph.tsx`, `ui/src/components/StatusBadge.tsx`                                                      |
 | `apps/web/src/lib/status.ts`                         | `ui/src/components/StatusGlyph.tsx`                                                                                           |

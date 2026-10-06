@@ -1,12 +1,15 @@
 // Adapted from Paperclip (MIT License, Copyright (c) 2025 Paperclip AI).
-// Source: ui/src/context/PanelContext.tsx at commit dd868ed125cd709506dd9b29fca640a44d580501.
-// License text: THIRD_PARTY_NOTICES.md.
-// Changes: the panel is closed by default and takes its content through a host element (a portal)
-// instead of a node held in state; the maximize request was removed.
+// Source: ui/src/context/SidebarContext.tsx and ui/src/context/PanelContext.tsx at commit
+// dd868ed125cd709506dd9b29fca640a44d580501. License text: THIRD_PARTY_NOTICES.md.
+// Changes: one context for both; the sidebar choice is stored too; the panel is closed by default
+// and takes its content through a host element (a portal) instead of a node held in state; the
+// phone drawer, the icon rail and the maximize request were removed.
 import { createContext, useContext } from 'react';
 
-/** Layout state of the app shell: the properties panel. */
+/** Layout state of the app shell: the sidebar and the properties panel. */
 export interface ShellValue {
+  sidebarOpen: boolean;
+  toggleSidebar: () => void;
   /** The person's choice; the panel shows only while a page has put content in it. */
   panelOpen: boolean;
   togglePanel: () => void;
@@ -27,11 +30,12 @@ export function useShell(): ShellValue {
   return shell;
 }
 
-/** Element ids of the shell regions; a toggle button points at its region (aria-controls). */
+/** Element ids the toggle buttons point at (aria-controls). */
 export const SIDEBAR_ID = 'sidebar';
 export const PROPERTIES_PANEL_ID = 'properties-panel';
 
 /** Browser storage holds layout choices only; nothing about the person or a company. */
+export const SIDEBAR_STORAGE_KEY = 'agent-office.sidebar';
 export const PANEL_STORAGE_KEY = 'agent-office.panel';
 
 /** True when the stored value of the key is `value`. A blocked storage reads as "not stored". */
