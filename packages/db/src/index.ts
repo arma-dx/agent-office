@@ -10,6 +10,7 @@ export {
   type Context,
   type ContextInput,
 } from './context.ts';
+export type { Queryable } from './queryable.ts';
 
 /**
  * Connection pool. The connection string belongs to the restricted application role (member of

@@ -1,4 +1,5 @@
 import pg from 'pg';
+import { localAdminUrl, localUrl } from './local-admin.ts';
 
 /**
  * Local development only. The migrations create the login roles office_api and office_worker without
@@ -8,30 +9,19 @@ import pg from 'pg';
  *
  * Usage (from the repository root, after `supabase start`): pnpm db:local-role
  */
-const LOCAL_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]']);
 const LOGIN_ROLES = new Set(['office_api', 'office_worker']);
-// Local Supabase default; the same on every developer machine and not a secret.
-const LOCAL_ADMIN_URL = 'postgresql://postgres:postgres@127.0.0.1:54322/postgres';
 
 async function main(): Promise<void> {
   const raw = process.env.DATABASE_URL;
   if (!raw) throw new Error('DATABASE_URL is not set; create .env from .env.example first');
-  const target = new URL(raw);
-  if (!LOCAL_HOSTS.has(target.hostname)) {
-    throw new Error(
-      'DATABASE_URL does not point to this machine; this script is for local use only',
-    );
-  }
+  const target = localUrl('DATABASE_URL', raw);
   const role = decodeURIComponent(target.username);
   const password = decodeURIComponent(target.password);
   if (!LOGIN_ROLES.has(role)) throw new Error('DATABASE_URL must use office_api or office_worker');
   if (password.length < 16) throw new Error('The password in DATABASE_URL is too short');
 
-  const admin = new URL(process.env.TEST_DATABASE_URL ?? LOCAL_ADMIN_URL);
-  if (!LOCAL_HOSTS.has(admin.hostname)) throw new Error('The admin URL is not local');
-  admin.pathname = target.pathname;
-
-  const client = new pg.Client({ connectionString: admin.toString() });
+  // The privileged address of the same local database (TEST_DATABASE_URL or the Supabase default).
+  const client = new pg.Client({ connectionString: localAdminUrl(process.env) });
   await client.connect();
   try {
     const { rows } = await client.query<{ sql: string }>(
