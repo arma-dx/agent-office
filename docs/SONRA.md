@@ -1,6 +1,6 @@
 # Sonraya kalanlar
 
-Kapsam dışı fikirler ve karar bekleyen açık sorular burada tutulur. Bir madde karara bağlanınca ilgili dokümana ya da karta işlenir ve buradan silinir. Madde kodları: M ve X görev kartları incelemesinden, N doküman incelemesinden, R tasarım raporuyla karşılaştırmadan, U 5 Ekim Paperclip incelemesinden ve arayüz kararlarından gelir, G1 kodsuz kalan giriş maddesidir; PLAN'daki modüller ise "modül M5" diye yazılır. "Karar N" 1 Ekim kurucu kararlarının birinci turunu, "ikinci tur karar N" ikinci turunu gösterir (`docs/kararlar/2026-10-01.md`). "2 Ekim karar N" `docs/kararlar/2026-10-02.md` içindeki kararı gösterir. "5 Ekim karar N" `docs/kararlar/2026-10-05.md` içindeki kararı gösterir. "6 Ekim karar N" `docs/kararlar/2026-10-06.md` içindeki kararı gösterir. Kart ve doküman incelemelerinin dosyaları depoya girmez, Paperclip incelemesi `docs/paperclip-incelemesi.md` içindedir; maddeler kendi başına okunacak biçimde yazıldı.
+Kapsam dışı fikirler ve karar bekleyen açık sorular burada tutulur. Bir madde karara bağlanınca ilgili dokümana ya da karta işlenir ve buradan silinir. Madde kodları: M ve X görev kartları incelemesinden, N doküman incelemesinden, R tasarım raporuyla karşılaştırmadan, U 5 Ekim Paperclip incelemesinden ve arayüz kararlarından gelir, G1 kodsuz kalan giriş maddesidir; PLAN'daki modüller ise "modül M5" diye yazılır. "Karar N" 1 Ekim kurucu kararlarının birinci turunu, "ikinci tur karar N" ikinci turunu gösterir (`docs/kararlar/2026-10-01.md`). "2 Ekim karar N" `docs/kararlar/2026-10-02.md` içindeki kararı gösterir. "5 Ekim karar N" `docs/kararlar/2026-10-05.md` içindeki kararı gösterir. "6 Ekim karar N" `docs/kararlar/2026-10-06.md` içindeki kararı gösterir. "7 Ekim karar N" `docs/kararlar/2026-10-07.md` içindeki kararı gösterir; T kodları 7 Ekim'de düzeltilen görev akışının sorularıdır. Kart ve doküman incelemelerinin dosyaları depoya girmez, Paperclip incelemesi `docs/paperclip-incelemesi.md` içindedir; maddeler kendi başına okunacak biçimde yazıldı.
 
 ## Görev kartları ve doküman incelemelerinden açık kalanlar (1 Ekim 2026)
 
@@ -334,3 +334,15 @@ Sonraya bırakılan fikirler (inceleme 13.3 ve 13.8):
 - Çıktılar için "yararlı, düzeltilmeli" oyu.
 - Çalıştırıcı fikirleri (inceleme 9.4): KALAN-ISLER 1.1'e başlanırken gözden geçirilir.
 - Sandbox sağlayıcılarının ayrıca incelenmesi (inceleme 13.8).
+
+## Görev akışı (7 Ekim)
+
+Kurucu 7 Ekim'de görev akışını anlattı (`docs/kararlar/2026-10-07.md`, karar 1-4): talep koordinasyon merkezine gelir, birim ajanı çalışır, durumlar kendiliğinden değişir, onay birimin gerçek kişisine ve gerekiyorsa talep sahibine gider. 0.4 için hazırlanan elle iş takibi planı uygulanmayacak. Yeniden planlama için kurucudan beklenen yanıtlar:
+
+- T1: Her birimin onay veren gerçek kişisi kim? Pilotta bütün birimlerin onaylayıcısı kurucu mu olacak, yoksa birimlere kişi mi atanacak? (Bugünkü belgeler: pilotta bütün onaylar kurucuda; veritabanında birime bağlı onaylayıcı alanı yok.)
+- T2: Talep sahibinin onayı hangi işlerde alınır? Her işin sonunda mı, yalnızca bazı işlerde mi; "gerektiğini" kim belirler?
+- T3: İnsan görevin üzerinde elle ne yapabilir? (Talebi iptal etme, yorum yazma, ajanın sorusunu yanıtlama, yönlendirmeyi düzeltme, işi durdurma ya da devralma.)
+- T4: Sıra. Bu akış koordinatör ve ajan çalıştırıcı olmadan çalışmaz; iş listesinde Claude bağlantısı (0.6), çalıştırıcı (1.1) ve koordinatör (1.7) daha sonra geliyor. Önce yalnızca talep girişi ve izleme ekranları mı kurulsun, yoksa sıra değişip akışın ince bir hâli uçtan uca mı çalıştırılsın?
+- T5: İnsanlara verilen işler (örneğin mali müşavirden beklenen belge) de görev kaydında tutulacak mı? Tasarım raporu Görev Takip ajanı için "insanlara ve ajanlara atanan bütün işlerin tek kayıtta tutulması" diyor.
+- Bu kararlarla kapanacak ya da değişecek eski sorular: M16 (durum geçişleri), M17 (atama değişikliği), M29 (kim hangi ajana iş verir), X2-4 (talep koordinatörden mi geçer).
+
