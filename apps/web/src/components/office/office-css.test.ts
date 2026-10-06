@@ -102,6 +102,11 @@ function declared(property: string): { where: string; value: string; rule: Rule 
   });
 }
 
+/** Every declaration of a property as one line, "selector list { value }", in source order. */
+function listed(property: string): string[] {
+  return declared(property).map((entry) => `${entry.where} { ${entry.value} }`);
+}
+
 /** The elements that hold text over the scene. */
 const TEXT_BOXES = ['.office-anchor', '.office-caption', '.office-legend', '.office-hint'];
 /** Every class a text box can be addressed by: a card and a label are anchors. */
@@ -342,8 +347,115 @@ describe('office.css', () => {
         ".office-agent:is([data-state='closed'], [data-state='stopped']) .office-figure",
       ).declarations.get('fill'),
     ).toBe('var(--surface)');
+    // No later rule paints the figure another way: these two are all that style it.
+    const figure = rules.filter((candidate) =>
+      candidate.selectors.some((selector) => subject(selector).includes('.office-figure')),
+    );
+    expect(figure.map((candidate) => candidate.selectors.join(', '))).toEqual([
+      '.office-figure',
+      ".office-agent:is([data-state='closed'], [data-state='stopped']) .office-figure",
+    ]);
+    // The mat is what tells a stopped desk from a closed one in the drawing; their tones are
+    // nearly the same.
+    expect(
+      Object.fromEntries(rule(".office-agent[data-state='stopped'] > .office-mat").declarations),
+    ).toEqual({ fill: 'var(--state-fill)', stroke: 'var(--state)' });
+    expect(rule('.office-mat').declarations.get('fill')).toBe('transparent');
     // Only these states exist in version 1.
     const states = [...source.matchAll(/data-state='([a-z_]+)'/g)].map((match) => match[1]);
     expect([...new Set(states)].sort()).toEqual(['closed', 'stopped']);
+  });
+
+  // tokens.test.ts measures every token in the role it has in the shell: a text token on the
+  // surfaces, a line token as a line. These lists keep each token of the scene in its role.
+  it('colors text with the two text tokens only, and the stop glyph with its status tone', () => {
+    expect(listed('color')).toEqual([
+      '.office-anchor { var(--ink) }',
+      ":is(.office-label, .office-legend li)[data-state='stopped'] .office-glyph { var(--status-cancelled) }",
+      '.office-card-meta { var(--ink-secondary) }',
+      '.office-tag { var(--ink) }',
+      '.office-count { var(--ink) }',
+      '.office-caption, .office-legend, .office-hint { var(--ink-secondary) }',
+    ]);
+  });
+
+  it('gives a ground to the viewport and to the text boxes only: nothing inside a box has its own', () => {
+    expect([...listed('background'), ...listed('background-color')]).toEqual([
+      '.office-viewport { var(--office-ground) }',
+      '.office-anchor { var(--surface) }',
+      '.office-anchor:hover { var(--surface-muted) }',
+      '.office-caption, .office-legend, .office-hint { var(--surface) }',
+    ]);
+  });
+
+  it('marks the selected card or label with a brand border, and draws rooms in the edge tone', () => {
+    expect(listed('border')).toEqual([
+      '.office-anchor { 1px solid var(--line) }',
+      ".office-anchor[aria-pressed='true'] { 2px solid var(--brand) }",
+      '.office-tag { 1px solid var(--line) }',
+      '.office-caption, .office-legend, .office-hint { 1px solid var(--line) }',
+    ]);
+    // The lines that say where a room is: 3:1 on the floor and on the ground (tokens.test.ts).
+    for (const selector of ['.office-walkway', '.office-slab-top', '.office-unit > .office-ring']) {
+      expect(rule(selector).declarations.get('stroke'), selector).toBe('var(--office-edge)');
+    }
+  });
+
+  it('writes a color in no other form: not as a named color, and not through another property', () => {
+    // Every property that can carry a color, by any name.
+    const colorProperty =
+      /^(?:color|background(?:-color)?|fill|stroke|border(?:-(?:top|right|bottom|left))?(?:-color)?|outline(?:-color)?|caret-color|accent-color|text-decoration(?:-color)?)$/;
+    const color = /^(?:(?:1px|2px) solid )?(?:var\(--[a-z-]+\)|transparent|none)$/;
+    // A custom property is a token, one of the two shades, or the offset of a card or label.
+    const custom = /^(?:var\(--[a-z-]+\)|transparent|#c4c4c4|#1b1b1b|translate\(.*\))$/;
+    const offenders = rules.flatMap((candidate) =>
+      [...candidate.declarations]
+        .filter(([property, value]) =>
+          property.startsWith('--')
+            ? !custom.test(value)
+            : colorProperty.test(property) && !color.test(value),
+        )
+        .map(([property, value]) => `${candidate.selectors.join(', ')} { ${property}: ${value} }`),
+    );
+    expect(offenders).toEqual([]);
+  });
+
+  it('never removes a focus ring and never writes text in upper case', () => {
+    // The shell draws the ring of every button (index.css); the scene only moves the ring of the
+    // viewport inside its box. design-rules.test.ts reads index.css and .tsx files, not this sheet.
+    const outlines = rules.flatMap((candidate) =>
+      [...candidate.declarations.keys()]
+        .filter((property) => property.startsWith('outline'))
+        .map((property) => `${candidate.selectors.join(', ')} { ${property} }`),
+    );
+    expect(outlines).toEqual(['.office-viewport:focus-visible { outline-offset }']);
+    expect(rule('.office-viewport:focus-visible').declarations.get('outline-offset')).toBe('-2px');
+    expect(source).not.toMatch(/text-transform|letter-spacing|font-variant/);
+  });
+
+  it('hides nothing but the names below the full level, and keeps a focused or selected label painted', () => {
+    const selectors = (property: string, value: string) =>
+      declared(property)
+        .filter((entry) => entry.value === value)
+        .map((entry) => entry.where);
+    const kept = ":not(:hover, :focus-visible, [aria-pressed='true'])";
+    expect(selectors('display', 'none')).toEqual([
+      `.office-viewport:not([data-level='full']) .office-label${kept} .office-name, ` +
+        `.office-viewport:not([data-level='full']) .office-card${kept} .office-card-name`,
+    ]);
+    expect(source).not.toMatch(/visibility|clip-path/);
+    // The scene is clipped, never scrolled, and the browser does not pan or zoom inside it.
+    expect(rule('.office-viewport').declarations.get('overflow')).toBe('clip');
+    expect(rule('.office-viewport').declarations.get('touch-action')).toBe('none');
+  });
+
+  it('hangs cards and labels by the offsets the overlay math uses', () => {
+    // overlayBox computes the same offsets for the bounds, the fit and the clearance check.
+    const hang = (placement: string) =>
+      rule(`.office-anchor[data-placement='${placement}']`).declarations.get('--hang');
+    expect(hang('card')).toBe(`translate(-50%, calc(-100% - ${String(OVERLAY.cardLift)}px))`);
+    expect(hang('above')).toBe(`translate(0, calc(-100% - ${String(OVERLAY.labelGap)}px))`);
+    expect(hang('below')).toBe(`translate(-100%, ${String(OVERLAY.labelGap)}px)`);
+    expect(declared('--hang')).toHaveLength(3);
   });
 });

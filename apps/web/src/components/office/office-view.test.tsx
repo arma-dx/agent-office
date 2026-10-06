@@ -36,6 +36,8 @@ const CARD = { width: 216, height: 48 };
 const LABEL = { width: 150, height: 24 };
 /** The keyboard hint while it is shown: it lies over the top of the scene, down to this pixel. */
 const HINT = { width: 320, height: 0 };
+/** A label that shows only its code, below the full level; null plays a layout that ignores the level. */
+let codeLabel: Size | null = null;
 let laidOut = true;
 const setPointerCapture = vi.fn<(pointerId: number) => void>();
 /** The last kind of input, for the :focus-visible stand-in below. */
@@ -58,7 +60,10 @@ function reportSize() {
 function fakeSize(element: HTMLElement): Size {
   if (!laidOut) return { width: 0, height: 0 };
   if (element.classList.contains('office-card')) return CARD;
-  if (element.classList.contains('office-label')) return LABEL;
+  if (element.classList.contains('office-label')) {
+    const whole = element.closest('[data-level]')?.getAttribute('data-level') === 'full';
+    return codeLabel === null || whole ? LABEL : codeLabel;
+  }
   // A hidden element has no box.
   if (element.classList.contains('office-hint') && !element.hidden) return HINT;
   return { width: 0, height: 0 };
@@ -71,6 +76,7 @@ beforeEach(() => {
   VIEWPORT.height = 600;
   LABEL.width = 150;
   HINT.height = 0;
+  codeLabel = null;
   laidOut = true;
   vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockImplementation(function (
     this: HTMLElement,
@@ -423,6 +429,13 @@ describe('OfficeView structure', () => {
     const legend = screen.getByRole('list', { name: 'Durumlar' });
     expect(legend.querySelectorAll('svg.office-glyph')).toHaveLength(1);
     expect(legend.querySelectorAll('svg')).toHaveLength(3);
+    // The mark is the figure it explains: an outline for a closed agent, filled for an enabled
+    // one. The filled figure never stands for an agent the company has not opened.
+    const mark = (state: string) =>
+      legend.querySelector(`li[data-state="${state}"] svg`)?.getAttribute('fill');
+    expect(mark('closed')).toBe('none');
+    expect(mark('enabled')).toBe('currentColor');
+    expect(legend.querySelector('li[data-state="stopped"] svg')).toHaveClass('office-glyph');
 
     // The pilot data of today: nobody has opened an agent.
     rerender(
@@ -1093,6 +1106,24 @@ describe('OfficeView fitting', () => {
     reportSize();
     expect(world.getAttribute('transform')).toBe(fittedTransform(narrow));
     expect(zoomOf(viewport)).toBeGreaterThan(fitted(narrow, false).k);
+  });
+
+  it('measures labels at the full level only: the shorter labels of the code level do not change the fit', () => {
+    // As in a browser: a label that shows only its code is narrower than the whole one.
+    codeLabel = { width: 60, height: 24 };
+    // So narrow that the scene fits below the level at which labels are whole.
+    VIEWPORT.width = 560;
+    const narrow = { width: 560, height: 600 };
+    const { viewport, world } = renderOffice();
+    expect(fitted(narrow).k).toBeLessThan(0.85);
+    expect(viewport).toHaveAttribute('data-level', 'code');
+    expect(world.getAttribute('transform')).toBe(fittedTransform(narrow));
+    // The browser reports the new, shorter sizes. Taken into the bounds they would enlarge the
+    // fit, the names would come back, the labels would widen and the fit would shrink again.
+    reportSize();
+    reportSize();
+    expect(viewport).toHaveAttribute('data-level', 'code');
+    expect(world.getAttribute('transform')).toBe(fittedTransform(narrow));
   });
 
   it('fits the scene again on a resize with something selected, unless the page holds the view', () => {

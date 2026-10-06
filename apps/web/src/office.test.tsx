@@ -7,7 +7,8 @@ import {
 import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { OfficeUnit } from './lib/office/model.ts';
+import { layoutOffice } from './lib/office/layout.ts';
+import { CENTRE_UNIT, type OfficeUnit } from './lib/office/model.ts';
 import { WIDE_WINDOW_QUERY } from './lib/office/use-wide-window.ts';
 import { PANEL_STORAGE_KEY } from './lib/shell.ts';
 import { stubMatchMedia } from './test/match-media.ts';
@@ -83,6 +84,13 @@ function listedAgents(): (string | null)[] {
     .map((button) => button.getAttribute('aria-label'));
 }
 
+/** What each row of that list shows: the code and the full card name, then the state word. */
+function listedRows(): (string | undefined)[][] {
+  return within(within(detailsPanel()).getByRole('list', { name: 'Ajanlar' }))
+    .getAllByRole('button')
+    .map((button) => [...button.children].map((line) => line.textContent));
+}
+
 describe('office page', () => {
   it('asks for the office of the company in the address and draws it under one heading', async () => {
     const api = officeApi();
@@ -107,8 +115,24 @@ describe('office page', () => {
     expect(within(list).getAllByRole('button')).toHaveLength(7 + 12);
     expect(document.querySelectorAll('svg g.office-unit')).toHaveLength(7);
     expect(document.querySelectorAll('svg g.office-agent')).toHaveLength(12);
-    // Kurumsal Hafıza stands in the middle.
-    expect(screen.getByRole('button', { name: 'Kurumsal Hafıza, HAF, 2 ajan' })).toBeVisible();
+    // Kurumsal Hafıza stands in the middle (6 October decision 4): its card hangs on the top
+    // corner of the room in the centre cell. Without a centre unit that cell stays free and the
+    // room goes to the first cell of the ring.
+    const middle = screen.getByRole('button', { name: 'Kurumsal Hafıza, HAF, 2 ajan' });
+    expect(middle).toBeVisible();
+    expect([middle.style.getPropertyValue('--sx'), middle.style.getPropertyValue('--sy')]).toEqual([
+      '-40',
+      '-76',
+    ]);
+    const layout = (centreUnit?: string) =>
+      layoutOffice(
+        ARMADX_OFFICE.map((unit) => ({ code: unit.code, agents: unit.agents.map((a) => a.code) })),
+        centreUnit === undefined ? {} : { centreUnit },
+      );
+    const cellOf = (rooms: ReturnType<typeof layout>['rooms']) =>
+      rooms.find((room) => room.unit === 'HAF')?.cell;
+    expect(cellOf(layout(CENTRE_UNIT).rooms)).toEqual({ col: 0, row: 0 });
+    expect(cellOf(layout().rooms)).not.toEqual({ col: 0, row: 0 });
     // Nobody has opened an agent yet: one state, one legend row.
     expect(
       within(screen.getByRole('list', { name: 'Durumlar' }))
@@ -363,6 +387,13 @@ describe('office page: the selection in the properties panel', () => {
       'KOR-3 Onay Masası Ajanı, Kapalı',
       'KOR-5 Toplantı Ajanı, Kapalı',
     ]);
+    // The rows show what their names say: the full card name, not the short one of the label.
+    expect(listedRows()).toEqual([
+      ['KOR-1 Ofis Koordinatörü', 'Kapalı'],
+      ['KOR-2 Görev Takip Ajanı', 'Kapalı'],
+      ['KOR-3 Onay Masası Ajanı', 'Kapalı'],
+      ['KOR-5 Toplantı Ajanı', 'Kapalı'],
+    ]);
 
     // What each element in the panel reads at the moment it takes the focus: that is what a
     // screen reader announces.
@@ -500,6 +531,10 @@ describe('office page: the selection in the properties panel', () => {
     expect(listedAgents()).toEqual([
       'HAF-1 Bilgi Tabanı Ajanı, Durduruldu',
       'HAF-2 Kurumsal Arama Ajanı, Kapalı',
+    ]);
+    expect(listedRows()).toEqual([
+      ['HAF-1 Bilgi Tabanı Ajanı', 'Durduruldu'],
+      ['HAF-2 Kurumsal Arama Ajanı', 'Kapalı'],
     ]);
 
     await userEvent.click(screen.getByRole('button', { name: /^KOR-1 / }));

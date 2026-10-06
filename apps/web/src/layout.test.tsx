@@ -94,6 +94,22 @@ describe('app layout', () => {
     );
   });
 
+  it('offers the office view to an employee (6 October decision 6: founder and employees)', async () => {
+    const employee: MembershipSummary = { ...ARMADX, role: 'employee', canApprove: false };
+    mockApi({ 'GET /session': sessionHandler({ memberships: [employee] }) });
+    renderApp('/c/armadx');
+    const mainMenu = await screen.findByRole('navigation', { name: 'Ana menü' });
+    expect(within(mainMenu).getByRole('link', { name: 'Ofis görünümü' })).toHaveAttribute(
+      'href',
+      '/c/armadx/office',
+    );
+    expect(
+      within(within(mainMenu).getByRole('list', { name: 'Ofis' }))
+        .getAllByRole('link')
+        .map((link) => link.textContent),
+    ).toEqual(['Ofis görünümü', 'Ajanlar']);
+  });
+
   it('does not offer the office view to an external person, and keeps the other rows', async () => {
     const external: MembershipSummary = { ...ARMADX, role: 'external', canApprove: false };
     mockApi({ 'GET /session': sessionHandler({ memberships: [external, PILLIKA] }) });

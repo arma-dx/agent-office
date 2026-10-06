@@ -16,6 +16,21 @@ const SIZE = { width: 1000, height: 600 };
 // Taller than the viewport allows at zoom 1, so fitting has to shrink it.
 const BOX = { x: -480, y: -296, width: 960, height: 640 };
 
+describe('ZOOM', () => {
+  it('has the limits and steps of the keyboard map, as numbers', () => {
+    // Every other test reads these from the constant; here they are written out once.
+    expect(ZOOM).toEqual({
+      min: 0.5,
+      max: 2,
+      step: 1.2,
+      fitMax: 1,
+      fitPadding: 16,
+      panStep: 48,
+      keepVisible: 64,
+    });
+  });
+});
+
 describe('clampZoom', () => {
   it('keeps the zoom between the two limits', () => {
     expect(clampZoom(0.01)).toBe(ZOOM.min);
@@ -63,6 +78,11 @@ describe('fitView', () => {
       { x: -122.5, y: -97, width: 245, height: 194 },
     );
     expect(view).toEqual({ x: 520, y: 370, k: 1 });
+    // The same for the width: a scene of even width in a canvas of odd width (a 1365 pixel
+    // window) would stand at 520.5 without the rounding.
+    expect(
+      fitView({ width: 1041, height: 741 }, { x: -122, y: -97, width: 244, height: 194 }),
+    ).toEqual({ x: 521, y: 371, k: 1 });
     const scaled = fitView(SIZE, BOX);
     expect(Number.isInteger(scaled?.x)).toBe(true);
     expect(Number.isInteger(scaled?.y)).toBe(true);
@@ -191,5 +211,7 @@ describe('keepInSight', () => {
     const bottom = (BOX.y + BOX.height) * kept.k + kept.y;
     expect(left).toBe(SIZE.width - ZOOM.keepVisible);
     expect(bottom).toBe(ZOOM.keepVisible);
+    // 64 pixels of the scene stay inside the viewport, at the right and at the top here.
+    expect([left, bottom]).toEqual([936, 64]);
   });
 });
