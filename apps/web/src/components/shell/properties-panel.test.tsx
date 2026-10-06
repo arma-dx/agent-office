@@ -1,23 +1,24 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
+import { flushSync } from 'react-dom';
 import { describe, expect, it } from 'vitest';
 import { PANEL_STORAGE_KEY } from '@/lib/shell';
 import { ShellProvider } from './app-shell.tsx';
 import { PanelRegion, PanelToggle, PropertiesPanel } from './properties-panel.tsx';
 
 /** A stand-in for a detail page: its properties exist only while the page is on screen. */
-function DetailPage() {
-  const [open, setOpen] = useState(true);
+function DetailPage({ startOpen }: { startOpen: boolean }) {
+  const [open, setOpen] = useState(startOpen);
   return (
     <div>
       <button
         type="button"
         onClick={() => {
-          setOpen(false);
+          setOpen(!open);
         }}
       >
-        Sayfadan çık
+        {open ? 'Sayfadan çık' : 'Sayfayı aç'}
       </button>
       {open ? (
         <PropertiesPanel>
@@ -28,11 +29,11 @@ function DetailPage() {
   );
 }
 
-function renderShell(withPage: boolean) {
+function renderShell(page: boolean | 'not yet open') {
   render(
     <ShellProvider>
       <PanelToggle />
-      {withPage ? <DetailPage /> : null}
+      {page ? <DetailPage startOpen={page === true} /> : null}
       <PanelRegion />
     </ShellProvider>,
   );
@@ -73,6 +74,23 @@ describe('properties panel', () => {
     localStorage.setItem(PANEL_STORAGE_KEY, 'open');
     renderShell(true);
     expect(await screen.findByRole('complementary', { name: 'Özellikler' })).toBeVisible();
+  });
+
+  it('is on screen in the same paint as the page that fills it', () => {
+    localStorage.setItem(PANEL_STORAGE_KEY, 'open');
+    renderShell('not yet open');
+    expect(screen.queryByRole('button', { name: /^Özellikleri/ })).toBeNull();
+    // No act() and no user-event on purpose: both also run the work a browser does after it has
+    // painted. What the document holds when this synchronous render returns is what the first
+    // paint with the page shows; a page painted without its panel jumps 320 px narrower one frame
+    // later.
+    flushSync(() => {
+      screen.getByRole('button', { name: 'Sayfayı aç' }).click();
+    });
+    expect(screen.getByRole('button', { name: 'Özellikleri gizle' })).toBeVisible();
+    expect(screen.getByRole('complementary', { name: 'Özellikler' })).toContainElement(
+      screen.getByText('Durum: Açık'),
+    );
   });
 
   it('goes away with the page that filled it', async () => {

@@ -7,7 +7,7 @@
 // instead of storing a node in context; closed by default; a hidden panel leaves the tab order;
 // the toggle lives in the top bar; no resize, maximize, tabs or width animation.
 import { PanelRightClose, PanelRightOpen } from 'lucide-react';
-import { useEffect, type ReactNode } from 'react';
+import { useLayoutEffect, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Button } from '@/components/ui/button';
 import { PROPERTIES_PANEL_ID, useShell } from '@/lib/shell';
@@ -18,7 +18,9 @@ import { PROPERTIES_PANEL_ID, useShell } from '@/lib/shell';
  */
 export function PropertiesPanel({ children }: { children: ReactNode }) {
   const { panelHost, registerPanel } = useShell();
-  useEffect(() => registerPanel(), [registerPanel]);
+  // A layout effect: the shell shows the panel and its toggle in the same paint as the page. With a
+  // passive effect the page was painted once at full width and then jumped 320 px narrower.
+  useLayoutEffect(() => registerPanel(), [registerPanel]);
   return panelHost ? createPortal(children, panelHost) : null;
 }
 

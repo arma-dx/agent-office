@@ -101,6 +101,20 @@ describe('top bar: location', () => {
     expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
     expect(screen.getByRole('navigation', { name: 'Ana menü' })).toBeInTheDocument();
   });
+
+  it.each(['/c/armadx/tasks/123', '/c/armadx/settings/security/x'])(
+    'leaves the heading to the not found screen at %s, an address below a known page',
+    async (path) => {
+      mockApi({ 'GET /session': sessionHandler() });
+      renderApp(path);
+      expect(
+        await screen.findByRole('heading', { level: 1, name: 'Sayfa bulunamadı' }),
+      ).toBeInTheDocument();
+      // The page route still matches by prefix; the bar must not name it above the screen's h1.
+      expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
+      expect(screen.getByRole('banner').textContent).toBe('');
+    },
+  );
 });
 
 describe('account menu: theme', () => {

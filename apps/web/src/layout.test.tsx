@@ -84,7 +84,8 @@ describe('app layout', () => {
     expect(
       await screen.findByRole('heading', { level: 1, name: 'Sayfa bulunamadı' }),
     ).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Bugün ekranına dön' })).toBeInTheDocument();
+    // Outside a company the button opens the start page, which picks the company.
+    expect(screen.getByRole('link', { name: 'Bugün ekranına dön' })).toHaveAttribute('href', '/');
   });
 
   it('shows the page not found screen at an unknown page of a company', async () => {
@@ -93,6 +94,27 @@ describe('app layout', () => {
     expect(
       await screen.findByRole('heading', { level: 1, name: 'Sayfa bulunamadı' }),
     ).toBeInTheDocument();
+  });
+
+  it('goes back to Today in the company of the URL, not in the remembered one', async () => {
+    // Opened by address in Pillika while the remembered company is Arma DX.
+    mockApi({ 'GET /session': sessionHandler({ lastCompanyId: ARMADX.companyId }) });
+    const { router } = renderApp('/c/pillika/no-such-page');
+    const back = await screen.findByRole('link', { name: 'Bugün ekranına dön' });
+    expect(back).toHaveAttribute('href', '/c/pillika');
+    await userEvent.click(back);
+    expect(await screen.findByRole('heading', { level: 1, name: 'Bugün' })).toBeInTheDocument();
+    expect(currentLocation(router).pathname).toBe('/c/pillika');
+    expect(screen.getByRole('button', { name: /Şirket: Pillika/ })).toBeInTheDocument();
+  });
+
+  it('opens the start page from the not found screen of an unknown company', async () => {
+    mockApi({ 'GET /session': sessionHandler({ memberships: [ARMADX] }) });
+    renderApp('/c/pillika/tasks');
+    expect(await screen.findByRole('link', { name: 'Bugün ekranına dön' })).toHaveAttribute(
+      'href',
+      '/',
+    );
   });
 });
 
