@@ -102,4 +102,4 @@ Bir çalışanın ya da dış kişinin kaybolan passkey'ini kurucu panelden sıf
 3. Sorgu kaç passkey'in kaldırıldığını ve kaç oturumun kapandığını döndürür. Hesabın bütün passkey'leri kaldırılır, açık oturumları kapanır ve her şirketin iz kaydına bir satır yazılır.
 4. Kurucu Google ile yeniden girer ve 10 dakika içinde Ayarlar, Güvenlik sayfasından yeni passkey ekler. İki ayrı cihazda passkey kaydı önerilir.
 
-Bu sorgu uygulamanın kendi rolleriyle (`office_api`, `office_worker`) çalışmaz; yalnızca göçleri çalıştıran rol çağırabilir. Yerel Supabase'de `postgres` rolüyle denendi; test projesinde henüz denenmedi.
+Bu sorgu uygulamanın kendi rolleriyle (`office_api`, `office_worker`) çalışmaz; yalnızca göçleri çalıştıran rol çağırabilir. Yerel Supabase'de ve test projesinde `postgres` rolüyle denendi (test projesinde 6 Ekim'de, geri alınan bir işlem içinde).

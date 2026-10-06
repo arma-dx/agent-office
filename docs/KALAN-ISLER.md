@@ -56,7 +56,7 @@ Sürüyor. Göçler `supabase/migrations`, testler `packages/db/test` (kısıtl�
 
 Altyapı:
 
-- [ ] Supabase hesabı ve iki proje: test ve canlı (test projesi açıldı; canlı için Pro plan kararı bekleniyor; adımlar `docs/supabase-kurulum.md`)
+- [ ] Supabase hesabı ve iki proje: test ve canlı (test projesi açıldı ve 6 Ekim'de bütün göçler gönderildi; canlı için Pro plan kararı bekleniyor; adımlar `docs/supabase-kurulum.md`)
 - [x] Veri bölgesinin seçimi: AB, Frankfurt (2 Ekim, karar 14)
 - [x] Yerel veritabanı: `supabase start` ve `supabase db reset` çalışır durumda (göçler ve testler yerel Supabase'de, süper kullanıcı olmayan `postgres` rolüyle geçiyor)
 - [x] Yetkili göç rolü ile kısıtlı uygulama rolünün ayrılması; uygulama rolünde `BYPASSRLS` yok
@@ -171,7 +171,7 @@ Sunucu tarafı:
 Roller ve şirket:
 
 - [x] Girişten sonra şirket seçimi; tek üyeliği olanın doğrudan geçmesi
-- [ ] Kenar çubuğunun başında şirket menüsü; kurucu için holding görünümü ve Kurucu özel alanı (şirket seçici ve Kurucu alanı hazır; menü 0.3a'da kenar çubuğuna taşınır; holding görünümü kalıyor)
+- [ ] Kenar çubuğunun başında şirket menüsü; kurucu için holding görünümü ve Kurucu özel alanı (şirket menüsü ve Kurucu alanı hazır; menü 0.3a'da kenar çubuğuna taşındı; holding görünümü kalıyor)
 - [x] Şirket seçicideki geçici örnek listenin (`apps/web/src/placeholder-data.ts`) kaldırılması; liste kullanıcının üyeliklerinden gelir
 - [x] Her API ucunda rol denetimi: `founder`, `employee`, `external` (bugünkü uçlarda; yeni uçlar aynı yardımcıyı kullanır)
 - [ ] Holding görünümü için API'de salt okunur birleştirme
@@ -227,7 +227,7 @@ Kabuk:
 - [x] Kenar çubuğu: şirket menüsü; üst satırlar (Bugün, Onaylar); "İş" grubu (Görevler, Notlar); "Ofis" grubu (Ajanlar); hesap menüsü (Ayarlar, tema, çıkış). "Yeni talep" satırı talep formuyla (0.4), "Ofis görünümü" satırı o ekranla (0.3b) menüye girer
 - [x] Üst çubuk ve konum bilgisi
 - [x] Özellik paneli altyapısı
-- [ ] Kenar çubuğunun daraltılması (yapılmadı; düğmeyle gizleme kurucunun yanıtını bekliyor, Karar: U21)
+- [x] Kenar çubuğunun daraltılması: üst çubuktaki düğmeyle gizleme ve gösterme, seçim tarayıcıda hatırlanır; dar simge şeridi ve sürükleyerek boyutlandırma yok (6 Ekim, karar 1)
 - [x] Menü simgeleri (simgeli yapıldı; Karar: U2)
 - [x] Telefon alt menüsünün kaldırılması (5 Ekim, karar 8)
 - [x] 1280 piksel ve üstü için tasarım (5 Ekim, karar 12); 1024 piksele kadar kullanılabilirlik (karar 8'den türetildi, kurucu onayı bekliyor)
