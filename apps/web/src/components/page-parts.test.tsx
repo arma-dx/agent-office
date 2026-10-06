@@ -7,6 +7,7 @@ import { InlineBanner } from './inline-banner.tsx';
 import { ListRow } from './list-row.tsx';
 import { PageSkeleton } from './page-skeleton.tsx';
 import { EmptyState, ErrorMessage } from './states.tsx';
+import { StatusIcon } from './status.tsx';
 import { TabBar } from './tab-bar.tsx';
 import { Tabs, TabsContent } from './ui/tabs.tsx';
 
@@ -22,6 +23,25 @@ describe('ListRow', () => {
     expect(within(row).getByText('Arma DX')).toBeVisible();
     expect(within(row).getByText('12:40')).toBeVisible();
     expect(within(row).queryByRole('link')).toBeNull();
+  });
+
+  it('shows the leading part before the title and the meta part after it', () => {
+    render(
+      <ul>
+        <ListRow
+          title="Teklif taslağı"
+          leading={<StatusIcon kind="task" status="open" labelled />}
+          meta={<span>Arma DX</span>}
+        />
+      </ul>,
+    );
+    const row = screen.getByRole('listitem');
+    const parts = [...row.children];
+    expect(parts[0]).toContainElement(within(row).getByRole('img', { name: 'Açık' }));
+    expect(parts[1]).toHaveTextContent('Teklif taslağı');
+    expect(parts[2]).toContainElement(within(row).getByText('Arma DX'));
+    // Only a row that leads somewhere looks clickable.
+    expect(row).not.toHaveClass('hover:bg-row-hover');
   });
 
   it('links the title over the whole row and keeps a button in the row apart from it', async () => {
@@ -47,6 +67,8 @@ describe('ListRow', () => {
     expect(rowLink).toHaveClass('row-link', 'after:absolute', 'after:inset-0');
     const row = screen.getByRole('listitem');
     expect(row).toHaveClass('relative', '[&_button]:relative', '[&_button]:z-10');
+    expect(row).toHaveClass('hover:bg-row-hover');
+    expect(within(row).getByText('Arma DX')).toBeVisible();
     expect(within(row).getAllByRole('link')).toHaveLength(1);
     // A control in the row is not inside the link and gets its own click.
     const approve = within(row).getByRole('button', { name: 'Onayla' });

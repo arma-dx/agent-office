@@ -7,8 +7,10 @@ import {
   RUN_STATUS,
   RUN_STATUSES,
   STATUS_TONES,
+  statusSpec,
   TASK_STATUS,
   TASK_STATUSES,
+  type StatusRef,
   type StatusSpec,
 } from '@/lib/status';
 import { readTokens } from '@/test/contrast';
@@ -19,6 +21,22 @@ const ALL: StatusSpec[] = [
   ...APPROVAL_STATUSES.map((status) => APPROVAL_STATUS[status]),
   ...RUN_STATUSES.map((status) => RUN_STATUS[status]),
 ];
+
+const ALL_REFS: StatusRef[] = [
+  ...TASK_STATUSES.map((status) => ({ kind: 'task', status }) as const),
+  ...APPROVAL_STATUSES.map((status) => ({ kind: 'approval', status }) as const),
+  ...RUN_STATUSES.map((status) => ({ kind: 'run', status }) as const),
+];
+
+/** The icon (by its lucide name) and the color role of each status, in the order of `statuses`. */
+function signs<S extends string>(statuses: readonly S[], table: Record<S, StatusSpec>) {
+  return Object.fromEntries(
+    statuses.map((status) => [
+      status,
+      `${table[status].icon.displayName ?? ''}, ${table[status].tone}`,
+    ]),
+  );
+}
 
 describe('status language', () => {
   it('pins the label of every status (the run labels are proposals awaiting the founder)', () => {
@@ -43,6 +61,33 @@ describe('status language', () => {
       'Sınıra takıldı',
       'Durduruldu',
     ]);
+  });
+
+  it('pins the icon and the color role of every status', () => {
+    // One icon and one color per status, the same on every screen (5 October 2026, decision 11).
+    // A changed row here is a change of the status language; the run rows and the approval colors
+    // are proposals awaiting the founder.
+    expect(signs(TASK_STATUSES, TASK_STATUS)).toEqual({
+      open: 'Circle, open',
+      in_progress: 'ProgressCircle, in-progress',
+      awaiting_approval: 'CircleDot, awaiting-approval',
+      awaiting_reply: 'CircleQuestionMark, awaiting-reply',
+      done: 'CircleCheck, done',
+      cancelled: 'Ban, cancelled',
+    });
+    expect(signs(APPROVAL_STATUSES, APPROVAL_STATUS)).toEqual({
+      pending: 'CircleDot, awaiting-approval',
+      approved: 'CircleCheck, done',
+      changes_requested: 'CircleArrowLeft, open',
+      rejected: 'CircleX, error',
+    });
+    expect(signs(RUN_STATUSES, RUN_STATUS)).toEqual({
+      running: 'ProgressCircle, in-progress',
+      completed: 'CircleCheck, done',
+      failed: 'CircleAlert, error',
+      limit_reached: 'CircleMinus, error',
+      stopped: 'CircleStop, cancelled',
+    });
   });
 
   it('gives every status a known tone, and one icon and one tone per label', () => {
@@ -97,6 +142,38 @@ describe('StatusIcon', () => {
     const icon = screen.getByRole('img', { name: 'Düzeltme istendi' });
     expect(icon).toHaveAttribute('width', '20');
     expect(icon).toHaveClass('text-status-open');
+  });
+});
+
+describe('every status', () => {
+  it.each(ALL_REFS)('$kind $status is drawn in the classes of its own color role', (ref) => {
+    const { tone, label } = statusSpec(ref);
+    const otherTones = STATUS_TONES.filter((other) => other !== tone);
+    const { container } = render(
+      <>
+        <StatusIcon {...ref} labelled />
+        <StatusBadge {...ref} />
+      </>,
+    );
+    // The icon takes the icon tone of the role (3:1 on every surface).
+    const icon = screen.getByRole('img', { name: label });
+    expect(icon).toHaveClass(`text-status-${tone}`);
+    for (const other of otherTones) expect(icon).not.toHaveClass(`text-status-${other}`);
+    // The badge takes the border, the fill and the text tone of the same role: the text tone is
+    // the one measured at 4.5:1 on that fill (tokens.test.ts), the icon tone is not.
+    const badge = container.querySelector('span');
+    expect(badge).toHaveTextContent(label);
+    expect(badge).toHaveClass(
+      `border-status-${tone}`,
+      `bg-status-${tone}-fill`,
+      `text-status-${tone}-text`,
+    );
+    expect(badge).not.toHaveClass(`text-status-${tone}`);
+    for (const other of otherTones) {
+      expect(badge).not.toHaveClass(`border-status-${other}`);
+      expect(badge).not.toHaveClass(`bg-status-${other}-fill`);
+      expect(badge).not.toHaveClass(`text-status-${other}-text`);
+    }
   });
 });
 

@@ -1,11 +1,14 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import { flushSync } from 'react-dom';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PANEL_STORAGE_KEY } from '@/lib/shell';
+import { renderInRouter } from '@/test/render-in-router';
+import { blockStorage } from '@/test/storage';
 import { ShellProvider } from './app-shell.tsx';
 import { PanelRegion, PanelToggle, PropertiesPanel } from './properties-panel.tsx';
+import { TopBar } from './top-bar.tsx';
 
 /** A stand-in for a detail page: its properties exist only while the page is on screen. */
 function DetailPage({ startOpen }: { startOpen: boolean }) {
@@ -38,6 +41,10 @@ function renderShell(page: boolean | 'not yet open') {
     </ShellProvider>,
   );
 }
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe('properties panel', () => {
   it('has no toggle and no region while no page uses it', () => {
@@ -91,6 +98,29 @@ describe('properties panel', () => {
     expect(screen.getByRole('complementary', { name: 'Özellikler' })).toContainElement(
       screen.getByText('Durum: Açık'),
     );
+  });
+
+  it('has its toggle in the top bar of the shell', async () => {
+    renderInRouter(
+      <ShellProvider>
+        <TopBar />
+        <DetailPage startOpen />
+        <PanelRegion />
+      </ShellProvider>,
+    );
+    const bar = await screen.findByRole('banner');
+    await userEvent.click(await within(bar).findByRole('button', { name: 'Özellikleri göster' }));
+    expect(screen.getByRole('complementary', { name: 'Özellikler' })).toBeVisible();
+  });
+
+  it('opens and closes in a browser that refuses storage', async () => {
+    // The choice then lasts until the page is closed.
+    blockStorage();
+    renderShell(true);
+    await userEvent.click(await screen.findByRole('button', { name: 'Özellikleri göster' }));
+    expect(screen.getByRole('complementary', { name: 'Özellikler' })).toBeVisible();
+    await userEvent.click(screen.getByRole('button', { name: 'Özellikleri gizle' }));
+    expect(screen.queryByRole('complementary', { name: 'Özellikler' })).toBeNull();
   });
 
   it('goes away with the page that filled it', async () => {

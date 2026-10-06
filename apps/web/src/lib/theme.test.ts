@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import indexHtml from '../../index.html?raw';
+import { blockStorage } from '../test/storage.ts';
 import { setThemeChoice, startTheme, THEME_STORAGE_KEY } from './theme.ts';
 
 function mockSystemPreference(dark: boolean) {
@@ -22,6 +23,7 @@ function mockSystemPreference(dark: boolean) {
 }
 
 afterEach(() => {
+  vi.restoreAllMocks();
   setThemeChoice('system', document.createElement('html'));
   vi.unstubAllGlobals();
 });
@@ -75,9 +77,58 @@ describe('theme', () => {
     expect(root.dataset['theme']).toBe('light');
   });
 
-  it('is applied before the first paint by the script in index.html, from the same key', () => {
-    // The script cannot import the constant; this keeps the two from drifting apart.
-    expect(indexHtml).toContain(`localStorage.getItem('${THEME_STORAGE_KEY}')`);
-    expect(indexHtml).toContain('document.documentElement.dataset.theme = stored');
+  it('follows the device in a browser that refuses storage, and still applies a choice', () => {
+    mockSystemPreference(false);
+    blockStorage();
+    const root = document.createElement('html');
+    // Without the guards this throws at the top of main.tsx and the panel stays a blank page.
+    expect(() => startTheme(root)).not.toThrow();
+    expect(root.dataset['theme']).toBe('light');
+    expect(() => {
+      setThemeChoice('dark', root);
+    }).not.toThrow();
+    expect(root.dataset['theme']).toBe('dark');
+  });
+});
+
+// The inline script of index.html puts a stored choice on <html> before the first paint. It cannot
+// import anything, so it is run here as the browser runs it.
+describe('first paint script (index.html)', () => {
+  const script = /<script>([\s\S]*?)<\/script>/.exec(indexHtml)?.[1] ?? '';
+  function runScript() {
+    // An indirect eval runs the text in the global scope, like a classic script.
+    (0, eval)(script);
+  }
+
+  afterEach(() => {
+    delete document.documentElement.dataset['theme'];
+  });
+
+  it('reads the key the theme module writes', () => {
+    expect(script).toContain(`localStorage.getItem('${THEME_STORAGE_KEY}')`);
+  });
+
+  it.each([
+    ['dark', 'dark'],
+    ['light', 'light'],
+    ['sepia', undefined],
+    [null, undefined],
+  ])('with %s stored, sets data-theme to %s', (stored, expected) => {
+    if (stored) localStorage.setItem(THEME_STORAGE_KEY, stored);
+    runScript();
+    expect(document.documentElement.dataset['theme']).toBe(expected);
+  });
+
+  it('leaves the page to the device when the browser refuses storage', () => {
+    blockStorage();
+    expect(runScript).not.toThrow();
+    expect(document.documentElement.dataset['theme']).toBeUndefined();
+  });
+
+  it('runs in the head, before the app bundle', () => {
+    const head = indexHtml.slice(0, indexHtml.indexOf('</head>'));
+    expect(head).toContain(script);
+    expect(script).not.toBe('');
+    expect(indexHtml.indexOf('<script>')).toBeLessThan(indexHtml.indexOf('<script type="module"'));
   });
 });

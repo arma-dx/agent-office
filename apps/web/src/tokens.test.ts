@@ -120,6 +120,35 @@ describe('color tokens (index.css)', () => {
     expect(names.filter((name) => !css.includes(`--color-${name}: var(--${name});`))).toEqual([]);
   });
 
+  it('keeps the accent and points the shadcn names at the measured tokens', () => {
+    // CLAUDE.md fixes the accent of the light theme.
+    expect(light['--brand']).toBe('#127a77');
+    // The components draw through these names (bg-primary, border-input, the --ring outline). The
+    // pairs below measure the tokens on the right; a name that points elsewhere escapes them.
+    expect(aliases).toEqual({
+      '--background': 'var(--surface)',
+      '--foreground': 'var(--ink)',
+      '--card': 'var(--surface)',
+      '--card-foreground': 'var(--ink)',
+      '--popover': 'var(--surface)',
+      '--popover-foreground': 'var(--ink)',
+      '--primary': 'var(--brand)',
+      '--primary-foreground': 'var(--on-brand)',
+      '--secondary': 'var(--surface-muted)',
+      '--secondary-foreground': 'var(--ink)',
+      '--muted': 'var(--surface-muted)',
+      '--muted-foreground': 'var(--ink-secondary)',
+      '--accent': 'var(--surface-muted)',
+      '--accent-foreground': 'var(--ink)',
+      '--destructive': 'var(--error)',
+      '--border': 'var(--line)',
+      '--input': 'var(--field-border)',
+      '--ring': 'var(--brand)',
+      '--sidebar': 'var(--canvas)',
+      '--skeleton': 'var(--sidebar-selected)',
+    });
+  });
+
   it('keeps every text and graphic pair of the light theme at WCAG AA', () => {
     expect(failures(light, requiredPairs('light'))).toEqual([]);
   });

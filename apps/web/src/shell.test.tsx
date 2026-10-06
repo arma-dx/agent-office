@@ -1,7 +1,8 @@
-import { screen, within } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createQueryClient } from './lib/query.ts';
+import { PROPERTIES_PANEL_ID } from './lib/shell.ts';
 import { setThemeChoice, THEME_STORAGE_KEY } from './lib/theme.ts';
 import { createAppRouter } from './router.tsx';
 import { json, mockApi, sessionHandler } from './test/mock-api.ts';
@@ -17,6 +18,22 @@ describe('app shell: regions and keyboard order', () => {
     // No page uses the properties panel yet: it takes no space and has no toggle.
     expect(screen.queryByRole('complementary', { name: 'Özellikler' })).toBeNull();
     expect(screen.queryByRole('button', { name: /^Özellikleri/ })).toBeNull();
+    // The region is in the frame all the same, hidden, for the first page that fills it.
+    const panel = document.getElementById(PROPERTIES_PANEL_ID);
+    expect(panel).toBeInTheDocument();
+    expect(panel).not.toBeVisible();
+  });
+
+  it('lets the skip link move the focus into the content', async () => {
+    mockApi({ 'GET /session': sessionHandler() });
+    renderApp('/c/armadx');
+    await screen.findByRole('navigation', { name: 'Ana menü' });
+    // A main without tabindex cannot take the focus: the link would scroll the page and leave the
+    // focus where it was.
+    const main = screen.getByRole('main');
+    expect(main).toHaveAttribute('tabindex', '-1');
+    main.focus();
+    expect(main).toHaveFocus();
   });
 
   it('walks from the skip link through the sidebar with the Tab key', async () => {
@@ -52,6 +69,31 @@ describe('top bar: location', () => {
     // A name on its own is a title: 15 px at the default font size, in rem so that it grows with
     // the browser's font size setting like the rest of the page.
     expect(title).toHaveClass('text-[0.9375rem]', 'font-semibold');
+    expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
+  });
+
+  it.each([
+    ['/c/armadx', 'Bugün'],
+    ['/c/armadx/approvals', 'Onaylar'],
+    ['/c/armadx/tasks', 'Görevler'],
+    ['/c/armadx/notes', 'Notlar'],
+    ['/c/armadx/agents', 'Ajanlar'],
+    ['/c/armadx/settings/users', 'Kullanıcılar'],
+    ['/c/armadx/settings/security', 'Güvenlik'],
+  ])('gives %s one h1, the name in the top bar', async (path, name) => {
+    mockApi({
+      'GET /session': sessionHandler(),
+      'GET /passkeys': () => json({ passkeys: [] }),
+      'GET /members': () => json({ members: [] }),
+      'GET /invitations': () => json({ invitations: [] }),
+    });
+    renderApp(path);
+    const bar = await screen.findByRole('banner');
+    expect(await within(bar).findByRole('heading', { level: 1, name })).toBeVisible();
+    // The page's own code loads apart from the route's declaration; count once it is on screen.
+    await waitFor(() => {
+      expect(screen.getByRole('main')).not.toBeEmptyDOMElement();
+    });
     expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
   });
 

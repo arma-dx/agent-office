@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import {
   ARMADX,
+  FOUNDER_SPACE,
   json,
   mockApi,
   noContent,
@@ -68,6 +69,40 @@ describe('app layout', () => {
     );
   });
 
+  it('keeps the menu rows in the company of the URL', async () => {
+    // Arma DX is the first membership and the remembered company; the address is in Pillika.
+    mockApi({ 'GET /session': sessionHandler() });
+    renderApp('/c/pillika/tasks');
+    const mainMenu = await screen.findByRole('navigation', { name: 'Ana menü' });
+    expect(
+      within(mainMenu)
+        .getAllByRole('link')
+        .map((link) => link.getAttribute('href')),
+    ).toEqual([
+      '/c/pillika',
+      '/c/pillika/approvals',
+      '/c/pillika/tasks',
+      '/c/pillika/notes',
+      '/c/pillika/agents',
+    ]);
+    expect(within(mainMenu).getByRole('link', { name: 'Görevler' })).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
+  });
+
+  it('keeps a row selected on an address below its page, and only that row', async () => {
+    mockApi({ 'GET /session': sessionHandler() });
+    renderApp('/c/armadx/tasks/123');
+    const mainMenu = await screen.findByRole('navigation', { name: 'Ana menü' });
+    expect(
+      within(mainMenu)
+        .getAllByRole('link')
+        .filter((link) => link.getAttribute('aria-current') === 'page')
+        .map((link) => link.textContent),
+    ).toEqual(['Görevler']);
+  });
+
   it('moves between pages from the menu', async () => {
     mockApi({ 'GET /session': sessionHandler() });
     renderApp('/c/armadx');
@@ -120,7 +155,10 @@ describe('app layout', () => {
 
 describe('company switcher', () => {
   it("lists the person's memberships, the private space under Kurucu", async () => {
-    mockApi({ 'GET /session': sessionHandler() });
+    // The private space comes first in the session: the menu groups by kind, not by order.
+    mockApi({
+      'GET /session': sessionHandler({ memberships: [FOUNDER_SPACE, ARMADX, PILLIKA] }),
+    });
     renderApp('/c/armadx');
     await userEvent.click(await screen.findByRole('button', { name: /Şirket: Arma DX/ }));
     const menu = await screen.findByRole('menu');
@@ -129,6 +167,8 @@ describe('company switcher', () => {
         .getAllByRole('menuitemradio')
         .map((i) => i.textContent),
     ).toEqual(['Arma DX', 'Pillika', 'Kurucu alanı']);
+    // Both group labels, each above its own rows.
+    expect(menu.textContent).toBe('ŞirketArma DXPillikaKurucuKurucu alanı');
     expect(within(menu).getByRole('menuitemradio', { name: 'Arma DX' })).toHaveAttribute(
       'aria-checked',
       'true',
