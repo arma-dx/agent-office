@@ -31,7 +31,7 @@ function CompanyPicker() {
                   onClick={() => {
                     rememberCompany.mutate(m.companyId);
                   }}
-                  className="flex min-h-14 flex-col justify-center px-4 py-3 hover:bg-canvas"
+                  className="flex min-h-14 flex-col justify-center px-4 py-3 hover:bg-row-hover"
                 >
                   <span className="text-sm font-medium">{companyLabel(m)}</span>
                   <span className="text-sm text-ink-secondary">{ROLE_LABELS[m.role]}</span>

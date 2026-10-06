@@ -51,5 +51,8 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     setupFiles: ['./src/test-setup.ts'],
+    // Vitest answers every stylesheet import with an empty string. The token test reads the source
+    // of index.css (import ... from './index.css?raw'), so that one import is let through.
+    css: { include: [/index\.css\?raw$/] },
   },
 });

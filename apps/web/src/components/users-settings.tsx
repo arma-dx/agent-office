@@ -381,8 +381,10 @@ export function MembersSection({ companyId }: { companyId: string }) {
 
 // Invitations
 
+// Invitation statuses are not part of the status language of tasks, approvals and runs
+// (lib/status.ts). The pending color is an open question for the founder (docs/SONRA.md).
 const invitationStatusClass: Record<Invitation['status'], string> = {
-  pending: 'text-awaiting-approval',
+  pending: 'text-status-open-text',
   expired: 'text-ink-secondary',
   accepted: 'text-brand',
   cancelled: 'text-ink-secondary',

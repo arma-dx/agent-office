@@ -2,10 +2,19 @@
 @import 'tw-animate-css';
 
 /*
- * The interface is temporary for now (2 October 2026); the design will be redone later.
- * Colors come from the variables in CLAUDE.md. Brand #127a77 instead of #13807d: 4.8:1 on the canvas (at least
- * 4.5:1 for normal text). The form field border is separate (--field-border): 3.3:1 on white (at least 3:1 for a
- * box boundary); thin divider lines stay on --line.
+ * Colors follow the 5 October 2026 decision 6 (visual direction c): white content area, light gray
+ * sidebar, neutral text and lines, Paperclip's status hues, our accent (--brand #127a77).
+ * Every text token reaches 4.5:1 and every icon, ring and field boundary reaches 3:1 on all seven
+ * surfaces (--surface, --surface-muted, --row-hover, --row-selected, --canvas, --sidebar-hover,
+ * --sidebar-selected). Two limits:
+ * - In the light theme --brand as text is only for --surface, --surface-muted, --row-hover and
+ *   --canvas; on the darker row tones use --brand-active.
+ * - On a status fill (badge, inline banner) text is --ink, --ink-secondary, the fill's own -text
+ *   tone or --brand-active. --brand and --error are not used as text there (below 4.5:1 on some
+ *   fills); a button on a banner is the outline button.
+ * tokens.test.ts measures these pairs from this file and fails below the thresholds.
+ * --row-selected, --sidebar-line and --status-live have no user yet (a selected list row, a line
+ * inside the sidebar, the live dot); they are kept because the set was measured as a whole.
  */
 
 /* Font served from our own server: only latin and latin-ext (enough for Turkish letters). */
@@ -112,17 +121,47 @@
 }
 
 :root {
-  --canvas: #f6f7f9;
+  /* Surfaces and row tones. */
   --surface: #ffffff;
-  --ink: #18202e;
-  --ink-secondary: #5b6475;
-  --line: #dde1e8;
-  --field-border: #858e9e;
+  --surface-muted: #f5f5f5;
+  --row-hover: #f5f5f5;
+  --row-selected: #e9e9e9;
+  --canvas: #f2f2f2;
+  --sidebar-hover: #e9e9e9;
+  --sidebar-selected: #dcdcdc;
+  /* Text, lines, brand. */
+  --ink: #0a0a0a;
+  --ink-secondary: #616161;
+  --line: #e5e5e5;
+  --sidebar-line: #e5e5e5;
+  --field-border: #8c8c8c;
   --brand: #127a77;
   --brand-active: #0f6663;
   --on-brand: #ffffff;
-  --error: #c2412d;
-  --awaiting-approval: #9a6412;
+  --error: #b41f1f;
+  /* Status language: icon tone, badge fill, badge and status text. */
+  --status-open: #b56b00;
+  --status-open-fill: #fef0da;
+  --status-open-text: #895600;
+  --status-in-progress: #155dfc;
+  --status-in-progress-fill: #dee8fc;
+  --status-in-progress-text: #1e51c1;
+  --status-awaiting-approval: #7c3aed;
+  --status-awaiting-approval-fill: #ebe1fc;
+  --status-awaiting-approval-text: #6630c2;
+  --status-awaiting-reply: #dc2626;
+  --status-awaiting-reply-fill: #fadede;
+  --status-awaiting-reply-text: #b41f1f;
+  --status-done: #00903e;
+  --status-done-fill: #def6e7;
+  --status-done-text: #007030;
+  --status-cancelled: #52585d;
+  --status-cancelled-fill: #f2f3f3;
+  --status-cancelled-text: #5d6265;
+  --status-error: #dc2626;
+  --status-error-fill: #fadede;
+  --status-error-text: #b41f1f;
+  --status-live: #2563eb;
   --radius: 0.375rem;
   /* Google sign-in button: colors fixed by Google's branding guidelines (light theme button). */
   --google-surface: #ffffff;
@@ -130,38 +169,101 @@
   --google-ink: #1f1f1f;
 }
 
-/* Dark theme; every color is at least 4.5:1 on the dark canvas and surface (field border at least 3:1). */
+/* Dark theme: Paperclip's dark arrangement (the sidebar is lighter than the content), same thresholds. */
 [data-theme='dark'] {
-  --canvas: #12161d;
-  --surface: #1a1f29;
-  --ink: #e6e9ef;
-  --ink-secondary: #a3abb9;
-  --line: #2c3340;
-  --field-border: #6b7486;
+  /* Surfaces and row tones. */
+  --surface: #171717;
+  --surface-muted: #262626;
+  --row-hover: #1f1f1f;
+  --row-selected: #262626;
+  --canvas: #262626;
+  --sidebar-hover: #2d2d2d;
+  --sidebar-selected: #333333;
+  /* Text, lines, brand. */
+  --ink: #fafafa;
+  --ink-secondary: #a1a1a1;
+  --line: #2e2e2e;
+  --sidebar-line: #3c3c3c;
+  --field-border: #6f6f6f;
   --brand: #4db6b1;
   --brand-active: #6cc6c1;
-  --on-brand: #12161d;
-  --error: #ee7a66;
-  --awaiting-approval: #d9a24c;
+  --on-brand: #171717;
+  --error: #ff6a68;
+  /* Status language: icon tone, badge fill, badge and status text. */
+  --status-open: #fbbf24;
+  --status-open-fill: #483514;
+  --status-open-text: #f7b13c;
+  --status-in-progress: #51a2ff;
+  --status-in-progress-fill: #1a2846;
+  --status-in-progress-text: #6798ff;
+  --status-awaiting-approval: #9474f0;
+  --status-awaiting-approval-fill: #2d1f46;
+  --status-awaiting-approval-text: #ad84ff;
+  --status-awaiting-reply: #e83631;
+  --status-awaiting-reply-fill: #421a1a;
+  --status-awaiting-reply-text: #ff6a68;
+  --status-done: #34d06f;
+  --status-done-fill: #193d27;
+  --status-done-text: #4ed17e;
+  --status-cancelled: #9a958a;
+  --status-cancelled-fill: #373839;
+  --status-cancelled-text: #b9bec1;
+  --status-error: #e83631;
+  --status-error-fill: #421a1a;
+  --status-error-text: #ff6a68;
+  --status-live: #51a2ff;
   --google-surface: #131314;
   --google-border: #8e918f;
   --google-ink: #e3e3e3;
 }
 
-/* The first paint before the script runs also follows the system preference (no light flash on load). */
+/*
+ * The first paint before the script runs follows the system preference (no light flash on load).
+ * These lines repeat the dark block above; tokens.test.ts fails when the two differ.
+ */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) {
-    --canvas: #12161d;
-    --surface: #1a1f29;
-    --ink: #e6e9ef;
-    --ink-secondary: #a3abb9;
-    --line: #2c3340;
-    --field-border: #6b7486;
+    /* Surfaces and row tones. */
+    --surface: #171717;
+    --surface-muted: #262626;
+    --row-hover: #1f1f1f;
+    --row-selected: #262626;
+    --canvas: #262626;
+    --sidebar-hover: #2d2d2d;
+    --sidebar-selected: #333333;
+    /* Text, lines, brand. */
+    --ink: #fafafa;
+    --ink-secondary: #a1a1a1;
+    --line: #2e2e2e;
+    --sidebar-line: #3c3c3c;
+    --field-border: #6f6f6f;
     --brand: #4db6b1;
     --brand-active: #6cc6c1;
-    --on-brand: #12161d;
-    --error: #ee7a66;
-    --awaiting-approval: #d9a24c;
+    --on-brand: #171717;
+    --error: #ff6a68;
+    /* Status language: icon tone, badge fill, badge and status text. */
+    --status-open: #fbbf24;
+    --status-open-fill: #483514;
+    --status-open-text: #f7b13c;
+    --status-in-progress: #51a2ff;
+    --status-in-progress-fill: #1a2846;
+    --status-in-progress-text: #6798ff;
+    --status-awaiting-approval: #9474f0;
+    --status-awaiting-approval-fill: #2d1f46;
+    --status-awaiting-approval-text: #ad84ff;
+    --status-awaiting-reply: #e83631;
+    --status-awaiting-reply-fill: #421a1a;
+    --status-awaiting-reply-text: #ff6a68;
+    --status-done: #34d06f;
+    --status-done-fill: #193d27;
+    --status-done-text: #4ed17e;
+    --status-cancelled: #9a958a;
+    --status-cancelled-fill: #373839;
+    --status-cancelled-text: #b9bec1;
+    --status-error: #e83631;
+    --status-error-fill: #421a1a;
+    --status-error-text: #ff6a68;
+    --status-live: #51a2ff;
     --google-surface: #131314;
     --google-border: #8e918f;
     --google-ink: #e3e3e3;
@@ -172,7 +274,7 @@
 /* shadcn components use these names both as utility classes and as raw var(--...). */
 :root,
 [data-theme] {
-  --background: var(--canvas);
+  --background: var(--surface);
   --foreground: var(--ink);
   --card: var(--surface);
   --card-foreground: var(--ink);
@@ -180,16 +282,19 @@
   --popover-foreground: var(--ink);
   --primary: var(--brand);
   --primary-foreground: var(--on-brand);
-  --secondary: var(--canvas);
+  --secondary: var(--surface-muted);
   --secondary-foreground: var(--ink);
-  --muted: var(--canvas);
+  --muted: var(--surface-muted);
   --muted-foreground: var(--ink-secondary);
-  --accent: var(--canvas);
+  --accent: var(--surface-muted);
   --accent-foreground: var(--ink);
   --destructive: var(--error);
   --border: var(--line);
   --input: var(--field-border);
   --ring: var(--brand);
+  --sidebar: var(--canvas);
+  /* Loading blocks must show on the content surface and on the canvas alike. */
+  --skeleton: var(--sidebar-selected);
 }
 
 @theme inline {
@@ -198,6 +303,12 @@
 
   --color-canvas: var(--canvas);
   --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
+  --color-row-hover: var(--row-hover);
+  --color-row-selected: var(--row-selected);
+  --color-sidebar-hover: var(--sidebar-hover);
+  --color-sidebar-selected: var(--sidebar-selected);
+  --color-sidebar-line: var(--sidebar-line);
   --color-ink: var(--ink);
   --color-ink-secondary: var(--ink-secondary);
   --color-line: var(--line);
@@ -206,7 +317,28 @@
   --color-brand-active: var(--brand-active);
   --color-on-brand: var(--on-brand);
   --color-error: var(--error);
-  --color-awaiting-approval: var(--awaiting-approval);
+  --color-status-open: var(--status-open);
+  --color-status-open-fill: var(--status-open-fill);
+  --color-status-open-text: var(--status-open-text);
+  --color-status-in-progress: var(--status-in-progress);
+  --color-status-in-progress-fill: var(--status-in-progress-fill);
+  --color-status-in-progress-text: var(--status-in-progress-text);
+  --color-status-awaiting-approval: var(--status-awaiting-approval);
+  --color-status-awaiting-approval-fill: var(--status-awaiting-approval-fill);
+  --color-status-awaiting-approval-text: var(--status-awaiting-approval-text);
+  --color-status-awaiting-reply: var(--status-awaiting-reply);
+  --color-status-awaiting-reply-fill: var(--status-awaiting-reply-fill);
+  --color-status-awaiting-reply-text: var(--status-awaiting-reply-text);
+  --color-status-done: var(--status-done);
+  --color-status-done-fill: var(--status-done-fill);
+  --color-status-done-text: var(--status-done-text);
+  --color-status-cancelled: var(--status-cancelled);
+  --color-status-cancelled-fill: var(--status-cancelled-fill);
+  --color-status-cancelled-text: var(--status-cancelled-text);
+  --color-status-error: var(--status-error);
+  --color-status-error-fill: var(--status-error-fill);
+  --color-status-error-text: var(--status-error-text);
+  --color-status-live: var(--status-live);
   --color-google-surface: var(--google-surface);
   --color-google-border: var(--google-border);
   --color-google-ink: var(--google-ink);
@@ -229,6 +361,8 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-skeleton: var(--skeleton);
 
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
@@ -259,6 +393,21 @@
 :focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 2px;
+}
+/*
+ * The link of a list row covers the whole row (components/list-row.tsx), so the ring is drawn on
+ * that cover, inside the row, instead of around the title text.
+ */
+.row-link:focus-visible {
+  outline: none;
+}
+.row-link:focus-visible::after {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+/* The content area takes focus from the skip link; it is not a control. */
+#content:focus-visible {
+  outline: none;
 }
 
 /* The reduced motion preference is respected. */
