@@ -69,15 +69,19 @@ export function panBy(view: View, dx: number, dy: number): View {
   return { x: view.x + dx, y: view.y + dy, k: view.k };
 }
 
-/** The view that shows the whole box, centred. Null while the viewport has no usable size. */
+/**
+ * The view that shows the whole box, centred. Null while the viewport has no usable size. The
+ * offset is rounded to whole pixels: every vertex of the scene is a whole pixel, and at zoom 1 a
+ * half pixel offset would smear every 1 pixel outline and every label border over two pixels.
+ */
 export function fitView(size: Size, box: Box2): View | null {
   const width = size.width - 2 * ZOOM.fitPadding;
   const height = size.height - 2 * ZOOM.fitPadding;
   if (width <= 0 || height <= 0 || box.width <= 0 || box.height <= 0) return null;
   const k = clampZoom(Math.min(width / box.width, height / box.height, ZOOM.fitMax));
   return {
-    x: (size.width - box.width * k) / 2 - box.x * k,
-    y: (size.height - box.height * k) / 2 - box.y * k,
+    x: Math.round((size.width - box.width * k) / 2 - box.x * k),
+    y: Math.round((size.height - box.height * k) / 2 - box.y * k),
     k,
   };
 }

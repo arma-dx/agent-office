@@ -48,11 +48,24 @@ describe('fitView', () => {
     expect(view).not.toBeNull();
     if (!view) return;
     expect(view.k).toBeCloseTo((600 - 2 * ZOOM.fitPadding) / 640, 10);
+    // Centred to the pixel: the offset itself is a whole number (see the next test).
     const left = BOX.x * view.k + view.x;
     const right = (BOX.x + BOX.width) * view.k + view.x;
-    expect(left).toBeCloseTo(SIZE.width - right, 10);
+    expect(Math.abs(left - (SIZE.width - right))).toBeLessThanOrEqual(1);
     const top = BOX.y * view.k + view.y;
-    expect(top).toBeCloseTo(ZOOM.fitPadding, 10);
+    expect(Math.abs(top - ZOOM.fitPadding)).toBeLessThanOrEqual(0.5);
+  });
+
+  it('puts the scene on whole pixels, so 1 pixel outlines stay sharp at zoom 1', () => {
+    // A scene of odd width in a viewport of even width would sit on half a pixel.
+    const view = fitView(
+      { width: 1040, height: 740 },
+      { x: -122.5, y: -97, width: 245, height: 194 },
+    );
+    expect(view).toEqual({ x: 520, y: 370, k: 1 });
+    const scaled = fitView(SIZE, BOX);
+    expect(Number.isInteger(scaled?.x)).toBe(true);
+    expect(Number.isInteger(scaled?.y)).toBe(true);
   });
 
   it('never enlarges a small scene beyond fitMax', () => {

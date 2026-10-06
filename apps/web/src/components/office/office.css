@@ -1,0 +1,380 @@
+/*
+ * The office view (module M15): every rule of the scene, under an office- class. Imported once, by
+ * office-view.tsx, so it loads with the page that shows the office.
+ *
+ * Every color is a token of index.css or an alias of one. The only values written out are the two
+ * --office-side-shade tones, the shaded side of a slab, which carry no meaning. Text stands on
+ * --surface only: labels, cards, the caption, the legend and the keyboard hint are opaque boxes,
+ * because the scene pans and zooms under them. Text sizes and the heights and widths that hold
+ * text are in rem and follow the font size set in the browser; the offsets and gaps of the drawing
+ * are in px. Nothing here moves by itself. office-css.test.ts keeps these rules.
+ */
+
+/* Scene tones: aliases on the figure, so they stay out of the token blocks of index.css. */
+.office-view {
+  --office-ground: var(--surface);
+  --office-floor: var(--canvas);
+  --office-edge: var(--field-border);
+  --office-side: var(--sidebar-selected);
+  --office-side-shade: #c4c4c4;
+  --office-walkway: var(--row-hover);
+}
+[data-theme='dark'] .office-view {
+  --office-side: var(--row-hover);
+  --office-side-shade: #1b1b1b;
+}
+/* First paint, before lib/theme.ts runs: the same two lines as the dark block above. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .office-view {
+    --office-side: var(--row-hover);
+    --office-side-shade: #1b1b1b;
+  }
+}
+
+.office-viewport {
+  position: relative;
+  min-height: 0;
+  flex: 1;
+  /* clip, not hidden: a clipped box is not a scroll container, so focusing a button that is
+     outside the viewport cannot scroll the scene out of step with the pan state. */
+  overflow: clip;
+  /* The browser must not pan or zoom the page on its own inside the scene. */
+  touch-action: none;
+  overscroll-behavior: contain;
+  user-select: none;
+  cursor: grab;
+  background: var(--office-ground);
+}
+.office-viewport[data-dragging] {
+  cursor: grabbing;
+}
+/* The viewport itself takes the focus for panning with the arrow keys; the ring sits inside its box. */
+.office-viewport:focus-visible {
+  outline-offset: -2px;
+}
+
+/* ---- Drawing (SVG). Every stroke keeps its width at every zoom. ---- */
+.office-world :is(polygon, rect, circle, path) {
+  vector-effect: non-scaling-stroke;
+  stroke-linejoin: round;
+}
+/* A walkway carries no information; it joins the rooms into one office. */
+.office-walkway {
+  fill: var(--office-walkway);
+  stroke: var(--office-edge);
+}
+.office-slab-top {
+  fill: var(--office-floor);
+  stroke: var(--office-edge);
+}
+.office-slab-left {
+  fill: var(--office-side);
+}
+.office-slab-right {
+  fill: var(--office-side-shade);
+}
+/* The silhouette of the slab, always outlined; it turns into the ring of the room. */
+.office-unit > .office-ring {
+  fill: none;
+  stroke: var(--office-edge);
+  stroke-width: 1;
+  pointer-events: none;
+}
+
+/* Desk sprite. Furniture is neutral; only the figure and the mat carry a state. */
+/* The straight parts snap to the pixel grid: at zoom 1 their outlines are one sharp pixel. */
+.office-desk,
+.office-leg,
+.office-stand,
+.office-chair-foot {
+  shape-rendering: crispEdges;
+}
+.office-monitor {
+  fill: var(--surface);
+  stroke: var(--ink-secondary);
+}
+.office-stand {
+  fill: var(--ink-secondary);
+}
+.office-leg {
+  fill: var(--office-side);
+}
+.office-desk {
+  fill: var(--surface);
+  stroke: var(--office-edge);
+}
+.office-chair {
+  fill: var(--office-side);
+  stroke: var(--office-edge);
+}
+.office-chair-foot {
+  fill: none;
+  stroke: var(--office-edge);
+}
+/* transparent is hit by the pointer; fill none would not be. The mat is the pointer target of a desk. */
+.office-mat {
+  fill: transparent;
+  stroke: none;
+  cursor: pointer;
+}
+.office-agent > .office-ring {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 2;
+  pointer-events: none;
+}
+
+/*
+ * States. Closed and enabled share one tone and differ by shape: an outline figure takes no work,
+ * a filled one does. A stopped agent is an outline figure on a mat, in the tone of a stopped run.
+ */
+.office-agent {
+  --state: var(--ink-secondary);
+  --state-fill: transparent;
+}
+.office-agent[data-state='stopped'] {
+  --state: var(--status-cancelled);
+  --state-fill: var(--status-cancelled-fill);
+}
+.office-figure {
+  fill: var(--state);
+  stroke: var(--state);
+}
+/* Closed and stopped: the figure is an outline. Enabled is the same tone, filled. */
+.office-agent:is([data-state='closed'], [data-state='stopped']) .office-figure {
+  fill: var(--surface);
+}
+.office-agent[data-state='stopped'] > .office-mat {
+  fill: var(--state-fill);
+  stroke: var(--state);
+}
+
+/*
+ * Rings on a room or a desk: under the pointer, keyboard focus, selection. Three rules in this
+ * order, so the later one wins on the same thing.
+ */
+.office-unit[data-hover] > .office-ring,
+.office-agent[data-hover] > .office-ring,
+.office-agent:hover > .office-ring {
+  stroke: var(--ink-secondary);
+}
+/* Keyboard focus is on this thing's button: dashed, so it cannot be taken for the selection. */
+.office-unit[data-active] > .office-ring,
+.office-agent[data-active] > .office-ring {
+  stroke: var(--brand);
+  stroke-width: 2;
+  stroke-dasharray: 4 3;
+}
+.office-unit[data-selected] > .office-ring,
+.office-agent[data-selected] > .office-ring {
+  stroke: var(--brand);
+  stroke-width: 2;
+  stroke-dasharray: none;
+}
+
+/* ---- Labels and cards (HTML over the drawing). ---- */
+.office-labels {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.office-labels ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+/*
+ * An anchor is placed from its scene point: the point is multiplied by the zoom, the element is
+ * scaled by --office-s (it shrinks with the scene down to 0.85 and never grows), and the last
+ * translate hangs it on the point by its own size. Every text inside is 13 px at the default font
+ * size, so the smallest it gets is 11 px.
+ */
+.office-anchor {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+  transform: translate(
+      calc(var(--sx) * var(--office-k) * 1px),
+      calc(var(--sy) * var(--office-k) * 1px)
+    )
+    scale(var(--office-s)) var(--hang);
+  pointer-events: auto;
+  box-sizing: border-box;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.8125rem;
+  text-align: left;
+  cursor: pointer;
+}
+.office-anchor[data-placement='card'] {
+  --hang: translate(-50%, calc(-100% - 24px));
+}
+.office-anchor[data-placement='above'] {
+  --hang: translate(0, calc(-100% - 4px));
+}
+.office-anchor[data-placement='below'] {
+  --hang: translate(-100%, 4px);
+}
+.office-anchor:hover {
+  background: var(--surface-muted);
+}
+.office-anchor:is(:hover, :focus-visible, [aria-pressed='true']) {
+  z-index: 1;
+}
+/* Selected: a 2 pixel brand border; the padding gives the pixel back, so the size does not change. */
+.office-anchor[aria-pressed='true'] {
+  border: 2px solid var(--brand);
+}
+.office-label[aria-pressed='true'] {
+  padding: 0 7px;
+}
+.office-card[aria-pressed='true'] {
+  padding: 5px 9px;
+}
+
+.office-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 1.5rem;
+  max-width: 14rem;
+  padding: 0 8px;
+  line-height: 1;
+  white-space: nowrap;
+}
+.office-code {
+  font-weight: 600;
+}
+.office-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.office-glyph {
+  width: 0.875rem;
+  height: 0.875rem;
+  flex: none;
+}
+:is(.office-label, .office-legend li)[data-state='stopped'] .office-glyph {
+  color: var(--status-cancelled);
+}
+
+/* 48 pixels high with a one-line name, 65 with two lines: 2 border + 12 padding + 17 per row. */
+.office-card {
+  display: flex;
+  width: 13.5rem;
+  flex-direction: column;
+  padding: 6px 10px;
+}
+.office-card-name {
+  font-weight: 600;
+  line-height: 1.0625rem;
+}
+/* At the code level this row is the only text of the card, so it is as large as the name. */
+.office-card-meta {
+  display: flex;
+  height: 1.0625rem;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink-secondary);
+  line-height: 1.0625rem;
+}
+.office-tag {
+  padding: 0 4px;
+  border: 1px solid var(--line);
+  border-radius: calc(var(--radius) * 0.8);
+  color: var(--ink);
+  font-weight: 600;
+  line-height: 0.9375rem;
+}
+.office-count {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/*
+ * Detail levels (overlay.ts). Below 0.85 the labels stop shrinking and shorten instead: an agent
+ * label keeps its code, a unit card its code and count. Hover, focus and selection bring the full
+ * text back, which serves as the tooltip. Below 0.6 agent labels are not painted; they stay in the
+ * accessibility tree and in the keyboard order, and appear while they have the focus.
+ */
+.office-viewport:not([data-level='full'])
+  .office-label:not(:hover, :focus-visible, [aria-pressed='true'])
+  .office-name,
+.office-viewport:not([data-level='full'])
+  .office-card:not(:hover, :focus-visible, [aria-pressed='true'])
+  .office-card-name {
+  display: none;
+}
+.office-viewport:not([data-level='full'])
+  .office-card:not(:hover, :focus-visible, [aria-pressed='true']) {
+  width: auto;
+}
+.office-viewport[data-level='units'] .office-label:not(:focus-visible, [aria-pressed='true']) {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* ---- Fixed parts around the scene: each has the box of a label. ---- */
+.office-caption,
+.office-legend,
+.office-hint {
+  position: absolute;
+  z-index: 2;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink-secondary);
+  pointer-events: none;
+}
+.office-caption {
+  top: 12px;
+  left: 16px;
+  font-size: 0.8125rem;
+}
+.office-legend {
+  bottom: 16px;
+  left: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  list-style: none;
+  font-size: 0.75rem;
+}
+.office-legend li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.office-legend svg {
+  width: 0.875rem;
+  height: 0.875rem;
+  flex: none;
+}
+/* Centred between the legend and the zoom buttons, clear of both; at most two lines. */
+.office-hint {
+  right: 0;
+  bottom: 16px;
+  left: 0;
+  width: fit-content;
+  max-width: min(35rem, calc(100% - 17rem));
+  margin-inline: auto;
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+.office-controls {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
