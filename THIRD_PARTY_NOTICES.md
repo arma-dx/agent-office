@@ -30,6 +30,7 @@ Files in this repository that contain code ported or adapted from Paperclip:
 | `apps/web/src/components/states.tsx`                 | `ui/src/components/EmptyState.tsx`                                                                                            |
 | `apps/web/src/components/tab-bar.tsx`                | `ui/src/components/PageTabBar.tsx`                                                                                            |
 | `apps/web/src/components/ui/tabs.tsx`                | `ui/src/components/ui/tabs.tsx`                                                                                               |
+| `apps/web/src/lib/office/view.ts`                    | `ui/src/pages/OrgChart.tsx`                                                                                                   |
 
 The Paperclip name, logo and illustrations are not used.
 
