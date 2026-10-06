@@ -13,11 +13,14 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { notifyError } from '@/lib/notify';
 import { signOut, useSession } from '@/lib/session';
+import { setThemeChoice, THEME_CHOICES, themeChoiceSchema, useThemeChoice } from '@/lib/theme';
 import { initials } from '@/lib/utils';
 
 /** Signs out, clears every cached answer and opens the login screen with a short note. */
@@ -35,9 +38,9 @@ function useSignOut() {
 }
 
 /**
- * The person's menu: name, settings (users for the founder, security for everyone), sign out. At
- * the bottom of the sidebar it is a menu row with a 24 px avatar and opens upward; in the header
- * of a page outside a company it opens downward.
+ * The person's menu: name, settings (users for the founder, security for everyone), theme, sign
+ * out. At the bottom of the sidebar it is a menu row with a 24 px avatar and opens upward; in the
+ * header of a page outside a company it opens downward.
  */
 export function AccountMenu({
   company,
@@ -48,6 +51,7 @@ export function AccountMenu({
 }) {
   const session = useSession();
   const signOutMutation = useSignOut();
+  const themeChoice = useThemeChoice();
   const name = session.user.name;
   // Users are managed by the founder, inside a company (nobody is invited to the private space).
   const usersCompany =
@@ -107,6 +111,20 @@ export function AccountMenu({
             </DropdownMenuItem>
           </>
         ) : null}
+        <DropdownMenuSeparator />
+        <DropdownMenuLabel>Tema</DropdownMenuLabel>
+        <DropdownMenuRadioGroup
+          value={themeChoice}
+          onValueChange={(value) => {
+            setThemeChoice(themeChoiceSchema.parse(value));
+          }}
+        >
+          {THEME_CHOICES.map((choice) => (
+            <DropdownMenuRadioItem key={choice.value} value={choice.value}>
+              {choice.label}
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
         <DropdownMenuSeparator />
         <DropdownMenuItem
           disabled={signOutMutation.isPending}

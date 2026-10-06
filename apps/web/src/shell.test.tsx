@@ -1,7 +1,8 @@
 import { screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { createQueryClient } from './lib/query.ts';
+import { setThemeChoice, THEME_STORAGE_KEY } from './lib/theme.ts';
 import { createAppRouter } from './router.tsx';
 import { json, mockApi, sessionHandler } from './test/mock-api.ts';
 import { renderApp } from './test/render-app.tsx';
@@ -99,5 +100,41 @@ describe('top bar: location', () => {
     ).toBeInTheDocument();
     expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
     expect(screen.getByRole('navigation', { name: 'Ana menü' })).toBeInTheDocument();
+  });
+});
+
+describe('account menu: theme', () => {
+  afterEach(() => {
+    setThemeChoice('system');
+  });
+
+  it('offers system, light and dark, applies the choice at once and stores it', async () => {
+    mockApi({ 'GET /session': sessionHandler() });
+    renderApp('/c/armadx');
+    await userEvent.click(await screen.findByRole('button', { name: 'Hesap: Ömer Kadıoğlu' }));
+    const menu = await screen.findByRole('menu');
+    const choices = within(menu).getAllByRole('menuitemradio');
+    expect(choices.map((choice) => choice.textContent)).toEqual(['Sistem', 'Açık', 'Koyu']);
+    expect(within(menu).getByRole('menuitemradio', { name: 'Sistem' })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+
+    await userEvent.click(within(menu).getByRole('menuitemradio', { name: 'Koyu' }));
+    expect(document.documentElement.dataset['theme']).toBe('dark');
+    expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe('dark');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Hesap: Ömer Kadıoğlu' }));
+    expect(await screen.findByRole('menuitemradio', { name: 'Koyu' })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+  });
+
+  it('is offered outside a company too', async () => {
+    mockApi({ 'GET /session': sessionHandler({ lastCompanyId: null }) });
+    renderApp('/companies');
+    await userEvent.click(await screen.findByRole('button', { name: 'Hesap: Ömer Kadıoğlu' }));
+    expect(await screen.findByRole('menuitemradio', { name: 'Açık' })).toBeInTheDocument();
   });
 });

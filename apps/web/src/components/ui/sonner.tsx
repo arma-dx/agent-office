@@ -6,12 +6,14 @@ import {
   OctagonXIcon,
   Loader2Icon,
 } from 'lucide-react';
+import { useTheme } from '@/lib/theme';
 
 const Toaster = ({ ...props }: ToasterProps) => {
+  // The toaster follows the theme chosen in the account menu, not the device on its own.
+  const theme = useTheme();
   return (
     <Sonner
-      // data-theme follows the system preference, so sonner follows the same preference itself.
-      theme="system"
+      theme={theme}
       className="toaster group"
       icons={{
         success: <CircleCheckIcon className="size-4" />,

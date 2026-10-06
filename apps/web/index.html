@@ -12,6 +12,17 @@
     <meta name="apple-mobile-web-app-title" content="Agent Office" />
     <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#171717" media="(prefers-color-scheme: dark)" />
+    <script>
+      // Puts a stored theme choice on <html> before the first paint; without it the page would
+      // first show the device theme. The key is THEME_STORAGE_KEY in src/lib/theme.ts.
+      try {
+        const stored = localStorage.getItem('agent-office.theme');
+        if (stored === 'light' || stored === 'dark')
+          document.documentElement.dataset.theme = stored;
+      } catch {
+        // Storage is blocked; the page follows the device.
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>

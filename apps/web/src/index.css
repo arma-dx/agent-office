@@ -218,8 +218,10 @@
 }
 
 /*
- * The first paint before the script runs follows the system preference (no light flash on load).
- * These lines repeat the dark block above; tokens.test.ts fails when the two differ.
+ * Before lib/theme.ts runs, the page follows the device, unless the inline script in index.html
+ * has already put a stored choice on <html> (data-theme). Either way the first paint is the theme
+ * the person will see. These lines repeat the dark block above; tokens.test.ts fails when the two
+ * differ.
  */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) {

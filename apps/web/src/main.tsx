@@ -4,11 +4,11 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { FRAMED_TEXT, isFramed } from '@/lib/frame';
 import { createQueryClient } from '@/lib/query';
-import { watchTheme } from '@/lib/theme';
+import { startTheme } from '@/lib/theme';
 import { createAppRouter } from './router.tsx';
 import './index.css';
 
-watchTheme();
+startTheme();
 
 const queryClient = createQueryClient();
 const router = createAppRouter({ queryClient });
