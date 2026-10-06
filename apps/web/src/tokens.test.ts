@@ -22,8 +22,11 @@ const SURFACES = [
 ];
 /** In the light theme --brand as text is only for these; darker row tones take --brand-active. */
 const LIGHT_BRAND_TEXT_SURFACES = ['--surface', '--surface-muted', '--row-hover', '--canvas'];
-/** A field (input, select, switch track) sits on one of these. */
-const FIELD_SURFACES = ['--surface', '--surface-muted', '--canvas'];
+/**
+ * A field (input, select, checkbox, switch track) sits on one of these. Its boundary is below 3:1
+ * on --row-selected and on the sidebar row tones, so no field goes there (header of index.css).
+ */
+const FIELD_SURFACES = ['--surface', '--surface-muted', '--row-hover', '--canvas'];
 
 /** The color roles of the status language: every --status-<tone>-fill names one. */
 const STATUS_TONES = Object.keys(light)

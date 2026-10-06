@@ -4,14 +4,17 @@
 /*
  * Colors follow the 5 October 2026 decision 6 (visual direction c): white content area, light gray
  * sidebar, neutral text and lines, Paperclip's status hues, our accent (--brand #127a77).
- * Every text token reaches 4.5:1 and every icon, ring and field boundary reaches 3:1 on all seven
- * surfaces (--surface, --surface-muted, --row-hover, --row-selected, --canvas, --sidebar-hover,
- * --sidebar-selected). Two limits:
+ * Every text token reaches 4.5:1 and every icon and ring reaches 3:1 on all seven surfaces
+ * (--surface, --surface-muted, --row-hover, --row-selected, --canvas, --sidebar-hover,
+ * --sidebar-selected). Three limits:
  * - In the light theme --brand as text is only for --surface, --surface-muted, --row-hover and
  *   --canvas; on the darker row tones use --brand-active.
  * - On a status fill (badge, inline banner) text is --ink, --ink-secondary, the fill's own -text
  *   tone or --brand-active. --brand and --error are not used as text there (below 4.5:1 on some
  *   fills); a button on a banner is the outline button.
+ * - A field boundary (--field-border) reaches 3:1 only on --surface, --surface-muted, --row-hover
+ *   and --canvas. Do not put an input, a select, a checkbox or a switch on --row-selected or on
+ *   the sidebar row tones (2.45 to 2.77 there in the light theme).
  * tokens.test.ts measures these pairs from this file and fails below the thresholds.
  * --row-selected, --sidebar-line and --status-live have no user yet (a selected list row, a line
  * inside the sidebar, the live dot); they are kept because the set was measured as a whole.

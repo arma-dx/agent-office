@@ -21,7 +21,7 @@ const ALL: StatusSpec[] = [
 ];
 
 describe('status language', () => {
-  it('uses the approved labels for task and approval statuses', () => {
+  it('pins the label of every status (the run labels are proposals awaiting the founder)', () => {
     expect(TASK_STATUSES.map((status) => TASK_STATUS[status].label)).toEqual([
       'Açık',
       'Sürüyor',
