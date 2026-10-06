@@ -126,7 +126,7 @@ Bir satır, ekranı yapıldığında menüye eklenir. Panel telefona uyumlu yap�
 | Ayarlar | Kullanıcılar ve roller, şirketler, entegrasyonlar (Drive bağlantısı ve klasör izin listesi Sprint 1, Gmail ve Takvim Sprint 3) | 0, 1 ve 3 |
 | Ölçümler | Ofis düzeyindeki ölçütler (aşağıdaki Ölçütler bölümü) | 4 |
 | Not grafiği | Notlar arası bağlantıların grafiği | 4 |
-| Ofis görünümü | Birimleri ve ajanları gösteren izometrik ofis haritası: birimler oda, ajanlar masalarında; çalışıyor, onay bekliyor, boşta ve hata durumları | 0: kabuktan hemen sonra, Görevler'den önce (5 Ekim, karar 14; KALAN-ISLER 0.3b) |
+| Ofis görünümü | Birimleri ve ajanları gösteren izometrik ofis haritası: birimler oda, ajanlar masalarında; çalışıyor, onay bekliyor, boşta ve hata durumları. İlk sürüm o şirkette ajanı olan birimleri, kartı olan ajanları, ortada Kurumsal Hafıza odasını ve ajanın o şirketteki durumunu (Kapalı, Etkin, Durduruldu) gösterir; canlı durumlar, sayılar ve ajan sayfasına geçiş ilgili işlerle gelir (6 Ekim, karar 3-8) | 0: kabuktan hemen sonra, Görevler'den önce (5 Ekim, karar 14; KALAN-ISLER 0.3b) |
 
 ## Modüller
 
