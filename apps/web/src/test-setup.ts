@@ -43,8 +43,10 @@ beforeEach(() => {
 // first, then every stubbed global (fetch in the app tests) goes back to its original value.
 // sonner keeps its toasts in module state and shows them to the next Toaster; they are dismissed so
 // that a test never sees the message of the one before.
+// Layout and theme choices live in localStorage; a test never starts with the choice of another.
 afterEach(() => {
   cleanup();
   toast.dismiss();
+  localStorage.clear();
   vi.unstubAllGlobals();
 });

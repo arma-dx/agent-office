@@ -18,4 +18,12 @@ declare module '@tanstack/react-router' {
   interface Register {
     router: ReturnType<typeof createAppRouter>;
   }
+  interface StaticDataRouteOption {
+    /**
+     * Where the page sits in the panel. The top bar shows it (the label is the page's h1).
+     * `parent` names a group that has no page of its own. Every page under /c/$company declares
+     * one; shell.test.tsx fails for a page that does not.
+     */
+    location?: { label: string; parent?: string };
+  }
 }

@@ -23,35 +23,48 @@ describe('app layout', () => {
     expect(screen.getByRole('link', { name: 'İçeriğe geç' })).toHaveAttribute('href', '#content');
   });
 
-  it('has five tabs in the bottom menu inside the company; the Ofis tab opens the Agents screen', async () => {
+  it('lists the menu in the sidebar in groups and marks only the open page', async () => {
     mockApi({ 'GET /session': sessionHandler() });
     const { router } = renderApp('/c/armadx');
-    const bottomMenu = await screen.findByRole('navigation', { name: 'Alt menü' });
-    const tabs = within(bottomMenu).getAllByRole('link');
-    expect(tabs.map((t) => t.textContent)).toEqual([
+    const mainMenu = await screen.findByRole('navigation', { name: 'Ana menü' });
+    const links = within(mainMenu).getAllByRole('link');
+    expect(links.map((link) => link.textContent)).toEqual([
       'Bugün',
       'Onaylar',
       'Görevler',
       'Notlar',
-      'Ofis',
+      'Ajanlar',
     ]);
-    expect(tabs.map((t) => t.getAttribute('href'))).toEqual([
+    expect(links.map((link) => link.getAttribute('href'))).toEqual([
       '/c/armadx',
       '/c/armadx/approvals',
       '/c/armadx/tasks',
       '/c/armadx/notes',
       '/c/armadx/agents',
     ]);
-    await userEvent.click(within(bottomMenu).getByRole('link', { name: 'Ofis' }));
+    const work = within(mainMenu).getByRole('list', { name: 'İş' });
+    expect(
+      within(work)
+        .getAllByRole('link')
+        .map((link) => link.textContent),
+    ).toEqual(['Görevler', 'Notlar']);
+    const office = within(mainMenu).getByRole('list', { name: 'Ofis' });
+    expect(
+      within(office)
+        .getAllByRole('link')
+        .map((link) => link.textContent),
+    ).toEqual(['Ajanlar']);
+
+    await userEvent.click(within(mainMenu).getByRole('link', { name: 'Ajanlar' }));
     expect(await screen.findByRole('heading', { level: 1, name: 'Ajanlar' })).toBeInTheDocument();
     expect(currentLocation(router).pathname).toBe('/c/armadx/agents');
     // Only the open page is marked; "Bugün" is not active on every page.
-    expect(within(bottomMenu).getByRole('link', { name: 'Ofis' })).toHaveAttribute(
-      'data-status',
-      'active',
+    expect(within(mainMenu).getByRole('link', { name: 'Ajanlar' })).toHaveAttribute(
+      'aria-current',
+      'page',
     );
-    expect(within(bottomMenu).getByRole('link', { name: 'Bugün' })).not.toHaveAttribute(
-      'data-status',
+    expect(within(mainMenu).getByRole('link', { name: 'Bugün' })).not.toHaveAttribute(
+      'aria-current',
     );
   });
 

@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { cn } from '@/lib/utils';
 
-/** The browser's own select, styled like Input; on phones it opens the system picker. */
+/** The browser's own select, styled like Input. */
 function NativeSelect({ className, ...props }: React.ComponentProps<'select'>) {
   return (
     <select

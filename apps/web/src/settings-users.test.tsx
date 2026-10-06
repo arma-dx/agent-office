@@ -137,9 +137,9 @@ describe('settings, users: visibility', () => {
     await userEvent.click(await screen.findByRole('menuitem', { name: 'Kullanıcılar' }));
     expect(await screen.findByRole('heading', { level: 1, name: 'Kullanıcılar' })).toBeVisible();
     expect(currentLocation(router).pathname).toBe('/c/armadx/settings/users');
-    // Settings are not in the bottom menu.
-    const bottomMenu = screen.getByRole('navigation', { name: 'Alt menü' });
-    expect(within(bottomMenu).queryByRole('link', { name: 'Kullanıcılar' })).toBeNull();
+    // Settings are in the account menu, not in the sidebar menu.
+    const mainMenu = screen.getByRole('navigation', { name: 'Ana menü' });
+    expect(within(mainMenu).queryByRole('link', { name: 'Kullanıcılar' })).toBeNull();
   });
 
   it('is not offered to an employee', async () => {
