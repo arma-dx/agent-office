@@ -251,6 +251,11 @@ function labels() {
   return within(screen.getByRole('list', { name: 'Birimler' })).getAllByRole('button');
 }
 
+/** Pointer events of the main mouse button: the press, a move while it is down, a move without it. */
+const PRESS = { pointerId: 1, isPrimary: true, button: 0, buttons: 1 };
+const HELD = { pointerId: 1, isPrimary: true, buttons: 1 };
+const FREE = { pointerId: 1, isPrimary: true, buttons: 0 };
+
 describe('OfficeView structure', () => {
   it('is a figure with a text summary, and lists units and agents as buttons in reading order', () => {
     renderOffice();
@@ -501,21 +506,51 @@ describe('OfficeView keyboard', () => {
 
   it('brings a button reached with the keyboard into view, 48 pixels inside the viewport', async () => {
     const user = userEvent.setup();
-    // Narrow: the width limits the fit, so the outermost rooms stand 16 pixels from the edge.
-    VIEWPORT.width = 560;
     const { viewport, world } = renderOffice();
-    const before = fitted({ width: 560, height: 600 });
-    expect(world.getAttribute('transform')).toBe(fittedTransform({ width: 560, height: 600 }));
-    await user.tab();
-    await user.tab();
+    // The person zooms in: the room on the far right is cut off by the edge of the viewport.
+    for (let step = 0; step < 3; step++) {
+      await user.click(screen.getByRole('button', { name: 'Yakınlaştır' }));
+    }
+    const k = zoomOf(viewport);
+    const extent = selectedExtent('unit:P-IST');
+    const right = () => (extent.x + extent.width) * k + translateOf(world)[0];
+    expect(right()).toBeGreaterThan(VIEWPORT.width);
+    const [before] = translateOf(world);
+
+    await user.tab({ shift: true });
+    expect(screen.getByRole('button', { name: /^Koordinasyon Katmanı/ })).toHaveFocus();
     await user.keyboard('{ArrowRight}');
     expect(screen.getByRole('button', { name: /^İstasyon Verisi/ })).toHaveFocus();
-    const extent = selectedExtent('unit:P-IST');
     const [x] = translateOf(world);
-    expect(zoomOf(viewport)).toBe(before.k);
-    expect(x).not.toBe(before.x);
-    expect((extent.x + extent.width) * before.k + x).toBeCloseTo(560 - 48, 8);
-    expect(extent.x * before.k + x).toBeGreaterThanOrEqual(48);
+    expect(zoomOf(viewport)).toBe(k);
+    expect(x).toBeLessThan(before);
+    expect(right()).toBeCloseTo(VIEWPORT.width - 48, 8);
+    expect(extent.x * k + x).toBeGreaterThanOrEqual(48);
+  });
+
+  it('leaves a fitted view fitted when the keyboard walks over buttons that are in sight', async () => {
+    const user = userEvent.setup();
+    // Narrow: the width limits the fit, so the outermost rooms stand 16 pixels from the edge,
+    // closer than the 48 pixels a button that was out of sight is brought in.
+    VIEWPORT.width = 560;
+    const { world } = renderOffice();
+    const narrow = fittedTransform({ width: 560, height: 600 });
+    expect(world.getAttribute('transform')).toBe(narrow);
+    await user.tab();
+    await user.tab();
+    const walked: (string | null)[] = [];
+    for (let step = 0; step < labels().length; step++) {
+      walked.push(document.activeElement?.getAttribute('data-office-id') ?? null);
+      expect(world.getAttribute('transform'), walked.at(-1) ?? '').toBe(narrow);
+      await user.keyboard('{ArrowDown}');
+    }
+    expect(new Set(walked).size).toBe(labels().length);
+    await user.keyboard('{Home}{ArrowRight}{End}');
+    expect(world.getAttribute('transform')).toBe(narrow);
+    // The view is still the fitted one: it follows the viewport.
+    VIEWPORT.width = 1000;
+    reportSize();
+    expect(world.getAttribute('transform')).toBe(fittedTransform({ width: 1000, height: 600 }));
   });
 
   it('selects with Enter and with Space, and clears the selection with Escape', async () => {
@@ -545,13 +580,63 @@ describe('OfficeView keyboard', () => {
     expect(world.getAttribute('transform')).toBe(fitted);
   });
 
-  it('leaves the browser shortcuts with Ctrl and Cmd alone', async () => {
+  it('keeps the focused button in the canvas when a zoom key is pressed on it', async () => {
+    const user = userEvent.setup();
+    const { viewport, world } = renderOffice();
+    // The desk on the far right: a zoom step around the middle of the canvas pushes it outwards.
+    await user.tab();
+    await user.tab();
+    await user.keyboard('{ArrowRight}{ArrowDown}');
+    expect(screen.getByRole('button', { name: /^P-IST-1 / })).toHaveFocus();
+    const extent = selectedExtent('agent:P-IST-1');
+    const start = zoomOf(viewport);
+    for (const steps of [1, 2, 3]) {
+      await user.keyboard('+');
+      const k = zoomOf(viewport);
+      expect(k).toBeCloseTo(start * ZOOM.step ** steps, 10);
+      const [x, y] = translateOf(world);
+      expect(extent.x * k + x, `left after ${steps}`).toBeGreaterThanOrEqual(48 - 1e-8);
+      expect((extent.x + extent.width) * k + x, `right after ${steps}`).toBeLessThanOrEqual(
+        VIEWPORT.width - 48 + 1e-8,
+      );
+      expect(extent.y * k + y, `top after ${steps}`).toBeGreaterThanOrEqual(48 - 1e-8);
+      expect((extent.y + extent.height) * k + y, `bottom after ${steps}`).toBeLessThanOrEqual(
+        VIEWPORT.height - 48 + 1e-8,
+      );
+    }
+    // On the map itself the step stays around the middle of the canvas: nothing follows.
+    await user.keyboard('0');
+    viewport.focus();
+    await user.keyboard('+');
+    const view = fitted(VIEWPORT);
+    const k = zoomOf(viewport);
+    expect(translateOf(world)[0]).toBeCloseTo(500 - (k / view.k) * (500 - view.x), 8);
+    expect(translateOf(world)[1]).toBeCloseTo(300 - (k / view.k) * (300 - view.y), 8);
+  });
+
+  it('leaves the browser shortcuts with Ctrl, Cmd and Alt alone', async () => {
     const user = userEvent.setup();
     const { viewport, world } = renderOffice();
     const fitted = world.getAttribute('transform');
-    viewport.focus();
-    await user.keyboard('{Control>}+{/Control}');
-    await user.keyboard('{Meta>}0{/Meta}');
+    // Each chord on its own: one that zoomed could not be told from one that was undone by the
+    // next. fireEvent answers false when the scene took the key from the browser.
+    for (const target of [viewport, screen.getByRole('button', { name: /^KOR-1 / })]) {
+      for (const key of ['+', '=', '-', '_', '0', 'ArrowLeft']) {
+        for (const modifier of ['ctrlKey', 'metaKey', 'altKey']) {
+          const left = fireEvent.keyDown(target, { key, [modifier]: true });
+          expect(left, `${modifier} ${key}`).toBe(true);
+          expect(world.getAttribute('transform'), `${modifier} ${key}`).toBe(fitted);
+        }
+      }
+    }
+    // The page zoom's "actual size" does not fit a view the person chose.
+    await user.click(screen.getByRole('button', { name: 'Yakınlaştır' }));
+    const chosen = world.getAttribute('transform');
+    expect(chosen).not.toBe(fitted);
+    expect(fireEvent.keyDown(viewport, { key: '0', metaKey: true })).toBe(true);
+    expect(world.getAttribute('transform')).toBe(chosen);
+    // Without a modifier the same keys are the scene's.
+    expect(fireEvent.keyDown(viewport, { key: '0' })).toBe(false);
     expect(world.getAttribute('transform')).toBe(fitted);
   });
 
@@ -562,6 +647,15 @@ describe('OfficeView keyboard', () => {
     const [x, y] = translateOf(world);
     screen.getByRole('button', { name: /^KOR-2 / }).focus();
     await user.keyboard('{ArrowUp}');
+    expect(world.getAttribute('transform')).toBe(fitted);
+    // On the first and on the last button an arrow has no button to go to: it still does not pan,
+    // and the key is left to the browser.
+    const first = screen.getByRole('button', { name: /^Koordinasyon Katmanı/ });
+    const last = screen.getByRole('button', { name: /^HAF-1 / });
+    expect(fireEvent.keyDown(first, { key: 'ArrowUp' })).toBe(true);
+    expect(fireEvent.keyDown(first, { key: 'ArrowLeft' })).toBe(true);
+    expect(fireEvent.keyDown(last, { key: 'ArrowDown' })).toBe(true);
+    expect(fireEvent.keyDown(last, { key: 'ArrowRight' })).toBe(true);
     expect(world.getAttribute('transform')).toBe(fitted);
     viewport.focus();
     await user.keyboard('{ArrowRight}');
@@ -662,9 +756,9 @@ describe('OfficeView pointer', () => {
       clientX: 100,
       clientY: 100,
     });
-    fireEvent.pointerMove(button, { pointerId: 1, isPrimary: true, clientX: 102, clientY: 101 });
+    fireEvent.pointerMove(button, { ...HELD, clientX: 102, clientY: 101 });
     expect(viewport).not.toHaveAttribute('data-dragging');
-    fireEvent.pointerMove(button, { pointerId: 1, isPrimary: true, clientX: 160, clientY: 130 });
+    fireEvent.pointerMove(button, { ...HELD, clientX: 160, clientY: 130 });
     expect(viewport).toHaveAttribute('data-dragging');
     expect(setPointerCapture).toHaveBeenCalledWith(1);
     fireEvent.pointerUp(viewport, { pointerId: 1, isPrimary: true, clientX: 160, clientY: 130 });
@@ -693,11 +787,85 @@ describe('OfficeView pointer', () => {
     const { viewport, world } = renderOffice();
     const fitted = world.getAttribute('transform');
     fireEvent.pointerDown(viewport, { pointerId: 1, isPrimary: true, button: 2, clientX: 0 });
-    fireEvent.pointerMove(viewport, { pointerId: 1, isPrimary: true, clientX: 80, clientY: 80 });
+    fireEvent.pointerMove(viewport, {
+      pointerId: 1,
+      isPrimary: true,
+      buttons: 2,
+      clientX: 80,
+      clientY: 80,
+    });
     fireEvent.pointerDown(viewport, { pointerId: 2, isPrimary: false, button: 0, clientX: 0 });
-    fireEvent.pointerMove(viewport, { pointerId: 2, isPrimary: false, clientX: 80, clientY: 80 });
+    fireEvent.pointerMove(viewport, {
+      pointerId: 2,
+      isPrimary: false,
+      buttons: 1,
+      clientX: 80,
+      clientY: 80,
+    });
     expect(world.getAttribute('transform')).toBe(fitted);
     expect(setPointerCapture).not.toHaveBeenCalled();
+  });
+
+  it('does not start a drag from a press with Ctrl, which opens the context menu on macOS', () => {
+    const { viewport, world } = renderOffice();
+    const fitted = world.getAttribute('transform');
+    // The menu takes the release: no pointerup follows, and the next moves have no button down.
+    fireEvent.pointerDown(viewport, { ...PRESS, ctrlKey: true, clientX: 100, clientY: 100 });
+    fireEvent.pointerMove(viewport, { ...HELD, ctrlKey: true, clientX: 180, clientY: 160 });
+    fireEvent.pointerMove(viewport, { ...FREE, clientX: 260, clientY: 220 });
+    expect(world.getAttribute('transform')).toBe(fitted);
+    expect(viewport).not.toHaveAttribute('data-dragging');
+    expect(setPointerCapture).not.toHaveBeenCalled();
+  });
+
+  it('drops a press whose release went elsewhere: the scene does not follow a pointer with no button down', () => {
+    const { onSelect, viewport, world } = renderOffice();
+    const fitted = world.getAttribute('transform');
+    // Pressed near the edge and released over the top bar, before the press became a drag: the
+    // viewport never sees the release. The pointer comes back with no button down.
+    fireEvent.pointerDown(viewport, { ...PRESS, clientX: 100, clientY: 2 });
+    fireEvent.pointerMove(viewport, { ...FREE, clientX: 300, clientY: 400 });
+    fireEvent.pointerMove(viewport, { ...FREE, clientX: 340, clientY: 440 });
+    expect(world.getAttribute('transform')).toBe(fitted);
+    expect(viewport).not.toHaveAttribute('data-dragging');
+    expect(setPointerCapture).not.toHaveBeenCalled();
+
+    // The same for a drag whose release was lost: it ends with the first move without a button.
+    fireEvent.pointerDown(viewport, { ...PRESS, clientX: 100, clientY: 100 });
+    fireEvent.pointerMove(viewport, { ...HELD, clientX: 160, clientY: 130 });
+    expect(viewport).toHaveAttribute('data-dragging');
+    const dragged = world.getAttribute('transform');
+    expect(dragged).not.toBe(fitted);
+    fireEvent.pointerMove(viewport, { ...FREE, clientX: 400, clientY: 300 });
+    expect(viewport).not.toHaveAttribute('data-dragging');
+    expect(world.getAttribute('transform')).toBe(dragged);
+    // No click followed that drag, so the next click is not dropped.
+    fireEvent.click(screen.getByRole('button', { name: /^KOR-1 / }));
+    expect(onSelect).toHaveBeenLastCalledWith('agent:KOR-1');
+  });
+
+  it('ends a drag that never ended when the next press begins', () => {
+    const { viewport } = renderOffice();
+    fireEvent.pointerDown(viewport, { ...PRESS, clientX: 100, clientY: 100 });
+    fireEvent.pointerMove(viewport, { ...HELD, clientX: 160, clientY: 130 });
+    expect(viewport).toHaveAttribute('data-dragging');
+    // No release and no move in between: the next press is a plain click.
+    fireEvent.pointerDown(viewport, { ...PRESS, clientX: 300, clientY: 300 });
+    expect(viewport).not.toHaveAttribute('data-dragging');
+    fireEvent.pointerUp(viewport, { ...FREE, clientX: 300, clientY: 300 });
+    expect(viewport).not.toHaveAttribute('data-dragging');
+  });
+
+  it('selects with Enter right after a drag that was cancelled: no click is waiting to be dropped', async () => {
+    const user = userEvent.setup();
+    const { onSelect, viewport } = renderOffice();
+    fireEvent.pointerDown(viewport, { ...PRESS, clientX: 100, clientY: 100 });
+    fireEvent.pointerMove(viewport, { ...HELD, clientX: 160, clientY: 130 });
+    fireEvent.pointerCancel(viewport, { ...FREE, clientX: 160, clientY: 130 });
+    expect(viewport).not.toHaveAttribute('data-dragging');
+    screen.getByRole('button', { name: /^KOR-1 / }).focus();
+    await user.keyboard('{Enter}');
+    expect(onSelect).toHaveBeenLastCalledWith('agent:KOR-1');
   });
 
   it('zooms at the cursor on wheel and keeps the page from scrolling', () => {

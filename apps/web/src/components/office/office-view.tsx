@@ -78,6 +78,9 @@ function withSizes(
   return next ?? current;
 }
 
+/** The keys that zoom by one step (lib/office/use-office-view.ts). */
+const ZOOM_KEYS: ReadonlySet<string> = new Set(['+', '=', '-', '_']);
+
 /** The office id of the element a pointer or key event started on, or null for empty floor. */
 function officeIdOf(target: EventTarget): string | null {
   if (!(target instanceof Element)) return null;
@@ -443,12 +446,21 @@ export function OfficeView({
       return;
     }
     const id = officeIdOf(event.target);
-    if (id === null || event.ctrlKey || event.metaKey || event.altKey) return;
-    const next = nextItem(items, id, event.key);
-    if (next === null) return;
-    event.preventDefault();
-    // The view pans to the button in onFocus; the browser must not scroll anything on its own.
-    document.getElementById(`${prefix}-${next}`)?.focus({ preventScroll: true });
+    const modified = event.ctrlKey || event.metaKey || event.altKey;
+    const next = id === null || modified ? null : nextItem(items, id, event.key);
+    if (next !== null) {
+      event.preventDefault();
+      // The view pans to the button in onFocus; the browser must not scroll anything on its own.
+      document.getElementById(`${prefix}-${next}`)?.focus({ preventScroll: true });
+      return;
+    }
+    // Every other key is the view's (pan, zoom, fit).
+    handlers.onKeyDown(event);
+    // A zoom step keeps the middle of the canvas where it is, which can push the button that has
+    // the focus out of the canvas: the view follows that button, as it does in onFocus.
+    if (id === null || !event.defaultPrevented || !ZOOM_KEYS.has(event.key)) return;
+    const extent = extentOf(layout, boxes, id);
+    if (extent) show(extent);
   };
 
   return (
@@ -468,10 +480,7 @@ export function OfficeView({
         data-level={level}
         style={{ '--office-k': view.k, '--office-s': overlayScale(view.k) } as CSSProperties}
         {...handlers}
-        onKeyDown={(event) => {
-          onKeyDown(event);
-          if (!event.defaultPrevented) handlers.onKeyDown(event);
-        }}
+        onKeyDown={onKeyDown}
         onClick={onClick}
         onFocus={onFocus}
         onBlur={onBlur}

@@ -138,10 +138,10 @@ export function useOfficeView(bounds: Box2, keep: Box2 | null = null): OfficeVie
   // events arrive between two renders, and it never lets the scene leave the viewport. A move the
   // person made (`own`) makes the view theirs. One the scene made to follow the focus or a
   // selection leaves a held view held, so it still goes back to the fitted one with the selection.
-  const move = (next: (current: View) => View, own: boolean) => {
+  const move = (next: (current: View, fitted: boolean) => View, own: boolean) => {
     setMode((current) => {
       const before = resolve(current, size, bounds);
-      const after = next(before);
+      const after = next(before, current.kind === 'fit');
       // A change that moves nothing leaves a fitted view fitted.
       if (after === before) return current;
       return {
@@ -241,20 +241,28 @@ export function useOfficeView(bounds: Box2, keep: Box2 | null = null): OfficeVie
     setMode(FIT);
   };
 
-  const endDrag = (event: PointerEvent<HTMLDivElement>) => {
+  // Ends the press, however it ended. Only a release is followed by a click: that click goes to the
+  // viewport (it holds the capture) and is dropped there. After a cancelled drag no click comes,
+  // and a flag left behind would drop the next selection made with the keyboard.
+  const stopDrag = (released: boolean) => {
     const current = drag.current;
-    if (!current || current.pointerId !== event.pointerId) return;
     drag.current = null;
-    if (!current.moved) return;
-    // The click that follows a drag goes to the viewport (it holds the capture) and is dropped there.
-    swallowClick.current = true;
+    if (!current?.moved) return;
+    swallowClick.current = released;
     setDragging(false);
+  };
+
+  const endDrag = (event: PointerEvent<HTMLDivElement>, released: boolean) => {
+    if (drag.current?.pointerId === event.pointerId) stopDrag(released);
   };
 
   const handlers: OfficeViewHandlers = {
     onPointerDown: (event) => {
       swallowClick.current = false;
-      if (event.button !== 0 || !event.isPrimary) return;
+      // A press whose release never reached the viewport leaves nothing behind.
+      stopDrag(false);
+      // Ctrl with the main button opens the context menu on macOS, and the menu takes the release.
+      if (event.button !== 0 || !event.isPrimary || event.ctrlKey) return;
       drag.current = {
         pointerId: event.pointerId,
         startX: event.clientX,
@@ -266,6 +274,12 @@ export function useOfficeView(bounds: Box2, keep: Box2 | null = null): OfficeVie
     onPointerMove: (event) => {
       const current = drag.current;
       if (!current || current.pointerId !== event.pointerId) return;
+      // No button is down any more: the release went elsewhere (the pointer left the viewport
+      // before the press became a drag, or a menu took it). The scene must not follow the pointer.
+      if (event.buttons === 0) {
+        stopDrag(false);
+        return;
+      }
       const dx = event.clientX - current.startX;
       const dy = event.clientY - current.startY;
       if (!current.moved) {
@@ -278,8 +292,12 @@ export function useOfficeView(bounds: Box2, keep: Box2 | null = null): OfficeVie
       }
       change(() => panBy(current.origin, dx, dy));
     },
-    onPointerUp: endDrag,
-    onPointerCancel: endDrag,
+    onPointerUp: (event) => {
+      endDrag(event, true);
+    },
+    onPointerCancel: (event) => {
+      endDrag(event, false);
+    },
     onClickCapture: (event) => {
       if (!swallowClick.current) return;
       swallowClick.current = false;
@@ -343,7 +361,13 @@ export function useOfficeView(bounds: Box2, keep: Box2 | null = null): OfficeVie
     fit,
     show: (box) => {
       if (!size) return;
-      move((current) => reveal(current, box, size, REVEAL_MARGIN), false);
+      move((current, fitted) => {
+        // A fitted view has the whole office in sight, as far as it fits, and stands closer to
+        // the edge than the margin (ZOOM.fitPadding): a thing that is inside the viewport already
+        // moves nothing, so the view stays fitted and keeps following the viewport.
+        if (fitted && reveal(current, box, size, 0) === current) return current;
+        return reveal(current, box, size, REVEAL_MARGIN);
+      }, false);
     },
   };
 }
