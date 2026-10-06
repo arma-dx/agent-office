@@ -17,10 +17,10 @@ import {
 // of another company, and nothing of the founder space, may appear.
 //
 // Fixtures: units KOR, HAF and OFY shared (OFY has no agent), A-KES of Arma DX, P-IST of Pillika;
-// agents KOR-1, KOR-2, KOR-10 and HAF-1 for both companies, KOR-4 for the founder space, A-KES-2
-// for Arma DX, P-IST-1 for Pillika, and P-IST-9 whose card names both companies although its unit
-// is Pillika's; switches in Arma DX KOR-1 enabled and HAF-1 stopped (with settings and a budget),
-// in Pillika P-IST-1 enabled.
+// agents KOR-1, KOR-2, KOR-10, HAF-1 and HAF-2 for both companies, KOR-4 for the founder space,
+// A-KES-2 for Arma DX, P-IST-1 for Pillika, and P-IST-9 whose card names both companies although
+// its unit is Pillika's; switches in Arma DX KOR-1 enabled and HAF-1 stopped (with settings and a
+// budget), in Pillika P-IST-1 enabled.
 
 describe('groupOffice', () => {
   const row = (unit: string, agent: string, status: string | null = null) => ({
@@ -107,7 +107,7 @@ describe.skipIf(noDatabase)('office', () => {
   }
 
   const ARMA = [
-    'HAF[HAF-1:stopped]',
+    'HAF[HAF-1:stopped HAF-2:none]',
     'KOR[KOR-1:enabled KOR-2:none KOR-10:none]',
     'A-KES[A-KES-2:none]',
   ];
@@ -116,12 +116,19 @@ describe.skipIf(noDatabase)('office', () => {
     const res = await request();
     expect(res.statusCode).toBe(200);
     expect(res.headers['cache-control']).toBe('no-store');
-    // Shared units first, each group by code; agents by number, so KOR-10 follows KOR-2.
+    // Shared units first, each group by code; agents by number, so KOR-10 follows KOR-2. HAF and
+    // KOR have several agents each: ordered by the agent number alone their rows would mix, and
+    // a unit would come back in pieces.
     expect(shape(res)).toEqual(ARMA);
-    expect(officeResponseSchema.parse(res.json()).units[0]).toEqual({
+    const { units } = officeResponseSchema.parse(res.json());
+    expect(new Set(units.map((unit) => unit.code)).size).toBe(units.length);
+    expect(units[0]).toEqual({
       code: 'HAF',
       name: 'Kurumsal Hafıza',
-      agents: [{ code: 'HAF-1', name: 'Bilgi Tabanı Ajanı', status: 'stopped' }],
+      agents: [
+        { code: 'HAF-1', name: 'Bilgi Tabanı Ajanı', status: 'stopped' },
+        { code: 'HAF-2', name: 'Kurumsal Arama Ajanı', status: null },
+      ],
     });
     // No unit without an agent, nothing of Pillika, nothing of the founder space, and no agent
     // whose unit belongs to another company although its card names this one.
@@ -135,7 +142,7 @@ describe.skipIf(noDatabase)('office', () => {
     expect(res.statusCode).toBe(200);
     // HAF-1 and KOR-1 have a switch in Arma DX only.
     expect(shape(res)).toEqual([
-      'HAF[HAF-1:none]',
+      'HAF[HAF-1:none HAF-2:none]',
       'KOR[KOR-1:none KOR-2:none KOR-10:none]',
       'P-IST[P-IST-1:enabled P-IST-9:none]',
     ]);

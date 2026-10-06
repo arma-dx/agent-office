@@ -1,4 +1,7 @@
-import { readdir } from 'node:fs/promises';
+import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { agentCodeSchema, companyCodeSchema, unitCodeSchema } from '@agent-office/shared';
 import { afterAll, describe, expect, it } from 'vitest';
 import { LocalAddressError, localAdminUrl } from '../scripts/local-admin.ts';
@@ -71,6 +74,28 @@ describe("the repository's own definitions", () => {
     const files = await readDefinitionFiles(AGENTS_DIR);
     expect(files.cards.map((card) => card.file)).not.toContain('tools.yaml');
     expect(files.cards.map((card) => card.file)).not.toContain('units.yaml');
+  });
+});
+
+describe('readDefinitionFiles', () => {
+  it('reads a card saved as .yml, so that the file name check can refuse it', async () => {
+    // A reader that took .yaml only would skip the file, and the card would never be checked.
+    const dir = await mkdtemp(join(tmpdir(), 'definitions-'));
+    try {
+      await writeFile(join(dir, 'units.yaml'), 'units: []\n');
+      await writeFile(join(dir, 'tools.yaml'), 'tools: []\n');
+      await writeFile(join(dir, 'KOR-1.yml'), 'code: KOR-1\n');
+      await writeFile(join(dir, 'KOR-2.yaml'), 'code: KOR-2\n');
+      await writeFile(join(dir, 'README.md'), 'not a card\n');
+      const files = await readDefinitionFiles(pathToFileURL(`${dir}/`));
+      expect(files.cards).toEqual([
+        { file: 'KOR-1.yml', content: { code: 'KOR-1' } },
+        { file: 'KOR-2.yaml', content: { code: 'KOR-2' } },
+      ]);
+      expect(files.units).toEqual({ units: [] });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -437,6 +462,50 @@ describe.skipIf(noDatabase)('syncDefinitions with the migration role', () => {
     });
   });
 
+  it('writes every field of a changed row: companies and unit of an agent, name and company of a unit', async () => {
+    await inAdminTransaction(async (tx) => {
+      const input = await fromDatabase(tx);
+      const kor4 = input.agents.find((agent) => agent.code === 'KOR-4');
+      const pist = input.agents.find((agent) => agent.code === 'P-IST-1');
+      const haf = input.units.find((unit) => unit.code === 'HAF');
+      const kes = input.units.find((unit) => unit.code === 'A-KES');
+      if (!kor4 || !pist || !haf || !kes) {
+        throw new Error('The fixtures have no KOR-4, P-IST-1, HAF or A-KES');
+      }
+      // Each field on a row of its own, so that no other change carries it. The company list
+      // decides in whose office an agent shows and which company may open it.
+      kor4.companyCodes = ['founder_space', 'armadx'];
+      pist.unitCode = 'HAF';
+      haf.name = 'Hafıza';
+      kes.companyCode = 'pillika';
+
+      const first = await syncDefinitions(tx.client, input);
+      expect(first.agents).toEqual({ inserted: 0, updated: 2, unchanged: input.agents.length - 2 });
+      expect(first.units).toEqual({ inserted: 0, updated: 2, unchanged: input.units.length - 2 });
+      expect(
+        await tx.rows(
+          `select code, unit_code, company_codes from office.agent_definitions
+           where code in ('KOR-4', 'P-IST-1') order by code`,
+        ),
+      ).toEqual([
+        { code: 'KOR-4', unit_code: 'KOR', company_codes: ['founder_space', 'armadx'] },
+        { code: 'P-IST-1', unit_code: 'HAF', company_codes: ['pillika'] },
+      ]);
+      expect(
+        await tx.rows(
+          `select code, name, company_code from office.units
+           where code in ('A-KES', 'HAF') order by code`,
+        ),
+      ).toEqual([
+        { code: 'A-KES', name: kes.name, company_code: 'pillika' },
+        { code: 'HAF', name: 'Hafıza', company_code: null },
+      ]);
+
+      const second = await syncDefinitions(tx.client, input);
+      expect(second.agents.updated + second.units.updated).toBe(0);
+    });
+  });
+
   it('refuses a company code the database does not have and writes nothing', async () => {
     await inAdminTransaction(async (tx) => {
       const before = await snapshot(tx);
@@ -499,6 +568,21 @@ describe.skipIf(noDatabase)('syncDefinitions with the migration role', () => {
       expect(after.agents.map((agent) => agent.code)).toContain('P-IST-1');
       expect(after.agents).toHaveLength(before.agents.length);
       expect(after.companyAgents).toBe(before.companyAgents);
+    });
+  });
+
+  it('keeps an orphan agent that nothing refers to', async () => {
+    await inAdminTransaction(async (tx) => {
+      const before = await snapshot(tx);
+      const input = await fromDatabase(tx);
+      // KOR-4 has no switch and no card version in the fixtures: no foreign key would stop a
+      // delete, so the row stays only because the sync never deletes.
+      expect(await tx.count('company_agents', `agent_code = 'KOR-4'`)).toBe(0);
+      expect(await tx.count('card_versions', `agent_code = 'KOR-4'`)).toBe(0);
+      input.agents = input.agents.filter((agent) => agent.code !== 'KOR-4');
+      const report = await syncDefinitions(tx.client, input, { allowOrphanAgents: true });
+      expect(report.orphanAgents).toEqual(['KOR-4']);
+      expect(await snapshot(tx)).toEqual(before);
     });
   });
 

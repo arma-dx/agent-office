@@ -116,7 +116,9 @@ export async function loadFixtures(client: Client): Promise<void> {
       ('${ids.otherCompany}', '${ids.otherFounder}', 'founder', true);
 
     -- Office view. OFY has no agent; P-IST-9 names a company its unit does not belong to; HAF-1's
-    -- row carries settings and a budget, which the office must never show.
+    -- row carries settings and a budget, which the office must never show. Two shared units have
+    -- more than one agent, so the order of the rows depends on the unit and not only on the
+    -- number of the agent.
     insert into office.units (code, name, company_code, pilot_enabled) values
       ('KOR', 'Koordinasyon Katmanı', null, true),
       ('HAF', 'Kurumsal Hafıza', null, true),
@@ -129,6 +131,7 @@ export async function loadFixtures(client: Client): Promise<void> {
       ('KOR-2', 'Görev Takip Ajanı', 'KOR', '{armadx,pillika}'),
       ('KOR-10', 'Onuncu Ajan', 'KOR', '{armadx,pillika}'),
       ('HAF-1', 'Bilgi Tabanı Ajanı', 'HAF', '{armadx,pillika}'),
+      ('HAF-2', 'Kurumsal Arama Ajanı', 'HAF', '{armadx,pillika}'),
       ('KOR-4', 'Yönetici Asistanı', 'KOR', '{founder_space}'),
       ('A-KES-2', 'Süreç Analizi Ajanı', 'A-KES', '{armadx}'),
       ('P-IST-1', 'İstasyon Veri Toplama Ajanı', 'P-IST', '{pillika}'),

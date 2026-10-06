@@ -12,8 +12,9 @@ export interface OfficeRow {
 
 // Only the switch is read from company_agents: its settings and budget never leave the database
 // through this query. Units shared by every company come first, then the company's own, each by
-// code; agents by the number at the end of their code, so KOR-10 follows KOR-9. The "C" collation
-// keeps the order independent of the database locale.
+// code; agents by the number at the end of their code, so KOR-10 follows KOR-9. The number is read
+// as numeric: the code pattern does not limit its digits, and one that is too large for an integer
+// would fail the whole query. The "C" collation keeps the order independent of the database locale.
 const OFFICE_SQL = `
   select u.code as unit_code,
          u.name as unit_name,
@@ -28,7 +29,7 @@ const OFFICE_SQL = `
     and (u.company_code is null or u.company_code = c.code)
   order by (u.company_code is not null),
            u.code collate "C",
-           substring(a.code from '[0-9]+$')::int,
+           substring(a.code from '[0-9]+$')::numeric,
            a.code collate "C"`;
 
 /**

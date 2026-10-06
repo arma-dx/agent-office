@@ -2,7 +2,13 @@ import { afterAll, describe, expect, it } from 'vitest';
 import type { ContextInput } from '../src/context.ts';
 import { readOffice, type OfficeRow } from '../src/office.ts';
 import { ids } from './fixtures.ts';
-import { closePools, inTransaction, inWorkerTransaction, noDatabase } from './helpers.ts';
+import {
+  closePools,
+  inAdminTransaction,
+  inTransaction,
+  inWorkerTransaction,
+  noDatabase,
+} from './helpers.ts';
 
 // The office query (module M15) reads the global tables, which have no row level security and
 // which the tenant isolation test leaves out of every loop. Its company filter is the join on the
@@ -135,6 +141,28 @@ describe.skipIf(noDatabase)('office query', () => {
       return readOffice(tx.client);
     });
     expect(shape(rows)).toEqual(ARMA);
+  });
+
+  it('orders agents by the number of their code, also one too large for an integer', async () => {
+    // The code pattern does not limit the digits, and the sync never deletes a row: a number
+    // beyond the integer range must not fail the office of every company the card names.
+    const rows = await inAdminTransaction(async (tx) => {
+      await tx.exec(
+        `insert into office.agent_definitions (code, name, unit_code, company_codes) values
+           ('KOR-2147483648', 'Too large for an integer', 'KOR', '{armadx}'),
+           ('KOR-10', 'Tenth', 'KOR', '{armadx}'),
+           ('KOR-9', 'Ninth', 'KOR', '{armadx}')`,
+      );
+      await tx.setContext({ companyId: ids.arma, userId: ids.founder });
+      return readOffice(tx.client);
+    });
+    expect(shape(rows)).toEqual([
+      'HAF/HAF-1:stopped',
+      'KOR/KOR-1:enabled',
+      'KOR/KOR-9:none',
+      'KOR/KOR-10:none',
+      'KOR/KOR-2147483648:none',
+    ]);
   });
 
   it('reads only the five columns of the contract', async () => {
