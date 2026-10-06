@@ -63,6 +63,8 @@ export interface OfficeViewHandlers {
 
 export interface OfficeViewApi {
   readonly view: View;
+  /** True while the scene follows the viewport: the whole office is in sight, as far as it fits. */
+  readonly fitted: boolean;
   readonly dragging: boolean;
   /** Callback ref for the viewport element. */
   readonly attach: (element: HTMLDivElement | null) => void;
@@ -70,7 +72,10 @@ export interface OfficeViewApi {
   readonly zoomIn: () => void;
   readonly zoomOut: () => void;
   readonly fit: () => void;
-  /** Pans as little as needed to bring a box of the scene into the viewport (keyboard focus moved there). */
+  /**
+   * Pans as little as needed to bring a box of the scene into the viewport: the keyboard focus
+   * moved there, or it was selected from outside the scene.
+   */
   readonly show: (box: Box2) => void;
 }
 
@@ -130,15 +135,23 @@ export function useOfficeView(bounds: Box2, keep: Box2 | null = null): OfficeVie
   }, [bounds, keep]);
 
   // Every change goes through here: it starts from the view on the screen, also when several
-  // events arrive between two renders, and it never lets the scene leave the viewport.
-  const change = (next: (current: View) => View) => {
+  // events arrive between two renders, and it never lets the scene leave the viewport. A move the
+  // person made (`own`) makes the view theirs. One the scene made to follow the focus or a
+  // selection leaves a held view held, so it still goes back to the fitted one with the selection.
+  const move = (next: (current: View) => View, own: boolean) => {
     setMode((current) => {
       const before = resolve(current, size, bounds);
       const after = next(before);
       // A change that moves nothing leaves a fitted view fitted.
       if (after === before) return current;
-      return { kind: 'own', view: size ? keepInSight(after, size, bounds) : after };
+      return {
+        kind: !own && current.kind === 'held' ? 'held' : 'own',
+        view: size ? keepInSight(after, size, bounds) : after,
+      };
     });
+  };
+  const change = (next: (current: View) => View) => {
+    move(next, true);
   };
 
   // The observer is started in a layout effect and reports before the browser paints; flushSync
@@ -317,6 +330,7 @@ export function useOfficeView(bounds: Box2, keep: Box2 | null = null): OfficeVie
 
   return {
     view,
+    fitted: mode.kind === 'fit',
     dragging,
     attach,
     handlers,
@@ -329,7 +343,7 @@ export function useOfficeView(bounds: Box2, keep: Box2 | null = null): OfficeVie
     fit,
     show: (box) => {
       if (!size) return;
-      change((current) => reveal(current, box, size, REVEAL_MARGIN));
+      move((current) => reveal(current, box, size, REVEAL_MARGIN), false);
     },
   };
 }

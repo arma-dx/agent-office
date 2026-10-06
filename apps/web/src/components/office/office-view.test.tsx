@@ -1,7 +1,8 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { createRef, type Ref } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { OfficeView } from '@/components/office/office-view';
+import { OfficeView, type OfficeViewHandle } from '@/components/office/office-view';
 import { layoutOffice } from '@/lib/office/layout';
 import type { OfficeUnit } from '@/lib/office/model';
 import { extentOf, overlayAnchors, overlayBoxes, sceneBounds } from '@/lib/office/overlay';
@@ -176,9 +177,11 @@ function office(
   selectedId: string | null,
   onSelect: (id: string | null) => void,
   holdView = false,
+  ref?: Ref<OfficeViewHandle>,
 ) {
   return (
     <OfficeView
+      ref={ref}
       companyName="Arma DX"
       units={UNITS}
       centreUnit="HAF"
@@ -884,6 +887,131 @@ describe('OfficeView fitting', () => {
     VIEWPORT.width = 1000;
     reportSize();
     expect(world.getAttribute('transform')).toBe(fittedTransform({ width: 1000, height: 600 }));
+  });
+
+  it('with holdView, brings a thing chosen outside the scene into view and still fits again afterwards', () => {
+    const onSelect = vi.fn<(id: string | null) => void>();
+    const handle = createRef<OfficeViewHandle>();
+    const { viewport, world, rerender } = renderOffice(null, true);
+    const before = fitted({ width: 1000, height: 600 });
+
+    // The room on the left is selected and the panel opens: the view is held at its zoom.
+    rerender(office('unit:KOR', onSelect, true, handle));
+    VIEWPORT.width = 680;
+    reportSize();
+    expect(zoomOf(viewport)).toBe(before.k);
+    const held = translateOf(world);
+
+    // The page selects the room on the far right from its panel. A new selection alone moves
+    // nothing; the page asks the scene to show it.
+    rerender(office('unit:P-IST', onSelect, true, handle));
+    expect(translateOf(world)).toEqual(held);
+    act(() => {
+      handle.current?.revealItem('unit:P-IST');
+    });
+    expect(zoomOf(viewport)).toBe(before.k);
+    const [x, y] = translateOf(world);
+    expect(x).toBeLessThan(held[0]);
+    expect(y).toBe(held[1]);
+    const extent = selectedExtent('unit:P-IST');
+    expect((extent.x + extent.width) * before.k + x).toBeCloseTo(680 - 48, 8);
+
+    // The scene moved the view, not the person: it is fitted again when the selection is gone.
+    rerender(office(null, onSelect, true, handle));
+    VIEWPORT.width = 1000;
+    reportSize();
+    expect(world.getAttribute('transform')).toBe(fittedTransform({ width: 1000, height: 600 }));
+  });
+
+  it('with holdView, following the keyboard focus beside the panel does not take the view over', async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn<(id: string | null) => void>();
+    const { world, rerender } = renderOffice(null, true);
+    rerender(office('unit:KOR', onSelect, true));
+    VIEWPORT.width = 680;
+    reportSize();
+    const held = world.getAttribute('transform');
+
+    // The arrow key moves the focus from the selected card to the next unit, the room on the far
+    // right, which is partly out of sight: the view follows.
+    await user.tab();
+    await user.tab();
+    expect(screen.getByRole('button', { name: /^Koordinasyon Katmanı/ })).toHaveFocus();
+    await user.keyboard('{ArrowRight}');
+    expect(screen.getByRole('button', { name: /^İstasyon Verisi/ })).toHaveFocus();
+    expect(world.getAttribute('transform')).not.toBe(held);
+
+    rerender(office(null, onSelect, true));
+    VIEWPORT.width = 1000;
+    reportSize();
+    expect(world.getAttribute('transform')).toBe(fittedTransform({ width: 1000, height: 600 }));
+  });
+
+  it('with holdView, a view the person moved beside the panel stays theirs', async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn<(id: string | null) => void>();
+    const handle = createRef<OfficeViewHandle>();
+    const { viewport, world, rerender } = renderOffice(null, true);
+    rerender(office('unit:KOR', onSelect, true, handle));
+    VIEWPORT.width = 680;
+    reportSize();
+
+    await user.click(screen.getByRole('button', { name: 'Yakınlaştır' }));
+    const zoomed = zoomOf(viewport);
+    const own = world.getAttribute('transform');
+    rerender(office('unit:P-IST', onSelect, true, handle));
+    act(() => {
+      handle.current?.revealItem('unit:P-IST');
+    });
+    // The room is brought into view at the person's zoom.
+    expect(zoomOf(viewport)).toBe(zoomed);
+    const chosen = world.getAttribute('transform');
+    expect(chosen).not.toBe(own);
+
+    rerender(office(null, onSelect, true, handle));
+    VIEWPORT.width = 1000;
+    reportSize();
+    expect(zoomOf(viewport)).toBe(zoomed);
+    expect(world.getAttribute('transform')).toBe(chosen);
+  });
+
+  it('leaves a fitted view alone when the page asks to show a thing: the whole office is in sight', () => {
+    const handle = createRef<OfficeViewHandle>();
+    // Narrow: the outermost rooms stand 16 pixels from the edge, closer than the reveal margin.
+    VIEWPORT.width = 560;
+    render(office('unit:P-IST', vi.fn(), true, handle));
+    reportSize();
+    const world = screen.getByTestId('office-world');
+    const narrow = fittedTransform({ width: 560, height: 600 });
+    expect(world.getAttribute('transform')).toBe(narrow);
+    act(() => {
+      handle.current?.revealItem('unit:P-IST');
+    });
+    expect(world.getAttribute('transform')).toBe(narrow);
+  });
+
+  it('moves the focus to the button of a unit or an agent when the page asks for it', () => {
+    const handle = createRef<OfficeViewHandle>();
+    render(office(null, vi.fn(), false, handle));
+    reportSize();
+    const label = screen.getByRole('button', { name: /^KOR-2 / });
+    act(() => {
+      handle.current?.focusItem('agent:KOR-2');
+    });
+    expect(label).toHaveFocus();
+    // It is the one button in the tab order from now on.
+    expect(label).toHaveAttribute('tabindex', '0');
+    expect(labels().filter((button) => button.tabIndex === 0)).toEqual([label]);
+
+    // A thing the scene does not hold: nothing happens.
+    act(() => {
+      handle.current?.focusItem('agent:KOR-9');
+      handle.current?.revealItem('agent:KOR-9');
+    });
+    expect(label).toHaveFocus();
+    expect(screen.getByTestId('office-world').getAttribute('transform')).toBe(
+      fittedTransform({ width: 1000, height: 600 }),
+    );
   });
 
   it('stays visible at the identity view when no size was ever reported', () => {

@@ -2,9 +2,16 @@
 // Source: ui/src/context/SidebarContext.tsx and ui/src/context/PanelContext.tsx at commit
 // dd868ed125cd709506dd9b29fca640a44d580501. License text: THIRD_PARTY_NOTICES.md.
 // Changes: one context for both; the sidebar choice is stored too; the panel is closed by default
-// and takes its content through a host element (a portal) instead of a node held in state; the
-// phone drawer, the icon rail and the maximize request were removed.
+// and takes its content through a host element (a portal) instead of a node held in state; a page
+// may ask for the panel while its content exists; the phone drawer, the icon rail and the maximize
+// request were removed.
 import { createContext, useContext } from 'react';
+
+/** What a page says about the properties it registers. */
+export interface PanelOptions {
+  /** Show the panel while these properties exist, whatever the person's choice is. */
+  open?: boolean;
+}
 
 /** Layout state of the app shell: the sidebar and the properties panel. */
 export interface ShellValue {
@@ -15,8 +22,14 @@ export interface ShellValue {
   togglePanel: () => void;
   /** True while a page on screen has registered properties. */
   panelInUse: boolean;
+  /**
+   * True while a page on screen asks for the panel: its properties describe a selection that the
+   * page clears itself (the office view). The panel then shows without the person's choice being
+   * read or written, and it has no toggle.
+   */
+  panelRequested: boolean;
   /** Called by a page's panel content while it is mounted; returns the function that undoes it. */
-  registerPanel: () => () => void;
+  registerPanel: (options?: PanelOptions) => () => void;
   /** The element the page's properties are rendered into. */
   panelHost: HTMLElement | null;
   setPanelHost: (element: HTMLElement | null) => void;

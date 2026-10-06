@@ -22,6 +22,7 @@ import {
   SIDEBAR_STORAGE_KEY,
   useShell,
   writeStoredFlag,
+  type PanelOptions,
   type ShellValue,
 } from '@/lib/shell';
 import { cn } from '@/lib/utils';
@@ -33,6 +34,8 @@ export function ShellProvider({ children }: { children: ReactNode }) {
   );
   const [panelOpen, setPanelOpen] = useState(() => readStoredFlag(PANEL_STORAGE_KEY, 'open'));
   const [panelCount, setPanelCount] = useState(0);
+  // How many of the registered properties ask for the panel themselves (PanelOptions.open).
+  const [requestCount, setRequestCount] = useState(0);
   const [panelHost, setPanelHost] = useState<HTMLElement | null>(null);
 
   const toggleSidebar = useCallback(() => {
@@ -45,10 +48,14 @@ export function ShellProvider({ children }: { children: ReactNode }) {
     setPanelOpen(!panelOpen);
   }, [panelOpen]);
 
-  const registerPanel = useCallback(() => {
+  const registerPanel = useCallback((options?: PanelOptions) => {
+    // A request lasts as long as the content that made it; the stored choice is not touched.
+    const requested = options?.open === true;
     setPanelCount((count) => count + 1);
+    if (requested) setRequestCount((count) => count + 1);
     return () => {
       setPanelCount((count) => count - 1);
+      if (requested) setRequestCount((count) => count - 1);
     };
   }, []);
 
@@ -59,11 +66,21 @@ export function ShellProvider({ children }: { children: ReactNode }) {
       panelOpen,
       togglePanel,
       panelInUse: panelCount > 0,
+      panelRequested: requestCount > 0,
       registerPanel,
       panelHost,
       setPanelHost,
     }),
-    [sidebarOpen, toggleSidebar, panelOpen, togglePanel, panelCount, registerPanel, panelHost],
+    [
+      sidebarOpen,
+      toggleSidebar,
+      panelOpen,
+      togglePanel,
+      panelCount,
+      requestCount,
+      registerPanel,
+      panelHost,
+    ],
   );
   return <ShellContext value={value}>{children}</ShellContext>;
 }

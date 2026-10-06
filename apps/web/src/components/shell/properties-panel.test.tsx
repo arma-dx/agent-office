@@ -32,11 +32,55 @@ function DetailPage({ startOpen }: { startOpen: boolean }) {
   );
 }
 
+/**
+ * A stand-in for a page with a selection (the office view): the properties describe the selected
+ * thing, and while the window is wide the page asks for the panel itself.
+ */
+function SelectionPage({ startWide = true }: { startWide?: boolean }) {
+  const [selected, setSelected] = useState(false);
+  const [wide, setWide] = useState(startWide);
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          setSelected(!selected);
+        }}
+      >
+        {selected ? 'Seçimi kaldır' : 'Masayı seç'}
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          setWide(!wide);
+        }}
+      >
+        {wide ? 'Pencereyi daralt' : 'Pencereyi genişlet'}
+      </button>
+      {selected ? (
+        <PropertiesPanel open={wide}>
+          <p>Kod: KOR-1</p>
+        </PropertiesPanel>
+      ) : null}
+    </div>
+  );
+}
+
 function renderShell(page: boolean | 'not yet open') {
   render(
     <ShellProvider>
       <PanelToggle />
       {page ? <DetailPage startOpen={page === true} /> : null}
+      <PanelRegion />
+    </ShellProvider>,
+  );
+}
+
+function renderSelectionPage(startWide = true) {
+  render(
+    <ShellProvider>
+      <PanelToggle />
+      <SelectionPage startWide={startWide} />
       <PanelRegion />
     </ShellProvider>,
   );
@@ -131,5 +175,108 @@ describe('properties panel', () => {
     expect(screen.queryByRole('complementary', { name: 'Özellikler' })).toBeNull();
     expect(screen.queryByRole('button', { name: /^Özellikleri/ })).toBeNull();
     expect(screen.queryByText('Durum: Açık')).toBeNull();
+  });
+});
+
+describe('properties panel: a page that asks for it', () => {
+  it('shows while the content exists although the person keeps the panel closed, without a toggle', async () => {
+    renderSelectionPage();
+    expect(screen.queryByRole('complementary', { name: 'Özellikler' })).toBeNull();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Masayı seç' }));
+    const panel = screen.getByRole('complementary', { name: 'Özellikler' });
+    expect(panel).toContainElement(screen.getByText('Kod: KOR-1'));
+    expect(screen.getByText('Kod: KOR-1')).toBeVisible();
+    // The page closes this panel itself; a toggle could hide the detail of a live selection.
+    expect(screen.queryByRole('button', { name: /^Özellikleri/ })).toBeNull();
+    // The person's choice is neither read nor written.
+    expect(localStorage.getItem(PANEL_STORAGE_KEY)).toBeNull();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Seçimi kaldır' }));
+    expect(screen.queryByRole('complementary', { name: 'Özellikler' })).toBeNull();
+    expect(screen.queryByText('Kod: KOR-1')).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Özellikleri/ })).toBeNull();
+    expect(localStorage.getItem(PANEL_STORAGE_KEY)).toBeNull();
+  });
+
+  it('is on screen in the same paint as the selection', () => {
+    renderSelectionPage();
+    // As above: what the document holds when this synchronous render returns is the first paint.
+    flushSync(() => {
+      screen.getByRole('button', { name: 'Masayı seç' }).click();
+    });
+    expect(screen.getByRole('complementary', { name: 'Özellikler' })).toContainElement(
+      screen.getByText('Kod: KOR-1'),
+    );
+  });
+
+  it('leaves a stored choice as it was', async () => {
+    localStorage.setItem(PANEL_STORAGE_KEY, 'open');
+    renderSelectionPage();
+    await userEvent.click(screen.getByRole('button', { name: 'Masayı seç' }));
+    expect(screen.getByRole('complementary', { name: 'Özellikler' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: /^Özellikleri/ })).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'Seçimi kaldır' }));
+    expect(screen.queryByRole('complementary', { name: 'Özellikler' })).toBeNull();
+    expect(localStorage.getItem(PANEL_STORAGE_KEY)).toBe('open');
+  });
+
+  it('follows the person again as soon as the page stops asking', async () => {
+    renderSelectionPage();
+    await userEvent.click(screen.getByRole('button', { name: 'Masayı seç' }));
+    expect(screen.getByRole('complementary', { name: 'Özellikler' })).toBeVisible();
+
+    // The window became too narrow for the panel beside the page: the content stays registered,
+    // the request ends, and the panel is the person's to open, as on every other page.
+    await userEvent.click(screen.getByRole('button', { name: 'Pencereyi daralt' }));
+    expect(screen.queryByRole('complementary', { name: 'Özellikler' })).toBeNull();
+    const toggle = screen.getByRole('button', { name: 'Özellikleri göster' });
+    await userEvent.click(toggle);
+    expect(screen.getByRole('complementary', { name: 'Özellikler' })).toBeVisible();
+    expect(localStorage.getItem(PANEL_STORAGE_KEY)).toBe('open');
+    await userEvent.click(screen.getByRole('button', { name: 'Özellikleri gizle' }));
+    expect(screen.queryByRole('complementary', { name: 'Özellikler' })).toBeNull();
+    expect(localStorage.getItem(PANEL_STORAGE_KEY)).toBeNull();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Pencereyi genişlet' }));
+    expect(screen.getByRole('complementary', { name: 'Özellikler' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: /^Özellikleri/ })).toBeNull();
+  });
+
+  it('behaves as on every other page when the content does not ask', async () => {
+    renderSelectionPage(false);
+    await userEvent.click(screen.getByRole('button', { name: 'Masayı seç' }));
+    expect(screen.queryByRole('complementary', { name: 'Özellikler' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Özellikleri göster' })).toHaveAttribute(
+      'aria-expanded',
+      'false',
+    );
+  });
+
+  it('shows in a browser that refuses storage', async () => {
+    blockStorage();
+    renderSelectionPage();
+    await userEvent.click(screen.getByRole('button', { name: 'Masayı seç' }));
+    expect(screen.getByRole('complementary', { name: 'Özellikler' })).toBeVisible();
+  });
+
+  it('counts each content on its own: a request ends with the content that made it', async () => {
+    // Two pages are never on screen together; this keeps the two counts of the shell honest.
+    render(
+      <ShellProvider>
+        <PanelToggle />
+        <DetailPage startOpen />
+        <SelectionPage />
+        <PanelRegion />
+      </ShellProvider>,
+    );
+    expect(await screen.findByRole('button', { name: 'Özellikleri göster' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Masayı seç' }));
+    expect(screen.getByRole('complementary', { name: 'Özellikler' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: /^Özellikleri/ })).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'Seçimi kaldır' }));
+    // The other content is still registered: the toggle is back, the panel closed as the person left it.
+    expect(screen.queryByRole('complementary', { name: 'Özellikler' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Özellikleri göster' })).toBeInTheDocument();
   });
 });

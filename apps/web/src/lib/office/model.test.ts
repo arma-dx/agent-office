@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { ARMADX_OFFICE, FOUNDER_OFFICE, PILLIKA_OFFICE } from '@/test/office-fixtures';
-import { AGENT_STATE_LABEL, agentId, shortName, stateOf, unitId } from './model.ts';
+import {
+  AGENT_STATE_LABEL,
+  AGENT_STATE_SENTENCE,
+  agentId,
+  selectionOf,
+  shortName,
+  stateOf,
+  unitId,
+} from './model.ts';
 
 /** Every card name of the pilot, once. */
 const CARD_NAMES = [
@@ -60,11 +68,45 @@ describe('stateOf', () => {
       stopped: 'Durduruldu',
     });
   });
+
+  it('has a sentence for every state that claims no history and names no company', () => {
+    expect(AGENT_STATE_SENTENCE).toEqual({
+      closed: 'Bu ajan kapalı.',
+      enabled: 'Bu ajan etkin.',
+      stopped: 'Bu ajan durduruldu, yeni iş almaz.',
+    });
+  });
 });
 
 describe('ids', () => {
   it('tells a unit from an agent with the same code prefix', () => {
     expect(unitId('KOR')).toBe('unit:KOR');
     expect(agentId('KOR-1')).toBe('agent:KOR-1');
+  });
+});
+
+describe('selectionOf', () => {
+  it('finds a unit by its id', () => {
+    const selection = selectionOf(ARMADX_OFFICE, 'unit:A-KES');
+    expect(selection).toEqual({ kind: 'unit', unit: ARMADX_OFFICE[4] });
+    expect(selection?.unit.name).toBe('Keşif ve Dönüşüm Danışmanlığı');
+  });
+
+  it('finds an agent together with the unit it sits in', () => {
+    const selection = selectionOf(ARMADX_OFFICE, 'agent:KOR-3');
+    expect(selection).toEqual({
+      kind: 'agent',
+      unit: ARMADX_OFFICE[1],
+      agent: { code: 'KOR-3', name: 'Onay Masası Ajanı', state: 'closed' },
+    });
+  });
+
+  it('gives null for a thing the list does not hold, and for an id of the other kind', () => {
+    // P-IST is Pillika's unit; a selection never outlives the data it was made in.
+    expect(selectionOf(ARMADX_OFFICE, 'unit:P-IST')).toBeNull();
+    expect(selectionOf(ARMADX_OFFICE, 'agent:KOR-4')).toBeNull();
+    expect(selectionOf(ARMADX_OFFICE, 'agent:KOR')).toBeNull();
+    expect(selectionOf(ARMADX_OFFICE, 'unit:KOR-1')).toBeNull();
+    expect(selectionOf([], 'unit:KOR')).toBeNull();
   });
 });

@@ -1,14 +1,18 @@
 import type { MembershipSummary } from '@agent-office/shared';
 import { useQuery } from '@tanstack/react-query';
 import { createFileRoute } from '@tanstack/react-router';
-import { useMemo, useState } from 'react';
-import { OfficeView } from '@/components/office/office-view';
+import { useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
+import { OfficeDetails } from '@/components/office/office-details';
+import { OfficeView, type OfficeViewHandle } from '@/components/office/office-view';
+import { PropertiesPanel } from '@/components/shell/properties-panel';
 import { EmptyState, ErrorMessage } from '@/components/states';
 import { Skeleton } from '@/components/ui/skeleton';
 import { userMessage } from '@/lib/api';
 import { toOfficeUnits } from '@/lib/office/from-api';
-import { agentId, CENTRE_UNIT, unitId } from '@/lib/office/model';
+import { CENTRE_UNIT, selectionOf } from '@/lib/office/model';
 import { officeQueryOptions } from '@/lib/office/query';
+import { useWideWindow } from '@/lib/office/use-wide-window';
 import { companyLabel, useCompany } from '@/lib/session';
 
 /**
@@ -38,22 +42,25 @@ function OfficeScreen() {
 
 function OfficeForCompany({ company }: { company: MembershipSummary }) {
   const query = useQuery(officeQueryOptions(company.companyId));
-  // A selection is a mark on the scene and nothing more. The shell remounts the page when the
-  // company changes, so it never crosses companies, and a reload clears it.
+  // The selection is a mark on the scene and the content of the properties panel. The shell
+  // remounts the page when the company changes, so it never crosses companies, and a reload clears
+  // it.
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // From 1280 px the page asks for the panel itself and the scene keeps its zoom beside it. In a
+  // narrower window the panel would leave too little of the scene, so it follows the person's own
+  // choice there (the toggle in the top bar).
+  const wide = useWideWindow();
+  const scene = useRef<OfficeViewHandle>(null);
+  const detailsHeading = useRef<HTMLHeadingElement>(null);
   // The same answer gives the same list (the query keeps equal data as one object), so a refetch
   // that changes nothing renders nothing again.
   const units = useMemo(() => (query.data ? toOfficeUnits(query.data) : []), [query.data]);
-  const known = useMemo(
-    () =>
-      new Set(
-        units.flatMap((unit) => [
-          unitId(unit.code),
-          ...unit.agents.map((agent) => agentId(agent.code)),
-        ]),
-      ),
-    [units],
+  // A thing that left the data is no selection any more.
+  const selection = useMemo(
+    () => (selectedId === null ? null : selectionOf(units, selectedId)),
+    [units, selectedId],
   );
+  const shownId = selection ? selectedId : null;
 
   if (query.isPending) {
     // One muted block, not placeholder rooms: how many rooms there are is not known yet.
@@ -94,16 +101,47 @@ function OfficeForCompany({ company }: { company: MembershipSummary }) {
     );
   }
 
+  // A choice made in the panel (an agent of the unit, the unit of the agent) replaces the content
+  // that held the pressed button, and the focus would fall back to the page. It goes to the heading
+  // instead; the new content is rendered first, so that the heading names the chosen thing when the
+  // focus arrives.
+  const selectFromDetails = (id: string) => {
+    flushSync(() => {
+      setSelectedId(id);
+    });
+    detailsHeading.current?.focus();
+    // Beside the panel the scene may show only a part of the office: the chosen thing is brought
+    // into it.
+    scene.current?.revealItem(id);
+  };
+
+  // The panel goes with the selection: the focus returns to the thing's button in the scene.
+  const clearFromDetails = () => {
+    if (shownId !== null) scene.current?.focusItem(shownId);
+    setSelectedId(null);
+  };
+
   return (
     <div className={`flex ${CANVAS_HEIGHT} min-w-0 flex-col`}>
       <OfficeView
+        ref={scene}
         companyName={companyLabel(company)}
         units={units}
         centreUnit={CENTRE_UNIT}
-        // A thing that left the data is no selection any more.
-        selectedId={selectedId !== null && known.has(selectedId) ? selectedId : null}
+        selectedId={shownId}
         onSelect={setSelectedId}
+        holdView={wide}
       />
+      {selection ? (
+        <PropertiesPanel open={wide}>
+          <OfficeDetails
+            selection={selection}
+            headingRef={detailsHeading}
+            onSelect={selectFromDetails}
+            onClear={clearFromDetails}
+          />
+        </PropertiesPanel>
+      ) : null}
     </div>
   );
 }

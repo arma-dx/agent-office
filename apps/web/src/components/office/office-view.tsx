@@ -10,6 +10,7 @@
 import {
   memo,
   useId,
+  useImperativeHandle,
   useLayoutEffect,
   useMemo,
   useState,
@@ -18,6 +19,7 @@ import {
   type KeyboardEvent,
   type MouseEvent,
   type PointerEvent,
+  type Ref,
 } from 'react';
 import { flushSync } from 'react-dom';
 import { Minus, Plus, Scan } from 'lucide-react';
@@ -230,6 +232,17 @@ function OfficeLegend({ states }: { states: ReadonlySet<AgentState> }) {
 const CONTROL_CLASS =
   'bg-surface hover:bg-surface-muted dark:bg-surface dark:hover:bg-surface-muted';
 
+/** What the page can ask of the scene from outside it (from the detail of the selection). */
+export interface OfficeViewHandle {
+  /** Moves the keyboard focus to the button of a unit or an agent (unit:KOR, agent:KOR-1). */
+  focusItem: (id: string) => void;
+  /**
+   * Pans as little as needed to bring a unit or an agent into the viewport; the zoom stays. A view
+   * that is fitted to the viewport is left alone.
+   */
+  revealItem: (id: string) => void;
+}
+
 export interface OfficeViewProps {
   companyName: string;
   units: readonly OfficeUnit[];
@@ -243,6 +256,7 @@ export interface OfficeViewProps {
    * selection in a panel beside the scene). Without it a resize fits the scene as usual.
    */
   holdView?: boolean;
+  ref?: Ref<OfficeViewHandle>;
 }
 
 /** The office view: an isometric drawing with pan and zoom, and a list of buttons laid over it. */
@@ -253,6 +267,7 @@ export function OfficeView({
   selectedId,
   onSelect,
   holdView = false,
+  ref,
 }: OfficeViewProps) {
   const prefix = useId();
   const layout = useMemo(
@@ -343,12 +358,29 @@ export function OfficeView({
     () => (selectedId === null ? null : extentOf(layout, boxes, selectedId)),
     [layout, boxes, selectedId],
   );
-  const { view, dragging, attach, handlers, zoomIn, zoomOut, fit, show } = useOfficeView(
+  const { view, fitted, dragging, attach, handlers, zoomIn, zoomOut, fit, show } = useOfficeView(
     bounds,
     holdView ? selectedExtent : null,
   );
   const measured = !measuring && anchorList.every((anchor) => sizes.has(anchor.id));
   const level = measured ? detailLevel(view.k) : 'full';
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      focusItem: (id) => {
+        // As with the arrow keys: onFocus pans the view, and the browser scrolls nothing.
+        document.getElementById(`${prefix}-${id}`)?.focus({ preventScroll: true });
+      },
+      revealItem: (id) => {
+        // A fitted view has the whole office in sight already, and it stays fitted.
+        if (fitted) return;
+        const extent = extentOf(layout, boxes, id);
+        if (extent) show(extent);
+      },
+    }),
+    [prefix, layout, boxes, fitted, show],
+  );
 
   // The button that has the keyboard focus; the drawing shows a dashed ring on its room or desk.
   const [activeId, setActiveId] = useState<string | null>(null);
