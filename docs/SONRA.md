@@ -339,10 +339,11 @@ Sonraya bırakılan fikirler (inceleme 13.3 ve 13.8):
 
 Kurucu 7 Ekim'de görev akışını anlattı (`docs/kararlar/2026-10-07.md`, karar 1-4): talep koordinasyon merkezine gelir, birim ajanı çalışır, durumlar kendiliğinden değişir, onay birimin gerçek kişisine ve gerekiyorsa talep sahibine gider. 0.4 için hazırlanan elle iş takibi planı uygulanmayacak. Yeniden planlama için kurucudan beklenen yanıtlar:
 
-- T1: Her birimin onay veren gerçek kişisi kim? Pilotta bütün birimlerin onaylayıcısı kurucu mu olacak, yoksa birimlere kişi mi atanacak? (Bugünkü belgeler: pilotta bütün onaylar kurucuda; veritabanında birime bağlı onaylayıcı alanı yok.)
-- T2: Talep sahibinin onayı hangi işlerde alınır? Her işin sonunda mı, yalnızca bazı işlerde mi; "gerektiğini" kim belirler?
-- T3: İnsan görevin üzerinde elle ne yapabilir? (Talebi iptal etme, yorum yazma, ajanın sorusunu yanıtlama, yönlendirmeyi düzeltme, işi durdurma ya da devralma.)
-- T4: Sıra. Bu akış koordinatör ve ajan çalıştırıcı olmadan çalışmaz; iş listesinde Claude bağlantısı (0.6), çalıştırıcı (1.1) ve koordinatör (1.7) daha sonra geliyor. Önce yalnızca talep girişi ve izleme ekranları mı kurulsun, yoksa sıra değişip akışın ince bir hâli uçtan uca mı çalıştırılsın?
-- T5: İnsanlara verilen işler (örneğin mali müşavirden beklenen belge) de görev kaydında tutulacak mı? Tasarım raporu Görev Takip ajanı için "insanlara ve ajanlara atanan bütün işlerin tek kayıtta tutulması" diyor.
+- T1 ila T5 kurucunun 7 Ekim yanıtıyla kapandı (`docs/kararlar/2026-10-07.md`, karar 5-9): onaylayıcı şimdilik kurucu, birime ve ajana onaylayıcı atanabilir; talep sahibinin onayı her işin sonunda; elle işlemler sınırlı; sıra değişir ve akışın ince hâli uçtan uca kurulur; insan görevleri ayrı bir tür olarak tutulur.
+- T6: İki türün adı ve yeri. Öneri: ajanların yürüttüğü işler "Talepler", insanların birbirine verdiği işler "Görevler"; kenar çubuğunda iki ayrı satır. Kurucu onayı bekliyor.
+- T7: Uçtan uca ilk denemede hangi birim ajanı çalışacak? Öneri: SOS-2 (yalnızca verilen kaynaktan metin üretir, dış bağlantı istemez). Kurucu onayı bekliyor.
+- T8: Yönlendirilen birimde açık ajan yoksa talep ne olur (birimin onaylayıcısına mı düşer)?
+- T9: Kart taslak durumundayken ajan açılabilir mi (M40 ile birlikte); ilk denemede ajanı kim, nereden açar?
+- T10: Talep sahibi sonucu onaylamazsa ne olur (iş ajana mı döner, kaç kez)? Birim onayındaki düzeltme döngüsü 2 Ekim karar 10'da tanımlı; talep sahibinin onayı için tanım yok.
 - Bu kararlarla kapanacak ya da değişecek eski sorular: M16 (durum geçişleri), M17 (atama değişikliği), M29 (kim hangi ajana iş verir), X2-4 (talep koordinatörden mi geçer).
 
