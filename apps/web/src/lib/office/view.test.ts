@@ -163,6 +163,15 @@ describe('reveal', () => {
     expect(reveal(view, at(450, 100, 50, 10), SIZE, 48)).toEqual({ x: -48, y: 0, k: 2 });
   });
 
+  it('keeps a larger margin at the top edge when it is given one', () => {
+    // Inside the 48 pixel margin, but under what lies over the top 72 pixels of the scene.
+    expect(reveal(IDENTITY, at(500, 50, 100, 24), SIZE, 48, 80)).toEqual({ x: 0, y: 30, k: 1 });
+    expect(reveal(IDENTITY, at(500, 80, 100, 24), SIZE, 48, 80)).toBe(IDENTITY);
+    // The other three edges keep the margin.
+    expect(reveal(IDENTITY, at(500, 600, 100, 24), SIZE, 48, 80)).toEqual({ x: 0, y: -72, k: 1 });
+    expect(reveal(IDENTITY, at(-10, 300, 100, 24), SIZE, 48, 80)).toEqual({ x: 58, y: 0, k: 1 });
+  });
+
   it('shows the top left corner of a box that is larger than the viewport', () => {
     expect(reveal(IDENTITY, at(200, 100, 2000, 1000), SIZE, 48)).toEqual({ x: -152, y: -52, k: 1 });
   });

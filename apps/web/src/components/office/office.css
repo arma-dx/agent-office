@@ -157,6 +157,9 @@
 .office-agent[data-hover] > .office-ring,
 .office-agent:hover > .office-ring {
   stroke: var(--ink-secondary);
+  /* As wide as the ring of a desk: a card stands partly over the floor of the room behind it, and
+     a change of tone alone on the 1 pixel outline does not show which room is its own. */
+  stroke-width: 2;
 }
 /* Keyboard focus is on this thing's button: dashed, so it cannot be taken for the selection. */
 .office-unit[data-active] > .office-ring,
@@ -243,7 +246,9 @@
   height: 1.5rem;
   max-width: 14rem;
   padding: 0 8px;
-  line-height: 1;
+  /* The line holds the dot of İ, the cedilla of ç and the tails of y, g and p: .office-name clips
+     what leaves its box. The label keeps its height, which is set above. */
+  line-height: 1.4;
   white-space: nowrap;
 }
 .office-code {
@@ -358,14 +363,15 @@
   height: 0.875rem;
   flex: none;
 }
-/* Centred between the legend and the zoom buttons, clear of both; at most two lines. */
+/*
+ * In the top right corner, which a fitted scene leaves free (its rooms form a diamond): at the
+ * bottom the hint lay over the lowest room and over the focus ring it tells about. Three lines at
+ * the default text size; in a narrow canvas it stays clear of the caption.
+ */
 .office-hint {
-  right: 0;
-  bottom: 16px;
-  left: 0;
-  width: fit-content;
-  max-width: min(35rem, calc(100% - 17rem));
-  margin-inline: auto;
+  top: 12px;
+  right: 16px;
+  max-width: min(20rem, calc(100% - 11rem));
   font-size: 0.75rem;
   line-height: 1.4;
 }

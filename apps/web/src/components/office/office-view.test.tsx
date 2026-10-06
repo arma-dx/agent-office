@@ -3,9 +3,10 @@ import userEvent from '@testing-library/user-event';
 import { createRef, type Ref } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { OfficeView, type OfficeViewHandle } from '@/components/office/office-view';
+import { byDepth, project } from '@/lib/office/iso';
 import { layoutOffice } from '@/lib/office/layout';
-import type { OfficeUnit } from '@/lib/office/model';
-import { extentOf, overlayAnchors, overlayBoxes, sceneBounds } from '@/lib/office/overlay';
+import { agentId, unitId, type OfficeUnit } from '@/lib/office/model';
+import { extentOf, OVERLAY, overlayAnchors, overlayBoxes, sceneBounds } from '@/lib/office/overlay';
 import { fitView, ZOOM, type Size } from '@/lib/office/view';
 
 const UNITS: OfficeUnit[] = [
@@ -33,6 +34,8 @@ const VIEWPORT = { width: 1000, height: 600 };
 /** Sizes the fake layout gives to a unit card and to an agent label; 0 x 0 plays "not laid out yet". */
 const CARD = { width: 216, height: 48 };
 const LABEL = { width: 150, height: 24 };
+/** The keyboard hint while it is shown: it lies over the top of the scene, down to this pixel. */
+const HINT = { width: 320, height: 0 };
 let laidOut = true;
 const setPointerCapture = vi.fn<(pointerId: number) => void>();
 /** The last kind of input, for the :focus-visible stand-in below. */
@@ -56,6 +59,8 @@ function fakeSize(element: HTMLElement): Size {
   if (!laidOut) return { width: 0, height: 0 };
   if (element.classList.contains('office-card')) return CARD;
   if (element.classList.contains('office-label')) return LABEL;
+  // A hidden element has no box.
+  if (element.classList.contains('office-hint') && !element.hidden) return HINT;
   return { width: 0, height: 0 };
 }
 
@@ -65,6 +70,7 @@ beforeEach(() => {
   VIEWPORT.width = 1000;
   VIEWPORT.height = 600;
   LABEL.width = 150;
+  HINT.height = 0;
   laidOut = true;
   vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockImplementation(function (
     this: HTMLElement,
@@ -281,8 +287,27 @@ describe('OfficeView structure', () => {
   it('writes the short name on the label and keeps the full card name in the accessible name', () => {
     renderOffice();
     const button = screen.getByRole('button', { name: /^KOR-2 Görev Takip Ajanı,/ });
-    expect(button).toHaveTextContent('KOR-2Görev Takip');
-    expect(button).toHaveAttribute('title', 'KOR-2 Görev Takip Ajanı');
+    // The whole text is compared: "Görev Takip Ajanı" would hold the short name as a part.
+    expect(button.querySelector('.office-code')?.textContent).toBe('KOR-2');
+    expect(button.querySelector('.office-name')?.textContent).toBe('Görev Takip');
+    expect(button.textContent).toBe('KOR-2Görev Takip');
+  });
+
+  it('shows the full card name as a tooltip of the text and gives the button no description', () => {
+    renderOffice();
+    const agents = labels().filter((button) => button.classList.contains('office-label'));
+    expect(agents).toHaveLength(4);
+    for (const button of agents) {
+      // A title on the button itself would be its description: after the name, which already
+      // starts with code and card name, a screen reader would say both a second time.
+      expect(button).not.toHaveAttribute('title');
+      expect(button).not.toHaveAccessibleDescription();
+    }
+    const button = screen.getByRole('button', { name: /^KOR-2 Görev Takip Ajanı,/ });
+    for (const part of ['.office-code', '.office-name']) {
+      expect(button.querySelector(part)).toHaveAttribute('title', 'KOR-2 Görev Takip Ajanı');
+      expect(button.querySelector(part)).toHaveAttribute('aria-hidden', 'true');
+    }
   });
 
   it('hides the drawing from assistive technology and draws one group per unit and per agent', () => {
@@ -295,6 +320,68 @@ describe('OfficeView structure', () => {
     expect(world.querySelectorAll('polygon.office-walkway')).toHaveLength(2);
     expect(world.querySelectorAll('[tabindex]')).toHaveLength(0);
     expect(world.querySelectorAll('text')).toHaveLength(0);
+  });
+
+  it('draws each desk where the layout puts it: a mat, the sprite with its figure, and a ring around the sprite', () => {
+    const { world } = renderOffice();
+    const layout = layoutOffice(
+      UNITS.map((unit) => ({ code: unit.code, agents: unit.agents.map((agent) => agent.code) })),
+      { centreUnit: 'HAF' },
+    );
+    const desks = layout.rooms.flatMap((room) => room.desks);
+    expect(desks).toHaveLength(4);
+    for (const desk of desks) {
+      const group = world.querySelector(`g.office-agent[data-office-id="${agentId(desk.agent)}"]`);
+      if (!group) throw new Error(`no desk for ${desk.agent}`);
+      // Painted in this order: the mat on the floor, the sprite on it, the ring last.
+      expect([...group.children].map((child) => child.getAttribute('class'))).toEqual([
+        'office-mat',
+        'office-sprite',
+        'office-ring',
+      ]);
+      const foot = project(desk.x, desk.y);
+      const sprite = group.querySelector('g.office-sprite');
+      expect(sprite?.getAttribute('transform'), desk.agent).toBe(`translate(${foot.x} ${foot.y})`);
+      // The figure (body and head) is what tells a closed agent from an enabled one.
+      expect(sprite?.querySelectorAll('.office-figure'), desk.agent).toHaveLength(2);
+      expect(sprite?.querySelectorAll('.office-monitor, .office-desk, .office-chair')).toHaveLength(
+        3,
+      );
+      // The ring stands ringPad outside the sprite, which a label and a card keep clear of.
+      const ring = group.querySelector('rect.office-ring');
+      expect(
+        ['x', 'y', 'width', 'height'].map((name) => Number(ring?.getAttribute(name))),
+        desk.agent,
+      ).toEqual([
+        foot.x - OVERLAY.spriteWidth / 2 - OVERLAY.ringPad,
+        foot.y - OVERLAY.spriteHeight - OVERLAY.ringPad,
+        OVERLAY.spriteWidth + 2 * OVERLAY.ringPad,
+        OVERLAY.spriteHeight + 2 * OVERLAY.ringPad,
+      ]);
+    }
+  });
+
+  it('paints rooms far to near, and the desks of a room far to near', () => {
+    const { world } = renderOffice();
+    const layout = layoutOffice(
+      UNITS.map((unit) => ({ code: unit.code, agents: unit.agents.map((agent) => agent.code) })),
+      { centreUnit: 'HAF' },
+    );
+    const ids = (elements: Iterable<Element>) =>
+      [...elements].map((element) => element.getAttribute('data-office-id'));
+    expect(ids(world.querySelectorAll('g.office-unit'))).toEqual(
+      layout.paintOrder.map((index) => unitId(layout.rooms[index]?.unit ?? '')),
+    );
+    // The order of the data is another one: the middle room is listed last and painted second.
+    expect(ids(world.querySelectorAll('g.office-unit'))).not.toEqual(
+      layout.rooms.map((room) => unitId(room.unit)),
+    );
+    for (const room of layout.rooms) {
+      const group = world.querySelector(`g.office-unit[data-office-id="${unitId(room.unit)}"]`);
+      expect(ids(group?.querySelectorAll('g.office-agent') ?? []), room.unit).toEqual(
+        [...room.desks].sort(byDepth).map((desk) => agentId(desk.agent)),
+      );
+    }
   });
 
   it('names a unit with its code, which is the text that stays visible at every zoom', () => {
@@ -526,6 +613,31 @@ describe('OfficeView keyboard', () => {
     expect(x).toBeLessThan(before);
     expect(right()).toBeCloseTo(VIEWPORT.width - 48, 8);
     expect(extent.x * k + x).toBeGreaterThanOrEqual(48);
+  });
+
+  it('keeps a button it brings into view clear of the keyboard hint, which lies over the top of the scene', async () => {
+    const user = userEvent.setup();
+    // The hint ends 72 pixels below the top edge, beyond the 48 pixel margin.
+    HINT.height = 72;
+    const { viewport, world } = renderOffice();
+    for (let step = 0; step < 3; step++) {
+      await user.click(screen.getByRole('button', { name: 'Yakınlaştır' }));
+    }
+    const k = zoomOf(viewport);
+    const extent = selectedExtent('unit:KOR');
+    const top = () => extent.y * k + translateOf(world)[1];
+    // The room on the upper left is cut off by the top edge. The hint is hidden: the pointer
+    // was used last.
+    expect(top()).toBeLessThan(0);
+    const hint = document.getElementById(viewport.getAttribute('aria-describedby') ?? '');
+    expect(hint).not.toBeVisible();
+
+    // The focus arrives with the keyboard: the hint shows, and the card comes in below it.
+    await user.tab({ shift: true });
+    expect(screen.getByRole('button', { name: /^Koordinasyon Katmanı/ })).toHaveFocus();
+    expect(hint).toBeVisible();
+    expect(top()).toBeCloseTo(72 + 8, 8);
+    expect(extent.x * k + translateOf(world)[0]).toBeCloseTo(48, 8);
   });
 
   it('leaves a fitted view fitted when the keyboard walks over buttons that are in sight', async () => {
@@ -1055,6 +1167,47 @@ describe('OfficeView fitting', () => {
     VIEWPORT.width = 1000;
     reportSize();
     expect(world.getAttribute('transform')).toBe(fittedTransform({ width: 1000, height: 600 }));
+  });
+
+  it('with holdView, keeps a thing selected with the keyboard clear of the hint when the panel opens', async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn<(id: string | null) => void>();
+    HINT.height = 72;
+    // Short: the height limits the fit, so the topmost card stands 16 pixels below the top edge.
+    VIEWPORT.height = 442;
+    const { viewport, world, rerender } = renderOffice(null, true);
+    const before = fitted({ width: 1000, height: 442 });
+    const extent = selectedExtent('unit:KOR');
+    expect(extent.y * before.k + before.y).toBe(16);
+    await user.tab();
+    await user.tab();
+    expect(screen.getByRole('button', { name: /^Koordinasyon Katmanı/ })).toHaveFocus();
+    // In sight already: the fitted view does not move for the focus, hint or not.
+    expect(world.getAttribute('transform')).toBe(fittedTransform({ width: 1000, height: 442 }));
+
+    // Enter selects; the page opens the panel, which takes 320 pixels, and the hint moves with
+    // the right edge of the canvas. The view is held at its zoom and the card comes out from
+    // under the hint.
+    rerender(office('unit:KOR', onSelect, true));
+    VIEWPORT.width = 680;
+    reportSize();
+    expect(zoomOf(viewport)).toBe(before.k);
+    expect(extent.y * before.k + translateOf(world)[1]).toBeCloseTo(72 + 8, 8);
+  });
+
+  it('with holdView, keeps the usual margin at the top when the panel opens for a selection made with the pointer', () => {
+    const onSelect = vi.fn<(id: string | null) => void>();
+    // The hint would end 72 pixels below the top edge, but it is hidden: no key was pressed.
+    HINT.height = 72;
+    VIEWPORT.height = 442;
+    const { viewport, world, rerender } = renderOffice(null, true);
+    const before = fitted({ width: 1000, height: 442 });
+    const extent = selectedExtent('unit:KOR');
+    rerender(office('unit:KOR', onSelect, true));
+    VIEWPORT.width = 680;
+    reportSize();
+    expect(zoomOf(viewport)).toBe(before.k);
+    expect(extent.y * before.k + translateOf(world)[1]).toBeCloseTo(48, 8);
   });
 
   it('with holdView, brings a thing chosen outside the scene into view and still fits again afterwards', () => {

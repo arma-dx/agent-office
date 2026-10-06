@@ -16,6 +16,11 @@ export const OVERLAY = {
   slab: 10,
   /** Free pixels between a sprite and its label. */
   labelGap: 4,
+  /**
+   * The ring of a desk (pointer, keyboard focus, selection) is drawn this far outside its sprite.
+   * With half of its 2 pixel line it stays inside labelGap, so no label and no card lies over it.
+   */
+  ringPad: 2,
   /** The bottom edge of a unit card is this far above the top corner of its room. */
   cardLift: 24,
   /** Sizes assumed until the browser has measured a label or a card (and in tests): the largest allowed. */
@@ -126,6 +131,21 @@ export function spriteBoxes(layout: OfficeLayout): OverlayBox[] {
       };
     }),
   );
+}
+
+/**
+ * Boxes of the desk rings at zoom 1, for the clearance check: the sprite grown by ringPad and by
+ * the half of the 2 pixel line that lies outside the path.
+ */
+export function ringBoxes(layout: OfficeLayout): OverlayBox[] {
+  const grow = OVERLAY.ringPad + 1;
+  return spriteBoxes(layout).map((sprite) => ({
+    id: sprite.id.replace('sprite:', 'ring:'),
+    x: sprite.x - grow,
+    y: sprite.y - grow,
+    width: sprite.width + 2 * grow,
+    height: sprite.height + 2 * grow,
+  }));
 }
 
 /** The box the view has to fit: every floor with its slab, every card and every label. */

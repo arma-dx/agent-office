@@ -1,11 +1,14 @@
 import { memo } from 'react';
-import { boxFaces, byDepth, ISO, project, type Box } from '@/lib/office/iso';
+import { boxFaces, byDepth, ISO, project, type Box, type ScenePoint } from '@/lib/office/iso';
 import type { OfficeLayout, Rect, RoomPlacement } from '@/lib/office/layout';
 import { agentId, unitId, type AgentState } from '@/lib/office/model';
 import { OVERLAY } from '@/lib/office/overlay';
 
 /** Half the side of the state mat under a desk, in tiles. */
 const MAT_HALF = 2;
+
+/** Corner radius of the ring around a desk, in scene pixels. */
+const RING_RADIUS = 4;
 
 /** A rectangle of floor at ground level, as a box without height. */
 function flat(rect: Rect): Box {
@@ -35,8 +38,7 @@ function Slab({ box }: { box: Box }) {
  * upright on a point of the floor, so one drawing serves every room. Coordinates are scene pixels
  * from the foot of the sprite (bottom centre); parts are painted far to near.
  */
-function DeskSprite({ x, y }: { x: number; y: number }) {
-  const foot = project(x, y);
+function DeskSprite({ foot }: { foot: ScenePoint }) {
   return (
     <g className="office-sprite" transform={`translate(${foot.x} ${foot.y})`}>
       <rect className="office-monitor" x={-10} y={-44} width={20} height={13} rx={2} />
@@ -82,6 +84,7 @@ function Room({ room, states, selectedId, activeId, hoverId }: RoomProps) {
       <polygon className="office-ring" points={boxFaces(slab).outline} />
       {desks.map((desk) => {
         const deskIdValue = agentId(desk.agent);
+        const foot = project(desk.x, desk.y);
         const half = MAT_HALF;
         const mat = boxFaces(
           flat({ x: desk.x - half, y: desk.y - half, w: 2 * half, d: 2 * half }),
@@ -98,8 +101,19 @@ function Room({ room, states, selectedId, activeId, hoverId }: RoomProps) {
           >
             {/* The mat takes the pointer for the whole desk; transparent is hit, fill none would not be. */}
             <polygon className="office-mat" points={mat} />
-            <DeskSprite x={desk.x} y={desk.y} />
-            <polygon className="office-ring" points={mat} />
+            <DeskSprite foot={foot} />
+            {/*
+              The ring goes around the sprite, not around the mat: a label hangs 4 pixels from the
+              sprite and a card can stand as close, so the outline of the mat lay under them.
+            */}
+            <rect
+              className="office-ring"
+              x={foot.x - OVERLAY.spriteWidth / 2 - OVERLAY.ringPad}
+              y={foot.y - OVERLAY.spriteHeight - OVERLAY.ringPad}
+              width={OVERLAY.spriteWidth + 2 * OVERLAY.ringPad}
+              height={OVERLAY.spriteHeight + 2 * OVERLAY.ringPad}
+              rx={RING_RADIUS}
+            />
           </g>
         );
       })}

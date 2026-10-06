@@ -111,13 +111,14 @@ function shiftInto(low: number, high: number, min: number, max: number): number 
 
 /**
  * Pans as little as needed so that a box of the scene is inside the viewport, `margin` pixels from
- * its edge. A box larger than the viewport shows its top left corner.
+ * its edge. A box larger than the viewport shows its top left corner. `top` is the margin at the
+ * top edge when something lies over the scene there (the keyboard hint).
  */
-export function reveal(view: View, box: Box2, size: Size, margin: number): View {
+export function reveal(view: View, box: Box2, size: Size, margin: number, top = margin): View {
   const left = box.x * view.k + view.x;
-  const top = box.y * view.k + view.y;
+  const upper = box.y * view.k + view.y;
   const dx = shiftInto(left, left + box.width * view.k, margin, size.width - margin);
-  const dy = shiftInto(top, top + box.height * view.k, margin, size.height - margin);
+  const dy = shiftInto(upper, upper + box.height * view.k, top, size.height - margin);
   return dx === 0 && dy === 0 ? view : panBy(view, dx, dy);
 }
 

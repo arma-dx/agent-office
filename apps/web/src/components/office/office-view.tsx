@@ -165,6 +165,7 @@ const OfficeLabels = memo(function OfficeLabels({
               {unit.agents.map((agent) => {
                 const itemId = agentId(agent.code);
                 const anchor = anchors.get(itemId);
+                const tooltip = `${agent.code} ${agent.name}`;
                 return (
                   <li key={agent.code}>
                     <button
@@ -178,13 +179,14 @@ const OfficeLabels = memo(function OfficeLabels({
                       tabIndex={tabStopId === itemId ? 0 : -1}
                       aria-pressed={selectedId === itemId}
                       aria-label={`${agent.code} ${agent.name}, ${unit.name}, ${AGENT_STATE_LABEL[agent.state]}`}
-                      title={`${agent.code} ${agent.name}`}
                     >
                       <StateGlyph state={agent.state} />
-                      <span aria-hidden="true" className="office-code tabular-nums">
+                      {/* The tooltip is on the text, not on the button: there it would be the
+                          button's description, and a screen reader would say code and name twice. */}
+                      <span aria-hidden="true" className="office-code tabular-nums" title={tooltip}>
                         {agent.code}
                       </span>
-                      <span aria-hidden="true" className="office-name">
+                      <span aria-hidden="true" className="office-name" title={tooltip}>
                         {shortName(agent.name)}
                       </span>
                     </button>
@@ -361,9 +363,13 @@ export function OfficeView({
     () => (selectedId === null ? null : extentOf(layout, boxes, selectedId)),
     [layout, boxes, selectedId],
   );
+  // The keyboard hint lies over the top right corner of the scene while it is shown: what the view
+  // brings into sight for the keyboard is kept clear of it.
+  const [hint, attachHint] = useState<HTMLParagraphElement | null>(null);
   const { view, fitted, dragging, attach, handlers, zoomIn, zoomOut, fit, show } = useOfficeView(
     bounds,
     holdView ? selectedExtent : null,
+    hint,
   );
   const measured = !measuring && anchorList.every((anchor) => sizes.has(anchor.id));
   const level = measured ? detailLevel(view.k) : 'full';
@@ -409,7 +415,10 @@ export function OfficeView({
   // The focus is on the viewport or moved to one of its buttons.
   const onFocus = (event: FocusEvent<HTMLDivElement>) => {
     const keyboard = focusedByKeyboard(event.target);
-    setKeyboardInside(keyboard);
+    // Applied at once: the hint is laid out before the view moves below, which keeps clear of it.
+    flushSync(() => {
+      setKeyboardInside(keyboard);
+    });
     const id = event.target instanceof HTMLButtonElement ? officeIdOf(event.target) : null;
     // A click leaves no ring behind: only a focus the keyboard gave marks the room or desk.
     setActiveId(keyboard ? id : null);
@@ -518,7 +527,7 @@ export function OfficeView({
       </div>
       <OfficeLegend states={present} />
       {/* Hidden, it still describes the viewport: a screen reader hears the keys when the map takes the focus. */}
-      <p id={hintId} className="office-hint" hidden={!keyboardInside}>
+      <p ref={attachHint} id={hintId} className="office-hint" hidden={!keyboardInside}>
         Ok tuşları birimler ve ajanlar arasında gezdirir, Enter seçer. Harita odaktayken oklar
         kaydırır; artı yakınlaştırır, eksi uzaklaştırır, sıfır ekrana sığdırır.
       </p>

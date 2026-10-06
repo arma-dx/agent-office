@@ -35,6 +35,9 @@ const DRAG_THRESHOLD = 4;
 /** Pixels kept between the selected or focused thing and the edge of the viewport. */
 const REVEAL_MARGIN = 48;
 
+/** Pixels kept between that thing and what lies over the top of the scene. */
+const COVER_GAP = 8;
+
 /**
  * fit: the scene follows the viewport. own: the person has panned or zoomed. held: the fitted view
  * was frozen because the viewport changed size while something was selected (the properties panel
@@ -83,6 +86,17 @@ function sizeOf(element: HTMLElement): Size {
   return { width: element.clientWidth, height: element.clientHeight };
 }
 
+/**
+ * The margin a revealed thing keeps from the top edge: the usual one, or enough to stand clear of
+ * the element that lies over the top of the scene while it is shown (the keyboard hint). Both
+ * elements are positioned in the same box, the figure.
+ */
+function topMargin(viewport: HTMLElement, cover: HTMLElement | null): number {
+  if (!cover || cover.offsetHeight === 0) return REVEAL_MARGIN;
+  const covered = cover.offsetTop + cover.offsetHeight - viewport.offsetTop;
+  return Math.max(REVEAL_MARGIN, covered + COVER_GAP);
+}
+
 /** WebKit's gesture events are not in lib.dom; their fields are read through guards instead of a cast. */
 function gestureOf(event: Event): { scale: number; clientX: number; clientY: number } | null {
   if (!('scale' in event) || typeof event.scale !== 'number' || event.scale <= 0) return null;
@@ -106,11 +120,19 @@ function resolve(mode: Mode, size: Size | null, bounds: Box2): View {
  * needed to keep that box in sight. Selecting something therefore never changes the size of the
  * drawing, although the properties panel takes a third of the width.
  *
+ * `cover` is an element that lies over the top of the scene while it is shown (the keyboard hint),
+ * or null. A thing the view brings into sight is kept clear of it. A fitted view is not moved for
+ * it: the hint stands in the corner a fitted scene leaves free.
+ *
  * The fitted view is not stored: it is computed during render from the viewport size and the
  * bounds, so a change of either (the detail panel opens, a label is measured) shows in the same
  * render, without an effect that sets state.
  */
-export function useOfficeView(bounds: Box2, keep: Box2 | null = null): OfficeViewApi {
+export function useOfficeView(
+  bounds: Box2,
+  keep: Box2 | null = null,
+  cover: HTMLElement | null = null,
+): OfficeViewApi {
   // The element is kept in state, not in a ref: the effects below start when it mounts, and the
   // hook can return its values in one object without handing a ref through render.
   const [element, attach] = useState<HTMLDivElement | null>(null);
@@ -124,15 +146,17 @@ export function useOfficeView(bounds: Box2, keep: Box2 | null = null): OfficeVie
 
   // What the resize observer needs of the latest render. Written in a layout effect, which runs
   // before the browser lays out and reports the new size.
-  const latest = useRef<{ bounds: Box2; keep: Box2 | null; size: Size | null }>({
-    bounds,
-    keep,
-    size: null,
-  });
+  const latest = useRef<{
+    bounds: Box2;
+    keep: Box2 | null;
+    cover: HTMLElement | null;
+    size: Size | null;
+  }>({ bounds, keep, cover, size: null });
   useLayoutEffect(() => {
     latest.current.bounds = bounds;
     latest.current.keep = keep;
-  }, [bounds, keep]);
+    latest.current.cover = cover;
+  }, [bounds, keep, cover]);
 
   // Every change goes through here: it starts from the view on the screen, also when several
   // events arrive between two renders, and it never lets the scene leave the viewport. A move the
@@ -164,20 +188,25 @@ export function useOfficeView(bounds: Box2, keep: Box2 | null = null): OfficeVie
       latest.current.size = next;
       const point = latest.current.keep;
       const box = latest.current.bounds;
+      // Read here, after the layout of the new size: the hint may have wrapped differently.
+      const top = topMargin(element, latest.current.cover);
       flushSync(() => {
         setSize(next);
         setMode((current) => {
           // Nothing is selected: a view that was only held follows the viewport again.
           if (point === null) return current.kind === 'held' ? FIT : current;
           if (current.kind !== 'fit') {
-            return { kind: current.kind, view: reveal(current.view, point, next, REVEAL_MARGIN) };
+            return {
+              kind: current.kind,
+              view: reveal(current.view, point, next, REVEAL_MARGIN, top),
+            };
           }
           // Something is selected and the viewport changed size: keep the view of the old size.
           const before = previous ? fitView(previous, box) : null;
           if (!before || (previous?.width === next.width && previous.height === next.height)) {
             return current;
           }
-          return { kind: 'held', view: reveal(before, point, next, REVEAL_MARGIN) };
+          return { kind: 'held', view: reveal(before, point, next, REVEAL_MARGIN, top) };
         });
       });
     });
@@ -360,13 +389,14 @@ export function useOfficeView(bounds: Box2, keep: Box2 | null = null): OfficeVie
     },
     fit,
     show: (box) => {
-      if (!size) return;
+      if (!size || !element) return;
+      const top = topMargin(element, cover);
       move((current, fitted) => {
         // A fitted view has the whole office in sight, as far as it fits, and stands closer to
         // the edge than the margin (ZOOM.fitPadding): a thing that is inside the viewport already
         // moves nothing, so the view stays fitted and keeps following the viewport.
         if (fitted && reveal(current, box, size, 0) === current) return current;
-        return reveal(current, box, size, REVEAL_MARGIN);
+        return reveal(current, box, size, REVEAL_MARGIN, top);
       }, false);
     },
   };

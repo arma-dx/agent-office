@@ -230,6 +230,19 @@ describe('office.css', () => {
     ]);
   });
 
+  it('keeps the keyboard hint in the top right corner, clear of the fitted scene and of the caption', () => {
+    // At the bottom it lay over the lowest room and over the focus ring it tells about.
+    expect(Object.fromEntries(rule('.office-hint').declarations)).toEqual({
+      top: '12px',
+      right: '16px',
+      'max-width': 'min(20rem, calc(100% - 11rem))',
+      'font-size': '0.75rem',
+      'line-height': '1.4',
+    });
+    expect(rule('.office-caption').declarations.get('top')).toBe('12px');
+    expect(rule('.office-caption').declarations.get('left')).toBe('16px');
+  });
+
   it('sizes text in rem, and keeps a label readable at its smallest scale', () => {
     const sizes = declared('font-size');
     expect(sizes.map((entry) => entry.where)).toEqual([
@@ -251,6 +264,10 @@ describe('office.css', () => {
     expect(Math.min(...inAnchor) * OVERLAY.fullFrom).toBeGreaterThanOrEqual(0.6875);
     // The font shorthand would reset the size: it only inherits the family of the panel.
     expect(declared('font').map((entry) => entry.value)).toEqual(['inherit']);
+    // The line of a label is taller than its text: the name clips what leaves its box, and a
+    // line as tall as the text cut the dot of İ, the cedilla of ç and the tails of y, g and p.
+    expect(rule('.office-label').declarations.get('line-height')).toBe('1.4');
+    expect(rule('.office-name').declarations.get('overflow')).toBe('hidden');
     // What holds a line of text grows with the text.
     for (const property of ['line-height', 'height', 'width', 'max-width']) {
       for (const { where, value } of declared(property)) {
@@ -282,7 +299,14 @@ describe('office.css', () => {
       '.office-unit[data-selected] > .office-ring',
       '.office-agent[data-selected] > .office-ring',
     );
-    expect(Object.fromEntries(hover.declarations)).toEqual({ stroke: 'var(--ink-secondary)' });
+    // Under the pointer the outline of a room is as wide as the ring of a desk: the tone alone,
+    // on a line of 1 pixel, does not show which room a card belongs to.
+    expect(Object.fromEntries(hover.declarations)).toEqual({
+      stroke: 'var(--ink-secondary)',
+      'stroke-width': '2',
+    });
+    expect(rule('.office-unit > .office-ring').declarations.get('stroke-width')).toBe('1');
+    expect(rule('.office-agent > .office-ring').declarations.get('stroke-width')).toBe('2');
     expect(Object.fromEntries(active.declarations)).toEqual({
       stroke: 'var(--brand)',
       'stroke-width': '2',

@@ -12,6 +12,7 @@ import {
   overlayBox,
   overlayBoxes,
   overlayScale,
+  ringBoxes,
   sceneBounds,
   spriteBoxes,
 } from './overlay.ts';
@@ -174,6 +175,37 @@ describe('the pilot offices with estimated label sizes', () => {
       expect(bounds.height).toBe(height);
     },
   );
+
+  it.each([
+    ['Arma DX', ARMADX_OFFICE],
+    ['Pillika', PILLIKA_OFFICE],
+    ['Kurucu alanı', FOUNDER_OFFICE],
+  ])('%s: the ring of a desk lies under no label and no card', (_name, units) => {
+    const layout = layoutOf(units);
+    const boxes = overlayBoxes(overlayAnchors(layout), estimatedSizes(units));
+    const rings = ringBoxes(layout);
+    expect(rings).toHaveLength(spriteBoxes(layout).length);
+    // The ring is the mark of selection, keyboard focus and the pointer: all of it shows, with
+    // at least a pixel to spare, next to its own label too.
+    const covered = rings.flatMap((ring) =>
+      boxes.filter((box) => clearance(ring, box) < 1).map((box) => `${ring.id} under ${box.id}`),
+    );
+    expect(covered).toEqual([]);
+  });
+
+  it('draws the ring of a desk around its sprite, inside the gap its label keeps', () => {
+    const layout = layoutOf(FOUNDER_OFFICE);
+    const [sprite] = spriteBoxes(layout);
+    const [ring] = ringBoxes(layout);
+    if (!sprite || !ring) throw new Error('missing');
+    expect(ring.id).toBe('ring:KOR-4');
+    // The path stands ringPad outside the sprite, and half of the 2 pixel line outside the path.
+    expect(sprite.x - ring.x).toBe(OVERLAY.ringPad + 1);
+    expect(sprite.y - ring.y).toBe(OVERLAY.ringPad + 1);
+    expect(ring.width).toBe(OVERLAY.spriteWidth + 2 * (OVERLAY.ringPad + 1));
+    expect(ring.height).toBe(OVERLAY.spriteHeight + 2 * (OVERLAY.ringPad + 1));
+    expect(OVERLAY.ringPad + 1).toBeLessThan(OVERLAY.labelGap);
+  });
 
   it('Kurucu alanı: one room fits with its card and label', () => {
     const layout = layoutOf(FOUNDER_OFFICE);
