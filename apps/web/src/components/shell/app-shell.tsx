@@ -13,6 +13,7 @@ import { SkipLink } from '@/components/layout';
 import { PanelRegion } from '@/components/shell/properties-panel';
 import { Sidebar } from '@/components/shell/sidebar';
 import { TopBar } from '@/components/shell/top-bar';
+import { usePageFullBleed } from '@/lib/location';
 import { useCompany, useRememberCompany, useSession } from '@/lib/session';
 import {
   PANEL_STORAGE_KEY,
@@ -23,6 +24,7 @@ import {
   writeStoredFlag,
   type ShellValue,
 } from '@/lib/shell';
+import { cn } from '@/lib/utils';
 
 /** Holds the layout state of the shell. The sidebar starts open, the properties panel closed. */
 export function ShellProvider({ children }: { children: ReactNode }) {
@@ -76,6 +78,8 @@ function ShellFrame({
   onSelectCompany: (code: string) => void;
 }) {
   const { sidebarOpen } = useShell();
+  // A page that fills the content area itself (the office view's canvas) gets no padding.
+  const fullBleed = usePageFullBleed();
   return (
     // 1000 px, not 1024: a 1024 px window with a classic scrollbar leaves about 1008 px.
     <div className="flex min-h-dvh min-w-250 bg-surface text-ink">
@@ -87,7 +91,11 @@ function ShellFrame({
         <TopBar />
         <div className="flex flex-1">
           {/* The window scrolls; the sidebar, the top bar and the properties panel stay in place. */}
-          <main id="content" tabIndex={-1} className="min-w-0 flex-1 scroll-mt-15 p-6">
+          <main
+            id="content"
+            tabIndex={-1}
+            className={cn('min-w-0 flex-1 scroll-mt-15', !fullBleed && 'p-6')}
+          >
             {/* A new company starts with fresh page state (forms, notes); data is keyed by company too. */}
             <Outlet key={company.companyId} />
           </main>

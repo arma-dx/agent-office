@@ -41,7 +41,7 @@ describe('app shell: regions and keyboard order', () => {
     renderApp('/c/armadx');
     await screen.findByRole('navigation', { name: 'Ana menü' });
     const stops: string[] = [];
-    for (let i = 0; i < 9; i += 1) {
+    for (let i = 0; i < 10; i += 1) {
       await userEvent.tab();
       const element = document.activeElement;
       stops.push(element?.getAttribute('aria-label') ?? element?.textContent ?? '');
@@ -53,10 +53,36 @@ describe('app shell: regions and keyboard order', () => {
       'Onaylar',
       'Görevler',
       'Notlar',
+      'Ofis görünümü',
       'Ajanlar',
       'Hesap: Ömer Kadıoğlu',
       'Kenar çubuğunu gizle',
     ]);
+  });
+
+  it('pads the content of every page except one that fills the content area itself', async () => {
+    mockApi({
+      'GET /session': sessionHandler(),
+      'GET /office': () => json({ units: [] }),
+    });
+    const { router } = renderApp('/c/armadx/tasks');
+    await screen.findByRole('heading', { level: 1, name: 'Görevler' });
+    const main = screen.getByRole('main');
+    expect(main).toHaveClass('p-6');
+
+    // The office view is its own canvas: it reaches the edges of the content area.
+    await router.navigate({ to: '/c/$company/office', params: { company: 'armadx' } });
+    await screen.findByRole('heading', { level: 1, name: 'Ofis görünümü' });
+    expect(main).not.toHaveClass('p-6');
+
+    // The not found screen is an ordinary page, also at an address below the office.
+    await router.navigate({ to: '/c/armadx/office/x' as never });
+    await screen.findByRole('heading', { level: 1, name: 'Sayfa bulunamadı' });
+    expect(screen.getByRole('main')).toHaveClass('p-6');
+
+    await router.navigate({ to: '/c/armadx/no-such-page' as never });
+    await screen.findByRole('heading', { level: 1, name: 'Sayfa bulunamadı' });
+    expect(screen.getByRole('main')).toHaveClass('p-6');
   });
 
   it('hides and shows the sidebar from the top bar and remembers the choice', async () => {
@@ -111,6 +137,7 @@ describe('top bar: location', () => {
     ['/c/armadx/approvals', 'Onaylar'],
     ['/c/armadx/tasks', 'Görevler'],
     ['/c/armadx/notes', 'Notlar'],
+    ['/c/armadx/office', 'Ofis görünümü'],
     ['/c/armadx/agents', 'Ajanlar'],
     ['/c/armadx/settings/users', 'Kullanıcılar'],
     ['/c/armadx/settings/security', 'Güvenlik'],
@@ -120,6 +147,7 @@ describe('top bar: location', () => {
       'GET /passkeys': () => json({ passkeys: [] }),
       'GET /members': () => json({ members: [] }),
       'GET /invitations': () => json({ invitations: [] }),
+      'GET /office': () => json({ units: [] }),
     });
     renderApp(path);
     const bar = await screen.findByRole('banner');
@@ -161,6 +189,7 @@ describe('top bar: location', () => {
         '/_authed/c/$company/approvals',
         '/_authed/c/$company/tasks',
         '/_authed/c/$company/notes',
+        '/_authed/c/$company/office',
         '/_authed/c/$company/agents',
         '/_authed/c/$company/settings/users',
         '/_authed/c/$company/settings/security',

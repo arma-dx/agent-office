@@ -29,10 +29,15 @@ export function isUnauthorized(error: unknown): boolean {
   return error instanceof ApiError && error.status === 401;
 }
 
-// 403 codes that mean the cached session's memberships or roles are out of date.
-const ACCESS_CHANGED: readonly ApiErrorCode[] = ['forbidden', 'founder_only'];
+// 403 codes that mean the cached session's memberships or roles are out of date. insiders_only:
+// the office page sends no request for a person whose cached role is external, so that answer
+// can only arrive when the role changed while the panel was open.
+const ACCESS_CHANGED: readonly ApiErrorCode[] = ['forbidden', 'founder_only', 'insiders_only'];
 
-/** The API refused the company or the founder-only action: the person's access has changed. */
+/**
+ * The API refused the company, the founder-only action or the screen closed to external people:
+ * the person's access has changed.
+ */
 export function isAccessChanged(error: unknown): boolean {
   return (
     error instanceof ApiError &&

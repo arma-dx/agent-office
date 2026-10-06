@@ -18,6 +18,7 @@ import { Route as AuthedCCompanyIndexRouteImport } from './routes/_authed/c/$com
 import { Route as AuthedCCompanyAgentsRouteImport } from './routes/_authed/c/$company/agents'
 import { Route as AuthedCCompanyApprovalsRouteImport } from './routes/_authed/c/$company/approvals'
 import { Route as AuthedCCompanyNotesRouteImport } from './routes/_authed/c/$company/notes'
+import { Route as AuthedCCompanyOfficeRouteImport } from './routes/_authed/c/$company/office'
 import { Route as AuthedCCompanyTasksRouteImport } from './routes/_authed/c/$company/tasks'
 import { Route as AuthedCCompanySettingsSecurityRouteImport } from './routes/_authed/c/$company/settings/security'
 import { Route as AuthedCCompanySettingsUsersRouteImport } from './routes/_authed/c/$company/settings/users'
@@ -66,6 +67,11 @@ const AuthedCCompanyNotesRoute = AuthedCCompanyNotesRouteImport.update({
   path: '/notes',
   getParentRoute: () => AuthedCCompanyRoute,
 } as any)
+const AuthedCCompanyOfficeRoute = AuthedCCompanyOfficeRouteImport.update({
+  id: '/office',
+  path: '/office',
+  getParentRoute: () => AuthedCCompanyRoute,
+} as any)
 const AuthedCCompanyTasksRoute = AuthedCCompanyTasksRouteImport.update({
   id: '/tasks',
   path: '/tasks',
@@ -92,6 +98,7 @@ export interface FileRoutesByFullPath {
   '/c/$company/agents': typeof AuthedCCompanyAgentsRoute
   '/c/$company/approvals': typeof AuthedCCompanyApprovalsRoute
   '/c/$company/notes': typeof AuthedCCompanyNotesRoute
+  '/c/$company/office': typeof AuthedCCompanyOfficeRoute
   '/c/$company/tasks': typeof AuthedCCompanyTasksRoute
   '/c/$company/': typeof AuthedCCompanyIndexRoute
   '/c/$company/settings/security': typeof AuthedCCompanySettingsSecurityRoute
@@ -104,6 +111,7 @@ export interface FileRoutesByTo {
   '/c/$company/agents': typeof AuthedCCompanyAgentsRoute
   '/c/$company/approvals': typeof AuthedCCompanyApprovalsRoute
   '/c/$company/notes': typeof AuthedCCompanyNotesRoute
+  '/c/$company/office': typeof AuthedCCompanyOfficeRoute
   '/c/$company/tasks': typeof AuthedCCompanyTasksRoute
   '/c/$company': typeof AuthedCCompanyIndexRoute
   '/c/$company/settings/security': typeof AuthedCCompanySettingsSecurityRoute
@@ -119,6 +127,7 @@ export interface FileRoutesById {
   '/_authed/c/$company/agents': typeof AuthedCCompanyAgentsRoute
   '/_authed/c/$company/approvals': typeof AuthedCCompanyApprovalsRoute
   '/_authed/c/$company/notes': typeof AuthedCCompanyNotesRoute
+  '/_authed/c/$company/office': typeof AuthedCCompanyOfficeRoute
   '/_authed/c/$company/tasks': typeof AuthedCCompanyTasksRoute
   '/_authed/c/$company/': typeof AuthedCCompanyIndexRoute
   '/_authed/c/$company/settings/security': typeof AuthedCCompanySettingsSecurityRoute
@@ -134,6 +143,7 @@ export interface FileRouteTypes {
     | '/c/$company/agents'
     | '/c/$company/approvals'
     | '/c/$company/notes'
+    | '/c/$company/office'
     | '/c/$company/tasks'
     | '/c/$company/'
     | '/c/$company/settings/security'
@@ -146,6 +156,7 @@ export interface FileRouteTypes {
     | '/c/$company/agents'
     | '/c/$company/approvals'
     | '/c/$company/notes'
+    | '/c/$company/office'
     | '/c/$company/tasks'
     | '/c/$company'
     | '/c/$company/settings/security'
@@ -160,6 +171,7 @@ export interface FileRouteTypes {
     | '/_authed/c/$company/agents'
     | '/_authed/c/$company/approvals'
     | '/_authed/c/$company/notes'
+    | '/_authed/c/$company/office'
     | '/_authed/c/$company/tasks'
     | '/_authed/c/$company/'
     | '/_authed/c/$company/settings/security'
@@ -236,6 +248,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedCCompanyNotesRouteImport
       parentRoute: typeof AuthedCCompanyRoute
     }
+    '/_authed/c/$company/office': {
+      id: '/_authed/c/$company/office'
+      path: '/office'
+      fullPath: '/c/$company/office'
+      preLoaderRoute: typeof AuthedCCompanyOfficeRouteImport
+      parentRoute: typeof AuthedCCompanyRoute
+    }
     '/_authed/c/$company/tasks': {
       id: '/_authed/c/$company/tasks'
       path: '/tasks'
@@ -264,6 +283,7 @@ interface AuthedCCompanyRouteChildren {
   AuthedCCompanyAgentsRoute: typeof AuthedCCompanyAgentsRoute
   AuthedCCompanyApprovalsRoute: typeof AuthedCCompanyApprovalsRoute
   AuthedCCompanyNotesRoute: typeof AuthedCCompanyNotesRoute
+  AuthedCCompanyOfficeRoute: typeof AuthedCCompanyOfficeRoute
   AuthedCCompanyTasksRoute: typeof AuthedCCompanyTasksRoute
   AuthedCCompanyIndexRoute: typeof AuthedCCompanyIndexRoute
   AuthedCCompanySettingsSecurityRoute: typeof AuthedCCompanySettingsSecurityRoute
@@ -274,6 +294,7 @@ const AuthedCCompanyRouteChildren: AuthedCCompanyRouteChildren = {
   AuthedCCompanyAgentsRoute: AuthedCCompanyAgentsRoute,
   AuthedCCompanyApprovalsRoute: AuthedCCompanyApprovalsRoute,
   AuthedCCompanyNotesRoute: AuthedCCompanyNotesRoute,
+  AuthedCCompanyOfficeRoute: AuthedCCompanyOfficeRoute,
   AuthedCCompanyTasksRoute: AuthedCCompanyTasksRoute,
   AuthedCCompanyIndexRoute: AuthedCCompanyIndexRoute,
   AuthedCCompanySettingsSecurityRoute: AuthedCCompanySettingsSecurityRoute,

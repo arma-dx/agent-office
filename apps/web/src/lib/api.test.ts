@@ -155,6 +155,8 @@ describe('userMessage', () => {
   it('recognises a 403 that means the access changed, and only that', () => {
     expect(isAccessChanged(new ApiError(403, 'x', 'forbidden'))).toBe(true);
     expect(isAccessChanged(new ApiError(403, 'x', 'founder_only'))).toBe(true);
+    // The office answers this to a person who became an external one while the panel was open.
+    expect(isAccessChanged(new ApiError(403, 'x', 'insiders_only'))).toBe(true);
     // Request forgery protection and a 403 without the agreed body are not about the session.
     expect(isAccessChanged(new ApiError(403, 'x', 'cross_site_request'))).toBe(false);
     expect(isAccessChanged(new ApiError(403, 'x'))).toBe(false);

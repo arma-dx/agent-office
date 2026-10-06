@@ -25,5 +25,7 @@ declare module '@tanstack/react-router' {
      * one; shell.test.tsx fails for a page that does not.
      */
     location?: { label: string; parent?: string };
+    /** The page fills the content area itself: no padding around it (the office view's canvas). */
+    fullBleed?: boolean;
   }
 }

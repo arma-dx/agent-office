@@ -2,15 +2,15 @@
 // Source: ui/src/components/Sidebar.tsx, ui/src/components/SidebarSection.tsx and
 // ui/src/components/primary-sidebar-styles.ts at commit dd868ed125cd709506dd9b29fca640a44d580501.
 // License text: THIRD_PARTY_NOTICES.md.
-// Changes: our menu (lib/menu.ts) instead of Paperclip's routes, queries and plugin outlets;
-// sentence-case group labels in the secondary text color; groups do not collapse; the sidebar is
-// sticky because the window scrolls.
+// Changes: our menu (lib/menu.ts) instead of Paperclip's routes, queries and plugin outlets, with
+// rows that only some roles are offered; sentence-case group labels in the secondary text color;
+// groups do not collapse; the sidebar is sticky because the window scrolls.
 import type { MembershipSummary } from '@agent-office/shared';
 import { useId, type ReactNode } from 'react';
 import { AccountMenu } from '@/components/shell/account-menu';
 import { CompanyMenu } from '@/components/shell/company-menu';
 import { SidebarNavItem } from '@/components/shell/sidebar-nav-item';
-import { MENU_SECTIONS } from '@/lib/menu';
+import { isOfferedTo, MENU_SECTIONS } from '@/lib/menu';
 import { SIDEBAR_ID } from '@/lib/shell';
 
 /** A group of menu rows; a labelled group names its list after the label. */
@@ -59,17 +59,19 @@ export function Sidebar({
       >
         {MENU_SECTIONS.map((section) => (
           <SidebarSection key={section.id} label={section.label}>
-            {section.items.map((item) => (
-              <li key={item.to}>
-                <SidebarNavItem
-                  to={item.to}
-                  company={company.code}
-                  label={item.label}
-                  icon={item.icon}
-                  exact={item.exact}
-                />
-              </li>
-            ))}
+            {section.items
+              .filter((item) => isOfferedTo(item, company.role))
+              .map((item) => (
+                <li key={item.to}>
+                  <SidebarNavItem
+                    to={item.to}
+                    company={company.code}
+                    label={item.label}
+                    icon={item.icon}
+                    exact={item.exact}
+                  />
+                </li>
+              ))}
           </SidebarSection>
         ))}
       </nav>

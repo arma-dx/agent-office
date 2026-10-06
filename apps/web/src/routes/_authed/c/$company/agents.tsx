@@ -12,7 +12,7 @@ function AgentsScreen() {
       <EmptyState
         variant="page"
         title="Henüz etkin ajan yok"
-        description="Ajanlar burada birimlerine göre listelenecek; her birinin durdurma düğmesi burada olacak. Ofis görünümü Kasım'da gelecek."
+        description="Ajanlar burada birimlerine göre listelenecek; her birinin durdurma düğmesi burada olacak."
       />
     </div>
   );

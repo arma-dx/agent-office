@@ -7,8 +7,9 @@ import { SESSION_QUERY_KEY } from './session.ts';
  * The session is fetched again when an answer says it no longer matches the server:
  * - a 401 means the session closed (idle or absolute limit); the authenticated layout then sends
  *   the person to the login screen;
- * - a 403 for the company or the founder role means a membership or role changed while the panel
- *   was open; the fresh memberships update the company switcher, the menu and the page.
+ * - a 403 for the company, the founder role or a screen closed to external people means a
+ *   membership or role changed while the panel was open; the fresh memberships update the company
+ *   switcher, the menu and the page.
  */
 export function createQueryClient(): QueryClient {
   const recheckSession = (error: unknown) => {

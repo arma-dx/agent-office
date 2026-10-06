@@ -1,4 +1,4 @@
-import { COMPANY_HEADER } from '@agent-office/shared';
+import { COMPANY_HEADER, type MembershipSummary } from '@agent-office/shared';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
@@ -34,6 +34,7 @@ describe('app layout', () => {
       'Onaylar',
       'Görevler',
       'Notlar',
+      'Ofis görünümü',
       'Ajanlar',
     ]);
     expect(links.map((link) => link.getAttribute('href'))).toEqual([
@@ -41,6 +42,7 @@ describe('app layout', () => {
       '/c/armadx/approvals',
       '/c/armadx/tasks',
       '/c/armadx/notes',
+      '/c/armadx/office',
       '/c/armadx/agents',
     ]);
     const work = within(mainMenu).getByRole('list', { name: 'İş' });
@@ -54,7 +56,7 @@ describe('app layout', () => {
       within(office)
         .getAllByRole('link')
         .map((link) => link.textContent),
-    ).toEqual(['Ajanlar']);
+    ).toEqual(['Ofis görünümü', 'Ajanlar']);
 
     await userEvent.click(within(mainMenu).getByRole('link', { name: 'Ajanlar' }));
     expect(await screen.findByRole('heading', { level: 1, name: 'Ajanlar' })).toBeInTheDocument();
@@ -83,12 +85,36 @@ describe('app layout', () => {
       '/c/pillika/approvals',
       '/c/pillika/tasks',
       '/c/pillika/notes',
+      '/c/pillika/office',
       '/c/pillika/agents',
     ]);
     expect(within(mainMenu).getByRole('link', { name: 'Görevler' })).toHaveAttribute(
       'aria-current',
       'page',
     );
+  });
+
+  it('does not offer the office view to an external person, and keeps the other rows', async () => {
+    const external: MembershipSummary = { ...ARMADX, role: 'external', canApprove: false };
+    mockApi({ 'GET /session': sessionHandler({ memberships: [external, PILLIKA] }) });
+    const { router } = renderApp('/c/armadx');
+    const mainMenu = await screen.findByRole('navigation', { name: 'Ana menü' });
+    const rows = () =>
+      within(mainMenu)
+        .getAllByRole('link')
+        .map((link) => link.textContent);
+    expect(rows()).toEqual(['Bugün', 'Onaylar', 'Görevler', 'Notlar', 'Ajanlar']);
+    expect(
+      within(within(mainMenu).getByRole('list', { name: 'Ofis' }))
+        .getAllByRole('link')
+        .map((link) => link.textContent),
+    ).toEqual(['Ajanlar']);
+
+    // The role belongs to the membership: in a company where the person is a founder the row is there.
+    await router.navigate({ to: '/c/$company', params: { company: 'pillika' } });
+    await waitFor(() => {
+      expect(rows()).toContain('Ofis görünümü');
+    });
   });
 
   it('keeps a row selected on an address below its page, and only that row', async () => {
