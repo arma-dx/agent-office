@@ -145,6 +145,7 @@ Kapsam dışı fikirler ve karar bekleyen açık sorular burada tutulur. Bir mad
 - Docker adımı: Node, `node_modules` altındaki TypeScript dosyalarını çalıştırmıyor. `pnpm deploy` kullanılırsa api ve worker tek dosyada paketlenmeli (esbuild ya da tsdown); ya da bütün çalışma alanı kopyalanır. Konteynerde `HOST=0.0.0.0` verilir.
 - Dependabot kaldırıldı: güncelleme önerilerini kendi açtığı dallarda getiriyordu, depoda yalnızca `development` ve `main` dalı olacak. GitHub Actions ve npm bağımlılıkları elle güncellenir. Soru: bunun için ayda bir gözden geçirme görevi açılsın mı?
 - pnpm 12 yeni bir sürüm; ciddi bir sorun çıkarsa 11.28.2'ye dönülebilir.
+- Supabase'ten başka bir yönteme geçiş ileride maliyet nedeniyle değerlendirilebilir (6 Ekim, karar 9). Bu yüzden Supabase'e özgü hizmetlere (Auth, hazır API, Realtime) bağımlılık kurulmaz ve dosya depolama dar bir modülün arkasında kalır (karar 9'dan türetilmiş yorum; kural 1 ve 9 ile aynı yönde).
 
 ## Arayüz temeli
 
