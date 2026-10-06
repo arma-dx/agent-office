@@ -3,7 +3,8 @@ import { cn } from '@/lib/utils';
 import { Dialog as DialogPrimitive } from 'radix-ui';
 
 // Dialog with a form (Radix Dialog). Drawn like the confirmation dialog: a line and a dimmed
-// backdrop, no shadow and no entrance animation (CLAUDE.md design rules).
+// backdrop (black in both themes, see alert-dialog.tsx), no shadow and no entrance animation
+// (CLAUDE.md design rules).
 
 function Dialog(props: React.ComponentProps<typeof DialogPrimitive.Root>) {
   return <DialogPrimitive.Root data-slot="dialog" {...props} />;
@@ -21,7 +22,7 @@ function DialogContent({
     <DialogPrimitive.Portal>
       <DialogPrimitive.Overlay
         data-slot="dialog-overlay"
-        className="fixed inset-0 z-50 bg-ink/40"
+        className="fixed inset-0 z-50 bg-black/40"
       />
       <DialogPrimitive.Content
         data-slot="dialog-content"

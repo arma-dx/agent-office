@@ -4,7 +4,9 @@ import { cn } from '@/lib/utils';
 import { AlertDialog as AlertDialogPrimitive } from 'radix-ui';
 
 // Confirmation dialog (Radix AlertDialog). Separated from the page by a line and a dimmed backdrop,
-// without a shadow and without an entrance animation (CLAUDE.md design rules).
+// without a shadow and without an entrance animation (CLAUDE.md design rules). The backdrop is
+// black in both themes: the text color (--ink) is light in the dark theme and would brighten the
+// page instead of dimming it.
 
 function AlertDialog(props: React.ComponentProps<typeof AlertDialogPrimitive.Root>) {
   return <AlertDialogPrimitive.Root data-slot="alert-dialog" {...props} />;
@@ -22,7 +24,7 @@ function AlertDialogContent({
     <AlertDialogPrimitive.Portal>
       <AlertDialogPrimitive.Overlay
         data-slot="alert-dialog-overlay"
-        className="fixed inset-0 z-50 bg-ink/40"
+        className="fixed inset-0 z-50 bg-black/40"
       />
       <AlertDialogPrimitive.Content
         data-slot="alert-dialog-content"

@@ -60,6 +60,9 @@ export function InlineBanner({
 }) {
   const spec = TONE[tone];
   const Icon = icon === false ? null : (icon ?? spec.icon);
+  // A message without a title next to a button: its first line and the icon are centred on the
+  // 32 px button instead of sitting at its top edge. Longer text still starts at the top.
+  const besideActions = Boolean(actions) && !title;
   return (
     <div
       role={role}
@@ -72,9 +75,12 @@ export function InlineBanner({
     >
       <div className="flex min-w-0 items-start gap-2.5">
         {Icon ? (
-          <Icon aria-hidden="true" className={cn('mt-0.5 size-4 shrink-0', spec.iconColor)} />
+          <Icon
+            aria-hidden="true"
+            className={cn('size-4 shrink-0', besideActions ? 'mt-2' : 'mt-0.5', spec.iconColor)}
+          />
         ) : null}
-        <div className="flex min-w-0 flex-col gap-1 text-sm">
+        <div className={cn('flex min-w-0 flex-col gap-1 text-sm', besideActions && 'py-1.5')}>
           {title ? <p className="leading-tight font-medium">{title}</p> : null}
           {children ? <div className="leading-snug">{children}</div> : null}
         </div>

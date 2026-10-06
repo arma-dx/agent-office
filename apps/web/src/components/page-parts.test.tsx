@@ -98,6 +98,28 @@ describe('InlineBanner', () => {
     expect(within(banner).getByRole('button', { name: 'Güvenlik sayfasını aç' })).toBeVisible();
     expect(banner).toHaveClass('bg-status-open-fill', 'border-status-open');
     expect(container.querySelector('svg')).toHaveAttribute('aria-hidden', 'true');
+    // With a title the text starts at the top edge of the button beside it.
+    expect(screen.getByText('Passkey ekleyin').parentElement).not.toHaveClass('py-1.5');
+    expect(container.querySelector('svg')).toHaveClass('mt-0.5');
+  });
+
+  it('centres a single line and its icon on the button beside it', () => {
+    const { container } = render(
+      <InlineBanner tone="danger" actions={<button type="button">Yeniden dene</button>}>
+        Liste alınamadı.
+      </InlineBanner>,
+    );
+    // 6 px above the 19 px line and 8 px above the 16 px icon: both on the centre of a 32 px button.
+    expect(screen.getByText('Liste alınamadı.').parentElement).toHaveClass('py-1.5');
+    expect(container.querySelector('svg')).toHaveClass('mt-2');
+  });
+
+  it('keeps a message without a button at the top of its box', () => {
+    const { container } = render(<InlineBanner>Önemli onaylar için gerekir.</InlineBanner>);
+    expect(screen.getByText('Önemli onaylar için gerekir.').parentElement).not.toHaveClass(
+      'py-1.5',
+    );
+    expect(container.querySelector('svg')).toHaveClass('mt-0.5');
   });
 
   it('can be an alert, and can leave the icon out', () => {
