@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { agentCodeSchema, unitCodeSchema } from './cards.ts';
 
 /**
  * Request and response shapes shared by the API (apps/api) and the panel (apps/web).
@@ -22,6 +23,8 @@ export const apiErrorCodeSchema = z.enum([
   'unauthenticated',
   'forbidden',
   'founder_only',
+  // A member who is an external person, on a screen for the founder and employees only.
+  'insiders_only',
   'cross_site_request',
   'invalid_request',
   'not_found',
@@ -532,3 +535,34 @@ export const removeMemberRequestSchema = z.strictObject({ stepUp: stepUpSchema.o
  * database administrator.
  */
 export const resetPasskeysRequestSchema = z.strictObject({ stepUp: stepUpSchema.optional() });
+
+// Office view (module M15; 5 October decisions 9 and 14) ------------------------------------------
+
+/** The company's switch for an agent (company_agents.status). */
+export const companyAgentStatusSchema = z.enum(['disabled', 'enabled', 'stopped']);
+export type CompanyAgentStatus = z.output<typeof companyAgentStatusSchema>;
+
+export const officeAgentSchema = z.object({
+  code: agentCodeSchema,
+  name: z.string(),
+  // null: the company has no company_agents row for this agent.
+  status: companyAgentStatusSchema.nullable(),
+});
+export type OfficeAgent = z.output<typeof officeAgentSchema>;
+
+export const officeUnitSchema = z.object({
+  code: unitCodeSchema,
+  name: z.string(),
+  // In the order of the number at the end of the code. Never empty: a unit without an agent for
+  // the company is not part of the answer.
+  agents: z.array(officeAgentSchema).min(1),
+});
+export type OfficeUnit = z.output<typeof officeUnitSchema>;
+
+/**
+ * GET /api/office: the units and agents of the selected company, units shared by every company
+ * first, each group by code. Founder or employee; 403 insiders_only for an external person. Never
+ * carries another company's units, agents or switches.
+ */
+export const officeResponseSchema = z.object({ units: z.array(officeUnitSchema) });
+export type OfficeResponse = z.output<typeof officeResponseSchema>;

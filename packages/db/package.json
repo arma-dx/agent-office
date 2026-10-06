@@ -16,6 +16,7 @@
     "@types/pg": "catalog:"
   },
   "dependencies": {
+    "@agent-office/shared": "workspace:*",
     "pg": "catalog:",
     "zod": "catalog:"
   }

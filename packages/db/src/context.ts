@@ -1,7 +1,6 @@
+import { agentCodeSchema } from '@agent-office/shared';
 import type { Pool, PoolClient } from 'pg';
 import { z } from 'zod';
-
-const agentCode = z.string().regex(/^[A-Z]{1,3}(-[A-Z]{2,4})?-[0-9]+$/);
 
 /**
  * The context the row policies read (CLAUDE.md rule 9). A value left empty is written as empty in
@@ -13,7 +12,7 @@ export const contextSchema = z.strictObject({
   projectId: z.uuid().nullable().default(null),
   // The email Google verified at login; used only in the login flow.
   email: z.email().nullable().default(null),
-  agentCode: agentCode.nullable().default(null),
+  agentCode: agentCodeSchema.nullable().default(null),
 });
 
 export type ContextInput = z.input<typeof contextSchema>;
@@ -27,7 +26,7 @@ export const agentContextSchema = z.strictObject({
   companyId: z.uuid(),
   userId: z.uuid(),
   projectId: z.uuid().nullable().default(null),
-  agentCode: agentCode,
+  agentCode: agentCodeSchema,
 });
 
 export type AgentContext = z.input<typeof agentContextSchema>;
