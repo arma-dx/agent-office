@@ -288,10 +288,12 @@ export function useOfficeView(
   const handlers: OfficeViewHandlers = {
     onPointerDown: (event) => {
       swallowClick.current = false;
+      // A second pointer (another finger) neither starts a drag nor ends the one that is going on.
+      if (!event.isPrimary) return;
       // A press whose release never reached the viewport leaves nothing behind.
       stopDrag(false);
       // Ctrl with the main button opens the context menu on macOS, and the menu takes the release.
-      if (event.button !== 0 || !event.isPrimary || event.ctrlKey) return;
+      if (event.button !== 0 || event.ctrlKey) return;
       drag.current = {
         pointerId: event.pointerId,
         startX: event.clientX,

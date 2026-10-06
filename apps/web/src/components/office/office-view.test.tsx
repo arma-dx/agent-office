@@ -974,6 +974,16 @@ describe('OfficeView pointer', () => {
     fireEvent.pointerDown(viewport, { ...PRESS, clientX: 100, clientY: 100 });
     fireEvent.pointerMove(viewport, { ...HELD, clientX: 160, clientY: 130 });
     expect(viewport).toHaveAttribute('data-dragging');
+    // The press of a second pointer (another finger) is not the next press: the drag goes on.
+    fireEvent.pointerDown(viewport, {
+      pointerId: 2,
+      isPrimary: false,
+      button: 0,
+      buttons: 1,
+      clientX: 300,
+      clientY: 300,
+    });
+    expect(viewport).toHaveAttribute('data-dragging');
     // No release and no move in between: the next press is a plain click.
     fireEvent.pointerDown(viewport, { ...PRESS, clientX: 300, clientY: 300 });
     expect(viewport).not.toHaveAttribute('data-dragging');
