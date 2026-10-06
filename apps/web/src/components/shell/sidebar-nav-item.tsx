@@ -27,7 +27,7 @@ export function SidebarNavItem({
       to={to}
       params={{ company }}
       activeOptions={{ exact }}
-      className="mx-2 flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-[13px] font-medium text-ink not-data-[status=active]:hover:bg-sidebar-hover data-[status=active]:bg-sidebar-selected data-[status=active]:font-semibold"
+      className="mx-2 flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-[0.8125rem] font-medium text-ink not-data-[status=active]:hover:bg-sidebar-hover data-[status=active]:bg-sidebar-selected data-[status=active]:font-semibold"
     >
       <Icon aria-hidden="true" className="size-4 shrink-0" />
       <span className="min-w-0 flex-1 truncate">{label}</span>

@@ -49,8 +49,9 @@ describe('top bar: location', () => {
     const bar = await screen.findByRole('banner');
     const title = await within(bar).findByRole('heading', { level: 1, name: 'Görevler' });
     expect(title).toBeVisible();
-    // A name on its own is a title.
-    expect(title).toHaveClass('text-[15px]', 'font-semibold');
+    // A name on its own is a title: 15 px at the default font size, in rem so that it grows with
+    // the browser's font size setting like the rest of the page.
+    expect(title).toHaveClass('text-[0.9375rem]', 'font-semibold');
     expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
   });
 
@@ -117,6 +118,24 @@ describe('top bar: location', () => {
   );
 });
 
+describe('menus: focus ring', () => {
+  afterEach(() => {
+    delete document.documentElement.dataset['input'];
+  });
+
+  it('marks the page with the last kind of input, for the ring of a menu used with the mouse', async () => {
+    // index.css leaves the keyboard ring out of menu rows and menu buttons under
+    // data-input="pointer" (design-rules.test.ts checks the rule); any key brings it back.
+    mockApi({ 'GET /session': sessionHandler() });
+    renderApp('/c/armadx');
+    await userEvent.click(await screen.findByRole('button', { name: /Şirket: Arma DX/ }));
+    await screen.findByRole('menu');
+    expect(document.documentElement.dataset['input']).toBe('pointer');
+    await userEvent.keyboard('{ArrowDown}');
+    expect(document.documentElement.dataset['input']).toBe('keyboard');
+  });
+});
+
 describe('account menu: theme', () => {
   afterEach(() => {
     setThemeChoice('system');
@@ -127,7 +146,9 @@ describe('account menu: theme', () => {
     renderApp('/c/armadx');
     await userEvent.click(await screen.findByRole('button', { name: 'Hesap: Ömer Kadıoğlu' }));
     const menu = await screen.findByRole('menu');
-    const choices = within(menu).getAllByRole('menuitemradio');
+    // The group carries the name: "Açık" alone is also the word for an open task.
+    const group = within(menu).getByRole('group', { name: 'Tema' });
+    const choices = within(group).getAllByRole('menuitemradio');
     expect(choices.map((choice) => choice.textContent)).toEqual(['Sistem', 'Açık', 'Koyu']);
     expect(within(menu).getByRole('menuitemradio', { name: 'Sistem' })).toHaveAttribute(
       'aria-checked',

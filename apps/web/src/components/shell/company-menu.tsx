@@ -45,7 +45,7 @@ export function CompanyMenu({
         >
           <span
             aria-hidden="true"
-            className="grid size-5 shrink-0 place-items-center rounded-md bg-brand text-[10px] font-semibold text-on-brand"
+            className="grid size-5 shrink-0 place-items-center rounded-md bg-brand text-[0.625rem] font-semibold text-on-brand"
           >
             {initials(selectedName)}
           </span>

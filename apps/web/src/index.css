@@ -389,12 +389,31 @@
   table {
     font-variant-numeric: tabular-nums;
   }
+  /*
+   * Room for the sticky top bar (60 px) and the focus ring: when the keyboard focus moves to a
+   * control that is out of view, the browser scrolls it to 80 px from the top of the window instead
+   * of under the bar. Set on the content and not as scroll-padding on the page, which would make the
+   * window jump when a control of the bar itself takes the focus.
+   */
+  #content * {
+    scroll-margin-top: 5rem;
+  }
 }
 
 /* Keyboard focus is always visible. Written outside a layer so it beats the outline-none class in components. */
 :focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 2px;
+}
+/*
+ * A menu used with the mouse: Radix moves the focus to the row under the pointer and back to the
+ * menu button by script, and the browser then draws the keyboard ring there. lib/input-kind.ts
+ * marks the root element with the last kind of input; after a press of the pointer the ring is left
+ * out on menu rows and menu buttons only. The row keeps its tone, and any key brings the ring back.
+ */
+[data-input='pointer'] [role^='menuitem']:focus-visible,
+[data-input='pointer'] [data-slot='dropdown-menu-trigger']:focus-visible {
+  outline: none;
 }
 /*
  * The link of a list row covers the whole row (components/list-row.tsx), so the ring is drawn on

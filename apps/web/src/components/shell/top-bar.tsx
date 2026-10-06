@@ -38,7 +38,7 @@ export function TopBar() {
             className={
               inTrail
                 ? 'min-w-0 truncate text-sm font-medium'
-                : 'min-w-0 truncate text-[15px] font-semibold'
+                : 'min-w-0 truncate text-[0.9375rem] font-semibold'
             }
           >
             {location.label}

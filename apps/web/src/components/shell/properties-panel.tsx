@@ -38,7 +38,7 @@ export function PanelRegion() {
       className="sticky top-15 flex h-[calc(100dvh-3.75rem)] w-80 shrink-0 flex-col border-l border-line bg-surface"
     >
       <div className="flex h-15 shrink-0 items-center border-b border-line px-4">
-        <h2 className="text-[15px] font-medium">Özellikler</h2>
+        <h2 className="text-[0.9375rem] font-medium">Özellikler</h2>
       </div>
       <div ref={setPanelHost} className="min-h-0 flex-1 overflow-y-auto p-4" />
     </aside>

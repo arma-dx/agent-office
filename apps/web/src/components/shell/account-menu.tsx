@@ -63,11 +63,11 @@ export function AccountMenu({
           <button
             type="button"
             aria-label={`Hesap: ${name}`}
-            className="flex w-full min-w-0 items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-[13px] font-medium hover:bg-sidebar-hover aria-expanded:bg-sidebar-hover"
+            className="flex w-full min-w-0 items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-[0.8125rem] font-medium hover:bg-sidebar-hover aria-expanded:bg-sidebar-hover"
           >
             <span
               aria-hidden="true"
-              className="grid size-6 shrink-0 place-items-center rounded-full bg-sidebar-selected text-[11px] font-semibold"
+              className="grid size-6 shrink-0 place-items-center rounded-full bg-sidebar-selected text-[0.6875rem] font-semibold"
             >
               {initials(name)}
             </span>
@@ -113,7 +113,9 @@ export function AccountMenu({
         ) : null}
         <DropdownMenuSeparator />
         <DropdownMenuLabel>Tema</DropdownMenuLabel>
+        {/* A menu label is not focusable, so a screen reader hears the name from the group. */}
         <DropdownMenuRadioGroup
+          aria-label="Tema"
           value={themeChoice}
           onValueChange={(value) => {
             setThemeChoice(themeChoiceSchema.parse(value));
