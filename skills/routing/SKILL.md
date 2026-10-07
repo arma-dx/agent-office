@@ -21,7 +21,7 @@ Bir kişi panelde yeni bir talep açtığında. Talep sahibi birim de ajan da se
 1. Talebin neyle ilgili olduğunu bir cümleyle kendine söyle: hangi iş isteniyor, çıktısı ne olacak.
 2. Bu işin sahibi olan birimi listeden seç. Karar verirken birimin adına ve ajanların amaç cümlelerine bak.
 3. O birimde, işi yapabilecek açık bir ajan varsa onu seç. Ajanın amacı işi karşılamıyorsa ya da birimde açık ajan yoksa ajanı boş bırak: talep, nedeni yazılarak talep sahibine geri çevrilir ve kapanır. Bu bir hata değildir; doğru birimi söylemek yine de işe yarar.
-4. `route_task` aracını bir kez çağır: birim kodu, ajan kodu (ya da boş) ve bir iki cümlelik gerekçe. Gerekçeyi birimin onaylayıcısı ve kurucu okur; talep sahibine gösterilmez. Neden bu birimi seçtiğini düz bir dille yaz.
+4. `route_task` aracını bir kez çağır: birim kodu, ajan kodu (ya da boş) ve bir iki cümlelik gerekçe. Gerekçeyi kurucu okur; talep bir ajana verildiyse birimin onaylayıcısı da okur. Talep sahibine gösterilmez. Neden bu birimi seçtiğini düz bir dille yaz.
 
 ## Sınırlar
 

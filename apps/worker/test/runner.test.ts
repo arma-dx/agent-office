@@ -336,13 +336,15 @@ describe.skipIf(noDatabase)('the coordinator’s run', () => {
       `- Yönlendirdiği birimde işi alabilecek açık ajan yoksa ajanı boş bırakır; talep, ${returned}`,
     );
     expect(system).toContain(`ajanı boş bırak: talep, ${returned}.`);
-    // Who reads the coordinator's reason: the approver and the founder, not the requester.
-    expect(system).toContain(
-      'Gerekçeyi birimin onaylayıcısı ve kurucu okur; talep sahibine gösterilmez.',
-    );
+    // Who reads the coordinator's reason: the founder always, the unit's approver only when the
+    // request went to an agent (a returned round has no active step), never the requester. The
+    // skill's step 4 and the tool's reason field say the same.
+    const readers = 'talep bir ajana verildiyse birimin onaylayıcısı da okur.';
+    expect(system).toContain(`Gerekçeyi kurucu okur; ${readers} Talep sahibine gösterilmez.`);
+    expect(definition).toContain(`Kurucu okur; ${readers}`);
     for (const text of [definition, system]) {
       expect(text).not.toMatch(
-        /onaylayıcısına düşer|Uygun ajan yoksa|talep sahibi ve onaylayıcı okur/,
+        /onaylayıcısına düşer|Uygun ajan yoksa|talep sahibi ve onaylayıcı okur|onaylayıcısı ve kurucu okur/,
       );
     }
   });

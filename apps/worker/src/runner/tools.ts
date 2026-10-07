@@ -122,7 +122,7 @@ const DEFINITIONS: Record<string, (description: string) => ModelTool> = {
           'O birimin işi yapabilecek açık ajanının kodu. Birimde uygun açık ajan yoksa boş metin (""): talep o zaman, birimde işi alabilecek açık ajan olmadığı yazılarak talep sahibine geri çevrilir ve kapanır.',
         ),
         reason: field(
-          `Bu birimin neden seçildiğini anlatan bir iki cümle (en çok ${String(LIMITS.reason)} karakter); birimin onaylayıcısı ve kurucu okur.`,
+          `Bu birimin neden seçildiğini anlatan bir iki cümle (en çok ${String(LIMITS.reason)} karakter). Kurucu okur; talep bir ajana verildiyse birimin onaylayıcısı da okur.`,
         ),
       },
       required: ['unit_code', 'agent_code', 'reason'],
