@@ -1,0 +1,645 @@
+import { z } from 'zod';
+import { agentCodeSchema, unitCodeSchema } from './cards.ts';
+import { stepUpSchema } from './api.ts';
+import { taskPersonSchema, taskStatusSchema, type TaskStatus } from './tasks.ts';
+
+/**
+ * Flow (A), "talep": a request that agents carry out (7 October decisions 1 to 8). A person writes
+ * what they want and chooses neither a unit nor an agent; the coordinator routes it, the unit's
+ * agent works, the unit's approver decides, the requester accepts. Nobody sets a status by hand.
+ *
+ * The API validates every body with these schemas and builds every answer with them; the panel
+ * validates every answer. There is no field here that sets a status or an approver: the only
+ * things a person sends are the request text, a decision, a close and, for the founder and the
+ * approver of the request, a correction of the routing (7 October decision 7).
+ */
+
+/** The agent every new request goes to first (its card: "Panelden gelen her talebi karşılar"). */
+export const COORDINATOR_AGENT_CODE = 'KOR-1';
+
+// The request text ---------------------------------------------------------------------------------
+
+export const REQUEST_TEXT_MAX = 20_000;
+export const REQUEST_TITLE_MAX = 80;
+
+// PostgreSQL text cannot hold the NUL character; a text with one is refused here (400), not there.
+const withoutNul = (text: string): boolean => !text.includes('\u0000');
+const NO_NUL = { message: 'Must not contain the NUL character' };
+
+export const requestTextSchema = z
+  .string()
+  .max(REQUEST_TEXT_MAX)
+  .refine((text) => text.trim().length > 0, { message: 'Must not be empty' })
+  .refine(withoutNul, NO_NUL);
+
+/**
+ * The title of a request is not asked for: it is the first line of the text that is not empty, cut
+ * at a word to REQUEST_TITLE_MAX characters. Made by code, never by a model: a title is shown in
+ * lists and in the top bar, and agent text reaches people only as a run summary, an approval's
+ * reasoning or a question.
+ */
+export function deriveRequestTitle(text: string): string {
+  const line =
+    text
+      .split(/\r?\n/)
+      .map((part) => part.replace(/\s+/g, ' ').trim())
+      .find((part) => part.length > 0) ?? '';
+  if (line.length <= REQUEST_TITLE_MAX) {
+    return line;
+  }
+  const cut = line.slice(0, REQUEST_TITLE_MAX + 1);
+  const space = cut.lastIndexOf(' ');
+  // A first word longer than the limit is cut inside the word; nothing else can be done with it.
+  return (space > REQUEST_TITLE_MAX / 2 ? cut.slice(0, space) : cut.slice(0, REQUEST_TITLE_MAX))
+    .replace(/[\s,;:.-]+$/u, '')
+    .trim();
+}
+
+/**
+ * POST /api/requests. The id is chosen by the panel, so a send that is repeated (a double click, a
+ * retry after a lost answer) answers the first record and opens no second request.
+ */
+export const createRequestSchema = z.strictObject({ id: z.uuid(), text: requestTextSchema });
+export type CreateRequest = z.input<typeof createRequestSchema>;
+
+// Stage and turn -----------------------------------------------------------------------------------
+
+/**
+ * Where a request is. Derived on the server from the records of the flow (routing, runs,
+ * approvals, the requester's approval); never stored and never set by anybody. The six statuses of
+ * a task stay the status language; the stage says what the status cannot: "Onay bekliyor" is true
+ * both while the unit's approver decides and while the requester accepts.
+ */
+export const requestStageSchema = z.enum([
+  // The coordinator is choosing the unit and the agent (or is about to).
+  'routing',
+  // The unit's agent is working (or is about to).
+  'working',
+  // The same, after a change request of the approver or the requester.
+  'revising',
+  'unit_approval',
+  'requester_approval',
+  // Nothing runs and nothing waits for a decision: a person must look at it.
+  'fell_to_person',
+  'done',
+  'cancelled',
+]);
+export type RequestStage = z.output<typeof requestStageSchema>;
+
+/** Why a request fell to a person, or how it was closed. A code; the sentence is the panel's. */
+export const requestCauseSchema = z.enum([
+  // fell_to_person
+  'coordinator_closed',
+  'no_routing',
+  'no_agent',
+  'agent_stopped',
+  'no_submission',
+  'run_failed',
+  'limit_reached',
+  'model_refused',
+  'model_unavailable',
+  // The provider's account cannot pay for the call, or does not offer the card's model.
+  'model_billing',
+  'model_not_available',
+  'card_not_runnable',
+  'second_change_request',
+  // cancelled
+  'cancelled_by_requester',
+  'stopped',
+  // Stopped while the approved result waited for its requester: the result was delivered.
+  'closed_after_delivery',
+  'rejected',
+]);
+export type RequestCause = z.output<typeof requestCauseSchema>;
+
+export const runStatusSchema = z.enum([
+  'running',
+  'completed',
+  'failed',
+  'limit_reached',
+  'stopped',
+]);
+export type RunStatus = z.output<typeof runStatusSchema>;
+
+/** Whose turn it is, before it is resolved to a person or an agent. */
+export type TurnRole = 'coordinator' | 'agent' | 'approver' | 'requester' | 'founder' | 'none';
+
+/** What the server reads about a request to say where it is. */
+export interface RequestFacts {
+  status: TaskStatus;
+  createdAt: Date;
+  // Who closed a cancelled request by hand: its requester, somebody else, or nobody (a rejection).
+  closedBy: 'requester' | 'other' | null;
+  // It was closed while its approved result waited for the requester's answer.
+  closedAfterDelivery: boolean;
+  // The coordinator can take a request in this company: its switch is on and its card has a
+  // version to run with.
+  coordinatorEnabled: boolean;
+  // Was the request ever routed.
+  routed: boolean;
+  // The step that is active now.
+  step: { agentCode: string | null; agentEnabled: boolean } | null;
+  // A result waits for the unit's approver.
+  pendingApproval: boolean;
+  // The approved result waits for the requester.
+  pendingAcceptance: boolean;
+  // The last decision on a result of the active step.
+  lastResult: { status: 'approved' | 'changes_requested' | 'rejected'; attempt: number } | null;
+  // Did the approver or the requester ask for changes on the active step.
+  changesRequested: boolean;
+  // The latest moment a run was called for: the routing of the active step or the last change
+  // request. Null before the first routing.
+  awaitedSince: Date | null;
+  // The latest run on the request, whoever ran it.
+  lastRun: {
+    agentCode: string;
+    status: RunStatus;
+    errorCode: string | null;
+    startedAt: Date;
+  } | null;
+}
+
+export interface DerivedStage {
+  stage: RequestStage;
+  cause: RequestCause | null;
+  turn: TurnRole;
+  // The step in hand takes longer than it should: nothing picked the job up, or a run is still
+  // open long after its time limit. The stage is not changed by a guess; the panel says "gecikti".
+  delayed: boolean;
+}
+
+// A queued run should start within this time; a running one should end within the longest time
+// limit a card may have (CLAUDE.md default: 10 minutes) plus the same margin.
+export const QUEUE_GRACE_MS = 2 * 60 * 1000;
+export const RUN_GRACE_MS = 12 * 60 * 1000;
+
+function causeOfRun(run: NonNullable<RequestFacts['lastRun']>, coordinator: boolean): RequestCause {
+  if (run.status === 'limit_reached') return 'limit_reached';
+  if (run.status === 'stopped') return 'agent_stopped';
+  if (run.status === 'completed') return coordinator ? 'no_routing' : 'no_submission';
+  switch (run.errorCode) {
+    case 'model_refusal':
+      return 'model_refused';
+    case 'model_unavailable':
+    case 'anthropic_auth_failed':
+      return 'model_unavailable';
+    case 'anthropic_billing':
+      return 'model_billing';
+    case 'anthropic_model_not_found':
+      return 'model_not_available';
+    case 'card_not_runnable':
+      return 'card_not_runnable';
+    default:
+      return 'run_failed';
+  }
+}
+
+/** The one place that says where a request is and whose turn it is. Pure: tested without a database. */
+export function deriveStage(facts: RequestFacts, now: Date): DerivedStage {
+  const at = (
+    stage: RequestStage,
+    turn: TurnRole,
+    extra: Partial<DerivedStage> = {},
+  ): DerivedStage => ({
+    stage,
+    cause: null,
+    turn,
+    delayed: false,
+    ...extra,
+  });
+  const since = (moment: Date): number => now.getTime() - moment.getTime();
+
+  if (facts.status === 'done') {
+    return at('done', 'none');
+  }
+  if (facts.status === 'cancelled') {
+    const cause: RequestCause =
+      facts.closedBy === 'requester'
+        ? 'cancelled_by_requester'
+        : facts.closedBy === 'other'
+          ? facts.closedAfterDelivery
+            ? 'closed_after_delivery'
+            : 'stopped'
+          : 'rejected';
+    return at('cancelled', 'none', { cause });
+  }
+  if (facts.pendingAcceptance) {
+    return at('requester_approval', 'requester');
+  }
+  if (facts.pendingApproval) {
+    return at('unit_approval', 'approver');
+  }
+
+  const run = facts.lastRun;
+  if (!facts.routed) {
+    if (run?.status === 'running') {
+      return at('routing', 'coordinator', { delayed: since(run.startedAt) > RUN_GRACE_MS });
+    }
+    if (run) {
+      return at('fell_to_person', 'founder', { cause: causeOfRun(run, true) });
+    }
+    if (!facts.coordinatorEnabled) {
+      return at('fell_to_person', 'founder', { cause: 'coordinator_closed' });
+    }
+    return at('routing', 'coordinator', { delayed: since(facts.createdAt) > QUEUE_GRACE_MS });
+  }
+
+  const step = facts.step;
+  if (!step) {
+    // The requester asked for changes twice: no step is active and nothing starts by itself.
+    return at('fell_to_person', 'approver', { cause: 'second_change_request' });
+  }
+  if (step.agentCode === null) {
+    return at('fell_to_person', 'approver', { cause: 'no_agent' });
+  }
+  const working: RequestStage = facts.changesRequested ? 'revising' : 'working';
+  if (run?.status === 'running' && run.agentCode === step.agentCode) {
+    return at(working, 'agent', { delayed: since(run.startedAt) > RUN_GRACE_MS });
+  }
+  if (facts.lastResult?.status === 'changes_requested' && facts.lastResult.attempt >= 2) {
+    // 2 October decision 10: after the second change request the work falls to a person.
+    return at('fell_to_person', 'approver', { cause: 'second_change_request' });
+  }
+  const awaitedSince = facts.awaitedSince ?? facts.createdAt;
+  if (run && run.agentCode === step.agentCode && run.startedAt >= awaitedSince) {
+    // The run that was called for has ended and left neither a result nor a question.
+    return at('fell_to_person', 'approver', { cause: causeOfRun(run, false) });
+  }
+  if (!step.agentEnabled) {
+    return at('fell_to_person', 'approver', { cause: 'agent_stopped' });
+  }
+  return at(working, 'agent', { delayed: since(awaitedSince) > QUEUE_GRACE_MS });
+}
+
+// Answers ------------------------------------------------------------------------------------------
+
+const instantSchema = z.iso.datetime({ offset: true });
+const unitRefSchema = z.object({ code: unitCodeSchema, name: z.string() });
+const agentRefSchema = z.object({ code: agentCodeSchema, name: z.string() });
+
+/**
+ * Who must act now. `founder` is used when nobody is appointed for the unit: the founder decides
+ * (7 October decision 5), and the panel says "Kurucu" without naming a person.
+ */
+export const requestTurnSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('person'), userId: z.uuid(), name: z.string().nullable() }),
+  z.object({ kind: z.literal('founder') }),
+  z.object({ kind: z.literal('agent'), code: agentCodeSchema, name: z.string() }),
+  z.object({ kind: z.literal('none') }),
+]);
+export type RequestTurn = z.output<typeof requestTurnSchema>;
+
+export const requestSummarySchema = z.object({
+  id: z.uuid(),
+  title: z.string(),
+  status: taskStatusSchema,
+  stage: requestStageSchema,
+  cause: requestCauseSchema.nullable(),
+  delayed: z.boolean(),
+  turn: requestTurnSchema,
+  // The reader is the one who must act.
+  waitingForMe: z.boolean(),
+  unit: unitRefSchema.nullable(),
+  requester: taskPersonSchema,
+  createdAt: instantSchema,
+  updatedAt: instantSchema,
+});
+export type RequestSummary = z.output<typeof requestSummarySchema>;
+
+export const REQUEST_LIST_LIMIT = 200;
+export const requestListSchema = z.object({
+  requests: z.array(requestSummarySchema),
+  // More requests exist than the list holds (no paging in the first slice).
+  truncated: z.boolean(),
+});
+export type RequestList = z.output<typeof requestListSchema>;
+
+/** The fixed reasons of a rejection or a change request (2 October decision 10). */
+export const rejectionReasonSchema = z.enum([
+  'incorrect_information',
+  'incomplete',
+  'language_and_tone',
+  'pricing',
+  'out_of_scope',
+  'other',
+]);
+export type RejectionReason = z.output<typeof rejectionReasonSchema>;
+
+/** One option of an agent's output (SOS-2 writes two or three per request). */
+export const resultOptionSchema = z.object({
+  code: z.string().min(1).max(8),
+  text: z.string(),
+  hashtags: z.array(z.string()),
+});
+export type ResultOption = z.output<typeof resultOptionSchema>;
+
+/**
+ * A result that waits for a decision of the unit's approver, with everything the decision needs.
+ * Given only to a person who may decide it. The marks (money, outside, passkey) come from the
+ * record and from code, never from the agent's text; `summary`, `rationale` and `riskNote` are the
+ * agent's words and are shown as such.
+ */
+export const approvalCardSchema = z.object({
+  id: z.uuid(),
+  requestId: z.uuid(),
+  requestTitle: z.string(),
+  requester: taskPersonSchema,
+  agent: agentRefSchema,
+  attempt: z.number().int().min(1).max(2),
+  createdAt: instantSchema,
+  title: z.string(),
+  summary: z.string().nullable(),
+  rationale: z.string().nullable(),
+  riskNote: z.string().nullable(),
+  options: z.array(resultOptionSchema),
+  involvesMoney: z.boolean(),
+  // Where the money mark comes from: the card says the work involves money; the agent stated it;
+  // or neither said anything and the safe default was taken. The panel says which, because a
+  // statement of the model is not a fact of the record. Null when the mark is not set.
+  moneyStatedBy: z.enum(['card', 'agent', 'default']).nullable(),
+  goesExternal: z.boolean(),
+  // Approving asks for a passkey re-verification (3 October decision 7, 5 October decision 2).
+  needsStepUp: z.boolean(),
+});
+export type ApprovalCard = z.output<typeof approvalCardSchema>;
+
+/** The approved result: what the requester is asked to accept, and what stays on the page. */
+export const requestResultSchema = z.object({
+  approvalId: z.uuid(),
+  agent: agentRefSchema,
+  title: z.string(),
+  option: resultOptionSchema.nullable(),
+  approvedBy: taskPersonSchema.nullable(),
+  approvedAt: instantSchema,
+});
+export type RequestResult = z.output<typeof requestResultSchema>;
+
+/** A result of the reader's own request that waits for their acceptance. */
+export const acceptanceCardSchema = z.object({
+  requestId: z.uuid(),
+  requestTitle: z.string(),
+  round: z.number().int().min(1),
+  openedAt: instantSchema,
+  result: requestResultSchema,
+});
+export type AcceptanceCard = z.output<typeof acceptanceCardSchema>;
+
+/** GET /api/approvals: what waits for a decision of the reader. */
+export const approvalDeskSchema = z.object({
+  approvals: z.array(approvalCardSchema),
+  acceptances: z.array(acceptanceCardSchema),
+});
+export type ApprovalDesk = z.output<typeof approvalDeskSchema>;
+
+const stepSchema = z.object({
+  // The catalog name of the tool; the panel has a fixed verb for each.
+  tool: z.string(),
+  status: z.enum(['started', 'succeeded', 'failed', 'sent_for_approval', 'blocked']),
+});
+
+/**
+ * The journey of a request: what happened, in order, already cut to what the reader may read.
+ * A run's summary is a fixed sentence made by code. Text an agent wrote appears in three places
+ * only, and only for a person who may decide the work (the founder, the approver of the step):
+ * the coordinator's reason for its routing, the closing words of a run that ended without its
+ * tool (`agentText`) and, inside the approval card, the agent's summary, reasoning and risk note.
+ * Nobody else reads a model's text before the approver has approved it (7 October decision 4).
+ */
+export const journeyItemSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('routing'),
+    id: z.uuid(),
+    at: instantSchema,
+    round: z.number().int().min(1),
+    unit: unitRefSchema,
+    agent: agentRefSchema.nullable(),
+    // Null: nobody is appointed for the unit, the founder decides.
+    approver: taskPersonSchema.nullable(),
+    // Null: the coordinator routed; set: a person corrected the routing.
+    by: taskPersonSchema.nullable(),
+    // A person's note for everybody; the coordinator's reason only for those who may decide.
+    reason: z.string().nullable(),
+  }),
+  z.object({
+    kind: z.literal('run'),
+    id: z.uuid(),
+    at: instantSchema,
+    agent: agentRefSchema,
+    status: runStatusSchema,
+    finishedAt: instantSchema.nullable(),
+    durationMs: z.number().int().nonnegative().nullable(),
+    errorCode: z.string().nullable(),
+    summary: z.string().nullable(),
+    // What the agent wrote when it ended without its tool; null for a reader who may not decide.
+    agentText: z.string().nullable(),
+    steps: z.array(stepSchema),
+  }),
+  z.object({
+    kind: z.literal('approval'),
+    id: z.uuid(),
+    at: instantSchema,
+    status: z.enum(['pending', 'approved', 'changes_requested', 'rejected', 'closed']),
+    attempt: z.number().int().min(1).max(2),
+    agent: agentRefSchema,
+    decidedBy: taskPersonSchema.nullable(),
+    reason: rejectionReasonSchema.nullable(),
+    note: z.string().nullable(),
+  }),
+  z.object({
+    kind: z.literal('acceptance'),
+    id: z.uuid(),
+    at: instantSchema,
+    round: z.number().int().min(1),
+    status: z.enum(['pending', 'approved', 'changes_requested', 'closed']),
+    reason: rejectionReasonSchema.nullable(),
+    note: z.string().nullable(),
+  }),
+]);
+export type JourneyItem = z.output<typeof journeyItemSchema>;
+
+/**
+ * GET /api/requests/:requestId: one answer for the whole page, so that the panel never puts a
+ * journey together from several answers with several permissions.
+ */
+export const requestDetailSchema = requestSummarySchema.extend({
+  text: z.string(),
+  agent: agentRefSchema.nullable(),
+  // The approver of the active step; null when nobody is appointed (the founder decides) or when
+  // no step is active.
+  approver: taskPersonSchema.nullable(),
+  // How a cancelled request was closed, for everybody who may read it: who closed it (the
+  // requester, the one who stopped it, the approver who rejected the result), the reason class of
+  // a rejection and that person's own words. Never anything an agent wrote.
+  closure: z
+    .object({
+      by: taskPersonSchema.nullable(),
+      reason: rejectionReasonSchema.nullable(),
+      note: z.string().nullable(),
+    })
+    .nullable(),
+  journey: z.array(journeyItemSchema),
+  // Only for a person who may decide it.
+  approval: approvalCardSchema.nullable(),
+  // The approved result; shown to everybody who may read the request once it is approved.
+  result: requestResultSchema.nullable(),
+  // The requester's approval waits, and the reader is the requester.
+  acceptance: z.object({ round: z.number().int().min(1) }).nullable(),
+  // The acts the reader may use (7 October decision 7). The server refuses the rest anyway.
+  actions: z.object({ cancel: z.boolean(), stop: z.boolean(), reroute: z.boolean() }),
+  // The clock the stage and the durations were read on.
+  serverTime: instantSchema,
+});
+export type RequestDetail = z.output<typeof requestDetailSchema>;
+
+// Decisions ----------------------------------------------------------------------------------------
+
+export const DECISION_NOTE_MAX = 2000;
+const noteSchema = z.string().trim().max(DECISION_NOTE_MAX).refine(withoutNul, NO_NUL);
+
+/**
+ * POST /api/approvals/:approvalId/decision: the decision of the unit's approver.
+ * - approved: the option chosen (required when the result has options) and, for an important
+ *   approval, the passkey re-verification for exactly this decision.
+ * - changes_requested, rejected: a reason from the fixed list; a note is required with "other".
+ */
+export const approvalDecisionSchema = z
+  .discriminatedUnion('decision', [
+    z.strictObject({
+      decision: z.literal('approved'),
+      selectedOption: z.string().min(1).max(8).optional(),
+      stepUp: stepUpSchema.optional(),
+    }),
+    z.strictObject({
+      decision: z.enum(['changes_requested', 'rejected']),
+      reason: rejectionReasonSchema,
+      note: noteSchema.optional(),
+    }),
+  ])
+  .refine(
+    (body) =>
+      body.decision === 'approved' ||
+      body.reason !== 'other' ||
+      (body.note !== undefined && body.note.length > 0),
+    { path: ['note'], message: 'Required with the reason "other"' },
+  );
+export type ApprovalDecision = z.input<typeof approvalDecisionSchema>;
+
+/**
+ * What the passkey confirms when an important result is approved: the approval (the subject of
+ * the re-verification) and the option chosen. The panel sends it to POST /api/step-up/options and
+ * the API builds the same from the decision, so a re-verification made for one option cannot
+ * approve another.
+ */
+export function approvalDecisionDetails(selectedOption: string | undefined): {
+  decision: 'approved';
+  selectedOption: string | null;
+} {
+  return { decision: 'approved', selectedOption: selectedOption ?? null };
+}
+
+/**
+ * POST /api/requests/:requestId/acceptance: the requester's answer to the approved result
+ * (7 October decision 6). No passkey: the approver gave it when releasing important work.
+ */
+export const acceptanceDecisionSchema = z.discriminatedUnion('decision', [
+  z.strictObject({ decision: z.literal('approved') }),
+  z.strictObject({
+    decision: z.literal('changes_requested'),
+    // The requester's words are the only thing the next attempt has to go on. The fixed list of
+    // reasons belongs to the approver's record (2 October decision 10); the requester is not
+    // asked to classify.
+    note: noteSchema.refine((note) => note.length > 0, { message: 'Required' }),
+    reason: rejectionReasonSchema.optional(),
+  }),
+]);
+export type AcceptanceDecision = z.input<typeof acceptanceDecisionSchema>;
+
+// Closing and correcting -----------------------------------------------------------------------------
+
+export const CLOSE_REASON_MAX = 500;
+const closeReasonSchema = z.string().trim().max(CLOSE_REASON_MAX).refine(withoutNul, NO_NUL);
+
+/**
+ * POST /api/requests/:requestId/close. The requester cancels and may say why; the approver of the
+ * request or the founder stops and must say why, in a sentence the requester reads (the API
+ * answers 409 reason_required without it).
+ */
+export const closeRequestSchema = z.strictObject({ reason: closeReasonSchema.optional() });
+export type CloseRequest = z.input<typeof closeRequestSchema>;
+
+export const ROUTING_NOTE_MAX = 600;
+
+/**
+ * POST /api/requests/:requestId/routing: the founder or the approver of the active step corrects
+ * the routing (7 October decision 7): the unit, and an agent of it that is open in this company,
+ * or no agent (the request then waits with that unit's approver). Routing again to the agent that
+ * already had the request starts its work again; that is also how a failed run is retried. The
+ * approver of the new step is looked up by the database, never sent.
+ */
+export const correctRoutingSchema = z.strictObject({
+  unitCode: unitCodeSchema,
+  agentCode: agentCodeSchema.nullable(),
+  // A person's note: shown on the journey and given to the agent as data.
+  note: z.string().trim().max(ROUTING_NOTE_MAX).refine(withoutNul, NO_NUL).optional(),
+});
+export type CorrectRouting = z.input<typeof correctRoutingSchema>;
+
+/** GET /api/requests/:requestId/routing-options: where the request can be routed to now. */
+export const routingOptionsSchema = z.object({
+  units: z.array(
+    z.object({
+      code: unitCodeSchema,
+      name: z.string(),
+      // The agents of the unit that are open in this company and have a card version to run with.
+      agents: z.array(agentRefSchema),
+    }),
+  ),
+});
+export type RoutingOptions = z.output<typeof routingOptionsSchema>;
+
+/**
+ * GET /api/requests/intake: can this person send a request in this company now. Asked by the form
+ * before it lets the person write, and enforced again by POST /api/requests (409
+ * requests_not_open), so that nobody sends a request that could never run.
+ */
+export const requestIntakeReasonSchema = z.enum([
+  // Kurucu alanı: no coordinator works there.
+  'private_space',
+  // The coordinator's switch is off in this company.
+  'coordinator_closed',
+  // The coordinator's card has no version to run with (the definitions were not synchronised),
+  // or its card is a draft.
+  'coordinator_not_ready',
+  // The coordinator's card is on trial: only the founder's requests run.
+  'trial_founder_only',
+]);
+export type RequestIntakeReason = z.output<typeof requestIntakeReasonSchema>;
+
+export const requestIntakeSchema = z.object({
+  open: z.boolean(),
+  reason: requestIntakeReasonSchema.nullable(),
+});
+export type RequestIntake = z.output<typeof requestIntakeSchema>;
+
+// The agent's output -------------------------------------------------------------------------------
+
+/**
+ * What submit_for_approval stores in approvals.payload for a result with options. Parsed again
+ * when it is read: the payload is what a model wrote.
+ */
+export const resultPayloadSchema = z.object({
+  options: z
+    .array(
+      z.object({
+        code: z.string().min(1).max(8),
+        text: z.string().min(1),
+        hashtags: z.array(z.string()).default([]),
+      }),
+    )
+    .min(1)
+    .max(3),
+  // Where the money mark of the approval comes from: the card says so, the agent stated it, or
+  // neither said anything and the safe default was taken. Written by the runner, not by the model.
+  money_stated_by: z.enum(['card', 'agent', 'default']).optional(),
+});
+export type ResultPayload = z.output<typeof resultPayloadSchema>;

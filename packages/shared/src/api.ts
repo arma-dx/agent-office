@@ -60,6 +60,16 @@ export const apiErrorCodeSchema = z.enum([
   // Passkey reset by a founder (5 October decision 3).
   'passkey_reset_self',
   'passkey_reset_not_allowed',
+  // Requests (flow A) and their approvals.
+  'request_closed',
+  'approval_closed',
+  'option_required',
+  'action_not_allowed',
+  'agent_not_available',
+  'agent_not_ready',
+  'requests_not_open',
+  'reason_required',
+  'routing_not_possible',
 ]);
 export type ApiErrorCode = z.output<typeof apiErrorCodeSchema>;
 
@@ -574,3 +584,13 @@ export type OfficeUnit = z.output<typeof officeUnitSchema>;
  */
 export const officeResponseSchema = z.object({ units: z.array(officeUnitSchema) });
 export type OfficeResponse = z.output<typeof officeResponseSchema>;
+
+/**
+ * PUT /api/agents/:agentCode/switch: the founder opens an agent for the company or stops it (rule:
+ * every agent has a stop switch per company; the switch is the company_agents row). A stopped
+ * agent takes no new work and its open run ends before its next step.
+ */
+export const agentSwitchRequestSchema = z.strictObject({
+  status: z.enum(['enabled', 'stopped']),
+});
+export type AgentSwitchRequest = z.input<typeof agentSwitchRequestSchema>;
