@@ -3,7 +3,7 @@ name: Ofis Koordinatörü
 unit: KOR
 companies: [armadx, pillika]
 version: "0.1"
-status: trial
+status: active
 owner: founder
 
 purpose: >

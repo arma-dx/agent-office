@@ -3,7 +3,7 @@ name: Sosyal İçerik Yazım Ajanı
 unit: SOS
 companies: [armadx, pillika]
 version: "0.1"
-status: trial
+status: active
 owner: founder
 
 purpose: >

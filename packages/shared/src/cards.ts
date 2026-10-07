@@ -47,9 +47,11 @@ export type AuthorityLevel = z.output<typeof authorityLevelSchema>;
 /**
  * What a card's status means for a run:
  *   draft   no run: the card is still being written;
- *   trial   runs only for requests the founder wrote (the first real runs carry only the
- *           founder's own text);
+ *   trial   runs only for requests the founder wrote;
  *   active  runs for every founder and employee of the company.
+ * No card is on trial now: the first cards are active, so the agents work for everybody's requests
+ * from the first runs on (8 October decision 1). The status stays as a rule the API's door and the
+ * runner hold; whether a later agent uses it is the founder's decision.
  * The switch that opens an agent for a company is separate (company_agents); both must allow it.
  */
 export const cardStatusSchema = z.enum(['draft', 'trial', 'active']);

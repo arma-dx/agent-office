@@ -39,8 +39,9 @@ import { busyProps } from '@/lib/utils';
  * or discarded.
  *
  * When it opens, the form asks whether a request can run for this person here now (the
- * coordinator open and ready; a card on trial runs for the founder only). If not, it says why and
- * does not send: nobody writes a request that would die at the door.
+ * coordinator open and ready; its card is active, so for every founder and employee, and were it
+ * put on trial, for the founder only). If not, it says why and does not send: nobody writes a
+ * request that would die at the door.
  */
 
 const draftSchema = z.object({ id: z.uuid(), text: z.string().max(REQUEST_TEXT_MAX) });

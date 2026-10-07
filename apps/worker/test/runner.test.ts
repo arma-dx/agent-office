@@ -27,7 +27,9 @@ import {
 // database by the real sync), with the worker's restricted role and a scripted model. No request
 // is ever sent to the Claude API from a test.
 //
-// In the fixtures the cards KOR-1 and SOS-2 are on trial: they run for requests the founder wrote.
+// The cards KOR-1 and SOS-2 are active (8 October decision 1): they run for everybody's requests.
+// Most cases here send the founder's; the trial rule, which no card uses now, has a case of its
+// own that rewrites a card version for its own length.
 
 const REQUEST = 'LinkedIn için gönderi yaz\nKaynak: İzmir ofisimiz 1 Ekim’de açıldı.';
 
@@ -860,18 +862,51 @@ describe.skipIf(noDatabase)('what stops a run or keeps it from starting', () => 
   });
 
   it('a card on trial runs only for the founder; without a key no model is called', async () => {
-    const byEmployee = await openRequest(ids.employee, REQUEST);
+    // No card of the repository is on trial now; the rule is kept, so the coordinator's version
+    // is rewritten for this case and put back.
+    const setStatus = (status: string) =>
+      admin(
+        `update office.card_versions v
+         set content = jsonb_set(v.content, '{card,status}', to_jsonb($1::text))
+         from office.agent_definitions d
+         where d.code = 'KOR-1' and v.id = d.current_version_id
+         returning v.content -> 'card' ->> 'status' as status`,
+        [status],
+      );
     const idle = new ScriptedModel([]);
-    const trial = await runner(idle);
-    const refused = await runAgentJob(trial.deps, job(byEmployee, 'KOR-1', ids.employee));
-    expect(refused).toMatchObject({ outcome: 'card_not_runnable', modelCalls: 0 });
-    expect(await runRow(refused.runId)).toMatchObject({
-      status: 'failed',
-      error_code: 'card_not_runnable',
-      cost_usd: '0.000000',
+    const byEmployee = await openRequest(ids.employee, REQUEST);
+    expect(await setStatus('trial')).toEqual([{ status: 'trial' }]);
+    try {
+      const trial = await runner(idle);
+      const refused = await runAgentJob(trial.deps, job(byEmployee, 'KOR-1', ids.employee));
+      expect(refused).toMatchObject({ outcome: 'card_not_runnable', modelCalls: 0 });
+      expect(await runRow(refused.runId)).toMatchObject({
+        status: 'failed',
+        error_code: 'card_not_runnable',
+        cost_usd: '0.000000',
+        user_id: ids.employee,
+      });
+      expect(idle.requests).toHaveLength(0);
+
+      // The founder's request passes the same card.
+      const onTrial = await openRequest(ids.founder, REQUEST);
+      const passes = await runner(new ScriptedModel([toolUse('route_task', ROUTE_TO_SOS)]));
+      expect(await runAgentJob(passes.deps, job(onTrial, 'KOR-1', ids.founder))).toMatchObject({
+        outcome: 'routed',
+        modelCalls: 1,
+      });
+    } finally {
+      expect(await setStatus('active')).toEqual([{ status: 'active' }]);
+    }
+    // With the active card the employee's request runs like the founder's.
+    const open = await openRequest(ids.employee, REQUEST);
+    const active = await runner(new ScriptedModel([toolUse('route_task', ROUTE_TO_SOS)]));
+    const routed = await runAgentJob(active.deps, job(open, 'KOR-1', ids.employee));
+    expect(routed).toMatchObject({ outcome: 'routed', modelCalls: 1 });
+    expect(await runRow(routed.runId)).toMatchObject({
+      status: 'completed',
       user_id: ids.employee,
     });
-    expect(idle.requests).toHaveLength(0);
 
     const byFounder = await openRequest(ids.founder, REQUEST);
     const noKey = await runner(null);

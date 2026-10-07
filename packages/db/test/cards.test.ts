@@ -112,7 +112,7 @@ describe.skipIf(noDatabase)('the card sync', () => {
          from office.agent_definitions d join office.card_versions v on v.id = d.current_version_id
          where d.code = 'SOS-2'`,
       );
-      expect(current).toEqual({ model: 'claude-sonnet-5-5', level: 'Y1', status: 'trial' });
+      expect(current).toEqual({ model: 'claude-sonnet-5-5', level: 'Y1', status: 'active' });
 
       // The same files again: nothing is written, also under another commit.
       const again = await syncCards(tx.client, parseCards(raw), 'bbbbbbb');
