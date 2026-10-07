@@ -12,6 +12,21 @@ export {
 } from './context.ts';
 export { readOffice, type OfficeRow } from './office.ts';
 export type { Queryable } from './queryable.ts';
+export * from './requests.ts';
+export {
+  AGENT_RUN_DEAD_QUEUE,
+  AGENT_RUN_QUEUE,
+  QUEUE_SCHEMA,
+  agentRunJobSchema,
+  agentRunSender,
+  createQueue,
+  ensureAgentRunQueues,
+  jobDataSchema,
+  sendJob,
+  type AgentRunJob,
+  type AgentRunSender,
+  type JobData,
+} from './queue.ts';
 
 /**
  * Connection pool. The connection string belongs to the restricted application role (member of

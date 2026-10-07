@@ -18,6 +18,7 @@
   "dependencies": {
     "@agent-office/shared": "workspace:*",
     "pg": "catalog:",
+    "pg-boss": "catalog:",
     "yaml": "catalog:",
     "zod": "catalog:"
   }

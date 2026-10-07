@@ -1143,3 +1143,93 @@ describe.skipIf(noDatabase)('a request never leaves its company or its project',
     });
   });
 });
+
+describe.skipIf(noDatabase)('what a reader may know about approvals they cannot read', () => {
+  afterAll(closePools);
+
+  const FACTS = `select pending_result, last_result_status, last_result_attempt,
+      last_change_request_at is not null as changes_requested
+    from office.request_flow_facts(array[$1::uuid])`;
+
+  it('the requester learns that a result waits and how it was decided, never its content', async () => {
+    await inTransaction(async (tx) => {
+      const { task, approval } = await submittedRequest(tx);
+      await tx.setContext(employeeA);
+      expect(await tx.count('approvals', 'id = $1', [approval])).toBe(0);
+      expect(await tx.rows(FACTS, [task])).toEqual([
+        {
+          pending_result: true,
+          last_result_status: null,
+          last_result_attempt: null,
+          changes_requested: false,
+        },
+      ]);
+      await tx.setContext(founderA);
+      await tx.exec(
+        `update office.approvals set status = 'changes_requested', rejection_reason = 'incomplete'
+         where id = $1`,
+        [approval],
+      );
+      await tx.setContext(employeeA);
+      expect(await tx.count('approvals', 'id = $1', [approval])).toBe(0);
+      expect(await tx.rows(FACTS, [task])).toEqual([
+        {
+          pending_result: false,
+          last_result_status: 'changes_requested',
+          last_result_attempt: 1,
+          changes_requested: true,
+        },
+      ]);
+    });
+  });
+
+  it('a rejection tells the requester who, which reason and the approver’s words, never the output', async () => {
+    const CLOSING = `select rejected_by_user_id, rejected_reason, rejected_note
+      from office.request_flow_facts(array[$1::uuid])`;
+    await inTransaction(async (tx) => {
+      const { task, approval } = await submittedRequest(tx);
+      await tx.setContext(employeeA);
+      expect(await tx.rows(CLOSING, [task])).toEqual([
+        { rejected_by_user_id: null, rejected_reason: null, rejected_note: null },
+      ]);
+      await tx.setContext(founderA);
+      await tx.exec(
+        `update office.approvals set status = 'rejected', rejection_reason = 'out_of_scope',
+           decision_reason = 'Not a text we publish' where id = $1`,
+        [approval],
+      );
+      await tx.setContext(employeeA);
+      // The approval itself, with the agent's output, stays closed to the requester.
+      expect(await tx.count('approvals', 'id = $1', [approval])).toBe(0);
+      expect(await tx.rows(CLOSING, [task])).toEqual([
+        {
+          rejected_by_user_id: ids.founder,
+          rejected_reason: 'out_of_scope',
+          rejected_note: 'Not a text we publish',
+        },
+      ]);
+    });
+  });
+
+  it('gives nothing outside the company, outside the project, without a context or to an agent run', async () => {
+    await inTransaction(async (tx) => {
+      for (const outside of [founderP, employeeP, externalA, {}]) {
+        await tx.setContext(outside);
+        expect(await tx.rows(FACTS, [ids.requestA])).toEqual([]);
+      }
+      await tx.setContext(employeeA);
+      const project = await openRequest(tx, ids.projectA);
+      expect(await tx.rows(FACTS, [project])).toHaveLength(1);
+      await tx.setContext(colleagueA);
+      expect(await tx.rows(FACTS, [project])).toEqual([]);
+      expect(await tx.rows(FACTS, [ids.requestA])).toHaveLength(1);
+      // A task between people has no flow.
+      expect(await tx.rows(FACTS, [ids.taskA])).toEqual([]);
+    });
+    // The worker's role cannot call it at all.
+    await inWorkerTransaction(async (tx) => {
+      await tx.setContext(agentRun(ids.employeeA, 'KOR-1'));
+      expect((await tx.expectError(FACTS, [ids.requestA])).code).toBe('42501');
+    });
+  });
+});
