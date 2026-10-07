@@ -339,6 +339,9 @@ Skill klasörü: `skills/<ad>/SKILL.md` ve yanında `templates/`, `examples/`, `
 
 - İki iş türü (7 Ekim, karar 9 ve 10): "Talep" (ajanların yürüttüğü iş) → `request`; "Görev" (insanların birbirine verdiği iş) → `task`. Menüde "Talepler" ve "Görevler"; adresler `/requests` ve `/tasks`.
 - "Koordinasyon merkezi" → kodda `coordinator` (kart: `KOR-1`); "birimin onaylayıcısı" → `approver`; "talep sahibi" → `requester`; "yönlendirme" → `routing`; "talep sahibinin onayı" → `requester approval`.
+- Tablolar ve alanlar: `tasks.kind` (`request`, `task`), `tasks.closed_by_user_id`, `tasks.close_reason`; `approvers` (birimin ya da ajanın onaylayıcısı); `task_routings` (yönlendirme adımları; `status`: `planned`, `active`, `done`, `replaced`, `cancelled`); `approvals.approver_user_id`, `approvals.routing_id`; `requester_approvals` (`status`: `pending`, `approved`, `changes_requested`)
+- İşlevler: `coordinator_agent_code`, `route_request` (koordinatör), `correct_routing` (kişi), `close_request`, `approver_for`, `member_can_approve`, `approval_released`; akışın iç işlevleri `flow_` ile başlar
+- İz kaydı olayları: `request_created`, `request_routed`, `request_rerouted`, `request_cancelled`, `request_stopped`; `approval_opened`, `approval_approved`, `approval_changes_requested`, `approval_rejected`, `approval_closed`, `approval_summary_changed`; `requester_approval_*`; `approver_appointed`, `approver_changed`, `approver_removed`
 
 ## Notlar
 

@@ -42,7 +42,7 @@ describe.skipIf(noDatabase)('withContext', () => {
         return rows[0]?.n;
       },
     );
-    expect(inside).toBe(2);
+    expect(inside).toBe(3);
     expect(await taskCount()).toBe(0);
     const { rows } = await pool.query<{ s: string | null }>(
       "select current_setting('app.company_id', true) as s",

@@ -73,6 +73,15 @@ export const ids = {
   stepUpP: id(113),
   stepUpInvitationA: id(114),
   stepUpInvitationP: id(115),
+
+  // One request (flow A) per company, walked through its flow: routed by the founder by hand, its
+  // result approved, the requester's approval left pending.
+  requestA: id(121),
+  requestRunA: id(122),
+  requestApprovalA: id(123),
+  requestP: id(124),
+  requestRunP: id(125),
+  requestApprovalP: id(126),
 } as const;
 
 /** The credential id of the founder's passkey in the fixtures. */
@@ -175,6 +184,10 @@ export async function loadFixtures(client: pg.Client): Promise<void> {
       ('${ids.cardHaf}', 'HAF-1', 'abc1234', '{}', 'Y1', 'test-model'),
       ('${ids.cardPist}', 'P-IST-1', 'abc1234', '{}', 'Y2', 'test-model');
     update office.agent_definitions set current_version_id = '${ids.cardKor}' where code = 'KOR-1';
+    -- A request is routed only to an agent that has a card version to run with.
+    update office.agent_definitions set current_version_id = '${ids.cardHaf}' where code = 'HAF-1';
+    update office.agent_definitions set current_version_id = '${ids.cardPist}'
+      where code = 'P-IST-1';
 
     insert into office.tools (name, kind, description) values
       ('${TOOL.read}', 'read', 'Reads a task'),
@@ -379,6 +392,56 @@ export async function loadFixtures(client: pg.Client): Promise<void> {
         flagged_by_user_id)
       values ('${ids.pillika}', '${ids.approvalPApproved}', 'KOR-1', 'Wrong price',
         '${ids.founder}');
+
+    -- A request (flow A): the flow tables are written only by the flow, so the fixture walks one
+    -- request through it. The appointment sits on HAF: the decision tests let other people decide
+    -- approvals KOR-1 opened.
+    ${contextSql(ids.arma, ids.employeeA)}
+    insert into office.tasks (id, company_id, kind, title)
+      values ('${ids.requestA}', '${ids.arma}', 'request', 'Fixture request');
+    ${contextSql(ids.arma, ids.founder)}
+    insert into office.approvers (company_id, unit_code, user_id)
+      values ('${ids.arma}', 'HAF', '${ids.founder}');
+    select office.correct_routing(
+      '${ids.requestA}', '[{"unit": "KOR", "agent": "KOR-1", "reason": "Fixture"}]'
+    );
+    ${contextSql(ids.arma, ids.employeeA, 'KOR-1')}
+    insert into office.runs
+        (id, company_id, task_id, agent_code, card_version_id, trigger_type, model)
+      values ('${ids.requestRunA}', '${ids.arma}', '${ids.requestA}', 'KOR-1', '${ids.cardKor}',
+        'handoff', 'test-model');
+    insert into office.approvals (id, company_id, task_id, run_id, agent_code, title, payload,
+        basis_type, basis_id, basis_version, involves_money, goes_external)
+      values ('${ids.requestApprovalA}', '${ids.arma}', '${ids.requestA}', '${ids.requestRunA}', 'KOR-1',
+        'Fixture result', '{}', 'task', '${ids.requestA}',
+        (select version from office.tasks where id = '${ids.requestA}'), false, false);
+    ${contextSql(ids.arma, ids.founder)}
+    update office.approvals set status = 'approved' where id = '${ids.requestApprovalA}';
+
+    -- A request (flow A): the flow tables are written only by the flow, so the fixture walks one
+    -- request through it. The appointment sits on HAF: the decision tests let other people decide
+    -- approvals KOR-1 opened.
+    ${contextSql(ids.pillika, ids.employeeP)}
+    insert into office.tasks (id, company_id, kind, title)
+      values ('${ids.requestP}', '${ids.pillika}', 'request', 'Fixture request');
+    ${contextSql(ids.pillika, ids.founder)}
+    insert into office.approvers (company_id, unit_code, user_id)
+      values ('${ids.pillika}', 'HAF', '${ids.founder}');
+    select office.correct_routing(
+      '${ids.requestP}', '[{"unit": "KOR", "agent": "KOR-1", "reason": "Fixture"}]'
+    );
+    ${contextSql(ids.pillika, ids.employeeP, 'KOR-1')}
+    insert into office.runs
+        (id, company_id, task_id, agent_code, card_version_id, trigger_type, model)
+      values ('${ids.requestRunP}', '${ids.pillika}', '${ids.requestP}', 'KOR-1', '${ids.cardKor}',
+        'handoff', 'test-model');
+    insert into office.approvals (id, company_id, task_id, run_id, agent_code, title, payload,
+        basis_type, basis_id, basis_version, involves_money, goes_external)
+      values ('${ids.requestApprovalP}', '${ids.pillika}', '${ids.requestP}', '${ids.requestRunP}', 'KOR-1',
+        'Fixture result', '{}', 'task', '${ids.requestP}',
+        (select version from office.tasks where id = '${ids.requestP}'), false, false);
+    ${contextSql(ids.pillika, ids.founder)}
+    update office.approvals set status = 'approved' where id = '${ids.requestApprovalP}';
   `;
   await client.query(sql);
 }
