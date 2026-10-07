@@ -1,8 +1,16 @@
 import { useMatches } from '@tanstack/react-router';
+import type { MenuItem } from './menu.ts';
+
+/** The page a detail page belongs to: the top bar shows it as a link back. */
+export interface ParentPage {
+  label: string;
+  to: MenuItem['to'];
+}
 
 export interface PageLocation {
   label: string;
-  parent?: string;
+  /** A group without a page of its own (text), or the page a detail page belongs to (a link). */
+  parent?: string | ParentPage;
 }
 
 /**

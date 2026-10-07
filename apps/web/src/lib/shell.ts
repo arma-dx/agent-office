@@ -33,6 +33,13 @@ export interface ShellValue {
   /** The element the page's properties are rendered into. */
   panelHost: HTMLElement | null;
   setPanelHost: (element: HTMLElement | null) => void;
+  /**
+   * The name of the record a detail page shows (a task's title). While it is set the top bar shows
+   * it as the page name instead of the label the route declares.
+   */
+  pageLabel: string | null;
+  /** Called by a page's <PageLabel> while it is mounted; returns the function that undoes it. */
+  registerPageLabel: (label: string) => () => void;
 }
 
 export const ShellContext = createContext<ShellValue | null>(null);
@@ -47,7 +54,11 @@ export function useShell(): ShellValue {
 export const SIDEBAR_ID = 'sidebar';
 export const PROPERTIES_PANEL_ID = 'properties-panel';
 
-/** Browser storage holds layout choices only; nothing about the person or a company. */
+/**
+ * The shell keeps layout choices only; nothing about the person or a company. What the task
+ * screens keep in the browser (a view per person and company, unsent texts) has its own rules:
+ * lib/tasks/view.ts and lib/drafts.ts.
+ */
 export const SIDEBAR_STORAGE_KEY = 'agent-office.sidebar';
 export const PANEL_STORAGE_KEY = 'agent-office.panel';
 

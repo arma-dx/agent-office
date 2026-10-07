@@ -1,4 +1,9 @@
-import { apiErrorSchema, COMPANY_HEADER, type ApiErrorCode } from '@agent-office/shared';
+import {
+  apiErrorSchema,
+  BACKGROUND_HEADER,
+  COMPANY_HEADER,
+  type ApiErrorCode,
+} from '@agent-office/shared';
 import type { z } from 'zod';
 
 /** The panel reaches the API only through the relative /api path (CLAUDE.md rule 1; panel and API share one domain). */
@@ -74,6 +79,12 @@ interface RequestOptions<T> {
   schema: z.ZodType<T>;
   /** Company-scoped endpoints: the selected company goes in the x-company-id header. */
   companyId?: string;
+  /**
+   * The request is sent on a timer (lib/refresh.ts), not because the person did something. The API
+   * answers it like any other but does not count it as activity: the session's 30 minute idle
+   * limit is not extended (rule 3). Never set it on a request a click or a key caused.
+   */
+  background?: boolean;
   signal?: AbortSignal;
 }
 
@@ -102,6 +113,7 @@ export async function apiRequest<T>(path: string, options: RequestOptions<T>): P
   const headers: Record<string, string> = {};
   if (options.body !== undefined) headers['Content-Type'] = 'application/json';
   if (options.companyId !== undefined) headers[COMPANY_HEADER] = options.companyId;
+  if (options.background === true) headers[BACKGROUND_HEADER] = '1';
   let response: Response;
   try {
     response = await fetch(`${API_ROOT}${path}`, {

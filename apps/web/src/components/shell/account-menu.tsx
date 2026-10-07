@@ -18,18 +18,23 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { clearDrafts } from '@/lib/drafts';
 import { notifyError } from '@/lib/notify';
 import { signOut, useSession } from '@/lib/session';
 import { setThemeChoice, THEME_CHOICES, themeChoiceSchema, useThemeChoice } from '@/lib/theme';
 import { initials } from '@/lib/utils';
 
-/** Signs out, clears every cached answer and opens the login screen with a short note. */
+/**
+ * Signs out, clears every cached answer and every unsent text kept in the tab (lib/drafts.ts) and
+ * opens the login screen with a short note.
+ */
 function useSignOut() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   return useMutation({
     mutationFn: signOut,
     onSuccess: async () => {
+      clearDrafts();
       await navigate({ to: '/login', search: { status: 'signed_out' }, replace: true });
       queryClient.removeQueries();
     },

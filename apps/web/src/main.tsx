@@ -2,6 +2,7 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider } from '@tanstack/react-router';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
+import { flushDrafts } from '@/lib/drafts';
 import { FRAMED_TEXT, isFramed } from '@/lib/frame';
 import { createQueryClient } from '@/lib/query';
 import { startTheme } from '@/lib/theme';
@@ -9,6 +10,8 @@ import { createAppRouter } from './router.tsx';
 import './index.css';
 
 startTheme();
+// A text typed a moment before the tab is closed or reloaded is still kept (lib/drafts.ts).
+window.addEventListener('pagehide', flushDrafts);
 
 const queryClient = createQueryClient();
 const router = createAppRouter({ queryClient });

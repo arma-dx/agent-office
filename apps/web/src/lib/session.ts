@@ -5,7 +5,7 @@ import {
   type MembershipSummary,
   type SessionResponse,
 } from '@agent-office/shared';
-import { queryOptions, useMutation, useQueryClient } from '@tanstack/react-query';
+import { queryOptions, useMutation, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { createContext, useContext } from 'react';
 import { z } from 'zod';
 import { API_ROOT, apiRequest, isUnauthorized } from './api.ts';
@@ -34,21 +34,40 @@ export const SESSION_QUERY_KEY = ['session'] as const;
 export type SessionState =
   { status: 'signed_in'; session: SessionResponse } | { status: 'signed_out'; expired: boolean };
 
+async function readSession(
+  client: QueryClient,
+  options: { signal?: AbortSignal; background?: boolean },
+): Promise<SessionState> {
+  try {
+    const session = await apiRequest('/session', { schema: sessionResponseSchema, ...options });
+    return { status: 'signed_in', session };
+  } catch (error) {
+    if (!isUnauthorized(error)) throw error;
+    const previous = client.getQueryData<SessionState>(SESSION_QUERY_KEY);
+    const expired = previous !== undefined && (previous.status === 'signed_in' || previous.expired);
+    return { status: 'signed_out', expired };
+  }
+}
+
 export const sessionQueryOptions = queryOptions({
   queryKey: SESSION_QUERY_KEY,
-  queryFn: async ({ signal, client }): Promise<SessionState> => {
-    try {
-      const session = await apiRequest('/session', { schema: sessionResponseSchema, signal });
-      return { status: 'signed_in', session };
-    } catch (error) {
-      if (!isUnauthorized(error)) throw error;
-      const previous = client.getQueryData<SessionState>(SESSION_QUERY_KEY);
-      const expired =
-        previous !== undefined && (previous.status === 'signed_in' || previous.expired);
-      return { status: 'signed_out', expired };
-    }
-  },
+  queryFn: ({ signal, client }): Promise<SessionState> => readSession(client, { signal }),
 });
+
+/**
+ * Reads the session again because a request the panel sent on a timer was refused (the session
+ * closed, or the person's access changed), and puts the answer where the session query keeps its
+ * own. The person did nothing, so this request is a background request too and does not extend the
+ * idle limit. A failure changes nothing: the person's next step asks again.
+ */
+export async function recheckSessionInBackground(client: QueryClient): Promise<void> {
+  try {
+    const state = await readSession(client, { background: true });
+    client.setQueryData<SessionState>(SESSION_QUERY_KEY, state);
+  } catch {
+    // Not reachable or not readable right now.
+  }
+}
 
 /** Remembers the company the panel opens next time (PUT /api/session/company). */
 export async function rememberCompany(companyId: string): Promise<void> {

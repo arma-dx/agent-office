@@ -2,6 +2,7 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup } from '@testing-library/react';
 import { toast } from 'sonner';
 import { afterEach, beforeEach, vi } from 'vitest';
+import { clearDrafts } from './lib/drafts.ts';
 
 beforeEach(() => {
   // jsdom does not provide matchMedia; the theme and sonner call it.
@@ -43,10 +44,14 @@ beforeEach(() => {
 // first, then every stubbed global (fetch in the app tests) goes back to its original value.
 // sonner keeps its toasts in module state and shows them to the next Toaster; they are dismissed so
 // that a test never sees the message of the one before.
-// Layout and theme choices live in localStorage; a test never starts with the choice of another.
+// Layout and theme choices live in localStorage and unsent texts in sessionStorage; a test never
+// starts with the choice or the draft of another.
 afterEach(() => {
   cleanup();
   toast.dismiss();
   localStorage.clear();
+  // Also the drafts that still wait to be written (lib/drafts.ts keeps them in module state).
+  clearDrafts();
+  sessionStorage.clear();
   vi.unstubAllGlobals();
 });

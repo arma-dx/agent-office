@@ -1,4 +1,4 @@
-import type { Member } from '@agent-office/shared';
+import { BACKGROUND_HEADER, type Member } from '@agent-office/shared';
 import { startAuthentication, type AuthenticationResponseJSON } from '@simplewebauthn/browser';
 import { focusManager } from '@tanstack/react-query';
 import { screen, waitFor, within } from '@testing-library/react';
@@ -108,6 +108,25 @@ describe('step-up: order of the steps', () => {
     // The protected request came after the ceremony, and no new options were fetched.
     expect(api.calls.slice(callsBeforeClick)[0]?.method).toBe('PATCH');
     expect(stepUp.issued).toHaveLength(1);
+  });
+
+  it('asks for the options as a background request: an open dialog is not activity', async () => {
+    const stepUp = stepUpIssuer();
+    const api = membersApi({ 'POST /step-up/options': stepUp.handler });
+    renderApp('/c/armadx/settings/users');
+    const { confirm } = await openApprovalDialog();
+    await whenReady(confirm);
+    // The dialog renews its challenge on a timer for as long as it is open; none of those
+    // requests may keep an unattended session alive (rule 3).
+    expect(
+      api.callsTo('POST /step-up/options').map((call) => call.headers.get(BACKGROUND_HEADER)),
+    ).toEqual(['1']);
+    await userEvent.click(confirm);
+    await waitFor(() => {
+      expect(api.callsTo(PATCH)).toHaveLength(1);
+    });
+    // The confirmed change is the person's own request and counts as usual.
+    expect(api.callsTo(PATCH)[0]?.headers.get(BACKGROUND_HEADER)).toBeNull();
   });
 
   it('says it is preparing while the options load, and starts nothing before they come', async () => {

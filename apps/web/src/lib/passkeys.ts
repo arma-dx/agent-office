@@ -59,6 +59,10 @@ export function stepUpOptionsQueryOptions(request: StepUpOptionsRequest | null) 
               method: 'POST',
               body: stepUpOptionsRequestSchema.parse(request),
               schema: stepUpOptionsResponseSchema,
+              // Preparation, not activity: the dialog asks again on a timer for as long as it is
+              // open, and an open dialog must not keep an unattended session alive (rule 3). The
+              // protected request that follows the person's confirmation counts as usual.
+              background: true,
             }),
     staleTime: STEP_UP_REFRESH_MS,
     refetchInterval: STEP_UP_REFRESH_MS,

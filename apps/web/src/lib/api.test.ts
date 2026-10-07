@@ -1,4 +1,4 @@
-import { COMPANY_HEADER } from '@agent-office/shared';
+import { BACKGROUND_HEADER, COMPANY_HEADER } from '@agent-office/shared';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { ApiError, apiRequest, isAccessChanged, isPermanentError, userMessage } from './api.ts';
@@ -29,6 +29,20 @@ describe('apiRequest', () => {
       '/api/health',
       expect.objectContaining({ method: 'GET', credentials: 'same-origin' }),
     );
+  });
+
+  it('marks only a background request with the background header', async () => {
+    const fetchMock = fetchResponse({ status: 'ok' });
+    vi.stubGlobal('fetch', fetchMock);
+    const headersOf = (call: number) =>
+      new Headers((fetchMock.mock.calls[call] as unknown as [string, RequestInit])[1].headers);
+    await apiRequest('/tasks', { schema, companyId: 'c1' });
+    await apiRequest('/tasks', { schema, companyId: 'c1', background: false });
+    await apiRequest('/tasks', { schema, companyId: 'c1', background: true });
+    expect(headersOf(0).has(BACKGROUND_HEADER)).toBe(false);
+    expect(headersOf(1).has(BACKGROUND_HEADER)).toBe(false);
+    expect(headersOf(2).get(BACKGROUND_HEADER)).toBe('1');
+    expect(headersOf(2).get(COMPANY_HEADER)).toBe('c1');
   });
 
   it('turns a failed response into an ApiError with the status code', async () => {

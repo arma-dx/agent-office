@@ -8,8 +8,11 @@ import {
   RouterProvider,
 } from '@tanstack/react-router';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ShellProvider } from '@/components/shell/app-shell';
+import { PageLabel } from '@/components/shell/page-label';
 import { TopBar } from '@/components/shell/top-bar';
 import { usePageFullBleed } from './location.ts';
 
@@ -115,5 +118,62 @@ describe('usePageFullBleed', () => {
     }, true);
     expect(await screen.findByText('Bu ekran açılamadı')).toBeInTheDocument();
     expect(screen.getByRole('main')).toHaveAttribute('data-full-bleed', 'no');
+  });
+});
+
+/** A detail page: it belongs to a list page and names its record once the record is known. */
+function TaskPage() {
+  const [title, setTitle] = useState<string | null>(null);
+  return (
+    <div>
+      {title === null ? null : <PageLabel>{title}</PageLabel>}
+      <button
+        type="button"
+        onClick={() => {
+          setTitle(
+            title === null ? 'Teklif taslağı' : title === 'Teklif taslağı' ? 'Başka görev' : null,
+          );
+        }}
+      >
+        Sonraki
+      </button>
+    </div>
+  );
+}
+
+function openDetailPage() {
+  const root = createRootRoute({ component: Frame });
+  const page = createRoute({
+    getParentRoute: () => root,
+    path: '/page',
+    staticData: {
+      location: { label: 'Görev', parent: { label: 'Görevler', to: '/c/$company/tasks' } },
+    },
+    component: TaskPage,
+  });
+  const router = createRouter({
+    routeTree: root.addChildren([page]),
+    history: createMemoryHistory({ initialEntries: ['/page'] }),
+  });
+  render(<RouterProvider router={router as never} />);
+}
+
+describe('the name of a record in the top bar', () => {
+  it('shows the declared label until the record is known, then the name of the record', async () => {
+    const user = userEvent.setup();
+    openDetailPage();
+    const next = await screen.findByRole('button', { name: 'Sonraki' });
+    expect(headings()).toEqual(['Görev']);
+    // The page the detail page belongs to stands before the name (a link inside a company).
+    expect(screen.getByText('Görevler')).toBeInTheDocument();
+
+    await user.click(next);
+    expect(headings()).toEqual(['Teklif taslağı']);
+    // The next record on the same page replaces the name; the older one does not clear it.
+    await user.click(next);
+    expect(headings()).toEqual(['Başka görev']);
+    // The record is gone (the page shows an error instead): the declared label is back.
+    await user.click(next);
+    expect(headings()).toEqual(['Görev']);
   });
 });

@@ -13,7 +13,7 @@ import { SkipLink } from '@/components/layout';
 import { PanelRegion } from '@/components/shell/properties-panel';
 import { Sidebar } from '@/components/shell/sidebar';
 import { TopBar } from '@/components/shell/top-bar';
-import { usePageFullBleed } from '@/lib/location';
+import { usePageFullBleed, usePageLocation } from '@/lib/location';
 import { useCompany, useRememberCompany, useSession } from '@/lib/session';
 import {
   PANEL_STORAGE_KEY,
@@ -37,6 +37,7 @@ export function ShellProvider({ children }: { children: ReactNode }) {
   // How many of the registered properties ask for the panel themselves (PanelOptions.open).
   const [requestCount, setRequestCount] = useState(0);
   const [panelHost, setPanelHost] = useState<HTMLElement | null>(null);
+  const [pageLabel, setPageLabel] = useState<string | null>(null);
 
   const toggleSidebar = useCallback(() => {
     writeStoredFlag(SIDEBAR_STORAGE_KEY, 'closed', sidebarOpen);
@@ -59,6 +60,14 @@ export function ShellProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  const registerPageLabel = useCallback((label: string) => {
+    setPageLabel(label);
+    // A newer label (the next record on the same page) is not cleared by the older one's undo.
+    return () => {
+      setPageLabel((current) => (current === label ? null : current));
+    };
+  }, []);
+
   const value = useMemo<ShellValue>(
     () => ({
       sidebarOpen,
@@ -70,6 +79,8 @@ export function ShellProvider({ children }: { children: ReactNode }) {
       registerPanel,
       panelHost,
       setPanelHost,
+      pageLabel,
+      registerPageLabel,
     }),
     [
       sidebarOpen,
@@ -80,6 +91,8 @@ export function ShellProvider({ children }: { children: ReactNode }) {
       requestCount,
       registerPanel,
       panelHost,
+      pageLabel,
+      registerPageLabel,
     ],
   );
   return <ShellContext value={value}>{children}</ShellContext>;
@@ -129,12 +142,20 @@ export function AppShell() {
   const company = useCompany();
   const navigate = useNavigate();
   const rememberCompany = useRememberCompany();
+  const location = usePageLocation();
 
   function selectCompany(code: string) {
     const target = session.memberships.find((m) => m.code === code);
     if (!target || target.code === company.code) return;
-    // Same section, other company: /c/armadx/tasks becomes /c/pillika/tasks.
-    void navigate({ to: '.', params: (previous) => ({ ...previous, company: target.code }) });
+    const parent = location?.parent;
+    if (typeof parent === 'object') {
+      // A record of this company does not exist in the other one: the page it belongs to opens
+      // there instead (/c/armadx/tasks/<id> becomes /c/pillika/tasks).
+      void navigate({ to: parent.to, params: { company: target.code } });
+    } else {
+      // Same section, other company: /c/armadx/tasks becomes /c/pillika/tasks.
+      void navigate({ to: '.', params: (previous) => ({ ...previous, company: target.code }) });
+    }
     rememberCompany.mutate(target.companyId);
   }
 

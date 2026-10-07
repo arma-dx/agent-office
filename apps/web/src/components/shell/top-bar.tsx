@@ -5,7 +5,9 @@
 // effects; sentence-case labels; the bar is sticky because the window scrolls; a sidebar toggle at
 // the right end, and the company name in the trail while the sidebar is hidden; the properties
 // toggle shows on every page that uses the panel; plugin toolbars, task identifiers and the phone
-// branches were removed.
+// branches were removed; a detail page names its record (lib/shell.ts, pageLabel) and links back
+// to the page it belongs to.
+import { Link } from '@tanstack/react-router';
 import { ChevronRight, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { PanelToggle } from '@/components/shell/properties-panel';
 import { Button } from '@/components/ui/button';
@@ -42,26 +44,43 @@ function SidebarToggle() {
 
 /**
  * The top bar: where the person is, then the layout toggles at the right end. The page name is
- * the h1 of the page and starts on the same 24 px line as the content below. What comes before it
- * is plain text: the company while the sidebar (and with it the company menu) is hidden, and a
- * group without a page of its own ("Ayarlar"). A name on its own is a title (15 px, semibold); at
+ * the h1 of the page and starts on the same 24 px line as the content below; on a detail page it
+ * is the name of the record (<PageLabel>), and the label the route declares until the record is
+ * known. What comes before it: the company while the sidebar (and with it the company menu) is
+ * hidden, then a group without a page of its own as plain text ("Ayarlar") or the page a detail
+ * page belongs to as a link back ("Görevler"). A name on its own is a title (15 px, semibold); at
  * the end of a trail it takes the trail's type (14 px, medium).
  */
 export function TopBar() {
   const location = usePageLocation();
   // The bar is also rendered outside the company layout in tests; without a company it names none.
   const company = useOptionalCompany();
-  const { sidebarOpen } = useShell();
+  const { sidebarOpen, pageLabel } = useShell();
   const companyName = sidebarOpen || !company ? undefined : companyLabel(company);
-  const inTrail = Boolean(companyName ?? location?.parent);
+  const parent = location?.parent;
+  const inTrail = Boolean(companyName ?? parent);
   return (
     <header className="sticky top-0 z-40 flex h-15 shrink-0 items-center gap-2 border-b border-line bg-surface px-6">
       <div className="flex min-w-0 flex-1 items-center gap-2">
         {companyName ? <span className={TRAIL_TEXT}>{companyName}</span> : null}
         {companyName && location ? <TrailSeparator /> : null}
-        {location?.parent ? (
+        {parent ? (
           <>
-            <span className={TRAIL_TEXT}>{location.parent}</span>
+            {typeof parent === 'string' || !company ? (
+              <span className={TRAIL_TEXT}>
+                {typeof parent === 'string' ? parent : parent.label}
+              </span>
+            ) : (
+              <Link
+                to={parent.to}
+                params={{ company: company.code }}
+                // The page on screen is the record, not the page this link leads back to.
+                activeOptions={{ exact: true }}
+                className={`${TRAIL_TEXT} rounded-sm hover:text-ink hover:underline`}
+              >
+                {parent.label}
+              </Link>
+            )}
             <TrailSeparator />
           </>
         ) : null}
@@ -73,7 +92,7 @@ export function TopBar() {
                 : 'min-w-0 truncate text-[0.9375rem] font-semibold'
             }
           >
-            {location.label}
+            {pageLabel ?? location.label}
           </h1>
         ) : null}
       </div>

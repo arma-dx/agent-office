@@ -33,6 +33,7 @@ Files in this repository that contain code ported or adapted from Paperclip:
 | `apps/web/src/lib/office/view.ts`                    | `ui/src/pages/OrgChart.tsx`                                                                                                   |
 | `apps/web/src/lib/office/use-office-view.ts`         | `ui/src/pages/OrgChart.tsx`                                                                                                   |
 | `apps/web/src/components/office/office-view.tsx`     | `ui/src/pages/OrgChart.tsx`                                                                                                   |
+| `apps/web/src/lib/drafts.ts`                         | `ui/src/lib/composer-draft.ts`, `ui/src/components/NewIssueDialog.tsx`                                                        |
 
 The Paperclip name, logo and illustrations are not used.
 

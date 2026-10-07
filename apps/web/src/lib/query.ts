@@ -10,6 +10,13 @@ import { SESSION_QUERY_KEY } from './session.ts';
  * - a 403 for the company, the founder role or a screen closed to external people means a
  *   membership or role changed while the panel was open; the fresh memberships update the company
  *   switcher, the menu and the page.
+ *
+ * No query asks again by itself when the network returns. That fetch has no person behind it: the
+ * panel would send it from an unattended tab on every reconnect of the Wi-Fi or the VPN, and each
+ * one would count as activity and push the session's 30 minute idle limit out (rule 3). Whatever
+ * the panel sends without an action of the person is either sent as a background request
+ * (lib/refresh.ts) or not sent. What is on screen is brought up to date by the refresh timer of
+ * the page or by the person's next step; coming back to the tab is such a step and still fetches.
  */
 export function createQueryClient(): QueryClient {
   const recheckSession = (error: unknown) => {
@@ -27,6 +34,7 @@ export function createQueryClient(): QueryClient {
     defaultOptions: {
       queries: {
         retry: (failureCount, error) => !isPermanentError(error) && failureCount < 3,
+        refetchOnReconnect: false,
       },
     },
   });

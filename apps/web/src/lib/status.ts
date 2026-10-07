@@ -2,6 +2,7 @@
 // Source: ui/src/components/StatusGlyph.tsx (the in-progress glyph, lines 51-55, and the icon per
 // status) at commit dd868ed125cd709506dd9b29fca640a44d580501. License text: THIRD_PARTY_NOTICES.md.
 // Changes: our task, approval and run statuses with Turkish labels and color roles.
+import { TASK_STATUSES, type TaskStatus } from '@agent-office/shared';
 import {
   Ban,
   Circle,
@@ -22,15 +23,8 @@ import {
  * the same on every screen (5 October 2026, decision 11). The values are the ones the database
  * holds (supabase/migrations: tasks, approvals, runs).
  */
-export const TASK_STATUSES = [
-  'open',
-  'in_progress',
-  'awaiting_approval',
-  'awaiting_reply',
-  'done',
-  'cancelled',
-] as const;
-export type TaskStatus = (typeof TASK_STATUSES)[number];
+// One list for the API and the panel: the task statuses come from the shared contract.
+export { TASK_STATUSES, type TaskStatus };
 
 export const APPROVAL_STATUSES = ['pending', 'approved', 'changes_requested', 'rejected'] as const;
 export type ApprovalStatus = (typeof APPROVAL_STATUSES)[number];
