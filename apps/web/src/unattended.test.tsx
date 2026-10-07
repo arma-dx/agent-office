@@ -76,7 +76,7 @@ const TIMER_QUERIES: Record<string, string> = {
 describe('queries on a timer', () => {
   it('reads the source of the panel', () => {
     expect(Object.keys(sources)).toEqual(
-      expect.arrayContaining(['./lib/refresh.ts', './lib/passkeys.ts']),
+      expect.arrayContaining(['./lib/refresh.ts', './lib/passkeys.ts', './lib/requests/query.ts']),
     );
   });
 

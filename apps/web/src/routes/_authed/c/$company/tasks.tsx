@@ -12,7 +12,7 @@ function TasksScreen() {
       <EmptyState
         variant="page"
         title="Henüz görev yok"
-        description="Görev kaydı kurulunca talepler ve atanan işler burada listelenecek."
+        description="Ekip içi görevler burada olacak. Ajanların yürüteceği işler için Yeni talep'i kullanın."
       />
     </div>
   );

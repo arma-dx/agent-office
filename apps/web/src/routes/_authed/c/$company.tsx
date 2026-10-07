@@ -1,5 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { SignedInPage } from '@/components/layout';
+import { RequestDialogProvider } from '@/components/requests/request-dialog';
 import { NotFoundScreen } from '@/components/screens';
 import { AppShell } from '@/components/shell/app-shell';
 import { CompanyContext, useSession } from '@/lib/session';
@@ -27,7 +28,9 @@ function CompanyLayout() {
   }
   return (
     <CompanyContext value={membership}>
-      <AppShell />
+      <RequestDialogProvider>
+        <AppShell />
+      </RequestDialogProvider>
     </CompanyContext>
   );
 }

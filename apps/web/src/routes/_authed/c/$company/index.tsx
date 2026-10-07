@@ -13,8 +13,8 @@ function TodayScreen() {
       <PasskeyReminder />
       <EmptyState
         variant="page"
-        title="Bugün için bir şey yok"
-        description="Bekleyen onaylar, bugünkü görevler ve ajanların son işleri burada görünecek."
+        title="Bugün listesi henüz kurulmadı"
+        description="Onayınızı bekleyen işler Onaylar'da, talepleriniz Talepler'de."
       />
     </div>
   );

@@ -20,7 +20,7 @@ describe('app layout', () => {
     mockApi({ 'GET /session': sessionHandler() });
     renderApp('/c/armadx');
     expect(await screen.findByRole('heading', { level: 1, name: 'Bugün' })).toBeInTheDocument();
-    expect(screen.getByText('Bugün için bir şey yok')).toBeInTheDocument();
+    expect(screen.getByText('Bugün listesi henüz kurulmadı')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'İçeriğe geç' })).toHaveAttribute('href', '#content');
   });
 
@@ -32,6 +32,7 @@ describe('app layout', () => {
     expect(links.map((link) => link.textContent)).toEqual([
       'Bugün',
       'Onaylar',
+      'Talepler',
       'Görevler',
       'Notlar',
       'Ofis görünümü',
@@ -40,6 +41,7 @@ describe('app layout', () => {
     expect(links.map((link) => link.getAttribute('href'))).toEqual([
       '/c/armadx',
       '/c/armadx/approvals',
+      '/c/armadx/requests',
       '/c/armadx/tasks',
       '/c/armadx/notes',
       '/c/armadx/office',
@@ -50,7 +52,7 @@ describe('app layout', () => {
       within(work)
         .getAllByRole('link')
         .map((link) => link.textContent),
-    ).toEqual(['Görevler', 'Notlar']);
+    ).toEqual(['Talepler', 'Görevler', 'Notlar']);
     const office = within(mainMenu).getByRole('list', { name: 'Ofis' });
     expect(
       within(office)
@@ -83,6 +85,7 @@ describe('app layout', () => {
     ).toEqual([
       '/c/pillika',
       '/c/pillika/approvals',
+      '/c/pillika/requests',
       '/c/pillika/tasks',
       '/c/pillika/notes',
       '/c/pillika/office',

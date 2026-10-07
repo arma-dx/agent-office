@@ -1,5 +1,19 @@
-import { useId, type Ref } from 'react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useId, useState, type Ref } from 'react';
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
+import { userMessage } from '@/lib/api';
+import { officeQueryOptions } from '@/lib/office/query';
+import { setAgentSwitch } from '@/lib/requests/query';
+import { useCompany } from '@/lib/session';
+import { busyProps } from '@/lib/utils';
 import {
   AGENT_STATE_LABEL,
   AGENT_STATE_SENTENCE,
@@ -55,6 +69,92 @@ function UnitDetails({ unit, onSelect }: { unit: OfficeUnit; onSelect: (id: stri
   );
 }
 
+/**
+ * The founder's switch for one agent in this company (CLAUDE.md: every agent has a stop switch per
+ * company). Opening lets the agent take the requests routed to it; stopping keeps it from taking
+ * new work and ends its open run before the next step. Nothing is shown as changed before the API
+ * has stored it.
+ */
+function AgentSwitch({ agent }: { agent: OfficeAgent }) {
+  const company = useCompany();
+  const queryClient = useQueryClient();
+  const [confirming, setConfirming] = useState(false);
+  const next = agent.state === 'enabled' ? 'stopped' : 'enabled';
+  const change = useMutation({
+    mutationFn: () => setAgentSwitch(company.companyId, agent.code, next),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: officeQueryOptions(company.companyId).queryKey,
+      });
+      setConfirming(false);
+    },
+  });
+  const label =
+    agent.state === 'enabled'
+      ? 'Ajanı durdur'
+      : agent.state === 'stopped'
+        ? 'Ajanı yeniden aç'
+        : 'Ajanı aç';
+  return (
+    <>
+      <Button
+        type="button"
+        variant="outline"
+        className="self-start"
+        onClick={() => {
+          change.reset();
+          setConfirming(true);
+        }}
+      >
+        {label}
+      </Button>
+      <AlertDialog
+        open={confirming}
+        onOpenChange={(open) => {
+          if (!change.isPending) setConfirming(open);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogTitle>
+            {next === 'stopped'
+              ? `${agent.code} bu şirkette durdurulsun mu?`
+              : `${agent.code} bu şirkette açılsın mı?`}
+          </AlertDialogTitle>
+          <AlertDialogDescription>
+            {next === 'stopped'
+              ? 'Yeni iş almaz; süren çalışması bir sonraki adımdan önce durur.'
+              : 'Açık ajan kendisine yönlendirilen talepleri çalıştırır ve yapay zekâ modelini kullanır.'}
+          </AlertDialogDescription>
+          {change.isError ? (
+            <p role="alert" className="text-sm text-destructive">
+              {userMessage(change.error)}
+            </p>
+          ) : null}
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              {...busyProps(change.isPending)}
+              onClick={(event) => {
+                if (change.isPending) event.preventDefault();
+              }}
+            >
+              Vazgeç
+            </AlertDialogCancel>
+            <Button
+              size="lg"
+              {...busyProps(change.isPending)}
+              onClick={() => {
+                if (!change.isPending) change.mutate();
+              }}
+            >
+              {label}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
+  );
+}
+
 /** An agent: its code, its unit (which can be chosen from here) and the company's switch for it. */
 function AgentDetails({
   unit,
@@ -65,6 +165,7 @@ function AgentDetails({
   agent: OfficeAgent;
   onSelect: (id: string) => void;
 }) {
+  const company = useCompany();
   return (
     <>
       <dl className={FIELDS}>
@@ -86,6 +187,7 @@ function AgentDetails({
         <dd>{AGENT_STATE_LABEL[agent.state]}</dd>
       </dl>
       <p className="text-ink-secondary">{AGENT_STATE_SENTENCE[agent.state]}</p>
+      {company.role === 'founder' ? <AgentSwitch agent={agent} /> : null}
     </>
   );
 }

@@ -41,7 +41,7 @@ describe('app shell: regions and keyboard order', () => {
     renderApp('/c/armadx');
     await screen.findByRole('navigation', { name: 'Ana menü' });
     const stops: string[] = [];
-    for (let i = 0; i < 10; i += 1) {
+    for (let i = 0; i < 12; i += 1) {
       await userEvent.tab();
       const element = document.activeElement;
       stops.push(element?.getAttribute('aria-label') ?? element?.textContent ?? '');
@@ -49,8 +49,10 @@ describe('app shell: regions and keyboard order', () => {
     expect(stops).toEqual([
       'İçeriğe geç',
       'Şirket: Arma DX. Değiştir',
+      'Yeni talep',
       'Bugün',
       'Onaylar',
+      'Talepler',
       'Görevler',
       'Notlar',
       'Ofis görünümü',

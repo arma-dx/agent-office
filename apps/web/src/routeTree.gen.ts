@@ -19,7 +19,9 @@ import { Route as AuthedCCompanyAgentsRouteImport } from './routes/_authed/c/$co
 import { Route as AuthedCCompanyApprovalsRouteImport } from './routes/_authed/c/$company/approvals'
 import { Route as AuthedCCompanyNotesRouteImport } from './routes/_authed/c/$company/notes'
 import { Route as AuthedCCompanyOfficeRouteImport } from './routes/_authed/c/$company/office'
+import { Route as AuthedCCompanyRequestsRouteImport } from './routes/_authed/c/$company/requests'
 import { Route as AuthedCCompanyTasksRouteImport } from './routes/_authed/c/$company/tasks'
+import { Route as AuthedCCompanyRequestsRequestIdRouteImport } from './routes/_authed/c/$company/requests_.$requestId'
 import { Route as AuthedCCompanySettingsSecurityRouteImport } from './routes/_authed/c/$company/settings/security'
 import { Route as AuthedCCompanySettingsUsersRouteImport } from './routes/_authed/c/$company/settings/users'
 
@@ -72,11 +74,22 @@ const AuthedCCompanyOfficeRoute = AuthedCCompanyOfficeRouteImport.update({
   path: '/office',
   getParentRoute: () => AuthedCCompanyRoute,
 } as any)
+const AuthedCCompanyRequestsRoute = AuthedCCompanyRequestsRouteImport.update({
+  id: '/requests',
+  path: '/requests',
+  getParentRoute: () => AuthedCCompanyRoute,
+} as any)
 const AuthedCCompanyTasksRoute = AuthedCCompanyTasksRouteImport.update({
   id: '/tasks',
   path: '/tasks',
   getParentRoute: () => AuthedCCompanyRoute,
 } as any)
+const AuthedCCompanyRequestsRequestIdRoute =
+  AuthedCCompanyRequestsRequestIdRouteImport.update({
+    id: '/requests_/$requestId',
+    path: '/requests/$requestId',
+    getParentRoute: () => AuthedCCompanyRoute,
+  } as any)
 const AuthedCCompanySettingsSecurityRoute =
   AuthedCCompanySettingsSecurityRouteImport.update({
     id: '/settings/security',
@@ -99,8 +112,10 @@ export interface FileRoutesByFullPath {
   '/c/$company/approvals': typeof AuthedCCompanyApprovalsRoute
   '/c/$company/notes': typeof AuthedCCompanyNotesRoute
   '/c/$company/office': typeof AuthedCCompanyOfficeRoute
+  '/c/$company/requests': typeof AuthedCCompanyRequestsRoute
   '/c/$company/tasks': typeof AuthedCCompanyTasksRoute
   '/c/$company/': typeof AuthedCCompanyIndexRoute
+  '/c/$company/requests/$requestId': typeof AuthedCCompanyRequestsRequestIdRoute
   '/c/$company/settings/security': typeof AuthedCCompanySettingsSecurityRoute
   '/c/$company/settings/users': typeof AuthedCCompanySettingsUsersRoute
 }
@@ -112,8 +127,10 @@ export interface FileRoutesByTo {
   '/c/$company/approvals': typeof AuthedCCompanyApprovalsRoute
   '/c/$company/notes': typeof AuthedCCompanyNotesRoute
   '/c/$company/office': typeof AuthedCCompanyOfficeRoute
+  '/c/$company/requests': typeof AuthedCCompanyRequestsRoute
   '/c/$company/tasks': typeof AuthedCCompanyTasksRoute
   '/c/$company': typeof AuthedCCompanyIndexRoute
+  '/c/$company/requests/$requestId': typeof AuthedCCompanyRequestsRequestIdRoute
   '/c/$company/settings/security': typeof AuthedCCompanySettingsSecurityRoute
   '/c/$company/settings/users': typeof AuthedCCompanySettingsUsersRoute
 }
@@ -128,8 +145,10 @@ export interface FileRoutesById {
   '/_authed/c/$company/approvals': typeof AuthedCCompanyApprovalsRoute
   '/_authed/c/$company/notes': typeof AuthedCCompanyNotesRoute
   '/_authed/c/$company/office': typeof AuthedCCompanyOfficeRoute
+  '/_authed/c/$company/requests': typeof AuthedCCompanyRequestsRoute
   '/_authed/c/$company/tasks': typeof AuthedCCompanyTasksRoute
   '/_authed/c/$company/': typeof AuthedCCompanyIndexRoute
+  '/_authed/c/$company/requests_/$requestId': typeof AuthedCCompanyRequestsRequestIdRoute
   '/_authed/c/$company/settings/security': typeof AuthedCCompanySettingsSecurityRoute
   '/_authed/c/$company/settings/users': typeof AuthedCCompanySettingsUsersRoute
 }
@@ -144,8 +163,10 @@ export interface FileRouteTypes {
     | '/c/$company/approvals'
     | '/c/$company/notes'
     | '/c/$company/office'
+    | '/c/$company/requests'
     | '/c/$company/tasks'
     | '/c/$company/'
+    | '/c/$company/requests/$requestId'
     | '/c/$company/settings/security'
     | '/c/$company/settings/users'
   fileRoutesByTo: FileRoutesByTo
@@ -157,8 +178,10 @@ export interface FileRouteTypes {
     | '/c/$company/approvals'
     | '/c/$company/notes'
     | '/c/$company/office'
+    | '/c/$company/requests'
     | '/c/$company/tasks'
     | '/c/$company'
+    | '/c/$company/requests/$requestId'
     | '/c/$company/settings/security'
     | '/c/$company/settings/users'
   id:
@@ -172,8 +195,10 @@ export interface FileRouteTypes {
     | '/_authed/c/$company/approvals'
     | '/_authed/c/$company/notes'
     | '/_authed/c/$company/office'
+    | '/_authed/c/$company/requests'
     | '/_authed/c/$company/tasks'
     | '/_authed/c/$company/'
+    | '/_authed/c/$company/requests_/$requestId'
     | '/_authed/c/$company/settings/security'
     | '/_authed/c/$company/settings/users'
   fileRoutesById: FileRoutesById
@@ -255,11 +280,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedCCompanyOfficeRouteImport
       parentRoute: typeof AuthedCCompanyRoute
     }
+    '/_authed/c/$company/requests': {
+      id: '/_authed/c/$company/requests'
+      path: '/requests'
+      fullPath: '/c/$company/requests'
+      preLoaderRoute: typeof AuthedCCompanyRequestsRouteImport
+      parentRoute: typeof AuthedCCompanyRoute
+    }
     '/_authed/c/$company/tasks': {
       id: '/_authed/c/$company/tasks'
       path: '/tasks'
       fullPath: '/c/$company/tasks'
       preLoaderRoute: typeof AuthedCCompanyTasksRouteImport
+      parentRoute: typeof AuthedCCompanyRoute
+    }
+    '/_authed/c/$company/requests_/$requestId': {
+      id: '/_authed/c/$company/requests_/$requestId'
+      path: '/requests/$requestId'
+      fullPath: '/c/$company/requests/$requestId'
+      preLoaderRoute: typeof AuthedCCompanyRequestsRequestIdRouteImport
       parentRoute: typeof AuthedCCompanyRoute
     }
     '/_authed/c/$company/settings/security': {
@@ -284,8 +323,10 @@ interface AuthedCCompanyRouteChildren {
   AuthedCCompanyApprovalsRoute: typeof AuthedCCompanyApprovalsRoute
   AuthedCCompanyNotesRoute: typeof AuthedCCompanyNotesRoute
   AuthedCCompanyOfficeRoute: typeof AuthedCCompanyOfficeRoute
+  AuthedCCompanyRequestsRoute: typeof AuthedCCompanyRequestsRoute
   AuthedCCompanyTasksRoute: typeof AuthedCCompanyTasksRoute
   AuthedCCompanyIndexRoute: typeof AuthedCCompanyIndexRoute
+  AuthedCCompanyRequestsRequestIdRoute: typeof AuthedCCompanyRequestsRequestIdRoute
   AuthedCCompanySettingsSecurityRoute: typeof AuthedCCompanySettingsSecurityRoute
   AuthedCCompanySettingsUsersRoute: typeof AuthedCCompanySettingsUsersRoute
 }
@@ -295,8 +336,10 @@ const AuthedCCompanyRouteChildren: AuthedCCompanyRouteChildren = {
   AuthedCCompanyApprovalsRoute: AuthedCCompanyApprovalsRoute,
   AuthedCCompanyNotesRoute: AuthedCCompanyNotesRoute,
   AuthedCCompanyOfficeRoute: AuthedCCompanyOfficeRoute,
+  AuthedCCompanyRequestsRoute: AuthedCCompanyRequestsRoute,
   AuthedCCompanyTasksRoute: AuthedCCompanyTasksRoute,
   AuthedCCompanyIndexRoute: AuthedCCompanyIndexRoute,
+  AuthedCCompanyRequestsRequestIdRoute: AuthedCCompanyRequestsRequestIdRoute,
   AuthedCCompanySettingsSecurityRoute: AuthedCCompanySettingsSecurityRoute,
   AuthedCCompanySettingsUsersRoute: AuthedCCompanySettingsUsersRoute,
 }

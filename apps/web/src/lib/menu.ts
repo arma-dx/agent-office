@@ -1,5 +1,13 @@
 import type { Role } from '@agent-office/shared';
-import { Bot, Building, CalendarDays, ClipboardCheck, ListTodo, NotebookText } from 'lucide-react';
+import {
+  Bot,
+  Building,
+  CalendarDays,
+  ClipboardCheck,
+  Inbox,
+  ListTodo,
+  NotebookText,
+} from 'lucide-react';
 
 /** Who is offered a menu row: every member, or the founder and the employees only. */
 export type MenuAudience = 'all' | 'insiders';
@@ -7,7 +15,8 @@ export type MenuAudience = 'all' | 'insiders';
 /**
  * Sidebar menu. Every page lives under the company in the URL (/c/$company/...), so a link keeps
  * the company the person is working in. A row enters the menu together with its screen: "Ofis
- * görünümü" came with the office view, "Yeni talep" comes with the request form.
+ * görünümü" came with the office view, "Talepler" and the "Yeni talep" button with the request
+ * flow.
  */
 export const MENU_SECTIONS = [
   {
@@ -28,6 +37,15 @@ export const MENU_SECTIONS = [
     id: 'work',
     label: 'İş',
     items: [
+      // Flow (A): the requests agents carry out. Not offered to an external person, who has none.
+      {
+        to: '/c/$company/requests',
+        label: 'Talepler',
+        icon: Inbox,
+        exact: false,
+        audience: 'insiders',
+      },
+      // Flow (B): the tasks people give to people. A different thing, on a row of its own.
       { to: '/c/$company/tasks', label: 'Görevler', icon: ListTodo, exact: false, audience: 'all' },
       {
         to: '/c/$company/notes',

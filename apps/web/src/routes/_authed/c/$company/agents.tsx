@@ -11,8 +11,8 @@ function AgentsScreen() {
     <div className="flex flex-col gap-4">
       <EmptyState
         variant="page"
-        title="Henüz etkin ajan yok"
-        description="Ajanlar burada birimlerine göre listelenecek; her birinin durdurma düğmesi burada olacak."
+        title="Ajan listesi henüz kurulmadı"
+        description="Ajanları Ofis görünümünden açıp durdurabilirsiniz."
       />
     </div>
   );

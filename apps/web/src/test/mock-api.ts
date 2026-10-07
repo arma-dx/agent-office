@@ -29,6 +29,16 @@ export function apiError(status: number, code: ApiErrorCode, message: string): R
 }
 
 /**
+ * What the shell itself asks for: on every page of a company the decisions that wait for the
+ * person (the count on the "Onaylar" row), and when the "Yeni talep" form opens whether a request
+ * can be sent now. A test that is not about them gets an empty desk and an open door.
+ */
+const SHELL_HANDLERS: Record<string, Handler> = {
+  'GET /approvals': () => json({ approvals: [], acceptances: [] }),
+  'GET /requests/intake': () => json({ open: true, reason: null }),
+};
+
+/**
  * Replaces fetch with a fake API. Handlers are keyed by "METHOD /path". A request without a
  * handler answers 404 and is listed in `unexpected`, so a test can tell a missing handler apart.
  */
@@ -47,7 +57,7 @@ export function mockApi(handlers: Record<string, Handler>) {
     };
     calls.push(call);
     const key = `${call.method} ${call.path}`;
-    const handler = handlers[key];
+    const handler = handlers[key] ?? SHELL_HANDLERS[key];
     if (!handler) {
       unexpected.push(key);
       return apiError(404, 'not_found', 'Kayıt bulunamadı.');

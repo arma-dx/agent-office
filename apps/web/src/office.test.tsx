@@ -352,7 +352,7 @@ describe('office page: the selection in the properties panel', () => {
       within(panel)
         .getAllByRole('button')
         .map((button) => button.textContent),
-    ).toEqual(['Koordinasyon Katmanı', 'Seçimi kaldır']);
+    ).toEqual(['Koordinasyon Katmanı', 'Ajanı aç', 'Seçimi kaldır']);
 
     // The page asked for the panel: the person's choice is not written, and there is no toggle.
     expect(localStorage.getItem(PANEL_STORAGE_KEY)).toBeNull();
