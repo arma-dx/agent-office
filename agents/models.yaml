@@ -1,0 +1,40 @@
+# Model tablosu: kartların adını yazabileceği modeller, her birinin nasıl çağrıldığı ve fiyatı.
+# Bir model adı yalnızca kartlarda ve bu dosyada geçer; koda gömülmez. Kartın yazdığı model burada
+# yoksa o kartla çalışma açılmaz. Değişiklik PR ile yapılır (araç kataloğu gibi).
+# prices: 1 milyon token başına ABD doları. Her token türünün fiyatı açık yazılır, çarpanla hesaplanmaz.
+# Kaynak: Claude API fiyat sayfası (25 Eylül 2026 tarihli başvuru). İlk gerçek çalışmadan önce
+# Anthropic konsolundaki fiyat sayfasıyla karşılaştırılır.
+# thinking: none ise düşünme parametresi gönderilmez; adaptive ise model kendisi karar verir.
+# effort: null ise efor parametresi gönderilmez (model kabul etmiyor).
+
+models:
+  - id: claude-haiku-4-5-20251001
+    max_tokens: 2048
+    thinking: none
+    effort: null
+    prices:
+      input: 1.00
+      output: 5.00
+      cache_write_5m: 1.25
+      cache_write_1h: 2.00
+      cache_read: 0.10
+  - id: claude-sonnet-5-5
+    max_tokens: 16000
+    thinking: adaptive
+    effort: medium
+    prices:
+      input: 2.00
+      output: 10.00
+      cache_write_5m: 2.50
+      cache_write_1h: 4.00
+      cache_read: 0.20
+  - id: claude-opus-5-5
+    max_tokens: 16000
+    thinking: adaptive
+    effort: medium
+    prices:
+      input: 4.00
+      output: 20.00
+      cache_write_5m: 5.00
+      cache_write_1h: 8.00
+      cache_read: 0.20

@@ -48,7 +48,8 @@ describe("the repository's own definitions", () => {
 
     // No fixed count: a card or a unit added by pull request must not break this test.
     const cardFiles = (await readdir(AGENTS_DIR)).filter(
-      (name) => name.endsWith('.yaml') && name !== 'units.yaml' && name !== 'tools.yaml',
+      (name) =>
+        name.endsWith('.yaml') && !['units.yaml', 'tools.yaml', 'models.yaml'].includes(name),
     );
     expect(cardFiles.length).toBeGreaterThan(0);
     expect(definitions.agents.map((agent) => `${agent.code}.yaml`).sort()).toEqual(

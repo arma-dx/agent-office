@@ -3,7 +3,7 @@ name: Ofis Koordinatörü
 unit: KOR
 companies: [armadx, pillika]
 version: "0.1"
-status: draft
+status: trial
 owner: founder
 
 purpose: >
@@ -32,7 +32,7 @@ outputs:
 
 skills: [routing]
 
-tools: [search_tasks, read_task, create_task, suggest_task, update_task, list_agents, list_users, search_notes, send_notification]
+tools: [search_tasks, read_task, create_task, suggest_task, update_task, route_task, list_agents, list_users, search_notes, send_notification]
 
 knowledge_sources:
   - Görev kartları ve birim tanımları

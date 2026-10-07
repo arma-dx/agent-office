@@ -3,7 +3,7 @@ name: Sosyal İçerik Yazım Ajanı
 unit: SOS
 companies: [armadx, pillika]
 version: "0.1"
-status: draft
+status: trial
 owner: founder
 
 purpose: >
@@ -41,6 +41,13 @@ authority:
 
 approval_points:
   - Her içerik yayından önce kurucu onayı
+
+# Onaylanan içeriği bir kişi şirket dışına gönderir (5 Ekim, karar 2): onay kaydı model ne yazarsa
+# yazsın "dışarı gidecek" olarak açılır ve onaylayan kişiden passkey istenir.
+output_goes_external: true
+# Sosyal içerik kendi başına para içermez; metinde fiyat ya da ödeme geçiyorsa ajan bunu sunarken
+# belirtir ve onay kaydında "para içeriyor (ajan belirtti)" yazar. Ajan bu işareti kaldıramaz.
+output_involves_money: false
 
 escalation:
   - Kaynak yetersizse metin uydurmaz; eksik bilgiyi sorar

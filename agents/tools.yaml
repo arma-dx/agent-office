@@ -37,6 +37,9 @@ tools:
   - name: list_agents
     kind: read
     description: Şirkette açık ajanların kodu, birimi, durumu ve kart özeti
+  - name: route_task
+    kind: internal_write
+    description: Talebi bir birime ve o birimin açık bir ajanına yönlendirir; birimin onaylayıcısını ajan değil sistem belirler. Yalnızca çalışmanın kendi talebinde çalışır; birimde açık ajan yoksa ajan boş bırakılır ve talep birimin onaylayıcısına düşer (7 Ekim, karar 1 ve 3)
   - name: list_users
     kind: read
     description: Şirketteki kullanıcılar ve rolleri

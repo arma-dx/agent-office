@@ -4,3 +4,4 @@ export * from './api.ts';
 export * from './cards.ts';
 export * from './tasks.ts';
 export * from './requests.ts';
+export * from './models.ts';

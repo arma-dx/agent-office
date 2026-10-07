@@ -7,16 +7,18 @@ import type { Queryable } from './queryable.ts';
 /**
  * Definitions sync: writes which units and agents exist (office.units, office.agent_definitions)
  * from the files under agents/. It is the first slice of the card sync (KALAN-ISLER 1.2; 6 October
- * decision 8) and writes nothing else: no card version, no tool, no company_agents row, and it
- * never deletes. Without a card version no agent can run (runs.card_version_id is required).
+ * decision 8) and writes nothing else: no company_agents row, and it never deletes. The tool
+ * catalog and the card versions are written after it by the card sync (cards.ts); without a card
+ * version no agent can run (runs.card_version_id is required).
  *
  * The global tables can be written by the migration role only (rule 9). This module is not
  * exported from index.ts, so the API and the worker do not load the YAML parser.
  */
 
 const UNITS_FILE = 'units.yaml';
-// The tool catalog is not a card; the full card sync reads it.
+// The tool catalog and the model table are not cards; the card sync (cards.ts) reads them.
 const TOOLS_FILE = 'tools.yaml';
+const MODELS_FILE = 'models.yaml';
 
 export interface DefinitionFiles {
   units: unknown;
@@ -82,12 +84,15 @@ async function readYaml(dir: URL, file: string): Promise<unknown> {
 }
 
 /**
- * agents/units.yaml and every other YAML file of the folder except tools.yaml, parsed but not
- * validated. `dir` ends with a slash. Cards come back in the order of their file names.
+ * agents/units.yaml and every other YAML file of the folder except tools.yaml and models.yaml,
+ * parsed but not validated. `dir` ends with a slash. Cards come back in the order of their file names.
  */
 export async function readDefinitionFiles(dir: URL): Promise<DefinitionFiles> {
   const names = (await readdir(dir))
-    .filter((name) => /\.ya?ml$/.test(name) && name !== UNITS_FILE && name !== TOOLS_FILE)
+    .filter(
+      (name) =>
+        /\.ya?ml$/.test(name) && name !== UNITS_FILE && name !== TOOLS_FILE && name !== MODELS_FILE,
+    )
     .sort();
   const units = await readYaml(dir, UNITS_FILE);
   const cards: DefinitionFiles['cards'] = [];

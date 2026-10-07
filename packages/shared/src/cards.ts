@@ -38,3 +38,133 @@ export const cardDefinitionSchema = z.looseObject({
   companies: z.array(companyCodeSchema).min(1),
 });
 export type CardDefinition = z.output<typeof cardDefinitionSchema>;
+
+// The full card ------------------------------------------------------------------------------------
+
+export const authorityLevelSchema = z.enum(['Y0', 'Y1', 'Y2', 'Y3']);
+export type AuthorityLevel = z.output<typeof authorityLevelSchema>;
+
+/**
+ * What a card's status means for a run:
+ *   draft   no run: the card is still being written;
+ *   trial   runs only for requests the founder wrote (the first real runs carry only the
+ *           founder's own text);
+ *   active  runs for every founder and employee of the company.
+ * The switch that opens an agent for a company is separate (company_agents); both must allow it.
+ */
+export const cardStatusSchema = z.enum(['draft', 'trial', 'active']);
+export type CardStatus = z.output<typeof cardStatusSchema>;
+
+export const toolNameSchema = z.string().regex(/^[a-z][a-z_]*$/);
+export const skillNameSchema = z.string().regex(/^[a-z][a-z0-9-]*$/);
+export const toolKindSchema = z.enum(['read', 'draft', 'internal_write', 'external_effect']);
+export type ToolKind = z.output<typeof toolKindSchema>;
+
+const line = z.string().trim().min(1);
+
+/**
+ * One item of a list of sentences. YAML reads an unquoted item with a colon in it ("İç rapor:
+ * durum, riskler") as a mapping with one key; the cards are written that way, so such an item is
+ * read back as the sentence it was meant to be.
+ */
+const item = z.union([line, z.record(z.string().min(1), line)]).transform((value, ctx) => {
+  if (typeof value === 'string') {
+    return value;
+  }
+  const entries = Object.entries(value);
+  const [entry] = entries;
+  if (entries.length !== 1 || entry === undefined) {
+    ctx.addIssue({ code: 'custom', message: 'Must be one sentence' });
+    return z.NEVER;
+  }
+  return `${entry[0]}: ${entry[1]}`;
+});
+
+/**
+ * agents/<code>.yaml, every field. Strict: a key the schema does not know stops the sync, so a
+ * typo in "prohibitions" can never silently drop a rule. The sync and the runner parse with this
+ * one schema.
+ */
+export const cardSchema = z.strictObject({
+  code: agentCodeSchema,
+  name: line,
+  unit: unitCodeSchema,
+  companies: z.array(companyCodeSchema).min(1),
+  version: line,
+  status: cardStatusSchema,
+  owner: line,
+  purpose: line,
+  triggers: z
+    .array(
+      z.strictObject({
+        type: z.enum(['request', 'scheduled', 'event', 'handoff']),
+        description: line,
+        schedule: line.optional(),
+      }),
+    )
+    .min(1),
+  inputs: z.array(item),
+  outputs: z.array(item).min(1),
+  skills: z.array(skillNameSchema),
+  tools: z.array(toolNameSchema).min(1),
+  knowledge_sources: z.array(item),
+  // `level` is what the runner applies. A card may name a lower level for one kind of output
+  // (customer_report: Y1); those are kept and not applied until the per output levels are decided
+  // (docs/SONRA.md M19).
+  authority: z
+    .object({ level: authorityLevelSchema, target: authorityLevelSchema })
+    .catchall(authorityLevelSchema),
+  approval_points: z.array(item),
+  escalation: z.array(item),
+  prohibitions: z.array(item),
+  model: line,
+  model_hard: line.optional(),
+  limits: z.strictObject({
+    tool_calls: z.number().int().min(1).max(100),
+    duration_minutes: z.number().int().min(1).max(60),
+  }),
+  metrics: z.array(item),
+  project_context: z.enum(['required', 'if_available', 'per_project']).optional(),
+  // The agent's output is sent outside the company by a person after it is approved (5 October
+  // decision 2 names the social media post). The approval then always states "goes outside",
+  // whatever the model stated: the passkey of an important approval cannot be talked away.
+  output_goes_external: z.boolean().optional(),
+  // Does the agent's output involve money, prices or a payment. The approval's money mark comes
+  // from here, never from the model's word alone (the rule of the step-up migration): the model
+  // may raise it for one output and can never lower it. A card that says nothing gets the safe
+  // side: its results are opened as involving money, so approving them asks for the passkey.
+  output_involves_money: z.boolean().optional(),
+});
+export type Card = z.output<typeof cardSchema>;
+
+/** agents/tools.yaml */
+export const toolsFileSchema = z.strictObject({
+  tools: z
+    .array(
+      z.strictObject({
+        name: toolNameSchema,
+        kind: toolKindSchema,
+        description: line,
+        approval_rule: line.optional(),
+      }),
+    )
+    .min(1),
+});
+export type ToolsFile = z.output<typeof toolsFileSchema>;
+
+/**
+ * What a card version holds (card_versions.content): the card and the text of every skill it
+ * names, so that a run points at exactly the instructions the model got and the worker reads no
+ * file of the repository at run time.
+ */
+export const storedCardSchema = z.strictObject({
+  card: cardSchema,
+  skills: z.array(
+    z.strictObject({
+      name: skillNameSchema,
+      sha256: z.string().regex(/^[0-9a-f]{64}$/),
+      body: z.string().min(1),
+    }),
+  ),
+});
+export type StoredCard = z.output<typeof storedCardSchema>;
