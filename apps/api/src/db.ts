@@ -1,4 +1,4 @@
-import { COMPANY_HEADER, roleSchema, type Role } from '@agent-office/shared';
+import { BACKGROUND_HEADER, COMPANY_HEADER, roleSchema, type Role } from '@agent-office/shared';
 import { setContext, withContext, type ContextInput, type createPool } from '@agent-office/db';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
@@ -51,12 +51,17 @@ interface VerifiedSessionRow {
 
 /**
  * Checks the session key inside the open transaction. verify_session closes a session that is past
- * its limits, so the transaction must be committed even when the answer is "no session".
+ * its limits, so the transaction must be committed even when the answer is "no session". With
+ * `activity` false the request is checked in the same way but does not extend the idle time.
  */
-export async function verifySession(client: DbClient, keyHash: Buffer): Promise<Session | null> {
+export async function verifySession(
+  client: DbClient,
+  keyHash: Buffer,
+  activity = true,
+): Promise<Session | null> {
   const { rows } = await client.query<VerifiedSessionRow>(
-    'select session_id, user_id, last_company_id from office.verify_session($1, $2)',
-    [keyHash, SESSION_IDLE_SECONDS],
+    'select session_id, user_id, last_company_id from office.verify_session($1, $2, $3)',
+    [keyHash, SESSION_IDLE_SECONDS, activity],
   );
   const row = rows[0];
   return row
@@ -89,6 +94,10 @@ type Outcome<T> =
  * with set_config(..., true), so it ends with the transaction and never stays on a pooled
  * connection. A thrown error rolls the transaction back, except CommitThenFail, which is answered
  * after the commit; a dead session is answered with 401 after the commit that records its closing.
+ *
+ * A request that carries the background header (the panel's periodic refresh) is checked like any
+ * other and gets the same 401 once the session is past a limit, but it does not count as activity:
+ * the idle time is not extended (rule 3).
  */
 export class RequestRunner {
   readonly #pool: Pool;
@@ -161,8 +170,10 @@ export class RequestRunner {
       clearSessionCookie(reply, this.#config);
       throw unauthenticated();
     }
+    // The value is not read: any request that carries the header is a background request.
+    const activity = request.headers[BACKGROUND_HEADER] === undefined;
     const outcome = await withContext(this.#pool, {}, async (client): Promise<Outcome<T>> => {
-      const session = await verifySession(client, keyHash);
+      const session = await verifySession(client, keyHash, activity);
       if (!session) {
         return { kind: 'no_session' };
       }

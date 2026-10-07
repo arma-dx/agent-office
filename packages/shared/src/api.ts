@@ -9,6 +9,14 @@ import { agentCodeSchema, unitCodeSchema } from './cards.ts';
 /** Header that carries the company selected in the panel. The API checks it against memberships. */
 export const COMPANY_HEADER = 'x-company-id';
 
+/**
+ * Header the panel puts on a request it sends on a timer (the periodic refresh of a list), not
+ * because the person did something. The API answers such a request as any other but does not count
+ * it as activity: the session's 30 minute idle limit is not extended (rule 3). The value is not
+ * read; the header can only make a session end sooner, never later, so it needs no trust.
+ */
+export const BACKGROUND_HEADER = 'x-background-refresh';
+
 export const roleSchema = z.enum(['founder', 'employee', 'external']);
 export type Role = z.output<typeof roleSchema>;
 

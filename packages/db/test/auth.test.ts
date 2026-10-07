@@ -26,7 +26,7 @@ const korA: ContextInput = { companyId: ids.arma, userId: ids.founder, agentCode
 
 const API_FUNCTIONS = [
   'office.open_session(bytea, text, timestamptz)',
-  'office.verify_session(bytea, integer)',
+  'office.verify_session(bytea, integer, boolean)',
   'office.close_session(bytea)',
   'office.close_all_sessions()',
   'office.set_last_company(bytea, uuid)',
@@ -1195,6 +1195,72 @@ describe.skipIf(noDatabase)('sessions', () => {
       expect(await sessionEnd(tx, session.id)).toEqual([
         { close_reason: 'expired', reason: 'idle_timeout' },
       ]);
+    });
+  });
+
+  it('a check that is not activity applies the same limits but never extends the idle time', async () => {
+    await inAdminTransaction(async (tx) => {
+      const session = await loginAndOpen(tx, FOUNDER_EMAIL, FOUNDER_SUB);
+      const check = (activity: boolean | null) =>
+        tx.rows<VerifiedSession>('select * from office.verify_session($1, 1800, $2)', [
+          session.key,
+          activity,
+        ]);
+      const backdate = (seconds: number) =>
+        tx.exec(
+          'update office.sessions set last_seen_at = now() - make_interval(secs => $2) where id = $1',
+          [session.id, seconds],
+        );
+      // now() does not move inside a transaction, so an untouched row is exactly as old as set.
+      const idleSeconds = async () =>
+        (
+          await tx.rows<{ idle: number }>(
+            `select extract(epoch from now() - last_seen_at)::int as idle
+             from office.sessions where id = $1`,
+            [session.id],
+          )
+        )[0]?.idle;
+
+      // The periodic refresh of a list: valid up to the limit, and last_seen_at is not written.
+      for (const seconds of [5 * 60, 20 * 60, 30 * 60 + 59]) {
+        await backdate(seconds);
+        expect(await check(false), String(seconds)).toEqual([
+          { session_id: session.id, user_id: ids.founder, last_company_id: null },
+        ]);
+        expect(await idleSeconds(), String(seconds)).toBe(seconds);
+      }
+      // The same session checked for something the person did is refreshed.
+      expect(await check(true)).toHaveLength(1);
+      expect(await idleSeconds()).toBe(0);
+      // Past the limit a background check closes the session like any other request.
+      await backdate(31 * 60);
+      expect(await check(false)).toEqual([]);
+      expect(await sessionEnd(tx, session.id)).toEqual([
+        { close_reason: 'expired', reason: 'idle_timeout' },
+      ]);
+      expect(await check(true)).toEqual([]);
+
+      // The absolute limit too.
+      const old = keyHash();
+      const [oldRow] = await tx.rows<{ id: string }>(
+        `insert into office.sessions
+           (key_hash, user_id, created_at, last_seen_at, absolute_expires_at)
+         values ($1, $2, now() - interval '11 hours', now() - interval '1 minute',
+                 now() - interval '1 hour')
+         returning id`,
+        [old, ids.founder],
+      );
+      expect(await tx.rows('select * from office.verify_session($1, 1800, false)', [old])).toEqual(
+        [],
+      );
+      expect(await sessionEnd(tx, oldRow?.id ?? '')).toEqual([
+        { close_reason: 'expired', reason: 'absolute_timeout' },
+      ]);
+      // Whether the request counts must be said: null is refused, not read as "yes" or "no".
+      expect(
+        (await tx.expectError('select * from office.verify_session($1, 1800, null)', [session.key]))
+          .code,
+      ).toBe('22023');
     });
   });
 

@@ -1,4 +1,9 @@
-import { apiErrorSchema, sessionResponseSchema } from '@agent-office/shared';
+import {
+  BACKGROUND_HEADER,
+  COMPANY_HEADER,
+  apiErrorSchema,
+  sessionResponseSchema,
+} from '@agent-office/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { hashSessionKey } from '../src/session.ts';
 import { accounts, ids } from './fixtures.ts';
@@ -195,6 +200,80 @@ describe.skipIf(noDatabase)('sessions', () => {
         [id],
       ),
     ).toBe(1);
+  });
+
+  it('a background request does not extend the idle time; any other request does', async () => {
+    const session = await sessionOf(server, accounts.founder);
+    const { id } = await sessionRow(session);
+    const idleMinutes = async () =>
+      (
+        await adminQuery<{ minutes: number }>(
+          `select round(extract(epoch from now() - last_seen_at) / 60)::int as minutes
+           from office.sessions where id = $1`,
+          [id],
+        )
+      )[0]?.minutes;
+    const background = () =>
+      server.app.inject({
+        method: 'GET',
+        url: '/api/session',
+        cookies: { [SESSION_COOKIE]: session },
+        headers: { [BACKGROUND_HEADER]: '1' },
+      });
+
+    await adminQuery(
+      `update office.sessions set last_seen_at = now() - interval '20 minutes' where id = $1`,
+      [id],
+    );
+    // The periodic refresh of an unattended tab: answered, and the session is as idle as before.
+    for (let tick = 0; tick < 3; tick += 1) {
+      const res = await background();
+      expect(res.statusCode).toBe(200);
+      expect(sessionResponseSchema.parse(res.json()).user.id).toBe(ids.founder);
+    }
+    expect(await idleMinutes()).toBe(20);
+    // A request of the person counts.
+    expect((await getSession(session)).statusCode).toBe(200);
+    expect(await idleMinutes()).toBe(0);
+
+    // Past the limit the background request itself closes the session and answers 401.
+    await adminQuery(
+      `update office.sessions set last_seen_at = now() - interval '32 minutes' where id = $1`,
+      [id],
+    );
+    const late = await background();
+    expect(late.statusCode).toBe(401);
+    expect(cookieValue(late, SESSION_COOKIE)).toBeUndefined();
+    expect(await sessionRow(session)).toMatchObject({ closed: true, close_reason: 'expired' });
+    expect(
+      await countLoginEvents(
+        `event = 'session_expired' and reason = 'idle_timeout' and session_id = $1`,
+        [id],
+      ),
+    ).toBe(1);
+  });
+
+  it('a background request on a company route is answered and does not count either', async () => {
+    const session = await sessionOf(server, accounts.employee, { amr: undefined });
+    const { id } = await sessionRow(session);
+    await adminQuery(
+      `update office.sessions set last_seen_at = now() - interval '25 minutes' where id = $1`,
+      [id],
+    );
+    const res = await server.app.inject({
+      method: 'GET',
+      url: '/api/office',
+      cookies: { [SESSION_COOKIE]: session },
+      // The value is not read: the header alone marks the request.
+      headers: { ...SAME_ORIGIN, [COMPANY_HEADER]: ids.arma, [BACKGROUND_HEADER]: 'anything' },
+    });
+    expect(res.statusCode).toBe(200);
+    const [row] = await adminQuery<{ stale: boolean }>(
+      `select last_seen_at < now() - interval '24 minutes' as stale
+       from office.sessions where id = $1`,
+      [id],
+    );
+    expect(row?.stale).toBe(true);
   });
 
   it('logs out: closes the session, clears the cookie, records the logout', async () => {
