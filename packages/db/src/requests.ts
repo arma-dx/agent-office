@@ -41,6 +41,8 @@ export interface RequestRow {
   closed_by_user_id: string | null;
   close_reason: string | null;
   closed_after_delivery: boolean;
+  // Returned to its requester: its last routing named a unit where no open agent could take it.
+  returned_no_agent: boolean;
   rejected_by_user_id: string | null;
   rejected_reason: string | null;
   rejected_note: string | null;
@@ -58,7 +60,6 @@ export interface RequestRow {
   step_agent_enabled: boolean | null;
   step_approver_user_id: string | null;
   step_created_at: Date | null;
-  has_step: boolean;
   pending_acceptance: boolean;
   pending_result: boolean;
   last_result_status: string | null;
@@ -100,9 +101,20 @@ const REQUEST_SQL = `
                )
            )
          ) as closed_after_delivery,
+         -- Returned to its requester (8 October decision 2): the steps of its last routing are
+         -- returned steps. The step is the record; the requester may read it like every step.
+         (
+           t.status = 'cancelled' and exists (
+             select 1 from office.task_routings r
+             where r.task_id = t.id and r.status = 'returned'
+               and r.round = (
+                 select max(r2.round) from office.task_routings r2 where r2.task_id = t.id
+               )
+           )
+         ) as returned_no_agent,
          f.rejected_by_user_id, f.rejected_reason, f.rejected_note,
          exists (select 1 from office.task_routings r where r.task_id = t.id) as routed,
-         s.id is not null as has_step,
+         -- The active step; it always has an agent (the table refuses an active step without one).
          s.agent_code as step_agent_code,
          sa.name as step_agent_name,
          (
@@ -200,12 +212,13 @@ export async function closeRequest(
 
 /**
  * A person corrects the routing (the founder, or the approver of the active step; the database
- * decides and appoints the approver of the new step). The note is the person's own.
+ * decides and appoints the approver of the new step). A person always names an agent; the
+ * database refuses a step without one. The note is the person's own.
  */
 export async function correctRouting(
   client: Queryable,
   requestId: string,
-  step: { unitCode: string; agentCode: string | null; note: string | null },
+  step: { unitCode: string; agentCode: string; note: string | null },
 ): Promise<void> {
   await client.query('select office.correct_routing($1, $2::jsonb)', [
     requestId,
@@ -571,8 +584,7 @@ export async function decideAcceptance(
 
 /**
  * The agent a new run is called for after a change request: the agent of the step that is active
- * now, if it is enabled. Null when nothing starts by itself (no active step, no agent, a stopped
- * agent).
+ * now, if it is enabled. Null when nothing starts by itself (no active step, a stopped agent).
  */
 export async function agentToRunAgain(
   client: Queryable,
@@ -584,8 +596,7 @@ export async function agentToRunAgain(
      join office.tasks t on t.id = s.task_id and t.kind = 'request'
      join office.company_agents ca
        on ca.company_id = s.company_id and ca.agent_code = s.agent_code and ca.status = 'enabled'
-     where s.task_id = $1 and s.status = 'active' and s.agent_code is not null
-       and t.status = 'in_progress'`,
+     where s.task_id = $1 and s.status = 'active' and t.status = 'in_progress'`,
     [requestId],
   );
   const row = rows[0];

@@ -47,7 +47,8 @@ approval_points:
 
 escalation:
   - Şirket ya da birim net değilse talep sahibine tek bir soru sorar
-  - Uygun ajan yoksa işi kurucuya atar
+  # 8 Ekim, karar 2: birimde açık ajan yoksa talep kurucuya düşmez, talep sahibine geri çevrilir.
+  - Yönlendirdiği birimde işi alabilecek açık ajan yoksa ajanı boş bırakır; talep, nedeni yazılarak talep sahibine geri çevrilir ve kapanır
   - Aynı iş iki kez geri dönerse kurucuya atar
 
 prohibitions:

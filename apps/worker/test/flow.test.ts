@@ -103,6 +103,10 @@ describe.skipIf(noDatabase)('a request from the first line to "done"', () => {
     };
   }
 
+  /** The journey as "kind:status", in the order the page shows it. */
+  const journeyOf = (read: RequestDetail): string[] =>
+    read.journey.map((item) => `${item.kind}:${'status' in item ? item.status : ''}`);
+
   /** The worker's part: takes the next job from the queue and runs it with the scripted model. */
   async function work(model: ScriptedModel): Promise<{ outcome: RunOutcome; agent: string }> {
     const [next] = await workerQueue.fetch(AGENT_RUN_QUEUE);
@@ -326,8 +330,6 @@ describe.skipIf(noDatabase)('a request from the first line to "done"', () => {
       },
       actions: { cancel: false, stop: false, reroute: false },
     });
-    const journeyOf = (read: RequestDetail): string[] =>
-      read.journey.map((item) => `${item.kind}:${'status' in item ? item.status : ''}`);
     const journey = [
       'run:completed',
       'routing:',
@@ -394,32 +396,158 @@ describe.skipIf(noDatabase)('a request from the first line to "done"', () => {
     expect(errors).toEqual([]);
   });
 
-  it('a request that falls to a person is not a dead end: the routing is corrected and the work goes on', async () => {
-    // The founder's own example: a KVKK text. The coordinator names the right unit, which has no
-    // agent yet.
+  it('a request for a unit with no open agent is returned to its requester and closed', async () => {
+    // 8 October decision 2, with the founder's own example: an employee asks for the KVKK texts.
+    // The coordinator names the right unit, which has no agent yet.
     const id = randomUUID();
-    await post(founder, '/api/requests', { id, text: 'KVKK aydınlatma metni hazırlansın' });
+    await post(employee, '/api/requests', { id, text: 'KVKK aydınlatma metni hazırlansın' });
     const toLegal = { unit_code: 'HUK', agent_code: '', reason: 'Hukuk ve uyum işi.' };
-    expect((await work(new ScriptedModel([toolUse('route_task', toLegal)]))).outcome).toBe(
+    expect(await work(new ScriptedModel([toolUse('route_task', toLegal)]))).toEqual({
+      outcome: 'returned',
+      agent: 'KOR-1',
+    });
+    // No unit agent's job: the queue is empty when the coordinator has finished.
+    expect(await workerQueue.fetch(AGENT_RUN_QUEUE)).toEqual([]);
+
+    // The requester reads that it was returned, why (the cause) and for which unit; nothing is
+    // left to do with it, and the coordinator's own reason is not theirs to read.
+    const returned = {
+      status: 'cancelled',
+      stage: 'cancelled',
+      cause: 'returned_no_agent',
+      delayed: false,
+      turn: { kind: 'none' },
+      waitingForMe: false,
+      unit: { code: 'HUK', name: 'Hukuk ve Uyum' },
+      requester: { userId: ids.employee },
+    };
+    const mine = await detail(employee, id);
+    expect(mine).toMatchObject({
+      ...returned,
+      agent: null,
+      closure: null,
+      approval: null,
+      result: null,
+      acceptance: null,
+      actions: { cancel: false, stop: false, reroute: false },
+    });
+    expect(journeyOf(mine)).toEqual(['run:completed', 'routing:']);
+    expect(mine.journey.find((item) => item.kind === 'run')).toMatchObject({
+      agent: { code: 'KOR-1' },
+      summary:
+        'Talep Hukuk ve Uyum birimine yönlendirildi; birimde işi alabilecek açık ajan olmadığı için talep sahibine geri çevrildi.',
+      agentText: null,
+    });
+    expect(mine.journey.find((item) => item.kind === 'routing')).toMatchObject({
+      unit: { code: 'HUK' },
+      agent: null,
+      by: null,
+      reason: null,
+    });
+    expect(JSON.stringify(mine)).not.toContain(toLegal.reason);
+
+    // Nothing waits for the founder: not their turn, nothing on the approval desk, no act offered.
+    // The founder alone reads the coordinator's reason.
+    const forFounder = await detail(founder, id);
+    expect(forFounder).toMatchObject({
+      ...returned,
+      approval: null,
+      actions: { cancel: false, stop: false, reroute: false },
+    });
+    expect(forFounder.journey.find((item) => item.kind === 'routing')).toMatchObject({
+      unit: { code: 'HUK' },
+      agent: null,
+      reason: toLegal.reason,
+    });
+    for (const session of [employee, founder]) {
+      expect(await waitingFor(session, id)).toEqual({ approval: false, acceptance: false });
+      const list = requestListSchema.parse((await get(session, '/api/requests')).json());
+      expect(list.requests.find((request) => request.id === id)).toMatchObject(returned);
+    }
+    // Closed is closed: the founder cannot give it to an agent afterwards, the requester cannot
+    // cancel it again. A new request is the way on.
+    const late = await post(founder, `/api/requests/${id}/routing`, {
+      unitCode: 'SOS',
+      agentCode: 'SOS-2',
+    });
+    expect([late.statusCode, errorCode(late)]).toEqual([409, 'request_closed']);
+    const cancel = await post(employee, `/api/requests/${id}/close`);
+    expect([cancel.statusCode, errorCode(cancel)]).toEqual([409, 'request_closed']);
+    expect(await workerQueue.fetch(AGENT_RUN_QUEUE)).toEqual([]);
+
+    // The records: one run of the coordinator, the status written by the flow, and the trace.
+    expect(
+      await admin(
+        `select agent_code, status, user_id, output ->> 'outcome' as outcome from office.runs
+         where task_id = $1`,
+        [id],
+      ),
+    ).toEqual([
+      { agent_code: 'KOR-1', status: 'completed', user_id: ids.employee, outcome: 'returned' },
+    ]);
+    const trace = await admin<{ event: string }>(
+      `select event from office.audit_log
+       where record_type = 'task' and record_id = $1
+         and (event like 'task_status_%' or event like 'request_%') order by id`,
+      [id],
+    );
+    expect(trace.map((row) => row.event)).toEqual([
+      'request_created',
+      'task_status_in_progress',
+      'request_routed',
+      'task_status_cancelled',
+      'request_returned',
+    ]);
+    expect(
+      await admin(
+        `select status, closed_by_user_id, close_reason, unit_code, initial_unit_code,
+           assignee_agent_code, routing_corrected from office.tasks where id = $1`,
+        [id],
+      ),
+    ).toEqual([
+      {
+        status: 'cancelled',
+        closed_by_user_id: null,
+        close_reason: null,
+        unit_code: 'HUK',
+        initial_unit_code: 'HUK',
+        assignee_agent_code: null,
+        routing_corrected: false,
+      },
+    ]);
+    expect(errors).toEqual([]);
+  });
+
+  it('a request that falls to a person is not a dead end: the routing is corrected and the work goes on', async () => {
+    // The unit agent's first run ends without submitting: it answers in text, is reminded once
+    // and answers in text again. The request falls to the founder (nobody is appointed).
+    const id = randomUUID();
+    await post(founder, '/api/requests', { id, text: 'LinkedIn için gönderi yaz' });
+    expect((await work(new ScriptedModel([toolUse('route_task', ROUTE_TO_SOS)]))).outcome).toBe(
       'routed',
     );
+    const silent = new ScriptedModel([
+      text('Kaynak bilgi yok.'),
+      text('Kaynak bilgi olmadan gönderi yazamam.'),
+    ]);
+    expect(await work(silent)).toEqual({ outcome: 'no_submission', agent: 'SOS-2' });
     const fell = await detail(founder, id);
     expect(fell).toMatchObject({
-      status: 'open',
+      status: 'in_progress',
       stage: 'fell_to_person',
-      cause: 'no_agent',
-      unit: { code: 'HUK' },
+      cause: 'no_submission',
+      unit: { code: 'SOS' },
       waitingForMe: true,
       actions: { cancel: true, stop: false, reroute: true },
     });
     expect(await workerQueue.fetch(AGENT_RUN_QUEUE)).toEqual([]);
 
-    // "Yönlendirmeyi düzelt": the founder gives it to the one agent that is open. The agent's job
-    // is on the real queue when the answer comes back.
+    // "Yönlendirmeyi düzelt": the founder gives it to the agent again, with a note. The agent's
+    // job is on the real queue when the answer comes back.
     const corrected = await post(founder, `/api/requests/${id}/routing`, {
       unitCode: 'SOS',
       agentCode: 'SOS-2',
-      note: 'Şimdilik sosyal içerik ajanı bir taslak yazsın.',
+      note: 'Kaynak: İzmir ofisimiz 1 Ekim’de açıldı.',
     });
     expect(requestDetailSchema.parse(corrected.json())).toMatchObject({
       status: 'in_progress',
@@ -432,12 +560,17 @@ describe.skipIf(noDatabase)('a request from the first line to "done"', () => {
       toolUse('submit_for_approval', RESULT),
     ]);
     expect(await work(model)).toEqual({ outcome: 'submitted', agent: 'SOS-2' });
-    expect(JSON.stringify(model.requests[0]?.messages[0])).toContain('Şimdilik sosyal içerik');
+    expect(JSON.stringify(model.requests[0]?.messages[0])).toContain('Kaynak: İzmir ofisimiz');
     const waiting = await detail(founder, id);
     expect(waiting).toMatchObject({ stage: 'unit_approval', unit: { code: 'SOS' } });
     expect(
-      waiting.journey.filter((item) => item.kind === 'routing').map((item) => item.unit.code),
-    ).toEqual(['HUK', 'SOS']);
+      waiting.journey
+        .filter((item) => item.kind === 'routing')
+        .map((item) => [item.round, item.unit.code, item.agent?.code, item.by?.userId ?? null]),
+    ).toEqual([
+      [1, 'SOS', 'SOS-2', null],
+      [2, 'SOS', 'SOS-2', ids.founder],
+    ]);
 
     // The founder is the requester here, so the close is a cancel; a result that waited is closed.
     const closed = await post(founder, `/api/requests/${id}/close`, { reason: 'Deneme bitti.' });
@@ -451,7 +584,7 @@ describe.skipIf(noDatabase)('a request from the first line to "done"', () => {
       'select routing_corrected, initial_unit_code from office.tasks where id = $1',
       [id],
     );
-    expect(task).toEqual({ routing_corrected: true, initial_unit_code: 'HUK' });
+    expect(task).toEqual({ routing_corrected: true, initial_unit_code: 'SOS' });
     expect(errors).toEqual([]);
   });
 

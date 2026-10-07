@@ -74,6 +74,9 @@ export type RunOutcome =
   | 'model_unavailable'
   // A run ended.
   | 'routed'
+  // The coordinator named a unit where no open agent could take the work: the routing returned
+  // the request to its requester and closed it (8 October decision 2).
+  | 'returned'
   | 'submitted'
   | 'no_routing'
   | 'no_submission'
@@ -687,6 +690,8 @@ export async function runAgentJob(deps: RunnerDeps, rawJob: unknown): Promise<Ru
           if (input.data.unit_code === card.unit || agent === job.agentCode) {
             throw new ToolRefusal('unit_not_routable');
           }
+          // Without an agent the database returns the request to its requester and closes it in
+          // this same statement; the rest of this transaction is the trace of this run.
           await client.query('select office.route_request($1, $2::jsonb, $3)', [
             job.taskId,
             JSON.stringify([{ unit: input.data.unit_code, agent, reason: input.data.reason }]),
@@ -707,10 +712,10 @@ export async function runAgentJob(deps: RunnerDeps, rawJob: unknown): Promise<Ru
           );
           const unitName = unit.rows[0]?.name ?? input.data.unit_code;
           record = { type: 'task', id: job.taskId };
-          outcome = 'routed';
+          outcome = agent === null ? 'returned' : 'routed';
           summary =
             agent === null
-              ? `Talep ${unitName} birimine yönlendirildi; birimde işi alabilecek açık ajan yok.`
+              ? `Talep ${unitName} birimine yönlendirildi; birimde işi alabilecek açık ajan olmadığı için talep sahibine geri çevrildi.`
               : `Talep ${unitName} birimine yönlendirildi; işi ${agent} yürütecek.`;
           stored = { unit: input.data.unit_code, agent };
         } else {

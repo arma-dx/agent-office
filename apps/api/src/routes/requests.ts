@@ -85,7 +85,9 @@ import type { RouteDeps } from '../services.ts';
  * records inside the database, and the database refuses every other writer. The one route that
  * names a unit and an agent is the correction of the routing, an act 7 October decision 7 gives to
  * the founder and the approver of the request; the database decides who may and appoints the
- * approver of the new step itself.
+ * approver of the new step itself. A person always names an agent there: only the coordinator's
+ * routing can find that a unit has no open agent, and such a request is returned to its requester
+ * and closed (8 October decision 2), with no act left for anybody.
  * What a person reads is decided by the row policies; a record the person cannot see answers 404
  * exactly like one that does not exist, and so does the id of a task between people.
  *
@@ -381,10 +383,11 @@ export function registerRequestRoutes(
 
   /**
    * "Yönlendirmeyi düzelt" (7 October decision 7): the founder or the approver of the active step
-   * names the unit and, if one can take the work, an agent of it. The database decides who may,
-   * closes what waited on the old step and appoints the approver of the new one; the agent's run
-   * is put on the queue with the routing, both or neither. Routing to the agent that already had
-   * the request starts its work again: this is also how a run that failed is tried again.
+   * names the unit and an agent of it that is open here (a body without an agent is refused: a
+   * person does not leave a request at a unit that has nobody to do it). The database decides who
+   * may, closes what waited on the old step and appoints the approver of the new one; the agent's
+   * run is put on the queue with the routing, both or neither. Routing to the agent that already
+   * had the request starts its work again: this is also how a run that failed is tried again.
    */
   app.post('/api/requests/:requestId/routing', async (request, reply): Promise<RequestDetail> =>
     runner.withCompany(request, reply, INSIDERS, async (context) => {
@@ -405,7 +408,7 @@ export function registerRequestRoutes(
       // The coordinator's own unit is never a place to route to (the list does not offer it).
       const options = await listRoutingOptions(client, COORDINATOR_AGENT_CODE);
       const offered = options.some(
-        (row) => row.unit_code === unitCode && (agentCode === null || row.agent_code === agentCode),
+        (row) => row.unit_code === unitCode && row.agent_code === agentCode,
       );
       if (!offered) {
         throw routingNotPossible();
@@ -426,15 +429,13 @@ export function registerRequestRoutes(
         if (code === 'P0002') throw notFound();
         throw error;
       }
-      if (agentCode !== null) {
-        // The run's identity stays the requester, whoever corrected the routing.
-        await jobs.send(client, {
-          companyId,
-          userId: before.requester_user_id,
-          taskId: requestId,
-          agentCode,
-        });
-      }
+      // The run's identity stays the requester, whoever corrected the routing.
+      await jobs.send(client, {
+        companyId,
+        userId: before.requester_user_id,
+        taskId: requestId,
+        agentCode,
+      });
       const row = await readRequest(client, COORDINATOR_AGENT_CODE, requestId);
       if (!row) {
         throw notFound();

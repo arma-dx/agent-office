@@ -42,7 +42,8 @@ export const LIMITS = {
 
 export const routeTaskInput = z.strictObject({
   unit_code: unitCodeSchema,
-  // An empty text: no enabled agent of the unit can take the work.
+  // An empty text: no enabled agent of the unit can take the work; the request is then returned
+  // to its requester and closed.
   agent_code: z.union([agentCodeSchema, z.literal('')]),
   reason: text(LIMITS.reason),
 });
@@ -118,7 +119,7 @@ const DEFINITIONS: Record<string, (description: string) => ModelTool> = {
           'Talebin gideceği birimin kodu; units_and_agents bloğundaki kodlardan biri.',
         ),
         agent_code: field(
-          'O birimin işi yapabilecek açık ajanının kodu. Birimde uygun açık ajan yoksa boş metin ("").',
+          'O birimin işi yapabilecek açık ajanının kodu. Birimde uygun açık ajan yoksa boş metin (""): talep o zaman, birimde işi alabilecek açık ajan olmadığı yazılarak talep sahibine geri çevrilir ve kapanır.',
         ),
         reason: field(
           `Bu birimin neden seçildiğini anlatan bir iki cümle (en çok ${String(LIMITS.reason)} karakter); birimin onaylayıcısı ve kurucu okur.`,

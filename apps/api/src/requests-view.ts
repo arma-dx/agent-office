@@ -58,11 +58,13 @@ export function factsOf(row: RequestRow): RequestFacts {
           ? 'requester'
           : 'other',
     closedAfterDelivery: row.closed_after_delivery,
+    returnedNoAgent: row.returned_no_agent,
     coordinatorEnabled: row.coordinator_enabled,
     routed: row.routed,
-    step: row.has_step
-      ? { agentCode: row.step_agent_code, agentEnabled: row.step_agent_enabled === true }
-      : null,
+    step:
+      row.step_agent_code !== null
+        ? { agentCode: row.step_agent_code, agentEnabled: row.step_agent_enabled === true }
+        : null,
     pendingApproval: row.pending_result,
     pendingAcceptance: row.pending_acceptance,
     lastResult:
@@ -162,7 +164,9 @@ export function peopleOf(row: RequestRow): string[] {
 /**
  * How a cancelled request was closed, in the words of the person who closed it: the requester's
  * cancel, a stop with its reason, or the rejection of the result with the approver's reason class
- * and note. Null while the request is not cancelled. Nothing here is an agent's text.
+ * and note. Null while the request is not cancelled, and for a request the routing returned to
+ * its requester: no person closed that one, and the cause and the unit say why (the coordinator's
+ * own reason is not the requester's to read). Nothing here is an agent's text.
  */
 export function closureOf(row: RequestRow, names: Names): RequestDetail['closure'] {
   if (row.status !== 'cancelled') {
@@ -170,6 +174,9 @@ export function closureOf(row: RequestRow, names: Names): RequestDetail['closure
   }
   if (row.closed_by_user_id !== null) {
     return { by: person(names, row.closed_by_user_id), reason: null, note: row.close_reason };
+  }
+  if (row.returned_no_agent) {
+    return null;
   }
   return {
     by: optionalPerson(names, row.rejected_by_user_id),

@@ -91,7 +91,6 @@ export const requestCauseSchema = z.enum([
   // fell_to_person
   'coordinator_closed',
   'no_routing',
-  'no_agent',
   'agent_stopped',
   'no_submission',
   'run_failed',
@@ -104,6 +103,9 @@ export const requestCauseSchema = z.enum([
   'card_not_runnable',
   'second_change_request',
   // cancelled
+  // Returned to its requester by the routing: the coordinator named the unit, and no open agent
+  // of it could take the work (8 October decision 2).
+  'returned_no_agent',
   'cancelled_by_requester',
   'stopped',
   // Stopped while the approved result waited for its requester: the result was delivered.
@@ -128,17 +130,21 @@ export type TurnRole = 'coordinator' | 'agent' | 'approver' | 'requester' | 'fou
 export interface RequestFacts {
   status: TaskStatus;
   createdAt: Date;
-  // Who closed a cancelled request by hand: its requester, somebody else, or nobody (a rejection).
+  // Who closed a cancelled request by hand: its requester, somebody else, or nobody (a rejection,
+  // or a return by the routing).
   closedBy: 'requester' | 'other' | null;
   // It was closed while its approved result waited for the requester's answer.
   closedAfterDelivery: boolean;
+  // The coordinator named a unit where no open agent could take the work: the request was returned
+  // to its requester and closed (read from the returned step of its last routing).
+  returnedNoAgent: boolean;
   // The coordinator can take a request in this company: its switch is on and its card has a
   // version to run with.
   coordinatorEnabled: boolean;
   // Was the request ever routed.
   routed: boolean;
-  // The step that is active now.
-  step: { agentCode: string | null; agentEnabled: boolean } | null;
+  // The step that is active now; it always has an agent (a step without one is a returned step).
+  step: { agentCode: string; agentEnabled: boolean } | null;
   // A result waits for the unit's approver.
   pendingApproval: boolean;
   // The approved result waits for the requester.
@@ -220,7 +226,9 @@ export function deriveStage(facts: RequestFacts, now: Date): DerivedStage {
           ? facts.closedAfterDelivery
             ? 'closed_after_delivery'
             : 'stopped'
-          : 'rejected';
+          : facts.returnedNoAgent
+            ? 'returned_no_agent'
+            : 'rejected';
     return at('cancelled', 'none', { cause });
   }
   if (facts.pendingAcceptance) {
@@ -248,9 +256,6 @@ export function deriveStage(facts: RequestFacts, now: Date): DerivedStage {
   if (!step) {
     // The requester asked for changes twice: no step is active and nothing starts by itself.
     return at('fell_to_person', 'approver', { cause: 'second_change_request' });
-  }
-  if (step.agentCode === null) {
-    return at('fell_to_person', 'approver', { cause: 'no_agent' });
   }
   const working: RequestStage = facts.changesRequested ? 'revising' : 'working';
   if (run?.status === 'running' && run.agentCode === step.agentCode) {
@@ -412,6 +417,7 @@ export const journeyItemSchema = z.discriminatedUnion('kind', [
     at: instantSchema,
     round: z.number().int().min(1),
     unit: unitRefSchema,
+    // Null: no open agent of the unit could take the work, and the request was returned.
     agent: agentRefSchema.nullable(),
     // Null: nobody is appointed for the unit, the founder decides.
     approver: taskPersonSchema.nullable(),
@@ -469,7 +475,8 @@ export const requestDetailSchema = requestSummarySchema.extend({
   approver: taskPersonSchema.nullable(),
   // How a cancelled request was closed, for everybody who may read it: who closed it (the
   // requester, the one who stopped it, the approver who rejected the result), the reason class of
-  // a rejection and that person's own words. Never anything an agent wrote.
+  // a rejection and that person's own words. Never anything an agent wrote. Null for a request the
+  // routing returned (cause returned_no_agent): no person closed it, and `unit` names the unit.
   closure: z
     .object({
       by: taskPersonSchema.nullable(),
@@ -571,14 +578,15 @@ export const ROUTING_NOTE_MAX = 600;
 
 /**
  * POST /api/requests/:requestId/routing: the founder or the approver of the active step corrects
- * the routing (7 October decision 7): the unit, and an agent of it that is open in this company,
- * or no agent (the request then waits with that unit's approver). Routing again to the agent that
- * already had the request starts its work again; that is also how a failed run is retried. The
- * approver of the new step is looked up by the database, never sent.
+ * the routing (7 October decision 7): the unit, and an agent of it that is open in this company.
+ * A person always names an agent: a request is not left at a unit that has nobody to do it (the
+ * person closes it with a reason instead). Routing again to the agent that already had the request
+ * starts its work again; that is also how a failed run is retried. The approver of the new step is
+ * looked up by the database, never sent.
  */
 export const correctRoutingSchema = z.strictObject({
   unitCode: unitCodeSchema,
-  agentCode: agentCodeSchema.nullable(),
+  agentCode: agentCodeSchema,
   // A person's note: shown on the journey and given to the agent as data.
   note: z.string().trim().max(ROUTING_NOTE_MAX).refine(withoutNul, NO_NUL).optional(),
 });
@@ -591,6 +599,7 @@ export const routingOptionsSchema = z.object({
       code: unitCodeSchema,
       name: z.string(),
       // The agents of the unit that are open in this company and have a card version to run with.
+      // A unit without one is listed too, so that the panel can say why it cannot be chosen.
       agents: z.array(agentRefSchema),
     }),
   ),

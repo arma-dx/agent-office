@@ -28,7 +28,9 @@ import {
   CAUSE_NEXT,
   CAUSE_SENTENCE,
   REASON_LABEL,
+  RETURNED_NEXT,
   personName,
+  returnedSentence,
   runLine,
   stepText,
   turnText,
@@ -630,11 +632,23 @@ export function FellNotice({ request, isFounder }: { request: RequestDetail; isF
 }
 
 /**
- * How a cancelled request was closed: who closed it and that person's own words. The answer goes
- * back to the requester also when it is no (7 October decision 4). Nothing here is an agent's text.
+ * How a cancelled request was closed: who closed it and that person's own words, or that the
+ * routing returned it because the unit has no open agent (8 October decision 2; a fixed sentence
+ * with the unit's name). The answer goes back to the requester also when it is no (7 October
+ * decision 4). Nothing here is an agent's text.
  */
 export function ClosedNotice({ request }: { request: RequestDetail }) {
   if (request.stage !== 'cancelled' || request.cause === null) return null;
+  if (request.cause === 'returned_no_agent') {
+    return (
+      <InlineBanner tone="info">
+        <div className="flex flex-col gap-2">
+          <p>{returnedSentence(request.unit?.name ?? null)}</p>
+          <p className="text-ink-secondary">{RETURNED_NEXT}</p>
+        </div>
+      </InlineBanner>
+    );
+  }
   const closure = request.closure;
   const who = closure?.by ? personName(closure.by) : null;
   const sentence =
@@ -668,9 +682,11 @@ export function ClosedNotice({ request }: { request: RequestDetail }) {
 
 /**
  * "Yönlendirmeyi düzelt" (7 October decision 7): the founder or the approver of the request gives
- * it to a unit and, if one can take it, an agent of that unit. Giving it to the agent that already
- * had it starts the work again. The approver of the new step is not chosen here: the database
- * appoints the unit's.
+ * it to a unit and an agent of that unit that is open. An agent is always chosen: a unit without
+ * an open agent is listed, so that the person sees why it cannot be chosen, and cannot be picked
+ * (a request is not left where nobody can do it; the person closes it instead). Giving the request
+ * to the agent that already had it starts the work again. The approver of the new step is not
+ * chosen here: the database appoints the unit's.
  */
 export function RerouteDialog({
   request,
@@ -690,14 +706,17 @@ export function RerouteDialog({
   const [note, setNote] = useState('');
   const [touched, setTouched] = useState(false);
   const units = options.data?.units ?? [];
-  const chosen = units.find((candidate) => candidate.code === unit);
+  // A unit without an open agent is not a choice, also when it is the request's own unit.
+  const chosen = units.find((candidate) => candidate.code === unit && candidate.agents.length > 0);
   // An agent that is not open any more is not a choice.
   const agentCode = chosen?.agents.some((candidate) => candidate.code === agent) ? agent : '';
+  // Nothing can be chosen: no unit of the company has an open agent now.
+  const nowhere = options.isSuccess && units.every((candidate) => candidate.agents.length === 0);
   const send = useMutation({
     mutationFn: () =>
       correctRouting(company.companyId, request.id, {
         unitCode: unit,
-        agentCode: agentCode === '' ? null : agentCode,
+        agentCode,
         ...(note.trim() === '' ? {} : { note: note.trim() }),
       }),
     onSuccess: (detail) => {
@@ -706,6 +725,7 @@ export function RerouteDialog({
     },
   });
   const unitProblem = touched && !chosen ? 'Bir birim seçin.' : null;
+  const agentProblem = touched && chosen && agentCode === '' ? 'Bir ajan seçin.' : null;
   return (
     <Dialog
       open
@@ -721,7 +741,7 @@ export function RerouteDialog({
           onSubmit={(event) => {
             event.preventDefault();
             setTouched(true);
-            if (send.isPending || !chosen) return;
+            if (send.isPending || nowhere || !chosen || agentCode === '') return;
             send.mutate();
           }}
         >
@@ -730,78 +750,96 @@ export function RerouteDialog({
               {userMessage(options.error)}
             </p>
           ) : null}
-          <div className="flex flex-col gap-1.5">
-            <label htmlFor={`${id}-unit`} className="text-sm font-medium">
-              Birim
-            </label>
-            <NativeSelect
-              id={`${id}-unit`}
-              value={chosen ? unit : ''}
-              aria-invalid={unitProblem !== null}
-              aria-busy={options.isPending}
-              onChange={(event) => {
-                setUnit(event.target.value);
-                setAgent('');
-              }}
-            >
-              <option value="">{options.isPending ? 'Yükleniyor' : 'Seçin'}</option>
-              {units.map((candidate) => (
-                <option key={candidate.code} value={candidate.code}>
-                  {candidate.name}
-                  {candidate.agents.length === 0 ? ' (açık ajan yok)' : ''}
-                </option>
-              ))}
-            </NativeSelect>
-            {unitProblem ? (
-              <p role="alert" className="text-sm text-destructive">
-                {unitProblem}
-              </p>
-            ) : null}
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <label htmlFor={`${id}-agent`} className="text-sm font-medium">
-              Ajan
-            </label>
-            <NativeSelect
-              id={`${id}-agent`}
-              value={agentCode}
-              aria-describedby={`${id}-agent-help`}
-              disabled={!chosen}
-              onChange={(event) => {
-                setAgent(event.target.value);
-              }}
-            >
-              <option value="">Ajan yok: birimin onaylayıcısına düşer</option>
-              {(chosen?.agents ?? []).map((candidate) => (
-                <option key={candidate.code} value={candidate.code}>
-                  {candidate.code} {candidate.name}
-                </option>
-              ))}
-            </NativeSelect>
-            <p id={`${id}-agent-help`} className="text-sm text-ink-secondary">
-              Yalnızca bu şirkette açık olan ajanlar listelenir. Seçtiğiniz ajan işe yeni bir
-              çalışmayla başlar; aynı ajanı yeniden seçmek işi baştan başlatır. Bekleyen onay varsa
-              kapanır.
+          {nowhere ? (
+            <p className="text-sm">
+              Şu an hiçbir birimde açık ajan yok; talep bir ajana verilemez.
             </p>
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <label htmlFor={`${id}-note`} className="text-sm font-medium">
-              Açıklama (isteğe bağlı)
-            </label>
-            <Textarea
-              id={`${id}-note`}
-              rows={2}
-              maxLength={ROUTING_NOTE_MAX}
-              value={note}
-              aria-describedby={`${id}-note-help`}
-              onChange={(event) => {
-                setNote(event.target.value);
-              }}
-            />
-            <p id={`${id}-note-help`} className="text-sm text-ink-secondary">
-              Talebi görebilen herkes okur; ajana da iletilir.
-            </p>
-          </div>
+          ) : (
+            <>
+              <div className="flex flex-col gap-1.5">
+                <label htmlFor={`${id}-unit`} className="text-sm font-medium">
+                  Birim
+                </label>
+                <NativeSelect
+                  id={`${id}-unit`}
+                  value={chosen ? unit : ''}
+                  aria-invalid={unitProblem !== null}
+                  aria-busy={options.isPending}
+                  onChange={(event) => {
+                    setUnit(event.target.value);
+                    setAgent('');
+                  }}
+                >
+                  <option value="">{options.isPending ? 'Yükleniyor' : 'Seçin'}</option>
+                  {units.map((candidate) => (
+                    <option
+                      key={candidate.code}
+                      value={candidate.code}
+                      disabled={candidate.agents.length === 0}
+                    >
+                      {candidate.name}
+                      {candidate.agents.length === 0 ? ' (açık ajan yok)' : ''}
+                    </option>
+                  ))}
+                </NativeSelect>
+                {unitProblem ? (
+                  <p role="alert" className="text-sm text-destructive">
+                    {unitProblem}
+                  </p>
+                ) : null}
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label htmlFor={`${id}-agent`} className="text-sm font-medium">
+                  Ajan
+                </label>
+                <NativeSelect
+                  id={`${id}-agent`}
+                  value={agentCode}
+                  aria-invalid={agentProblem !== null}
+                  aria-describedby={`${id}-agent-help`}
+                  disabled={!chosen}
+                  onChange={(event) => {
+                    setAgent(event.target.value);
+                  }}
+                >
+                  <option value="">Seçin</option>
+                  {(chosen?.agents ?? []).map((candidate) => (
+                    <option key={candidate.code} value={candidate.code}>
+                      {candidate.code} {candidate.name}
+                    </option>
+                  ))}
+                </NativeSelect>
+                {agentProblem ? (
+                  <p role="alert" className="text-sm text-destructive">
+                    {agentProblem}
+                  </p>
+                ) : null}
+                <p id={`${id}-agent-help`} className="text-sm text-ink-secondary">
+                  Yalnızca bu şirkette açık olan ajanlar listelenir. Seçtiğiniz ajan işe yeni bir
+                  çalışmayla başlar; aynı ajanı yeniden seçmek işi baştan başlatır. Bekleyen onay
+                  varsa kapanır.
+                </p>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label htmlFor={`${id}-note`} className="text-sm font-medium">
+                  Açıklama (isteğe bağlı)
+                </label>
+                <Textarea
+                  id={`${id}-note`}
+                  rows={2}
+                  maxLength={ROUTING_NOTE_MAX}
+                  value={note}
+                  aria-describedby={`${id}-note-help`}
+                  onChange={(event) => {
+                    setNote(event.target.value);
+                  }}
+                />
+                <p id={`${id}-note-help`} className="text-sm text-ink-secondary">
+                  Talebi görebilen herkes okur; ajana da iletilir.
+                </p>
+              </div>
+            </>
+          )}
           {send.isError ? (
             <p role="alert" className="text-sm text-destructive">
               {userMessage(send.error)}
@@ -818,9 +856,12 @@ export function RerouteDialog({
             >
               Vazgeç
             </Button>
-            <Button type="submit" {...busyProps(send.isPending)}>
-              {send.isPending ? 'Yönlendiriliyor' : 'Yönlendir'}
-            </Button>
+            {/* Nothing to choose, so nothing to send. */}
+            {nowhere ? null : (
+              <Button type="submit" {...busyProps(send.isPending)}>
+                {send.isPending ? 'Yönlendiriliyor' : 'Yönlendir'}
+              </Button>
+            )}
           </DialogFooter>
         </form>
       </DialogContent>
@@ -934,10 +975,14 @@ export function Journey({ request }: { request: RequestDetail }) {
                       'Koordinasyon merkezi talebi yönlendirdi:'
                     )}{' '}
                     <span className="font-medium">{item.unit.name}</span>
+                    {/* A step without an agent is a returned step: nobody works on it and nobody
+                        approves anything, so no approver is named. That the request went back to
+                        its requester is said by the notice and by the run's own summary. */}
                     {item.agent
-                      ? `, ajan ${item.agent.code} ${item.agent.name}.`
-                      : '; birimde açık ajan yok.'}{' '}
-                    Onaylayıcı: {item.approver ? personName(item.approver) : 'Kurucu'}.
+                      ? `, ajan ${item.agent.code} ${item.agent.name}. Onaylayıcı: ${
+                          item.approver ? personName(item.approver) : 'Kurucu'
+                        }.`
+                      : '; birimde bu işi alabilecek açık ajan yok.'}
                   </p>
                   {item.reason ? (
                     item.by ? (

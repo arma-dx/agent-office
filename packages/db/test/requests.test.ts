@@ -480,20 +480,300 @@ describe.skipIf(noDatabase)('routing a request', () => {
     });
   });
 
-  it('a step without an agent leaves the request open for the unit’s approver (T8)', async () => {
+  it('a routing to a unit with no open agent returns the request to its requester and closes it', async () => {
+    // 8 October decision 2. HAF-1 is stopped in Arma DX: no open agent of HAF can take the work.
+    const reason = 'Belongs to memory; no agent there can write it';
     await inTransaction(async (tx) => {
       await tx.setContext(employeeA);
       const task = await openRequest(tx);
       await tx.setContext(agentRun(ids.employeeA, 'KOR-1'));
       const run = await openRun(tx, task, 'KOR-1');
-      await tx.rows(ROUTE, [task, JSON.stringify([{ unit: 'HAF', agent: null }]), run]);
-      expect(await statusOf(tx, task)).toBe('open');
+      const returned = JSON.stringify([{ unit: 'HAF', agent: null, reason }]);
+      expect((await one<{ round: number }>(tx, ROUTE, [task, returned, run])).round).toBe(1);
+      // Closed by the flow: nobody is the closer and there is no close reason. The unit stays on
+      // the request (also as the first unit ever chosen); no agent is assigned.
       expect(
-        await tx.rows(
-          `select unit_code, agent_code, status from office.task_routings where task_id = $1`,
+        await one(
+          tx,
+          `select status, closed_by_user_id, close_reason, unit_code, initial_unit_code,
+             assignee_agent_code, routing_corrected
+           from office.tasks where id = $1`,
           [task],
         ),
-      ).toEqual([{ unit_code: 'HAF', agent_code: null, status: 'active' }]);
+      ).toEqual({
+        status: 'cancelled',
+        closed_by_user_id: null,
+        close_reason: null,
+        unit_code: 'HAF',
+        initial_unit_code: 'HAF',
+        assignee_agent_code: null,
+        routing_corrected: false,
+      });
+      // The routing decision stays a record: the unit, the coordinator's reason, the run.
+      const steps = `select round, seq, unit_code, agent_code, approver_user_id, status,
+           routed_by_agent_code, routed_by_user_id, run_id, reason
+         from office.task_routings where task_id = $1`;
+      const step = {
+        round: 1,
+        seq: 1,
+        unit_code: 'HAF',
+        agent_code: null,
+        approver_user_id: ids.founder,
+        status: 'returned',
+        routed_by_agent_code: 'KOR-1',
+        routed_by_user_id: null,
+        run_id: run,
+        reason,
+      };
+      expect(await tx.rows(steps, [task])).toEqual([step]);
+      // Nothing waits for anybody.
+      expect(await tx.count('approvals', 'task_id = $1', [task])).toBe(0);
+      expect(await tx.count('requester_approvals', 'task_id = $1', [task])).toBe(0);
+      expect(await tx.count('task_routings', `task_id = $1 and status = 'active'`, [task])).toBe(0);
+
+      // A closed request stays closed: no second routing, no correction, no new run.
+      for (const again of [returned, JSON.stringify([{ unit: 'KOR', agent: 'KOR-1' }])]) {
+        expect(await tx.expectError(ROUTE, [task, again, run])).toEqual({
+          code: '23514',
+          message: 'A closed request is not routed',
+        });
+      }
+      await tx.exec(
+        `update office.runs set status = 'completed', finished_at = now() where id = $1`,
+        [run],
+      );
+      expect(
+        (
+          await tx.expectError(
+            `insert into office.runs (company_id, task_id, agent_code, card_version_id,
+               trigger_type, model) values ($1, $2, 'KOR-1', $3, 'request', 'test-model')`,
+            [ids.arma, task, ids.cardKor],
+          )
+        ).message,
+      ).toBe('The request is closed');
+      await tx.setContext(founderA);
+      expect(
+        await tx.expectError(CORRECT, [task, JSON.stringify([{ unit: 'KOR', agent: 'KOR-1' }])]),
+      ).toEqual({ code: '23514', message: 'A closed request is not routed' });
+      expect((await tx.expectError('select office.close_request($1, $2)', [task, 'x'])).code).toBe(
+        '23514',
+      );
+
+      // The trace: routed, then returned, in the name of the run; names and ids only.
+      const trace = await tx.rows<{ event: string; row: string }>(
+        `select a.event, to_jsonb(a)::text as row from office.audit_log a
+         where a.record_type = 'task' and a.record_id = $1
+           and (a.event like 'request_%' or a.event like 'task_status_%')
+         order by a.id`,
+        [task],
+      );
+      expect(trace.map((row) => row.event)).toEqual([
+        'request_created',
+        'task_status_in_progress',
+        'request_routed',
+        'task_status_cancelled',
+        'request_returned',
+      ]);
+      expect(
+        await tx.rows(
+          `select a.event, a.company_id, a.user_id, a.agent_code, a.tool_name, a.external_ref
+           from office.audit_log a
+           where a.record_type = 'task' and a.record_id = $1
+             and a.event in ('request_routed', 'request_returned')
+           order by a.id`,
+          [task],
+        ),
+      ).toEqual(
+        ['request_routed', 'request_returned'].map((event) => ({
+          event,
+          company_id: ids.arma,
+          user_id: ids.employeeA,
+          agent_code: 'KOR-1',
+          tool_name: null,
+          external_ref: null,
+        })),
+      );
+      expect(trace.map((row) => row.row).join(' ')).not.toContain('Belongs to memory');
+
+      // The requester reads the returned step (the unit; the reason is cut by the API's statement).
+      await tx.setContext(employeeA);
+      expect(await tx.rows(steps, [task])).toEqual([step]);
+    });
+  });
+
+  it('one step without an agent returns the whole round, also after an earlier routing', async () => {
+    await inTransaction(async (tx) => {
+      // The coordinator's run is still open when the unit agent has submitted: its second routing
+      // names an agent for the first step and none for the second.
+      await enableHaf(tx);
+      await tx.setContext(employeeA);
+      const task = await openRequest(tx);
+      await tx.setContext(agentRun(ids.employeeA, 'KOR-1'));
+      const korRun = await openRun(tx, task, 'KOR-1');
+      await tx.rows(ROUTE, [task, HAF_STEP, korRun]);
+      await tx.setContext(agentRun(ids.employeeA, 'HAF-1'));
+      const hafRun = await openRun(tx, task, 'HAF-1');
+      const approval = (await one<{ id: string }>(tx, SUBMIT, [task, hafRun, null])).id;
+      expect(await statusOf(tx, task)).toBe('awaiting_approval');
+
+      await tx.setContext(agentRun(ids.employeeA, 'KOR-1'));
+      const steps = JSON.stringify([
+        { unit: 'HAF', agent: 'HAF-1' },
+        { unit: 'A-KES', agent: null },
+      ]);
+      expect((await one<{ round: number }>(tx, ROUTE, [task, steps, korRun])).round).toBe(2);
+      expect(
+        await tx.rows(
+          `select round, seq, unit_code, agent_code, status from office.task_routings
+           where task_id = $1 order by round, seq`,
+          [task],
+        ),
+      ).toEqual([
+        { round: 1, seq: 1, unit_code: 'HAF', agent_code: 'HAF-1', status: 'replaced' },
+        { round: 2, seq: 1, unit_code: 'HAF', agent_code: 'HAF-1', status: 'returned' },
+        { round: 2, seq: 2, unit_code: 'A-KES', agent_code: null, status: 'returned' },
+      ]);
+      // The request names the unit that had no agent for it; the first unit ever chosen stays.
+      expect(
+        await one(
+          tx,
+          `select status, closed_by_user_id, unit_code, initial_unit_code, assignee_agent_code,
+             routing_corrected
+           from office.tasks where id = $1`,
+          [task],
+        ),
+      ).toEqual({
+        status: 'cancelled',
+        closed_by_user_id: null,
+        unit_code: 'A-KES',
+        initial_unit_code: 'HAF',
+        assignee_agent_code: null,
+        routing_corrected: false,
+      });
+      // What waited is closed with it, and the unit agent cannot submit any more.
+      await tx.setContext(founderA);
+      expect(
+        await one(
+          tx,
+          `select status, invalidated_at is not null as closed from office.approvals where id = $1`,
+          [approval],
+        ),
+      ).toEqual({ status: 'pending', closed: true });
+      expect(
+        (
+          await tx.rows<{ event: string }>(
+            `select event from office.audit_log
+             where record_type = 'task' and record_id = $1 and event like 'request_%'
+             order by id`,
+            [task],
+          )
+        ).map((row) => row.event),
+      ).toEqual(['request_created', 'request_routed', 'request_rerouted', 'request_returned']);
+      await tx.setContext(agentRun(ids.employeeA, 'HAF-1'));
+      expect((await tx.expectError(SUBMIT, [task, hafRun, null])).message).toBe(
+        'The request is closed',
+      );
+    });
+  });
+
+  it('a person names an agent in every step: a correction without one is refused and changes nothing', async () => {
+    await inTransaction(async (tx) => {
+      const { task, approval } = await submittedRequest(tx);
+      const state = async (): Promise<unknown> => {
+        await tx.setContext(founderA);
+        return {
+          task: await one(
+            tx,
+            `select status, unit_code, assignee_agent_code, routing_corrected, version
+             from office.tasks where id = $1`,
+            [task],
+          ),
+          steps: await tx.rows(
+            `select round, seq, unit_code, agent_code, status from office.task_routings
+             where task_id = $1 order by round, seq`,
+            [task],
+          ),
+          approval: await one(
+            tx,
+            `select status, invalidated_at from office.approvals where id = $1`,
+            [approval],
+          ),
+          trace: await tx.count('audit_log', `record_type = 'task' and record_id = $1`, [task]),
+        };
+      };
+      const before = await state();
+      expect(before).toMatchObject({
+        task: { status: 'awaiting_approval', unit_code: 'HAF', assignee_agent_code: 'HAF-1' },
+        steps: [{ round: 1, seq: 1, unit_code: 'HAF', agent_code: 'HAF-1', status: 'active' }],
+        approval: { status: 'pending', invalidated_at: null },
+      });
+      for (const steps of [
+        [{ unit: 'A-KES', agent: null }],
+        [{ unit: 'A-KES' }],
+        [{ unit: 'HAF', agent: null, reason: 'Wait here' }],
+        [
+          { unit: 'HAF', agent: 'HAF-1' },
+          { unit: 'A-KES', agent: null },
+        ],
+      ]) {
+        // The founder and the appointed approver of the active step alike.
+        await tx.setContext(founderA);
+        expect(await tx.expectError(CORRECT, [task, JSON.stringify(steps)])).toEqual({
+          code: '23514',
+          message: 'A person routes a request to an agent',
+        });
+      }
+      expect(await state()).toEqual(before);
+      // Who may not correct at all is told so first, whatever the steps say.
+      await tx.setContext(employeeA);
+      expect(
+        (await tx.expectError(CORRECT, [task, JSON.stringify([{ unit: 'A-KES', agent: null }])]))
+          .code,
+      ).toBe('42501');
+      // With an agent the same correction goes through.
+      await tx.setContext(founderA);
+      expect(
+        (
+          await one<{ round: number }>(tx, CORRECT, [
+            task,
+            JSON.stringify([{ unit: 'KOR', agent: 'KOR-1' }]),
+          ])
+        ).round,
+      ).toBe(2);
+    });
+  });
+
+  it('a step without an agent exists only as a returned step', async () => {
+    // The table itself refuses it, whoever writes: here the privileged role.
+    await inAdminTransaction(async (tx) => {
+      const insert = (status: string, agent: string | null): string =>
+        `insert into office.task_routings (company_id, task_id, round, seq, unit_code, agent_code,
+           status, routed_by_user_id)
+         values ('${ids.arma}', '${ids.requestA}', 9, 1, 'HAF', ${agent === null ? 'null' : `'${agent}'`},
+           '${status}', '${ids.founder}')`;
+      // The fixture request has a step of its own that is active.
+      for (const status of ['planned', 'done', 'replaced', 'cancelled']) {
+        const refused = await tx.expectError(insert(status, null));
+        expect(refused.code).toBe('23514');
+        expect(refused.message).toContain('agent_unless_returned');
+      }
+      await tx.exec(
+        `update office.task_routings set status = 'replaced' where task_id = '${ids.requestA}'`,
+      );
+      const active = await tx.expectError(insert('active', null));
+      expect([active.code, active.message.includes('agent_unless_returned')]).toEqual([
+        '23514',
+        true,
+      ]);
+      expect(await tx.exec(insert('returned', null))).toBe(1);
+      for (const status of ['planned', 'active', 'done', 'replaced', 'cancelled']) {
+        const moved = await tx.expectError(
+          `update office.task_routings set status = '${status}'
+           where task_id = '${ids.requestA}' and round = 9`,
+        );
+        expect([status, moved.code]).toEqual([status, '23514']);
+      }
+      expect((await tx.expectError(insert('parked', 'HAF-1'))).code).toBe('23514');
     });
   });
 
@@ -1112,6 +1392,39 @@ describe.skipIf(noDatabase)('a request never leaves its company or its project',
           ])
         ).message,
       ).toBe('No such request');
+      // Nor can it return the other company's request to its requester: the same refusal for a
+      // routing without an agent, and nothing of the request moves.
+      expect(
+        await tx.expectError(ROUTE, [
+          ids.requestA,
+          JSON.stringify([{ unit: 'KOR', agent: null }]),
+          ids.runP,
+        ]),
+      ).toEqual({ code: 'P0002', message: 'No such request' });
+    });
+    await inAdminTransaction(async (tx) => {
+      expect(
+        await one(tx, 'select status, closed_by_user_id from office.tasks where id = $1', [
+          ids.requestA,
+        ]),
+      ).toEqual({ status: 'awaiting_approval', closed_by_user_id: null });
+      expect(
+        await tx.count('task_routings', `task_id = $1 and status = 'returned'`, [ids.requestA]),
+      ).toBe(0);
+    });
+    // Inside the company the return is the coordinator's alone, from its own running run: a run
+    // of the coordinator on another request of the same company cannot return this one.
+    await inWorkerTransaction(async (tx) => {
+      await tx.setContext(agentRun(ids.employeeA, 'KOR-1'));
+      expect(
+        (
+          await tx.expectError(ROUTE, [
+            ids.requestA,
+            JSON.stringify([{ unit: 'HAF', agent: null }]),
+            ids.runA,
+          ])
+        ).message,
+      ).toBe('Only the coordinator routes a request, from its own running run on it');
     });
   });
 

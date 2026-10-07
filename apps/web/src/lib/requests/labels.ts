@@ -44,7 +44,6 @@ const STAGE_FOR_ME: Partial<Record<RequestStage, string>> = {
 export const CAUSE_SHORT: Record<RequestCause, string> = {
   coordinator_closed: 'koordinasyon merkezi kapalı',
   no_routing: 'yönlendirilemedi',
-  no_agent: 'birimde açık ajan yok',
   agent_stopped: 'ajan durduruldu',
   no_submission: 'ajan sonuç sunmadı',
   run_failed: 'çalışma tamamlanamadı',
@@ -55,17 +54,21 @@ export const CAUSE_SHORT: Record<RequestCause, string> = {
   model_not_available: 'model bu hesapta yok',
   card_not_runnable: 'ajan kartı çalışmaya açık değil',
   second_change_request: 'ikinci düzeltme isteği',
+  returned_no_agent: 'birimde açık ajan yok',
   cancelled_by_requester: 'talep sahibi iptal etti',
   stopped: 'durduruldu',
   closed_after_delivery: 'sonuç iletildi, talep sahibi yanıtlamadı',
   rejected: 'sonuç reddedildi',
 };
 
-/** One sentence for the notice of a request that fell to a person. */
+/**
+ * One sentence for the notice of a request that fell to a person. The closing notice of a
+ * cancelled request builds its own sentence with the names of the record (who closed it, which
+ * unit had no agent); the entries of those causes are what is said when a name is missing.
+ */
 export const CAUSE_SENTENCE: Record<RequestCause, string> = {
   coordinator_closed: 'Koordinasyon merkezi bu şirkette açık olmadığı için talep yönlendirilemedi.',
   no_routing: 'Koordinasyon merkezi bu talebi bir birime yönlendiremedi.',
-  no_agent: 'Talep bu birime yönlendirildi ama birimde işi alabilecek açık ajan yok.',
   agent_stopped: 'Ajan durdurulduğu için iş yarıda kaldı.',
   no_submission: 'Ajan sonucu onaya sunmadan çalışmasını bitirdi.',
   run_failed: 'Ajanın çalışması bir hata nedeniyle tamamlanamadı.',
@@ -76,6 +79,7 @@ export const CAUSE_SENTENCE: Record<RequestCause, string> = {
   model_not_available: 'Ajanın kartında yazan model kullanılamıyor.',
   card_not_runnable: 'Bu ajanın kartı bu talep için çalışmaya açık değil.',
   second_change_request: 'İkinci düzeltme isteğinden sonra iş ajana dönmedi.',
+  returned_no_agent: 'Talep geri çevrildi: birimde bu işi alabilecek açık ajan yok.',
   cancelled_by_requester: 'Talep sahibi talebi iptal etti.',
   stopped: 'İş durduruldu.',
   closed_after_delivery: 'Sonuç onaylanıp iletildi; talep sahibi yanıtlamadan talep kapatıldı.',
@@ -83,16 +87,29 @@ export const CAUSE_SENTENCE: Record<RequestCause, string> = {
 };
 
 /**
+ * Why a request was returned to its requester (8 October decision 2), with the name of the unit
+ * the coordinator chose: a fixed sentence, never the coordinator's own reason. And what follows
+ * from it: the request is closed and is not opened again.
+ */
+export function returnedSentence(unitName: string | null): string {
+  return unitName === null
+    ? CAUSE_SENTENCE.returned_no_agent
+    : `Talep geri çevrildi: ${unitName} biriminde bu işi alabilecek açık ajan yok.`;
+}
+
+export const RETURNED_NEXT =
+  'Talep kapandı; bu iş için bir ajan açıldığında yeni bir talep gönderebilirsiniz.';
+
+/**
  * What the person who can act is told to do (the founder, the approver of the request): every way
- * a request stops has a way on, "Yönlendirmeyi düzelt", which gives the work to an agent again and
- * starts a new run. No sentence here promises that opening an agent revives a request by itself.
+ * an open request stops has a way on, "Yönlendirmeyi düzelt", which gives the work to an agent
+ * again and starts a new run. No sentence here promises that opening an agent revives a request by
+ * itself. A closed request (returned, cancelled, stopped, rejected) has no way on and no entry.
  */
 export const CAUSE_NEXT: Partial<Record<RequestCause, string>> = {
   coordinator_closed:
     'Koordinasyon merkezi bu talebi kendiliğinden yeniden ele almaz. "Yönlendirmeyi düzelt" ile talebi bir birime ve ajana kendiniz verebilirsiniz.',
   no_routing: '"Yönlendirmeyi düzelt" ile talebi bir birime ve ajana kendiniz verebilirsiniz.',
-  no_agent:
-    '"Yönlendirmeyi düzelt" ile talebi açık bir ajana verebilir ya da talebi kapatabilirsiniz.',
   agent_stopped:
     'Ajanı Ofis görünümünden yeniden açmak bu talebi kendiliğinden başlatmaz. Açtıktan sonra "Yönlendirmeyi düzelt" ile işi yeniden verin.',
   no_submission:
@@ -140,9 +157,14 @@ export function stageText(
   request: Pick<RequestSummary, 'stage' | 'cause' | 'waitingForMe' | 'delayed'>,
 ): string {
   const mine = request.waitingForMe ? STAGE_FOR_ME[request.stage] : undefined;
-  // A request stopped after its approved result was delivered is not a cancelled piece of work.
+  // A request stopped after its approved result was delivered is not a cancelled piece of work,
+  // and neither is one the routing returned to its requester: nobody cancelled it.
   const base =
-    request.cause === 'closed_after_delivery' ? 'Kapatıldı' : (mine ?? STAGE_LABEL[request.stage]);
+    request.cause === 'closed_after_delivery'
+      ? 'Kapatıldı'
+      : request.cause === 'returned_no_agent'
+        ? 'Geri çevrildi'
+        : (mine ?? STAGE_LABEL[request.stage]);
   const cause =
     request.cause !== null && (request.stage === 'fell_to_person' || request.stage === 'cancelled')
       ? `: ${CAUSE_SHORT[request.cause]}`

@@ -220,12 +220,22 @@ describe('Talepler', () => {
     });
     const fallen = requestDetail({
       id: '88888888-8888-4888-8888-888888888888',
-      title: 'KVKK metni',
-      status: 'open',
+      title: 'Kasım duyurusu',
+      status: 'in_progress',
       stage: 'fell_to_person',
-      cause: 'no_agent',
-      unit: { code: 'HUK', name: 'Hukuk ve Uyum' },
+      cause: 'no_submission',
       waitingForMe: true,
+    });
+    // Returned by the routing: the legal unit has no open agent (8 October decision 2).
+    const returned = requestDetail({
+      id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      title: 'KVKK metni',
+      status: 'cancelled',
+      stage: 'cancelled',
+      cause: 'returned_no_agent',
+      turn: { kind: 'none' },
+      waitingForMe: false,
+      unit: { code: 'HUK', name: 'Hukuk ve Uyum' },
     });
     const done = requestDetail({
       id: '99999999-9999-4999-8999-999999999999',
@@ -238,7 +248,10 @@ describe('Talepler', () => {
     const api = mockApi({
       'GET /session': sessionHandler(),
       'GET /requests': () =>
-        json({ requests: [working, waiting, done, fallen].map(summaryOf), truncated: false }),
+        json({
+          requests: [working, waiting, done, fallen, returned].map(summaryOf),
+          truncated: false,
+        }),
     });
     renderApp('/c/armadx/requests');
     const mine = await screen.findByRole('region', { name: /Sizden beklenenler/ });
@@ -248,14 +261,27 @@ describe('Talepler', () => {
         .map((row) => row.textContent),
     ).toEqual([
       expect.stringContaining('Onayınız bekleniyor'),
-      expect.stringContaining('Sizden bekleniyor: birimde açık ajan yok'),
+      expect.stringContaining('Sizden bekleniyor: ajan sonuç sunmadı'),
     ]);
     const running = screen.getByRole('region', { name: /Sürenler/ });
     expect(within(running).getByRole('listitem')).toHaveTextContent('Ajan çalışıyor');
     expect(within(running).getByRole('listitem')).toHaveTextContent('SOS-2');
+    const [finished, sentBack] = within(
+      screen.getByRole('region', { name: /Bitenler/ }),
+    ).getAllByRole('listitem');
+    expect(finished).toHaveTextContent('Tamamlandı');
+    // A returned request is closed and waits for nobody. The row names the stage in words; the
+    // status stays the existing "İptal" with its icon, and the link reads the same sentence.
+    if (!sentBack) throw new Error('No row for the returned request');
+    expect(sentBack).toHaveTextContent('Geri çevrildi: birimde açık ajan yok');
+    expect(sentBack).not.toHaveTextContent(/İptal edildi|Sizden bekleniyor|İnsana düştü/);
+    expect(within(sentBack).getByRole('img', { name: 'İptal' })).toBeVisible();
     expect(
-      within(screen.getByRole('region', { name: /Bitenler/ })).getByRole('listitem'),
-    ).toHaveTextContent('Tamamlandı');
+      within(sentBack).getByRole('link', {
+        name: 'KVKK metni, Geri çevrildi: birimde açık ajan yok',
+      }),
+    ).toHaveAttribute('href', '/c/armadx/requests/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+    expect(within(mine).queryByText(/KVKK metni/)).toBeNull();
     // A row is a link and nothing else: no control changes a status, a unit or an agent.
     const list = screen.getByRole('main');
     expect(within(list).queryAllByRole('combobox')).toEqual([]);
@@ -522,15 +548,130 @@ describe('the page of a request', () => {
     expect(screen.queryByText(/Yönlendirmeyi düzelt/)).toBeNull();
   });
 
-  it('a request that fell to a person is not a dead end: the founder corrects the routing', async () => {
-    // The founder's own example: a KVKK text, routed to the legal unit, which has no agent.
-    const fallen = requestDetail({
+  // The founder's own example: a KVKK text, routed to the legal unit, which has no agent. The
+  // request went back to its requester and was closed (8 October decision 2). The API gives the
+  // coordinator's own reason to nobody but the one who may decide.
+  const returnedRequest = (reason: string | null) =>
+    requestDetail({
       title: 'KVKK aydınlatma metni hazırlansın',
-      status: 'open',
+      text: 'KVKK aydınlatma metni hazırlansın',
+      status: 'cancelled',
+      stage: 'cancelled',
+      cause: 'returned_no_agent',
+      turn: { kind: 'none' },
+      waitingForMe: false,
+      unit: { code: 'HUK', name: 'Hukuk ve Uyum' },
+      agent: null,
+      approval: null,
+      closure: null,
+      journey: [
+        {
+          kind: 'run',
+          id: '44444444-4444-4444-8444-444444444444',
+          at: '2026-10-07T09:00:00.000Z',
+          agent: { code: 'KOR-1', name: 'Ofis Koordinatörü' },
+          status: 'completed',
+          finishedAt: '2026-10-07T09:00:04.000Z',
+          durationMs: 4000,
+          errorCode: null,
+          summary:
+            'Talep Hukuk ve Uyum birimine yönlendirildi; birimde işi alabilecek açık ajan olmadığı için talep sahibine geri çevrildi.',
+          agentText: null,
+          steps: [{ tool: 'route_task', status: 'succeeded' }],
+        },
+        {
+          kind: 'routing',
+          id: '66666666-6666-4666-8666-666666666666',
+          at: '2026-10-07T09:00:00.000Z',
+          round: 1,
+          unit: { code: 'HUK', name: 'Hukuk ve Uyum' },
+          agent: null,
+          approver: null,
+          by: null,
+          reason,
+        },
+      ],
+      actions: { cancel: false, stop: false, reroute: false },
+    });
+  const RETURNED_WHY =
+    'Talep geri çevrildi: Hukuk ve Uyum biriminde bu işi alabilecek açık ajan yok.';
+  const RETURNED_THEN =
+    'Talep kapandı; bu iş için bir ajan açıldığında yeni bir talep gönderebilirsiniz.';
+
+  it('a returned request tells its requester why with the unit’s name, that it is closed, and offers nothing', async () => {
+    const api = mockApi({
+      'GET /session': sessionHandler(EMPLOYEE_SESSION),
+      [`GET /requests/${REQUEST_ID}`]: () => json(returnedRequest(null)),
+    });
+    renderApp(`/c/armadx/requests/${REQUEST_ID}`);
+    // The two sentences of the notice: why, with the unit's name, and what follows from it.
+    expect(await screen.findByText(RETURNED_WHY)).toBeVisible();
+    expect(screen.getByText(RETURNED_THEN)).toBeVisible();
+    // The header names the stage in words; the status is the existing "İptal".
+    expect(stageLine()).toBe('Aşama: Geri çevrildi: birimde açık ajan yok Birim: Hukuk ve Uyum');
+    expect(
+      within(screen.getByRole('heading', { level: 2, name: /KVKK aydınlatma metni/ })).getByRole(
+        'img',
+        {
+          name: 'İptal',
+        },
+      ),
+    ).toBeVisible();
+    // Nothing is offered, and no sentence names a way on for this request.
+    for (const name of ['Yönlendirmeyi düzelt', 'İşi durdur', 'Talebi iptal et']) {
+      expect(screen.queryByRole('button', { name })).toBeNull();
+    }
+    const page = screen.getByRole('main');
+    expect(page).not.toHaveTextContent(/Yönlendirmeyi düzelt|kapatabilirsiniz|iptal etti|durdurdu/);
+    expect(page).not.toHaveTextContent(/Sizden bekleniyor|Bir kişi ilgilenecek|İnsana düştü/);
+    // The journey says the same in the code's own words (the run's summary and the step), names
+    // no approver for a step nobody works on, and shows no reason of the coordinator.
+    const journey = screen.getByRole('region', { name: 'Yolculuk' });
+    expect(journey).toHaveTextContent(
+      'Talep Hukuk ve Uyum birimine yönlendirildi; birimde işi alabilecek açık ajan olmadığı için talep sahibine geri çevrildi.',
+    );
+    expect(journey).toHaveTextContent(
+      'Koordinasyon merkezi talebi yönlendirdi: Hukuk ve Uyum; birimde bu işi alabilecek açık ajan yok.',
+    );
+    expect(journey).not.toHaveTextContent(/Onaylayıcı|gerekçesi/);
+    expect(api.unexpected).toEqual([]);
+  });
+
+  it('the founder reads the same notice on a returned request, with the coordinator’s reason, and is offered nothing either', async () => {
+    const reason = 'Hukuk ve uyum işi; birimde bunu yazabilecek ajan yok.';
+    const api = mockApi({
+      'GET /session': sessionHandler(),
+      [`GET /requests/${REQUEST_ID}`]: () => json(returnedRequest(reason)),
+    });
+    renderApp(`/c/armadx/requests/${REQUEST_ID}`);
+    expect(await screen.findByText(RETURNED_WHY)).toBeVisible();
+    expect(screen.getByText(RETURNED_THEN)).toBeVisible();
+    expect(stageLine()).toBe('Aşama: Geri çevrildi: birimde açık ajan yok Birim: Hukuk ve Uyum');
+    // The coordinator's own words stay in the journey, under the label that says whose they are.
+    const journey = screen.getByRole('region', { name: 'Yolculuk' });
+    expect(
+      within(journey).getByText('Koordinasyon merkezinin gerekçesi (yalnızca siz görürsünüz)'),
+    ).toBeVisible();
+    expect(within(journey).getByText(reason)).toBeVisible();
+    for (const name of ['Yönlendirmeyi düzelt', 'İşi durdur', 'Talebi iptal et']) {
+      expect(screen.queryByRole('button', { name })).toBeNull();
+    }
+    // No way on is named for a closed request, also not to the one who could open an agent.
+    expect(screen.getByRole('main')).not.toHaveTextContent(
+      /Yönlendirmeyi düzelt|Ofis görünümünden|kapatabilirsiniz|Sizden bekleniyor/,
+    );
+    expect(api.unexpected).toEqual([]);
+  });
+
+  it('a request that fell to a person is not a dead end: the founder corrects the routing', async () => {
+    // The unit agent ended its run without submitting; the founder gives the work to an agent.
+    const fallen = requestDetail({
+      status: 'in_progress',
       stage: 'fell_to_person',
-      cause: 'no_agent',
+      cause: 'no_submission',
       turn: { kind: 'founder' },
       waitingForMe: true,
+      // The request's own unit has no open agent any more.
       unit: { code: 'HUK', name: 'Hukuk ve Uyum' },
       agent: null,
       approval: null,
@@ -565,27 +706,36 @@ describe('the page of a request', () => {
     });
     renderApp(`/c/armadx/requests/${REQUEST_ID}`);
     expect(
-      await screen.findByText(
-        'Talep bu birime yönlendirildi ama birimde işi alabilecek açık ajan yok.',
-      ),
+      await screen.findByText('Ajan sonucu onaya sunmadan çalışmasını bitirdi.'),
     ).toBeVisible();
     // No sentence promises that opening an agent revives the request; the way on is named.
     expect(screen.queryByText(/Ofis görünümünden açabilirsiniz/)).toBeNull();
     expect(
-      screen.getByText(/"Yönlendirmeyi düzelt" ile talebi açık bir ajana verebilir/),
+      screen.getByText(/"Yönlendirmeyi düzelt" ile işi aynı ajana yeniden verebilir/),
     ).toBeVisible();
     const open = screen.getByRole('button', { name: 'Yönlendirmeyi düzelt' });
     await userEvent.click(open);
     const dialog = await screen.findByRole('dialog', { name: 'Yönlendirmeyi düzelt' });
     const unit = await within(dialog).findByRole('combobox', { name: 'Birim' });
+    // A unit without an open agent stays in the list, so that the founder sees why it cannot be
+    // chosen, and cannot be picked.
     await waitFor(() => {
       expect(
         within(unit).getByRole('option', { name: 'Hukuk ve Uyum (açık ajan yok)' }),
-      ).toBeVisible();
+      ).toBeDisabled();
     });
-    // The request's own unit is chosen to begin with; no approver can be chosen anywhere.
-    expect(unit).toHaveValue('HUK');
+    expect(within(unit).getByRole('option', { name: 'Sosyal Medya' })).toBeEnabled();
+    // The request's own unit has no open agent, so nothing is chosen to begin with; no approver
+    // can be chosen anywhere.
+    expect(unit).toHaveValue('');
     expect(within(dialog).getAllByRole('combobox')).toHaveLength(2);
+    const agent = within(dialog).getByRole('combobox', { name: 'Ajan' });
+    expect(agent).toBeDisabled();
+    // No way to leave the request at a unit without an agent.
+    expect(within(dialog).queryByRole('option', { name: /Ajan yok/ })).toBeNull();
+    expect(dialog).not.toHaveTextContent(/onaylayıcısına düşer/);
+    await userEvent.selectOptions(unit, 'HUK').catch(() => undefined);
+    expect(unit).toHaveValue('');
     await userEvent.keyboard('{Escape}');
     await waitFor(() => {
       expect(screen.queryByRole('dialog')).toBeNull();
@@ -596,22 +746,84 @@ describe('the page of a request', () => {
     await waitFor(() => {
       expect(within(again).getByRole('option', { name: 'Sosyal Medya' })).toBeVisible();
     });
+    const send = within(again).getByRole('button', { name: 'Yönlendir' });
+    // Nothing chosen: the form says which field is missing and sends nothing.
+    await userEvent.click(send);
+    expect(within(again).getByRole('alert')).toHaveTextContent('Bir birim seçin.');
     await userEvent.selectOptions(within(again).getByRole('combobox', { name: 'Birim' }), 'SOS');
-    await userEvent.selectOptions(within(again).getByRole('combobox', { name: 'Ajan' }), 'SOS-2');
+    // A unit alone is not enough: an agent must be chosen.
+    const agentBox = within(again).getByRole('combobox', { name: 'Ajan' });
+    expect(agentBox).toBeEnabled();
+    expect(agentBox).toHaveValue('');
+    expect(
+      within(agentBox)
+        .getAllByRole('option')
+        .map((option) => option.textContent),
+    ).toEqual(['Seçin', 'SOS-2 Sosyal İçerik Yazım Ajanı']);
+    await userEvent.click(send);
+    expect(within(again).getByRole('alert')).toHaveTextContent('Bir ajan seçin.');
+    expect(agentBox).toBeInvalid();
+    expect(agentBox).toHaveAccessibleDescription(
+      /Yalnızca bu şirkette açık olan ajanlar listelenir/,
+    );
+    expect(api.callsTo(`POST /requests/${REQUEST_ID}/routing`)).toHaveLength(0);
+    await userEvent.selectOptions(agentBox, 'SOS-2');
+    expect(within(again).queryByRole('alert')).toBeNull();
     await userEvent.type(
       within(again).getByRole('textbox', { name: 'Açıklama (isteğe bağlı)' }),
       'Taslağı sosyal içerik ajanı yazsın.',
     );
-    await userEvent.click(within(again).getByRole('button', { name: 'Yönlendir' }));
+    await userEvent.click(send);
     await waitFor(() => {
       expect(stageLine()).toContain('Aşama: Ajan çalışıyor Sıra: SOS-2 Birim: Sosyal Medya');
     });
+    expect(api.callsTo(`POST /requests/${REQUEST_ID}/routing`)).toHaveLength(1);
     expect(api.callsTo(`POST /requests/${REQUEST_ID}/routing`)[0]?.body).toEqual({
       unitCode: 'SOS',
       agentCode: 'SOS-2',
       note: 'Taslağı sosyal içerik ajanı yazsın.',
     });
     expect(screen.queryByRole('dialog')).toBeNull();
+    expect(api.unexpected).toEqual([]);
+  });
+
+  it('the correction dialog says so and offers no send when no unit has an open agent', async () => {
+    const fallen = requestDetail({
+      status: 'in_progress',
+      stage: 'fell_to_person',
+      cause: 'agent_stopped',
+      approval: null,
+      journey: [],
+    });
+    const api = mockApi({
+      'GET /session': sessionHandler(),
+      [`GET /requests/${REQUEST_ID}`]: () => json(fallen),
+      [`GET /requests/${REQUEST_ID}/routing-options`]: () =>
+        json({
+          units: [
+            { code: 'HUK', name: 'Hukuk ve Uyum', agents: [] },
+            { code: 'SOS', name: 'Sosyal Medya', agents: [] },
+          ],
+        }),
+    });
+    renderApp(`/c/armadx/requests/${REQUEST_ID}`);
+    const open = await screen.findByRole('button', { name: 'Yönlendirmeyi düzelt' });
+    await userEvent.click(open);
+    const dialog = await screen.findByRole('dialog', { name: 'Yönlendirmeyi düzelt' });
+    expect(
+      await within(dialog).findByText(
+        'Şu an hiçbir birimde açık ajan yok; talep bir ajana verilemez.',
+      ),
+    ).toBeVisible();
+    expect(within(dialog).queryByRole('button', { name: 'Yönlendir' })).toBeNull();
+    expect(within(dialog).queryAllByRole('combobox')).toEqual([]);
+    // The dialog closes as before and gives the focus back.
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Vazgeç' }));
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).toBeNull();
+      expect(open).toHaveFocus();
+    });
+    expect(api.callsTo(`POST /requests/${REQUEST_ID}/routing`)).toHaveLength(0);
     expect(api.unexpected).toEqual([]);
   });
 

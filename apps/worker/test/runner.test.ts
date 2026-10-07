@@ -216,19 +216,135 @@ describe.skipIf(noDatabase)('the coordinator’s run', () => {
     expect(parsed.find((unit) => unit.unit === 'HUK')?.agents).toEqual([]);
   });
 
-  it('names a unit without an agent: the request waits for a person and no job is sent', async () => {
-    const taskId = await openRequest(ids.founder, 'KVKK aydınlatma metni hazırlansın');
+  it('names a unit without an agent: the request is returned to its requester and closed, and no job is sent', async () => {
+    // 8 October decision 2, with the founder's own example: an employee asks for the KVKK texts,
+    // and the legal unit has no agent yet.
+    const taskId = await openRequest(ids.employee, 'KVKK aydınlatma metni hazırlansın');
     const model = new ScriptedModel([
       toolUse('route_task', { unit_code: 'HUK', agent_code: '', reason: 'Hukuk işi.' }),
     ]);
-    const { deps, jobs } = await runner(model);
-    const result = await runAgentJob(deps, job(taskId, 'KOR-1', ids.founder));
-    expect(result.outcome).toBe('routed');
-    expect((await runRow(result.runId)).summary).toBe(
-      'Talep Hukuk ve Uyum birimine yönlendirildi; birimde işi alabilecek açık ajan yok.',
-    );
+    const { deps, jobs, log } = await runner(model);
+    const result = await runAgentJob(deps, job(taskId, 'KOR-1', ids.employee));
+    // An outcome of its own: the logs and the tests tell a return from a routing.
+    expect(result).toMatchObject({ outcome: 'returned', modelCalls: 1 });
+    const row = await runRow(result.runId);
+    expect(row).toMatchObject({
+      status: 'completed',
+      error_code: null,
+      tool_call_count: 1,
+      // The sentence every reader of the request reads; the coordinator's reason is not in it.
+      summary:
+        'Talep Hukuk ve Uyum birimine yönlendirildi; birimde işi alabilecek açık ajan olmadığı için talep sahibine geri çevrildi.',
+      user_id: ids.employee,
+    });
+    expect(row.output).toMatchObject({ outcome: 'returned', model_calls: 1 });
+    expect(log.filter((entry) => entry.event === 'run_finished')).toEqual([
+      {
+        event: 'run_finished',
+        fields: { run: result.runId, status: 'completed', outcome: 'returned', code: null },
+      },
+    ]);
+    // No unit agent's job.
     expect(jobs.sent).toEqual([]);
-    expect(await statusOf(taskId)).toBe('open');
+    // The request is closed by the flow: nobody is the closer; the unit stays on it.
+    expect(
+      await admin(
+        `select status, closed_by_user_id, close_reason, unit_code, assignee_agent_code
+         from office.tasks where id = $1`,
+        [taskId],
+      ),
+    ).toEqual([
+      {
+        status: 'cancelled',
+        closed_by_user_id: null,
+        close_reason: null,
+        unit_code: 'HUK',
+        assignee_agent_code: null,
+      },
+    ]);
+    // The routing decision stays a record, with the reason, as a returned step.
+    expect(
+      await admin(
+        `select unit_code, agent_code, status, routed_by_agent_code, run_id, reason
+         from office.task_routings where task_id = $1`,
+        [taskId],
+      ),
+    ).toEqual([
+      {
+        unit_code: 'HUK',
+        agent_code: null,
+        status: 'returned',
+        routed_by_agent_code: 'KOR-1',
+        run_id: result.runId,
+        reason: 'Hukuk işi.',
+      },
+    ]);
+    expect(
+      await admin(
+        `select seq, tool_name, status, input, result from office.tool_calls where run_id = $1`,
+        [result.runId],
+      ),
+    ).toEqual([
+      {
+        seq: 1,
+        tool_name: 'route_task',
+        status: 'succeeded',
+        input: { unit: 'HUK', agent: null },
+        result: { ok: true },
+      },
+    ]);
+    // The trace of the request: routed, then returned, then the run's own rows.
+    const events = await admin<{ event: string }>(
+      `select event from office.audit_log
+       where record_type = 'task' and record_id = $1 and event not like 'task_%' order by id`,
+      [taskId],
+    );
+    expect(events.map((entry) => entry.event)).toEqual([
+      'request_created',
+      'run_started',
+      'request_routed',
+      'request_returned',
+      'tool_called',
+      'run_completed',
+    ]);
+    // A second job for it finds a closed request: no run, no model call.
+    const idle = new ScriptedModel([]);
+    const again = await runner(idle);
+    expect(await runAgentJob(again.deps, job(taskId, 'KOR-1', ids.employee))).toMatchObject({
+      outcome: 'request_closed',
+      runId: null,
+    });
+    expect(await runCount(taskId)).toBe(1);
+    expect(idle.requests).toHaveLength(0);
+  });
+
+  it('tells the model what an empty agent does: in the tool, the card and the skill', async () => {
+    const taskId = await openRequest(ids.founder, REQUEST);
+    const model = new ScriptedModel([toolUse('route_task', ROUTE_TO_SOS)]);
+    await runAgentJob((await runner(model)).deps, job(taskId, 'KOR-1', ids.founder));
+    const returned = 'nedeni yazılarak talep sahibine geri çevrilir ve kapanır';
+    const [tool] = model.requests[0]?.tools ?? [];
+    const definition = JSON.stringify(tool);
+    // The catalog's description and the field's own.
+    expect(definition).toContain(`talep o zaman ${returned}`);
+    expect(definition).toContain(
+      'birimde işi alabilecek açık ajan olmadığı yazılarak talep sahibine geri çevrilir ve kapanır',
+    );
+    const system = systemOf(model);
+    // The card's line under "Takıldığında" and step 3 of the routing skill.
+    expect(system).toContain(
+      `- Yönlendirdiği birimde işi alabilecek açık ajan yoksa ajanı boş bırakır; talep, ${returned}`,
+    );
+    expect(system).toContain(`ajanı boş bırak: talep, ${returned}.`);
+    // Who reads the coordinator's reason: the approver and the founder, not the requester.
+    expect(system).toContain(
+      'Gerekçeyi birimin onaylayıcısı ve kurucu okur; talep sahibine gösterilmez.',
+    );
+    for (const text of [definition, system]) {
+      expect(text).not.toMatch(
+        /onaylayıcısına düşer|Uygun ajan yoksa|talep sahibi ve onaylayıcı okur/,
+      );
+    }
   });
 
   it('a model that only answers is reminded once; its words are never the summary', async () => {

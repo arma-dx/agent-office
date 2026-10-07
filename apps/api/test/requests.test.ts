@@ -44,6 +44,8 @@ import { errorCode, freshPasskey, send, signStepUp } from './passkey-helpers.ts'
 const database = inject('database');
 const CARD_KOR = '00000000-0000-4000-8000-000000000901';
 const CARD_HAF = '00000000-0000-4000-8000-000000000902';
+// What the coordinator writes as the reason of its routing: a model's text nobody approved.
+const COORDINATOR_REASON = 'Kurumsal hafıza işi.';
 // An employee who holds the general approval right and is appointed nowhere. A person of this
 // file's own: other files change the approval right of the fixtures' people.
 const RIGHT_HOLDER = '00000000-0000-4000-8000-000000000903';
@@ -142,8 +144,16 @@ describe.skipIf(noDatabase)('requests', () => {
     return requestDetailSchema.parse(res.json());
   }
 
-  /** The coordinator's run: routes the request to HAF-2 and ends. */
-  async function route(taskId: string, requester: string, agent: string | null = 'HAF-2') {
+  /**
+   * The coordinator's run: routes the request to HAF-2 and ends. Without an agent the routing
+   * returns the request to its requester (8 October decision 2).
+   */
+  async function route(
+    taskId: string,
+    requester: string,
+    agent: string | null = 'HAF-2',
+    unit = 'HAF',
+  ) {
     await agentStep(
       workerPool,
       { companyId: ids.arma, userId: requester, agentCode: 'KOR-1' },
@@ -156,12 +166,12 @@ describe.skipIf(noDatabase)('requests', () => {
         const runId = run.rows[0]?.id;
         await client.query('select office.route_request($1, $2::jsonb, $3)', [
           taskId,
-          JSON.stringify([{ unit: 'HAF', agent, reason: 'Kurumsal hafıza işi.' }]),
+          JSON.stringify([{ unit, agent, reason: COORDINATOR_REASON }]),
           runId,
         ]);
         await client.query(
           `update office.runs set status = 'completed', finished_at = now(),
-             summary = 'Talep Kurumsal Hafıza birimine yönlendirildi.' where id = $1`,
+             summary = 'Talep birime yönlendirildi.' where id = $1`,
           [runId],
         );
       },
@@ -596,7 +606,7 @@ describe.skipIf(noDatabase)('requests', () => {
     expect((await read(founder, id)).actions).toEqual({ cancel: false, stop: true, reroute: true });
   });
 
-  it('a rejected result closes the request; a request without an agent falls to the founder', async () => {
+  it('a rejected result closes the request and tells the requester who, why and in which words', async () => {
     const rejected = await open(employee);
     await route(rejected.id, ids.employee);
     const approvalId = await submit(rejected.id, ids.employee);
@@ -623,27 +633,109 @@ describe.skipIf(noDatabase)('requests', () => {
       },
     });
     expect(JSON.stringify(forRequester)).not.toContain('Yeni ofisimiz açıldı.');
+  });
 
-    const unrouted = await open(employee, 'KVKK aydınlatma metni hazırlansın');
-    await route(unrouted.id, ids.employee, null);
-    expect(await read(employee, unrouted.id)).toMatchObject({
-      status: 'open',
-      stage: 'fell_to_person',
-      cause: 'no_agent',
-      turn: { kind: 'founder' },
+  it('a request routed to a unit with no open agent is returned and closed: everybody reads why, nobody can act', async () => {
+    // 8 October decision 2, with the founder's own example. OFY has no agent in the fixtures.
+    const jobs = server.jobs.sent.length;
+    const { id } = await open(employee, 'KVKK aydınlatma metni hazırlansın');
+    await route(id, ids.employee, null, 'OFY');
+    const returned = {
+      status: 'cancelled',
+      stage: 'cancelled',
+      cause: 'returned_no_agent',
+      delayed: false,
+      turn: { kind: 'none' },
       waitingForMe: false,
-      unit: { code: 'HAF' },
-      actions: { cancel: true, stop: false, reroute: false },
+      unit: { code: 'OFY', name: 'Ofis Yönetimi ve Denetim' },
+      requester: { userId: ids.employee },
+    };
+    const closed = {
+      ...returned,
+      agent: null,
+      approver: null,
+      // No person closed it and nobody wrote a reason: the cause and the unit say why.
+      closure: null,
+      approval: null,
+      result: null,
+      acceptance: null,
+      actions: { cancel: false, stop: false, reroute: false },
+    };
+    // The requester, a colleague who may read it, an employee with the approval right, the founder.
+    for (const session of [employee, colleague, rightHolder, founder]) {
+      expect(await read(session, id)).toMatchObject(closed);
+      const list = requestListSchema.parse((await get(session, '/api/requests')).json());
+      expect(list.requests.find((request) => request.id === id)).toMatchObject(returned);
+      const waiting = approvalDeskSchema.parse((await get(session, '/api/approvals')).json());
+      expect(
+        [...waiting.approvals, ...waiting.acceptances].map((card) => card.requestId),
+      ).not.toContain(id);
+    }
+    const mine = requestListSchema.parse((await get(employee, '/api/requests?mine=true')).json());
+    expect(mine.requests.find((request) => request.id === id)).toMatchObject(returned);
+
+    // The journey keeps the routing decision. The coordinator's own reason is a model's text
+    // nobody approved: the founder reads it, the requester and everybody else do not (the panel
+    // tells them why with a fixed sentence built from the cause and the unit's name).
+    const routing = async (session: string) =>
+      (await read(session, id)).journey.filter((item) => item.kind === 'routing');
+    const step = {
+      round: 1,
+      unit: { code: 'OFY', name: 'Ofis Yönetimi ve Denetim' },
+      agent: null,
+      by: null,
+    };
+    expect(await routing(founder)).toMatchObject([{ ...step, reason: COORDINATOR_REASON }]);
+    for (const session of [employee, colleague, rightHolder]) {
+      expect(await routing(session)).toMatchObject([{ ...step, reason: null }]);
+      expect(JSON.stringify(await read(session, id))).not.toContain(COORDINATOR_REASON);
+    }
+
+    // Nothing is left to do with it, for anybody: it is closed.
+    const url = `/api/requests/${id}`;
+    for (const session of [employee, founder]) {
+      const rerouted = await post(session, `${url}/routing`, {
+        unitCode: 'HAF',
+        agentCode: 'HAF-2',
+      });
+      expect([rerouted.statusCode, errorCode(rerouted)]).toEqual([409, 'request_closed']);
+      const closedAgain = await post(session, `${url}/close`, { reason: 'Gerek kalmadı.' });
+      expect([closedAgain.statusCode, errorCode(closedAgain)]).toEqual([409, 'request_closed']);
+      const accepted = await post(session, `${url}/acceptance`, { decision: 'approved' });
+      expect([accepted.statusCode, errorCode(accepted)]).toEqual([409, 'approval_closed']);
+    }
+    expect(await read(employee, id)).toMatchObject(closed);
+    // Only the coordinator's job was ever sent for it.
+    expect(server.jobs.sent.slice(jobs)).toEqual([
+      { companyId: ids.arma, userId: ids.employee, taskId: id, agentCode: 'KOR-1' },
+    ]);
+    const [task] = await adminQuery(
+      `select status, closed_by_user_id, close_reason, unit_code, initial_unit_code,
+         assignee_agent_code from office.tasks where id = $1`,
+      [id],
+    );
+    expect(task).toEqual({
+      status: 'cancelled',
+      closed_by_user_id: null,
+      close_reason: null,
+      unit_code: 'OFY',
+      initial_unit_code: 'OFY',
+      assignee_agent_code: null,
     });
-    expect(await read(founder, unrouted.id)).toMatchObject({
-      waitingForMe: true,
-      actions: { cancel: false, stop: true, reroute: true },
+
+    // The same when the unit has an open agent whose work does not cover the request: the
+    // coordinator leaves the agent empty and the request is returned.
+    const other = await open(employee, 'Sözleşme taslağı hazırlansın');
+    await route(other.id, ids.employee, null);
+    expect(await read(employee, other.id)).toMatchObject({
+      ...closed,
+      unit: { code: 'HAF', name: 'Kurumsal Hafıza' },
     });
   });
 
   it('the founder corrects the routing; the agent starts in the requester’s name', async () => {
     const { id } = await open(employee, 'Geçen ayın toplantı notlarını özetle');
-    await route(id, ids.employee, null);
+    await route(id, ids.employee);
     const options = routingOptionsSchema.parse(
       (await get(founder, `/api/requests/${id}/routing-options`)).json(),
     );
@@ -668,24 +760,44 @@ describe.skipIf(noDatabase)('requests', () => {
     expect((await post(external, url, { unitCode: 'HAF', agentCode: 'HAF-2' })).statusCode).toBe(
       403,
     );
-    // A body that tries to appoint, the coordinator's own unit, a stopped agent, a foreign unit.
+    // A body that tries to appoint or to set a status, and a body without an agent: a person
+    // always names one (a request is not left at a unit that has nobody to do it).
     for (const body of [
       { unitCode: 'HAF', agentCode: 'HAF-2', approver: ids.employee },
       { unitCode: 'HAF', agentCode: 'HAF-2', status: 'done' },
       { unitCode: 'HAF' },
+      { unitCode: 'HAF', agentCode: null },
+      { unitCode: 'HAF', agentCode: '' },
+      { unitCode: 'A-KES', agentCode: null, note: 'Burada beklesin.' },
+      { unitCode: 'OFY', agentCode: null },
     ]) {
-      expect((await post(founder, url, body)).statusCode).toBe(400);
+      const res = await post(founder, url, body);
+      expect([res.statusCode, errorCode(res)]).toEqual([400, 'invalid_request']);
     }
+    // The coordinator's own unit, a stopped agent, a foreign unit, an agent without a switch, an
+    // agent of another unit.
     for (const body of [
       { unitCode: 'KOR', agentCode: 'KOR-1' },
       { unitCode: 'HAF', agentCode: 'HAF-1' },
-      { unitCode: 'P-IST', agentCode: null },
+      { unitCode: 'P-IST', agentCode: 'P-IST-1' },
       { unitCode: 'A-KES', agentCode: 'A-KES-2' },
+      { unitCode: 'OFY', agentCode: 'HAF-2' },
     ]) {
       const res = await post(founder, url, body);
       expect([res.statusCode, errorCode(res)]).toEqual([409, 'routing_not_possible']);
     }
+    // None of them moved the request or started anything.
     expect(server.jobs.sent).toHaveLength(before);
+    expect(await read(founder, id)).toMatchObject({
+      status: 'in_progress',
+      stage: 'working',
+      unit: { code: 'HAF' },
+      agent: { code: 'HAF-2' },
+      actions: { cancel: false, stop: true, reroute: true },
+    });
+    expect(
+      (await read(founder, id)).journey.filter((item) => item.kind === 'routing'),
+    ).toHaveLength(1);
 
     const corrected = await post(founder, url, {
       unitCode: 'HAF',
@@ -706,7 +818,7 @@ describe.skipIf(noDatabase)('requests', () => {
     // Everybody who reads the request reads who corrected it and that person's note.
     const journey = (await read(employee, id)).journey.filter((item) => item.kind === 'routing');
     expect(journey).toMatchObject([
-      { round: 1, agent: null, by: null, reason: null },
+      { round: 1, agent: { code: 'HAF-2' }, by: null, reason: null },
       {
         round: 2,
         agent: { code: 'HAF-2' },
@@ -719,16 +831,6 @@ describe.skipIf(noDatabase)('requests', () => {
       [id],
     );
     expect(task).toEqual({ routing_corrected: true, initial_unit_code: 'HAF' });
-    // A unit without an agent: the request waits with that unit's approver, and no job is sent.
-    const jobs = server.jobs.sent.length;
-    const parked = await post(founder, url, { unitCode: 'A-KES', agentCode: null });
-    expect(requestDetailSchema.parse(parked.json())).toMatchObject({
-      status: 'open',
-      stage: 'fell_to_person',
-      cause: 'no_agent',
-      unit: { code: 'A-KES' },
-    });
-    expect(server.jobs.sent).toHaveLength(jobs);
     // A closed request is not routed; a hidden one does not exist.
     await post(employee, `/api/requests/${id}/close`);
     const late = await post(founder, url, { unitCode: 'HAF', agentCode: 'HAF-2' });

@@ -10,6 +10,7 @@ import {
   createRequestSchema,
   deriveRequestTitle,
   deriveStage,
+  requestCauseSchema,
   type RequestFacts,
 } from '../src/requests.ts';
 
@@ -72,7 +73,7 @@ describe('the bodies a person sends', () => {
     expect(parse({ decision: 'rejected', reason: 'incomplete', note: 'x' })).toBe(false);
   });
 
-  it('a close may carry a reason; a correction names a unit and an agent or none, nothing else', () => {
+  it('a close may carry a reason; a correction names a unit and an agent, nothing else', () => {
     expect(closeRequestSchema.safeParse({}).success).toBe(true);
     expect(closeRequestSchema.safeParse({ reason: 'Yanlışlıkla iki kez gönderildi' }).success).toBe(
       true,
@@ -81,8 +82,12 @@ describe('the bodies a person sends', () => {
     expect(closeRequestSchema.safeParse({ status: 'cancelled' }).success).toBe(false);
     const parse = (body: unknown): boolean => correctRoutingSchema.safeParse(body).success;
     expect(parse({ unitCode: 'SOS', agentCode: 'SOS-2' })).toBe(true);
-    expect(parse({ unitCode: 'HUK', agentCode: null, note: 'Hukuk birimine ait' })).toBe(true);
+    expect(parse({ unitCode: 'SOS', agentCode: 'SOS-2', note: 'Bir taslak yazsın' })).toBe(true);
+    // A person always names an agent: a request is not left at a unit that has nobody to do it.
+    expect(parse({ unitCode: 'HUK', agentCode: null, note: 'Hukuk birimine ait' })).toBe(false);
+    expect(parse({ unitCode: 'HUK', agentCode: '' })).toBe(false);
     expect(parse({ unitCode: 'SOS' })).toBe(false);
+    expect(parse({ agentCode: 'SOS-2' })).toBe(false);
     for (const extra of [{ approver: id }, { status: 'done' }, { requester: id }]) {
       expect(parse({ unitCode: 'SOS', agentCode: 'SOS-2', ...extra })).toBe(false);
     }
@@ -97,6 +102,7 @@ describe('where a request is and whose turn it is', () => {
     createdAt: ago(10_000),
     closedBy: null,
     closedAfterDelivery: false,
+    returnedNoAgent: false,
     coordinatorEnabled: true,
     routed: false,
     step: null,
@@ -160,9 +166,6 @@ describe('where a request is and whose turn it is', () => {
     expect(of({ lastRun: run('SOS-2', 'running') }, routed)).toBe('working - agent on time');
     expect(of({ lastRun: run('SOS-2', 'running'), changesRequested: true }, routed)).toBe(
       'revising - agent on time',
-    );
-    expect(of({ step: { agentCode: null, agentEnabled: false } }, routed)).toBe(
-      'fell_to_person no_agent approver on time',
     );
     expect(of({ step: { agentCode: 'SOS-2', agentEnabled: false } }, routed)).toBe(
       'fell_to_person agent_stopped approver on time',
@@ -232,5 +235,54 @@ describe('where a request is and whose turn it is', () => {
     expect(of({ status: 'cancelled', closedBy: null }, routed)).toBe(
       'cancelled rejected none on time',
     );
+  });
+
+  it('a request returned for want of an open agent is closed, with that cause and nobody’s turn', () => {
+    // 8 October decision 2: the coordinator named the unit, no open agent of it could take the
+    // work, and the routing closed the request. No step is active and the coordinator's run is
+    // the last one.
+    const returned: RequestFacts = {
+      ...routed,
+      status: 'cancelled',
+      returnedNoAgent: true,
+      step: null,
+      awaitedSince: null,
+      lastRun: run('KOR-1', 'completed'),
+    };
+    expect(of({}, returned)).toBe('cancelled returned_no_agent none on time');
+    // Old, and never late: nothing is awaited on a closed request.
+    expect(
+      of(
+        { createdAt: ago(10 * RUN_GRACE_MS), lastRun: run('KOR-1', 'completed', null, 9e6) },
+        returned,
+      ),
+    ).toBe('cancelled returned_no_agent none on time');
+    // A person's own close is said as that person's.
+    expect(of({ closedBy: 'requester' }, returned)).toBe(
+      'cancelled cancelled_by_requester none on time',
+    );
+    expect(of({ closedBy: 'other' }, returned)).toBe('cancelled stopped none on time');
+    // Without the returned step a request nobody closed by hand was rejected.
+    expect(of({ returnedNoAgent: false }, returned)).toBe('cancelled rejected none on time');
+  });
+
+  it('no request waits for a person because a unit has no agent', () => {
+    // The cause of option a is gone: such a request is returned, never parked.
+    const causes: readonly string[] = requestCauseSchema.options;
+    expect(causes).not.toContain('no_agent');
+    expect(causes).toContain('returned_no_agent');
+    // Every way an open, routed request can fall to a person names another cause.
+    const fell = [
+      of({ step: null }, routed),
+      of({ step: { agentCode: 'SOS-2', agentEnabled: false } }, routed),
+      of({ lastRun: run('SOS-2', 'completed') }, routed),
+      of({ lastResult: { status: 'changes_requested', attempt: 2 } }, routed),
+    ];
+    expect(fell).toEqual([
+      'fell_to_person second_change_request approver on time',
+      'fell_to_person agent_stopped approver on time',
+      'fell_to_person no_submission approver on time',
+      'fell_to_person second_change_request approver on time',
+    ]);
   });
 });
