@@ -27,6 +27,10 @@ Henüz olmayanlar: veritabanı (göç dosyası yok), giriş, işlevli ekran (yal
 
 6 Ekim 2026: yeni kabuk kuruldu (0.3a) ve Ofis görünümünün ilk sürümü yapıldı (0.3b); sıradaki iş Görev kaydı ve pano (0.4). Ofis görünümünde açık kalan maddeler, yanlarında yazan işleri bekliyor.
 
+7 Ekim 2026: kurucu görev akışını düzeltti (`docs/kararlar/2026-10-07.md`, karar 1-12). 0.4 için hazırlanan elle iş takibi planı uygulanmaz. İki ayrı iş türü var: ajanların yürüttüğü **Talepler** ve insanların birbirine verdiği **Görevler**. Sıra değişti (karar 8): sıradaki iş talep akışının ince dilimidir (0.4); akışın ince bir hâli uçtan uca çalıştırılır ve ekranlar onunla birlikte kurulur. Eski 0.4'ün elle yürüyen kısmı Görevler'e (0.4b) taşındı.
+
+8 Ekim 2026: kurucu dilimin altı sorusunu yanıtladı (`docs/kararlar/2026-10-08.md`, karar 1-6): ajanlar herkesin talebi için çalışır; birimde açık ajan yoksa talep nedeniyle talep sahibine geri çevrilir ve kapanır; talep sahibi sonucu kabul etmezse iş aynı ajana bir kez döner; iki onay ayrı alınır; talep metnine kişisel veri ve müşteri bilgisi yazılabilir; dilimden sonra önce talep akışının kalanı (0.4a), sonra Görevler (0.4b) yapılır.
+
 ## Sprint 0
 
 ### 0.1 Arayüz temeli
@@ -281,32 +285,97 @@ Testler:
 - [x] Şirket ayrımı: öteki şirketin ajanı ve sayıları görünmez (birimler, ajanlar ve ajan düğmeleri için yazıldı, Kurucu alanı dahil; sayılar bağlandıkça onların testi eklenir)
 - [x] Yerleşim hesabı
 
-### 0.4 Görev kaydı ve pano (M2)
+### 0.4 Talep akışının ince dilimi (M2, M3, M4 ve M5'in ilk parçaları)
 
-Arayüz 0.3a'daki kabukta, Paperclip'in kalıplarıyla kurulur (5 Ekim, karar 7; `docs/paperclip-incelemesi.md` 13.3). Kapsam: 5 Ekim, karar 11; kurucu onayı bekliyor.
+7 Ekim, karar 1-8 ve 10-12; 8 Ekim, karar 1-5. Bir kişi panelde talebini yazar; koordinasyon merkezi (KOR-1) bir birime ve o birimin ajanına yönlendirir; ajan (ilk denemede SOS-2, karar 11) Claude API ile bir kez çalışır ve sonucunu birimin onaylayıcısına sunar; onaydan sonra talep sahibinin onayı alınır; talep tamamlanır. Durumları veritabanı yazar, kimse elle değiştirmez. Arayüz 0.3a'daki kabukta, Paperclip'in kalıplarıyla kurulur (5 Ekim, karar 7). Açık sorular ve sormadan yapılan varsayımlar `docs/SONRA.md` içinde, "Görev akışı (7 Ekim)" başlığında.
+
+Veri ve kurallar:
+
+- [ ] `tasks` tablosunda iki tür: `request` (talep) ve `task` (görev); talep açıldıktan sonra elle değişmez
+- [ ] Yönlendirme kaydı (birim, ajan, onaylayıcı, gerekçe); düzeltilebilir (PLAN M8)
+- [ ] Birim ve ajan onaylayıcısı tablosu; kimse atanmamışsa kurucu (karar 5)
+- [ ] Talep sahibinin onayı: ayrı kayıt, her işin sonunda (karar 6); onaylayıcı ile talep sahibi aynı kişi olsa da ayrı alınır (8 Ekim, karar 4)
+- [ ] Talep sahibi sonucu kabul etmezse işin aynı ajana bir kez dönmesi; ikincide kurucuya düşmesi (8 Ekim, karar 3)
+- [ ] Yönlendirilen birimde açık ajan yoksa talebin nedeniyle talep sahibine geri çevrilip kapanması (8 Ekim, karar 2)
+- [ ] Durumun kayıtları izlemesi: yönlendirme, çalışma, onay, talep sahibinin onayı, iptal ve durdurma
+- [ ] Talebin, yönlendirmenin ve onay kararlarının `audit_log`'a yazılması
+- [ ] Her yeni tablo ve yol için şirket ayrımı testi (kısıtlı rollerle)
+- [ ] Bir kişinin işlemlerinin (talep açma, onay, iptal, yönlendirmeyi düzeltme) yalnızca API rolüyle yapılabilmesi
+
+Sunucu:
+
+- [ ] Talep açma, listeleme ve ayrıntı uçları; koordinatörün işinin aynı işlemde kuyruğa konması (yalnızca kimlikler, kural 10)
+- [ ] Onay kararı ucu (onayla, düzeltme iste, reddet); önemli onayda passkey
+- [ ] Talep sahibinin onayı ucu
+- [ ] Talebi iptal etme ve işi durdurma; yönlendirmeyi düzeltme (karar 7)
+- [ ] Ajanı şirket için açma ve durdurma (durdurma düğmesi)
+- [ ] Arka plandaki yenileme isteğinin oturumun hareketsizlik süresini uzatmaması (inceleme 13.4; kural 3)
+
+Çalıştırıcı (1.1'in ilk parçası) ve Claude bağlantısı (0.6):
+
+- [ ] Kartların ve skill'lerin `card_versions` tablosuna, araç kataloğunun `tools` tablosuna senkronizasyonu
+- [ ] KOR-1 ve SOS-2 için ilk skill'ler (yalnızca yöntem; kurucunun belgeleri gelince genişler)
+- [ ] KOR-1 ve SOS-2'nin şirketteki herkesin talebi için çalışması (8 Ekim, karar 1)
+- [ ] Çalıştırıcı: bağlam, her adım kendi kısa işleminde, `runs` ve `audit_log` adım adım
+- [ ] İki araç: `route_task` (KOR-1) ve `submit_for_approval` (SOS-2); araç kapısı (Y1 kuralı)
+- [ ] İstem: talimat ve veri ayrı; talep metni işaretli veri bloğunda (kural 7)
+- [ ] Araç çağrısı ve süre sınırı; durdurma düğmesi; AI izni denetimi (kural 12)
+- [ ] Claude istemcisi tek dosyada; model adı ve fiyatı yapılandırmadan; maliyet kaydı
+- [ ] (Senden) Anthropic API anahtarı ve geliştirme için düşük harcama sınırı (karar 12)
+- [ ] Gerçek modelle tek deneme çağrısı
+
+Arayüz:
+
+- [ ] Kenar çubuğunda "Yeni talep" düğmesi ve "Talepler" satırı; "Görevler" ayrı satır (karar 9 ve 10)
+- [ ] Talep formu: tek alan, ne istendiği; kişisel veri ve müşteri bilgisi için uyarı yok (8 Ekim, karar 5)
+- [ ] Talepler listesi: aşama ve sıranın kimde olduğu
+- [ ] Talep sayfası: aşama, onay kartı, talep sahibinin onayı, sonuç, yolculuk
+- [ ] Onaylar ekranı ve kenar çubuğunda bekleyen sayısı
+- [ ] Ofis görünümünde ajanı açma ve durdurma
+- [ ] Listelerin ve talep sayfasının belirli aralıklarla yenilenmesi (5 Ekim, karar 11; kurucu onayı bekliyor)
+
+Testler:
+
+- [ ] Akış uçtan uca: talep, yönlendirme, ajan, onay, talep sahibinin onayı, tamamlandı (sahte modelle)
+- [ ] Talebin ve onaylanmamış ajan metninin yetkisi olmayana görünmemesi
+- [ ] Talimat gibi yazılmış talep metninin kuralları ve araçları değiştirememesi
+
+### 0.4a Talep akışının kalanı
+
+Dilimde bilerek olmayanlar. Dilimden hemen sonra yapılır (8 Ekim, karar 6).
+
+- [ ] Ajanın insana soru sorması ve "Yanıt bekliyor" durumu (karar 7: talep sahibi ajanın sorusunu yanıtlar)
+- [ ] Talebe yorum yazma (karar 7)
+- [ ] Birden çok ajanın sırayla çalışması (karar 1)
+- [ ] Proje içinde talep; talep formunda proje ve son tarih
+- [ ] Talep formunda ek (Karar: M13)
+- [ ] Talep formunda yarım kalan metnin saklanması (Karar: U13)
+- [ ] Bildirimler ve Bugün listesi
+- [ ] Ofis görünümünde canlı durumlar
+- [ ] "Her yerde durdur": ajanı iki şirkette birden durdurma
+
+### 0.4b Görevler: ekip içi görevler (M2)
+
+7 Ekim, karar 9: şirketin iş takibinde Jira yerine paneldeki görev bölümü kullanılabilir; insanlara da görev atanır. Taleplerden ayrı tutulur: iki ayrı tür gibi görünürler. Talep akışının kalanından (0.4a) sonra yapılır (8 Ekim, karar 6). Arayüz Paperclip'in kalıplarıyla kurulur (5 Ekim, karar 7; `docs/paperclip-incelemesi.md` 13.3).
 
 Sunucu:
 
 - [ ] Görev oluşturma, listeleme, ayrıntı, güncelleme uçları
 - [ ] Yorum ekleme ve listeleme
-- [ ] Durum geçiş kuralları: insan hangi geçişi yapar, ajan hangisini (Karar: M16)
-- [ ] Atama: insana ya da ajana; atama değişikliği kuralı (Karar: M17)
+- [ ] Durum geçiş kuralları: kim hangi geçişi yapar (Karar: M16)
+- [ ] Atama: insana; atama değişikliği kuralı (Karar: M17)
 - [ ] Öncelik, son tarih, proje ve birim alanları
-- [ ] Her değişikliğin `audit_log`'a yazılması
-- [ ] Arka plandaki yenileme isteğinin oturumun hareketsizlik süresini uzatmaması (inceleme 13.4, öneri; kural 3)
 
 Arayüz:
 
-- [ ] Talep formu: metin, ek, şirket, son tarih; birimi kendin seçme seçeneği (Karar: X2-4)
-- [ ] Talep formunda yarım kalan metnin saklanması (Karar: U13)
-- [ ] Liste görünümü; şirket, birim, ajan ve durum filtresi
+- [ ] Görev formu
+- [ ] Liste görünümü; şirket, birim ve durum filtresi
 - [ ] Liste satırında durum simgesi ve sabit genişlikte zaman sütunu
 - [ ] Listede gruplama
-- [ ] Satır içinde durum ve atanan değiştirme (izin verilen geçişler Karar: M16; seçilebilecek ajanlar Karar: M29)
+- [ ] Satır içinde durum ve atanan değiştirme (izin verilen geçişler Karar: M16)
 - [ ] Tarayıcıda saklanan görünüm (Karar: U13)
-- [ ] Listelerin belirli aralıklarla yenilenmesi (5 Ekim, karar 11; kurucu onayı bekliyor)
 - [ ] Pano görünümü: duruma göre sütunlar, sürükleyip bırakma
-- [ ] Görev ayrıntısının temel hali, sohbet biçimli akış olarak: talep, durum, atanan, yorumlar, yazma kutusu, özellik paneli (5 Ekim, karar 11; kurucu onayı bekliyor)
+- [ ] Görev ayrıntısı: durum, atanan, yorumlar, yazma kutusu, özellik paneli
 - [ ] Boş ekran metinleri
 
 Testler:
@@ -314,7 +383,7 @@ Testler:
 - [ ] Durum geçiş kuralları
 - [ ] Görünürlük: proje kapsamı ve dış kişi
 - [ ] Filtreler
-- [ ] Arka plandaki yenileme isteği oturumun hareketsizlik süresini uzatmaz
+- [ ] Bir görevin talep uçlarından, bir talebin görev uçlarından okunamaması
 
 ### 0.5 Onay Masası (M3)
 
@@ -325,7 +394,7 @@ Sunucu:
 - [ ] Onay kaydı oluşturma ve kuyruk listeleme uçları
 - [ ] Karar uçları: onayla, düzeltme iste, reddet
 - [ ] Düzeltme ve rette gerekçe zorunluluğu; neden listesi (Karar: M25)
-- [ ] Yalnızca kurucunun karar verebilmesi
+- [ ] Kararı birimin onaylayıcısının ve kurucunun verebilmesi; kimse atanmamışken yalnızca kurucunun (7 Ekim, karar 5)
 - [ ] Önemli onaylarda passkey doğrulaması
 - [ ] Kararın bağlı görevin durumuna yansıması (Karar: M16)
 - [ ] Onaylanan çağrının onaydan sonra uygulanması için altyapı (Karar: M5)
@@ -354,12 +423,12 @@ Arayüz:
 Testler:
 
 - [ ] Onay akışı: dışa etkili hiçbir iş onaysız çıkamaz
-- [ ] Kurucu dışındaki rol karar veremez
+- [ ] Atanmamış kişi karar veremez; kimse atanmamışken kurucu dışındaki rol karar veremez
 - [ ] Gerekçesiz ret ve düzeltme reddedilir
 
 ### 0.6 Claude bağlantısı, çalışma kaydı ve maliyet (M4)
 
-- [ ] Anthropic API anahtarı (Senden: hesap ve anahtar)
+- [ ] Anthropic API anahtarı (Senden: hesap ve anahtar); geliştirmede de API anahtarı, düşük harcama sınırıyla (7 Ekim, karar 12)
 - [ ] Anahtarın kasada durması; yalnızca worker ortamında
 - [ ] Claude istemcisi: model adı koda gömülmez, karttan okunur
 - [ ] (Rapor) Model katmanının değiştirilebilir tasarlanması: sağlayıcıya özgü kodun tek yerde durması

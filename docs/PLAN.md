@@ -10,6 +10,8 @@ Kaynak: `docs/agent-office-tasarım-raporu.md` (Agentik Ofis Tasarım Raporu, 29
 | 31 Ekim | Pilotun 14 ajanı tamam | KOR-4, KOR-5, A-KES-2, P-IST-1, TAS-3, TAS-6 eklenir |
 | Kasım sonu | 4 haftalık ölçüm, Pilot hedefte kapısı | Yetki yükseltmeleri ve Aşama 2 kararı |
 
+7 Ekim kararı 8 iş sırasını değiştirdi: önce talep akışının ince bir hâli uçtan uca çalıştırılır (talep, yönlendirme, tek bir birim ajanı, onay, sonuç). Yukarıdaki tarihler ve aşağıdaki sprint tarihleri bu değişiklikten önce yazıldı; Dilimden sonra önce talep akışının kalanı, sonra Görevler yapılır (8 Ekim, karar 6). 10 Ekim açılışının yeni tarihi kurucunun kararını bekliyor (`docs/SONRA.md`, T12).
+
 Pilot üç şeyi kanıtlamak için seçildi: koordinasyon omurgasının çalıştığını, kurumsal hafızanın doğru yanıt verdiğini ve iki şirkette de ölçülebilir zaman kazancı sağlandığını.
 
 Kapsam dışı: dış müşterilere kurulum (Ürünleşme), WhatsApp ve Uyumsoft entegrasyonları, pilot dışındaki ajanlar, kurum içi model (yalnızca bir müşteri şart koşarsa), Jira gibi dış görev araçları (yalnızca bir müşteri projesi gerektirirse).
@@ -95,7 +97,7 @@ Rapordaki dört seviye. Ajanların çoğu Y1 ile başlar; "Y1, hedef Y2" yazan a
 - Yükseltme: ajan en az 50 işte ilk seferde yüzde 95 onay oranına ulaşır ve son 30 günde kritik hata yapmazsa bir üst seviyeye önerilir; kararı birim sorumlusu, başlangıçta kurucu verir. Kritik hata ajanı hemen bir seviye düşürür ve vaka incelenir. Eşikler pilotta gerçek veriyle ayarlanır.
 - Hiçbir koşulda ajana bırakılmayan işler (ajan bu işlerde en fazla Y1): para transferi, imza ve taahhüt, resmî kurumlara başvuru ve beyan, kişisel verinin silinmesi ya da üçüncü kişiye aktarılması.
 - Pilotta Y1 kapısı kodla uygulanır (1 Ekim ikinci tur, karar 4): Y1 ajan yalnızca korumalı alana (taslaklar) ve kendi görevinin durumuna yazar; paylaşılan kayda yazması (bildirim, paylaşılan not, başka bir görevi güncelleme) onaya düşer; görev açma öneri olarak gelir. Ajanın soruları ve eskalasyonları "insana sor" yoluyla ajanın sorumlusuna (kartta `owner`) ya da talep sahibine gider, onaya düşmez (2 Ekim, karar 1). Y2 ve Y3 kapıları karar bekliyor (`docs/SONRA.md`, M19).
-- Her ajanın bir insan sorumlusu var; sorumlu ajanı her an durdurabilir ya da işi devralabilir. Pilotta bütün ajanların sorumlusu ve bütün onaylar kurucuda; onay yetkisi zamanla ekibe devredilir.
+- Her ajanın bir insan sorumlusu var; sorumlu ajanı her an durdurabilir ya da işi devralabilir. Pilotta bütün ajanların sorumlusu kurucudadır. Onay, işi yapan birimin onaylayıcısındadır: şimdilik bütün birimlerin onaylayıcısı kurucudur; ileride birime, ayrıca tek bir ajana başka bir kişi atanabilir, talep sahibinin onayı da her işin sonunda alınır (7 Ekim, karar 5 ve 6).
 
 ## Ekranlar
 

@@ -335,6 +335,11 @@ Skill klasörü: `skills/<ad>/SKILL.md` ve yanında `templates/`, `examples/`, `
 - Tablolar: `sessions`, `invitations`, `login_events`; `user_emails.google_sub`, `memberships.invitation_id`
 - İşlevler: `complete_login`, `open_session`, `verify_session`, `close_session`, `close_all_sessions`, `set_last_company`, `record_login_event`, `is_active_founder`, `company_kind`
 
+## 7 Ekim ile eklenen adlar (karşılığı olan eski Türkçe ad yok)
+
+- İki iş türü (7 Ekim, karar 9 ve 10): "Talep" (ajanların yürüttüğü iş) → `request`; "Görev" (insanların birbirine verdiği iş) → `task`. Menüde "Talepler" ve "Görevler"; adresler `/requests` ve `/tasks`.
+- "Koordinasyon merkezi" → kodda `coordinator` (kart: `KOR-1`); "birimin onaylayıcısı" → `approver`; "talep sahibi" → `requester`; "yönlendirme" → `routing`; "talep sahibinin onayı" → `requester approval`.
+
 ## Notlar
 
 - Hata metinleri (veritabanı tetikleyicilerinin `raise exception` metinleri, geliştiriciye dönük iletiler) İngilizcedir. Kullanıcıya gösterilecek Türkçe metni API üretir; API hata metnine göre değil SQLSTATE koduna göre dallanır.

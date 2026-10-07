@@ -341,9 +341,33 @@ Kurucu 7 Ekim'de görev akışını anlattı (`docs/kararlar/2026-10-07.md`, kar
 
 - T1 ila T5 kurucunun 7 Ekim yanıtıyla kapandı (`docs/kararlar/2026-10-07.md`, karar 5-9): onaylayıcı şimdilik kurucu, birime ve ajana onaylayıcı atanabilir; talep sahibinin onayı her işin sonunda; elle işlemler sınırlı; sıra değişir ve akışın ince hâli uçtan uca kurulur; insan görevleri ayrı bir tür olarak tutulur.
 - T6 ve T7 kapandı (7 Ekim, karar 10 ve 11): adlar şimdilik "Talepler" ve "Görevler"; ilk ajan SOS-2.
-- T8: Yönlendirilen birimde açık ajan yoksa talep ne olur (birimin onaylayıcısına mı düşer)?
-- T9: Kart taslak durumundayken ajan açılabilir mi (M40 ile birlikte); ilk denemede ajanı kim, nereden açar?
-- T10: Talep sahibi sonucu onaylamazsa ne olur (iş ajana mı döner, kaç kez)? Birim onayındaki düzeltme döngüsü 2 Ekim karar 10'da tanımlı; talep sahibinin onayı için tanım yok.
+- T8, T9 ve T10 kurucunun 8 Ekim yanıtıyla kapandı (`docs/kararlar/2026-10-08.md`, karar 1-3): ajanlar ilk denemelerden başlayarak şirketteki herkesin talebi için çalışır; yönlendirilen birimde açık ajan yoksa talep, nedeni yazılarak talep sahibine geri çevrilir ve kapanır; talep sahibi "istediğim bu değil" derse iş açıklamasıyla aynı ajana bir kez geri döner, ikinci kez derse kurucuya düşer. M40'ın öteki yarısı (taslak durumundaki kartın anlamı) yerinde duruyor.
 - T11 kapandı (7 Ekim, karar 12): model çağrıları geliştirmede de canlıda da API anahtarıyla yapılır; abonelik hesabının limiti kullanılmaz. İleride yeniden bakılırsa: Anthropic belgesi, önceden onay alınmadıkça bir ürünün claude.ai girişini ya da limitlerini sunmasına izin vermiyor; kurucunun yalnızca kendi makinesinde kendi denemeleri için kendi hesabını kullanması bunun dışında.
-- Bu kararlarla kapanacak ya da değişecek eski sorular: M16 (durum geçişleri), M17 (atama değişikliği), M29 (kim hangi ajana iş verir), X2-4 (talep koordinatörden mi geçer).
+- T12: sıra kapandı (8 Ekim, karar 6): dilimden sonra önce talep akışının kalanı (KALAN-ISLER 0.4a), sonra Görevler (0.4b). Açık kalan: PLAN'daki "10 Ekim'de pilot 8 ajanla açılır" tarihi tutmuyor; yeni tarihi kurucu verir.
+- T13 ve T14 kapandı (8 Ekim, karar 4 ve 5): birimin onaylayıcısı ile talep sahibi aynı kişi olsa da iki onay ayrı alınır; talep metnine kişisel veri ve müşteri bilgisi yazılabilir, formda uyarı olmaz.
+- Bu kararlarla kapanacak ya da değişecek eski sorular: M16 (durum geçişleri), M17 (atama değişikliği), M29 (kim hangi ajana iş verir), X2-4 (talep koordinatörden mi geçer). M16 ve M17 artık yalnızca Görevler (0.4b) içindir; taleplerde durumu ve atamayı sistem yazar (karar 1 ve 2).
+
+Sormadan yapılan varsayımlar (ince dilimin planında; hepsi **kurucu onayı bekliyor**, hiçbiri karar değildir, her biri tek yerden değişir):
+
+- V-a: Talep gönderildikten sonra metni düzeltilemez; düzeltme yeni bir taleptir. Yarım kalan talep metni tarayıcı sekmesinde saklanır, sekme kapanınca ya da çıkışta silinir (U13 ile birlikte).
+- V-b: Talebi ve onaylanan sonucunu şirketteki kurucu ve çalışanlar görebilir (form bunu söyler); dış kişiler talep açamaz ve göremez; Kurucu alanında talep açılamaz. Öbür okuma: yalnızca talep sahibi, onaylayıcı ve kurucu görür.
+- V-c: Onaylanmamış hiçbir ajan metni onaylayıcı ve kurucudan başkasına görünmez: bekleyen ya da reddedilen sonuç, ajanın "yapamadım" açıklaması ve koordinasyon merkezinin yönlendirme gerekçesi. Talep sahibi birimi, ajanı ve aşamayı görür. Öbür okuma: yönlendirme gerekçesini talep sahibi de okur.
+- V-d: Bir birime kimse atanmamışken talebin sonucuna yalnızca kurucu karar verir; genel onay hakkı olan çalışan karar veremez (karar 5'in sözü). Öbür okuma: onay hakkı olan herkes.
+- V-e: "Reddet" talebi kapatır; talep sahibi kimin, hangi nedenle reddettiğini ve onaylayıcının açıklamasını görür, ajanın metnini görmez. Öbür okuma: reddedilen iş kapanmaz, onaylayıcıya düşer.
+- V-f: "İşi durdur" geri alınmaz ve bir neden ister; talep sahibi nedeni okur. Duraklatıp sürdürme yoktur.
+- V-g: Talep sahibinin onayını yalnızca talep sahibi verir; passkey istenmez, süre sınırı yoktur, neden listesinden seçmesi istenmez (yalnızca bir cümle yazar). Yanıt gelmezse talep "Onay bekliyor" kalır; kurucu kapatırsa "Kapatıldı: sonuç iletildi" görünür. Öbür okuma: kurucu onun yerine kabul edebilir, ya da N gün sonra kendiliğinden tamamlanır.
+- V-h: "Görevle ilgili öteki gerçek kişiler" (karar 3) ince dilimde şunlardır: birimin onaylayıcısı, kurucu ve talep sahibi. Talebe ayrıca kişi eklenemez. Öbür okuma: talebe kişi eklenebilir ve onay onların ekranına da düşer.
+- V-i: KOR-1 ve SOS-2 ilk denemede yalnızca yöntem anlatan kısa skill metinleriyle çalışır; marka dili ve onaylı örnek gönderiler kurucudan gelince eklenir, test seti ilk gerçek çalışmalardan sonra yazılır. Bu, PLAN'daki sıradan (önce kurucunun belgeleri, skill, test seti, deneme, etkin) yalnızca bu dilim için ayrılmadır.
+- V-j: `agents/common-rules.md` bütün ajanların ortak talimat metnidir (yalnızca bu dilimin değil) ve her kart sürümünün içinde saklanır.
+
+8 Ekim kararlarından türetilen yorumlar (kurucu bunları söylemedi; kararlar uygulanırken çıkarıldı, hepsi **kurucu onayı bekliyor**):
+
+- Y-a (karar 1): KOR-1 ve SOS-2 kartları "etkin" durumdadır. Kartın "deneme" durumu (yalnızca kurucunun talepleri için çalışır) kodda durur, onu kullanan kart yoktur; sonraki ajanlarda kullanılıp kullanılmayacağına kurucu karar verir. PLAN'daki sıra (kurucunun belgeleri, skill, test seti, deneme, etkin) bu iki ajan için atlanmış olur (V-i ile birlikte).
+- Y-b (karar 1): "şirketteki herkes" kurucu ve çalışanlardır; dış kişiler talep açamaz (V-b değişmedi).
+- Y-c (karar 2): geri çevrilen talep "İptal" durumunda kapanır. Talep sahibine neden, kodun yazdığı sabit bir cümleyle ve birimin adıyla söylenir ("... biriminde bu işi alabilecek açık ajan yok"); koordinasyon merkezinin kendi gerekçe metni talep sahibine gösterilmez (V-c). Kapanan talep yeniden açılmaz; talep sahibi yeni bir talep yazar.
+- Y-d (karar 2): birimde açık ajan olsa da ajanın işi bu talebi karşılamıyorsa talep aynı biçimde geri çevrilir.
+- Y-e (karar 2): bir kişi "Yönlendirmeyi düzelt" ile talebi ajansız bir birime veremez; açık bir ajan seçer ya da talebi nedenini yazarak kapatır.
+- Y-f (karar 2): karar yönlendirme anını söyler. Yönlendirmeden sonra ajan durdurulursa, çalışma başarısız olursa ya da koordinasyon merkezi hiçbir birim seçemezse talep geri çevrilmez; eskisi gibi insana düşer.
+- Y-g (karar 5): ortak kurallardaki "talepteki kişi bilgisini çıktına taşıma" cümlesi kaldırıldı, çünkü yazılmasına izin verilen bilgiyi ajanın kullanamaması işi bozar. Müşteri adı geçen talepte ajanın bunu onaylayana not düşmesi cümlesi kaldı (kural 12 için; talep sahibini uyarmaz). Kurucu `agents/common-rules.md` metnini okurken karar verir.
+- Y-h (karar 5): karar yalnızca kişinin forma elle yazdığı metin içindir. Bağlanan kaynaklar için kural (avukat görüşüne kadar kişisel veri içeren kaynak bağlanmaz) ve kural 12 değişmedi; serbest metinde yazılanı kod denetleyemez. Kişisel veri, avukat görüşü gelmeden yurt dışındaki modele gidebilir; bu sonuç kurucuya soruda yazılmıştı.
 
