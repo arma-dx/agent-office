@@ -1,4 +1,4 @@
-import { createPool } from '@agent-office/db';
+import { agentRunSender, createPool, createQueue, ensureAgentRunQueues } from '@agent-office/db';
 import { GoogleAuthProvider } from './auth/google.ts';
 import { assertRestrictedRole } from './db.ts';
 import { loadApiEnv, serverConfig } from './env.ts';
@@ -13,10 +13,19 @@ const pool = createPool(env.DATABASE_URL, 'agent-office-api', (error) => {
   app.log.error({ failure: loggableError(error) }, 'idle database connection failed');
 });
 const google = config.google ? new GoogleAuthProvider(config.google) : null;
+// The API only puts agent runs on the queue, inside the transaction of the request that calls for
+// them; the worker consumes them. Same restricted role as the pool.
+const queue = createQueue(
+  env.DATABASE_URL,
+  (error) => {
+    app.log.error({ failure: loggableError(error) }, 'queue connection failed');
+  },
+  'sender',
+);
 
 const app = buildServer({
   logLevel: env.LOG_LEVEL,
-  services: { config, pool, authProvider: google },
+  services: { config, pool, authProvider: google, jobs: agentRunSender(queue) },
 });
 
 if (google) {
@@ -33,6 +42,7 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
     app.log.info({ signal }, 'shutting down');
     app
       .close()
+      .then(() => queue.stop({ graceful: false }))
       .then(() => pool.end())
       .then(
         () => process.exit(0),
@@ -50,6 +60,17 @@ try {
   await assertRestrictedRole(pool);
 } catch (error) {
   app.log.fatal({ failure: loggableError(error) }, 'database role check failed; not starting');
+  await pool.end();
+  process.exit(1);
+}
+
+// The queue schema comes from the migrations; the two agent run queues are created by whichever of
+// the API and the worker starts first.
+try {
+  await queue.start();
+  await ensureAgentRunQueues(queue);
+} catch (error) {
+  app.log.fatal({ failure: loggableError(error) }, 'queue could not be started; not starting');
   await pool.end();
   process.exit(1);
 }

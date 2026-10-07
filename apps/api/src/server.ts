@@ -4,11 +4,13 @@ import type { HealthResponse } from '@agent-office/shared';
 import { RequestRunner } from './db.ts';
 import { errorBody, errorHandler } from './errors.ts';
 import { REDACTED, REDACT_PATHS, redact, stripQuery } from './log.ts';
+import { registerAgentRoutes } from './routes/agents.ts';
 import { registerAuthRoutes } from './routes/auth.ts';
 import { registerInvitationRoutes } from './routes/invitations.ts';
 import { registerMemberRoutes } from './routes/members.ts';
 import { registerOfficeRoutes } from './routes/office.ts';
 import { registerPasskeyRoutes } from './routes/passkeys.ts';
+import { registerRequestRoutes } from './routes/requests.ts';
 import { registerSessionRoutes } from './routes/session.ts';
 import { DEFAULT_RATE_LIMITS, registerRateLimit, sameOriginGuard } from './security.ts';
 import type { RouteDeps, ServerServices } from './services.ts';
@@ -86,6 +88,8 @@ export function buildServer(opts: BuildServerOptions = {}): FastifyInstance {
       registerMemberRoutes(api, deps);
       registerOfficeRoutes(api, deps);
       registerPasskeyRoutes(api, deps);
+      registerRequestRoutes(api, deps);
+      registerAgentRoutes(api, deps);
       done();
     });
   }

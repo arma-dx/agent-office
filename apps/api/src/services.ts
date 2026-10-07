@@ -1,3 +1,4 @@
+import type { AgentRunSender } from '@agent-office/db';
 import type { AuthProvider } from './auth/provider.ts';
 import type { Pool, RequestRunner } from './db.ts';
 import type { ServerConfig } from './env.ts';
@@ -11,6 +12,8 @@ export interface ServerServices {
   // null: Google sign-in is not configured.
   authProvider: AuthProvider | null;
   rateLimits?: RateLimits;
+  // Puts agent runs on the queue inside the request's transaction (rule 10: ids only).
+  jobs: AgentRunSender;
 }
 
 export interface RouteDeps extends ServerServices {

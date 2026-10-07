@@ -1,4 +1,9 @@
-import { createPool } from '@agent-office/db';
+import {
+  agentRunJobSchema,
+  createPool,
+  type AgentRunJob,
+  type AgentRunSender,
+} from '@agent-office/db';
 import type { FastifyInstance, LightMyRequestResponse } from 'fastify';
 import { inject } from 'vitest';
 import {
@@ -96,10 +101,26 @@ export function claimsOf(
   };
 }
 
+/**
+ * Stands in for the queue: checks the job as the real sender does, touches the request's own
+ * connection and remembers what was sent. The queue itself is tested in packages/db, and the whole
+ * flow with a real queue in apps/worker.
+ */
+export class RecordingJobs implements AgentRunSender {
+  readonly sent: AgentRunJob[] = [];
+
+  async send(client: Parameters<AgentRunSender['send']>[0], job: AgentRunJob): Promise<void> {
+    const data = agentRunJobSchema.parse(job);
+    await client.query('select 1');
+    this.sent.push(data);
+  }
+}
+
 export interface TestServer {
   app: FastifyInstance;
   google: FakeGoogle;
   config: ServerConfig;
+  jobs: RecordingJobs;
   close(): Promise<void>;
 }
 
@@ -113,6 +134,7 @@ export function createTestServer(
 ): TestServer {
   const pool: Pool = createPool(connectionString('app'), 'agent-office-api-test', () => {});
   const google = new FakeGoogle();
+  const jobs = new RecordingJobs();
   const config = options.config ?? testConfig();
   const app = buildServer({
     ...(options.logStream ? { logStream: options.logStream } : { logger: false }),
@@ -121,12 +143,14 @@ export function createTestServer(
       pool,
       authProvider: options.provider === undefined ? google : options.provider,
       rateLimits: options.rateLimits ?? RELAXED_LIMITS,
+      jobs,
     },
   });
   return {
     app,
     google,
     config,
+    jobs,
     close: async () => {
       await app.close();
       await pool.end();
