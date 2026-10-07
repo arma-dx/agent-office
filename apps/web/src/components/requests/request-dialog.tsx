@@ -189,9 +189,8 @@ function RequestDialog({
             </p>
           </div>
           <p id={noticeId} className="text-sm text-ink-secondary">
-            Talep metni yapay zekâ modeline gönderilir. Kişisel veri ve yapay zekâ kullanımına izin
-            vermeyen müşterilerin bilgisini yazmayın. Talebi ve onaylanan sonucunu şirketteki kurucu
-            ve çalışanlar görebilir.
+            Talep metni yapay zekâ modeline gönderilir. Talebi ve onaylanan sonucunu şirketteki
+            kurucu ve çalışanlar görebilir.
           </p>
           {send.isError ? (
             <p role="alert" className="text-sm text-destructive">

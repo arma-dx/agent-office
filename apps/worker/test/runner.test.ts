@@ -191,6 +191,12 @@ describe.skipIf(noDatabase)('the coordinator’s run', () => {
     expect(system).toContain('# Görev kartın: KOR-1 Ofis Koordinatörü');
     expect(system).toContain('# Talep yönlendirme');
     expect(system).not.toContain('İzmir');
+    // The common rules ask the agent to note a customer's name for the approver. They do not tell
+    // it to leave out what the requester wrote about a person: what may be written in a request
+    // (8 October decision 5), the agent must be able to use.
+    expect(system).toContain('## Müşteri bilgisi');
+    expect(system).toContain('o müşterinin yapay zekâ kullanımına izin verip vermediğine bakar');
+    expect(system).not.toMatch(/kişiye ait bilgi|çıktına taşıma/);
     const data = firstUserText(model);
     expect(data).toContain('<request>');
     expect(data).toContain('İzmir ofisimiz');

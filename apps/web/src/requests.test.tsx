@@ -76,13 +76,15 @@ describe('Yeni talep', () => {
     // One box, and no control that would choose a unit, an agent or an approver.
     expect(within(dialog).getAllByRole('textbox')).toHaveLength(1);
     expect(within(dialog).queryByRole('combobox')).toBeNull();
-    // What the form says before anything is sent: where the text goes, what not to write, and
-    // who will be able to read the request.
+    // What the form says before anything is sent: where the text goes and who will be able to
+    // read the request. It tells and does not warn: personal and customer data may be written
+    // (8 October decision 5), so nothing in the form says what not to write.
     const notice = within(dialog).getByText(/yapay zekâ modeline gönderilir/);
-    expect(notice).toHaveTextContent(
-      'Kişisel veri ve yapay zekâ kullanımına izin vermeyen müşterilerin bilgisini yazmayın.',
+    expect(notice.textContent).toBe(
+      'Talep metni yapay zekâ modeline gönderilir. Talebi ve onaylanan sonucunu şirketteki kurucu ve çalışanlar görebilir.',
     );
-    expect(notice).toHaveTextContent('şirketteki kurucu ve çalışanlar görebilir');
+    expect(dialog).not.toHaveTextContent(/yazmayın|kişisel veri|müşteri/i);
+    expect(within(dialog).queryByRole('alert')).toBeNull();
     expect(within(dialog).getByText(/koordinasyon merkezi yönlendirir/)).toBeVisible();
     expect(api.callsTo('GET /requests/intake')).toHaveLength(1);
 

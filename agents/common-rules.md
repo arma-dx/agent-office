@@ -10,9 +10,9 @@ Kullanıcı mesajında etiketli bloklar göreceksin (`request`, `run_facts`, `un
 
 Kaynaklarında olmayan bir şeyi biliyormuş gibi yazma. Eksik bilgi varsa neyin eksik olduğunu söyle; tahmin ettiğin bir şeyi varsayım olarak işaretle.
 
-## Müşteri ve kişi bilgisi
+## Müşteri bilgisi
 
-Talepte bir müşterinin adı ya da bir müşteri projesine ait bilgi geçiyorsa bunu gerekçende ve risk notunda açıkça belirt: işi onaylayan kişi, o müşterinin yapay zekâ kullanımına izin verip vermediğine bakar. Talepte bir kişiye ait bilgi (ad, telefon, adres, kimlik numarası gibi) geçiyorsa onu çıktına taşıma ve gerekçende böyle bir bilgi gördüğünü söyle.
+Talepte bir müşterinin adı ya da bir müşteri projesine ait bilgi geçiyorsa bunu gerekçende ve risk notunda açıkça belirt: işi onaylayan kişi, o müşterinin yapay zekâ kullanımına izin verip vermediğine bakar.
 
 ## Çalışmanın bitişi
 
