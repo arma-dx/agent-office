@@ -6,6 +6,7 @@ import {
   storedCardSchema,
   toolsFileSchema,
   type Card,
+  type ModelProfile,
   type StoredCard,
   type ToolsFile,
 } from '@agent-office/shared';
@@ -16,8 +17,8 @@ import type { Queryable } from './queryable.ts';
 
 /**
  * Card sync: writes the tool catalog (office.tools) and one card version per card
- * (office.card_versions, with the text of the card's skills) from the files under agents/ and
- * skills/, and points each agent at its current version. It follows the definitions sync, which
+ * (office.card_versions, with the common rules and the text of the card's skills) from the files
+ * under agents/ and skills/, and points each agent at its current version. It follows the definitions sync, which
  * writes the units and the agents themselves; without a card version no agent can run.
  *
  * A version is written only when the card or one of its skills changed, under the git commit that
@@ -30,11 +31,18 @@ import type { Queryable } from './queryable.ts';
  */
 
 const SKIP = new Set(['units.yaml', 'tools.yaml', 'models.yaml']);
+const RULES_FILE = 'common-rules.md';
+
+function sha256(text: string): string {
+  return createHash('sha256').update(text, 'utf8').digest('hex');
+}
 
 export interface CardFiles {
   tools: unknown;
   models: unknown;
   cards: { file: string; content: unknown }[];
+  // agents/common-rules.md: the rules every agent gets before its card.
+  rules: string;
   // The text of skills/<name>/SKILL.md, by skill name.
   skills: Map<string, string>;
 }
@@ -75,10 +83,17 @@ export async function readCardFiles(agentsDir: URL, skillsDir: URL): Promise<Car
       // A folder without a SKILL.md is not a skill yet.
     }
   }
+  let rules: string;
+  try {
+    rules = await readFile(new URL(RULES_FILE, agentsDir), 'utf8');
+  } catch {
+    throw new DefinitionsError('invalid_files', 'A card file could not be read', [RULES_FILE]);
+  }
   return {
     tools: await yaml(agentsDir, 'tools.yaml'),
     models: await yaml(agentsDir, 'models.yaml'),
     cards,
+    rules,
     skills,
   };
 }
@@ -132,6 +147,10 @@ export function parseCards(raw: CardFiles): CardSet {
   }
   const priced = new Set(models.success ? models.data.models.map((model) => model.id) : []);
 
+  const rulesBody = raw.rules.trim();
+  if (rulesBody === '') problems.push(`${RULES_FILE}: empty`);
+  const rules = { sha256: sha256(rulesBody), body: rulesBody };
+
   const versions: StoredCard[] = [];
   const withoutSkills: CardSet['withoutSkills'] = [];
   for (const { file, content } of raw.cards) {
@@ -161,14 +180,10 @@ export function parseCards(raw: CardFiles): CardSet {
       if ('problem' in result) {
         problems.push(result.problem);
       } else {
-        skills.push({
-          name,
-          sha256: createHash('sha256').update(result.body, 'utf8').digest('hex'),
-          body: result.body,
-        });
+        skills.push({ name, sha256: sha256(result.body), body: result.body });
       }
     }
-    versions.push({ card, skills });
+    versions.push({ card, rules, skills });
   }
   if (problems.length > 0) {
     throw new DefinitionsError('invalid_files', 'The card files are not valid', problems);
@@ -247,4 +262,20 @@ export async function syncCards(
     throw new DefinitionsError('invalid_files', 'The card versions could not be written', problems);
   }
   return { tools: set.tools.length, written, unchanged, withoutSkills: set.withoutSkills };
+}
+
+/**
+ * agents/models.yaml by model id: how each model is called and what it costs. Read by the worker
+ * once at start; the directory URL ends with a slash.
+ */
+export async function readModels(agentsDir: URL): Promise<Map<string, ModelProfile>> {
+  const file = modelsFileSchema.safeParse(await yaml(agentsDir, 'models.yaml'));
+  if (!file.success) {
+    throw new DefinitionsError(
+      'invalid_files',
+      'The model table is not valid',
+      problemsOf('models.yaml', file.error),
+    );
+  }
+  return new Map(file.data.models.map((model) => [model.id, model]));
 }

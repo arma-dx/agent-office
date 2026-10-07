@@ -5,6 +5,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./cards": "./src/cards.ts",
+    "./definitions": "./src/definitions.ts",
     "./test/database": "./test/database.ts"
   },
   "scripts": {

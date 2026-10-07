@@ -6,6 +6,7 @@ packages:
 # Her bağımlılığın monorepoda tek sürümü olur. `pnpm add` sürümü buraya, `catalog:` ifadesini package.json'a yazar.
 catalogMode: strict
 catalog:
+  '@anthropic-ai/sdk': 0.131.0
   '@eslint/js': 10.0.1
   '@fastify/cookie': 11.1.2
   '@fastify/rate-limit': 11.2.0

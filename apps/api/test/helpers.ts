@@ -130,6 +130,8 @@ export function createTestServer(
     rateLimits?: RateLimits;
     provider?: AuthProvider | null;
     logStream?: { write: (line: string) => void };
+    // The flow test of the worker passes a sender of the real queue.
+    jobs?: AgentRunSender;
   } = {},
 ): TestServer {
   const pool: Pool = createPool(connectionString('app'), 'agent-office-api-test', () => {});
@@ -143,7 +145,7 @@ export function createTestServer(
       pool,
       authProvider: options.provider === undefined ? google : options.provider,
       rateLimits: options.rateLimits ?? RELAXED_LIMITS,
-      jobs,
+      jobs: options.jobs ?? jobs,
     },
   });
   return {

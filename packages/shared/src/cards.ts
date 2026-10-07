@@ -153,12 +153,14 @@ export const toolsFileSchema = z.strictObject({
 export type ToolsFile = z.output<typeof toolsFileSchema>;
 
 /**
- * What a card version holds (card_versions.content): the card and the text of every skill it
- * names, so that a run points at exactly the instructions the model got and the worker reads no
- * file of the repository at run time.
+ * What a card version holds (card_versions.content): the common rules, the card and the text of
+ * every skill it names, so that a run points at exactly the instructions the model got and the
+ * worker reads no file of the repository at run time.
  */
 export const storedCardSchema = z.strictObject({
   card: cardSchema,
+  // agents/common-rules.md: the rules every agent gets before its card.
+  rules: z.strictObject({ sha256: z.string().regex(/^[0-9a-f]{64}$/), body: z.string().min(1) }),
   skills: z.array(
     z.strictObject({
       name: skillNameSchema,
