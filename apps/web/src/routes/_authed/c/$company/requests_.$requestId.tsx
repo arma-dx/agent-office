@@ -3,6 +3,7 @@ import { createFileRoute, Link } from '@tanstack/react-router';
 import { CLOSE_REASON_MAX } from '@agent-office/shared';
 import { useId, useState } from 'react';
 import { z } from 'zod';
+import { RequestComments } from '@/components/requests/request-comments';
 import {
   AcceptanceCardView,
   ApprovalCardView,
@@ -37,9 +38,9 @@ import { useCompany } from '@/lib/session';
 import { busyProps } from '@/lib/utils';
 
 /**
- * One request (flow A): where it is, whose turn it is, what waits for the reader, the result and
- * the journey. Everything on it comes from one answer of the API, already cut to what the reader
- * may read. The page offers only the acts 7 October decision 7 gives: the requester cancels; the
+ * One request (flow A): where it is, whose turn it is, what waits for the reader, the result, the
+ * journey and, under it, what people wrote to each other about the request. Everything on it
+ * comes from one answer of the API, already cut to what the reader may read. The page offers only the acts 7 October decision 7 gives: the requester cancels; the
  * approver of the request and the founder correct the routing and stop; the approver decides and
  * the requester accepts in their cards. Whoever stops somebody else's request says why.
  */
@@ -213,6 +214,10 @@ function RequestScreen() {
       </section>
 
       <Journey request={request} />
+      {/* The key is the request: the router keeps this screen mounted when only the id in the
+          address changes (the form of a new request leads from one request's page to another's),
+          and a comment typed for one request must not open in the box of the next one. */}
+      <RequestComments key={request.id} request={request} />
 
       <AlertDialog
         open={confirming}

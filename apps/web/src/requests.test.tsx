@@ -17,6 +17,7 @@ import {
 import {
   APPROVAL_CARD,
   APPROVAL_ID,
+  comment,
   DEFAULT_JOURNEY,
   EMPLOYEE,
   FOUNDER,
@@ -24,6 +25,7 @@ import {
   RESULT,
   requestDetail,
   summaryOf,
+  withComments,
 } from './test/request-fixtures.ts';
 import { ASSERTION, challengeId, signed, STEP_UP_OPTIONS, stepUpIssuer } from './test/passkeys.ts';
 import { currentLocation, renderApp } from './test/render-app.tsx';
@@ -2336,6 +2338,568 @@ describe('the page of a request', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+  // Comments (8 October decision 13): the requester, the approver of the request and the founder
+  // write, everybody who reads the request reads, no agent does. A comment changes nothing of the
+  // request. What is being typed is the person's: no refresh and no other page takes it.
+  describe('Yorumlar', () => {
+    const GET = `GET /requests/${REQUEST_ID}`;
+    const POST = `POST /requests/${REQUEST_ID}/comments`;
+    const SENTENCE =
+      'Yorumları yalnızca insanlar okur: talebi görebilen herkes. Ajanlar yorumları görmez; yorum talebi ve işin gidişini değiştirmez.';
+    const WHO_MAY_WRITE =
+      'Bu talebe yalnızca talep sahibi, birimin onaylayıcısı ve kurucu yorum yazabilir.';
+    const RIGHT_GONE =
+      'Bu talebe artık yorum yazamazsınız. Yazdığınız metin aşağıda duruyor; gerekiyorsa kopyalayın.';
+    const QUESTION = comment();
+    const ANSWER = comment({
+      id: '77777777-7777-4777-8777-777777777772',
+      author: FOUNDER,
+      body: 'B daha kısa.\nA’yı sonra kullanırız.',
+      createdAt: '2026-10-07T10:30:00.000Z',
+    });
+    const draftOf = (requestId: string, userId: string = USER_ID) =>
+      draftKey(userId, ARMADX.companyId, `comment.${requestId}`);
+
+    function region(): HTMLElement {
+      return screen.getByRole('region', { name: /^Yorumlar/ });
+    }
+
+    function box(): HTMLTextAreaElement {
+      return within(region()).getByRole('textbox', { name: 'Yorum yaz' });
+    }
+
+    function listed(): string[] {
+      return within(region())
+        .queryAllByRole('listitem')
+        .map((item) => item.textContent);
+    }
+
+    /** Opens the page of the default request with these comments; the reader is the founder. */
+    async function openPage(
+      comments: ReturnType<typeof withComments>,
+      overrides: Parameters<typeof requestDetail>[0] = {},
+    ) {
+      const api = mockApi({
+        'GET /session': sessionHandler(),
+        [GET]: () => json(requestDetail({ comments, ...overrides })),
+      });
+      const app = renderApp(`/c/armadx/requests/${REQUEST_ID}`);
+      await screen.findByRole('region', { name: /^Yorumlar/ });
+      return { api, ...app };
+    }
+
+    it('lists the comments under the journey, oldest first, with who and when', async () => {
+      const former = comment({
+        id: '77777777-7777-4777-8777-777777777773',
+        author: { userId: '33333333-3333-4333-8333-333333333334', name: null },
+        body: 'Ben de B derim.',
+        createdAt: '2026-10-07T11:00:00.000Z',
+      });
+      await openPage(withComments([QUESTION, ANSWER, former], false));
+      // Under the journey, as a section of its own: not rows of the journey.
+      const journey = screen.getByRole('region', { name: 'Yolculuk' });
+      expect(
+        journey.compareDocumentPosition(region()) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+      expect(journey).not.toHaveTextContent('Neden B seçildi?');
+      expect(within(region()).getByRole('heading', { name: 'Yorumlar 3' })).toBeVisible();
+
+      const items = within(region()).getAllByRole('listitem');
+      expect(items).toHaveLength(3);
+      const [first, second, third] = items;
+      if (!first || !second || !third) throw new Error('Three comments expected');
+      expect(first).toHaveTextContent('Ayşe Yılmaz');
+      expect(within(first).getByText('Neden B seçildi?')).toBeVisible();
+      expect(first.querySelector('time')).toHaveAttribute('datetime', QUESTION.createdAt);
+      expect(second).toHaveTextContent('Ömer Kadıoğlu');
+      expect(second.querySelector('time')).toHaveAttribute('datetime', ANSWER.createdAt);
+      // The text as it was written, with its line break.
+      const body = second.querySelector('p[dir="auto"]');
+      expect(body?.textContent).toBe('B daha kısa.\nA’yı sonra kullanırız.');
+      expect(body).toHaveClass('whitespace-pre-wrap');
+      // Somebody who is no longer a member of the company.
+      expect(third).toHaveTextContent('Eski üye');
+      expect(third).toHaveTextContent('Ben de B derim.');
+
+      cleanup();
+      await openPage(withComments([], false));
+      expect(within(region()).getByText('Henüz yorum yok.')).toBeVisible();
+      expect(within(region()).queryByRole('list')).toBeNull();
+      expect(within(region()).getByRole('heading', { name: 'Yorumlar' })).toBeVisible();
+
+      cleanup();
+      await openPage(withComments([QUESTION, ANSWER], false, true));
+      expect(
+        within(region()).getByText(
+          'En yeni 200 yorum gösteriliyor; daha eski yorumlar bu sayfada görünmez.',
+        ),
+      ).toBeVisible();
+      // No count that would be a wrong one.
+      expect(within(region()).getByRole('heading', { name: 'Yorumlar' })).toBeVisible();
+    });
+
+    it('a comment’s text is plain text', async () => {
+      const written = '<b>kalın</b> https://example.com <img src=x onerror=alert(1)> [bağlantı](x)';
+      await openPage(withComments([comment({ body: written })], false));
+      expect(within(region()).getByText(written)).toBeVisible();
+      expect(region().querySelector('b, img, a')).toBeNull();
+      expect(within(region()).queryByRole('link')).toBeNull();
+    });
+
+    it('tells a reader who may not write who can, and offers no box', async () => {
+      await openPage(withComments([QUESTION], false));
+      expect(within(region()).getByText(WHO_MAY_WRITE)).toBeVisible();
+      expect(within(region()).queryByRole('textbox')).toBeNull();
+      expect(within(region()).queryByRole('button')).toBeNull();
+      // The comments are read all the same.
+      expect(listed()).toHaveLength(1);
+    });
+
+    it('says next to the box that only people read comments', async () => {
+      await openPage(withComments([]));
+      expect(box()).toHaveAccessibleDescription(`${SENTENCE} Ctrl+Enter ile de gönderilir.`);
+      expect(within(region()).getByText(SENTENCE)).toBeVisible();
+      // Nothing suggests that an agent reads a comment, answers it or is told of it.
+      expect(region()).not.toHaveTextContent(
+        /ajan\S* (\S+ )?(okur|görür|yanıtlar|dikkate alır)|ajan\S* (iletilir|bildirilir|gider|ulaşır)/i,
+      );
+      expect(within(region()).queryByText(WHO_MAY_WRITE)).toBeNull();
+    });
+
+    it('sends a comment with an id, shows it only when the API has stored it, and empties the box', async () => {
+      const { api } = await openPage(withComments([QUESTION]));
+      let answer: (response: Response) => void = () => undefined;
+      api.handle(
+        POST,
+        () =>
+          new Promise<Response>((resolve) => {
+            answer = resolve;
+          }),
+      );
+      await userEvent.type(box(), 'B daha kısa.');
+      await userEvent.click(within(region()).getByRole('button', { name: 'Yorumu gönder' }));
+      // Not stored yet: nothing is shown as sent, and the text is still the person's.
+      await waitFor(() => {
+        expect(api.callsTo(POST)).toHaveLength(1);
+      });
+      expect(listed()).toHaveLength(1);
+      expect(box()).toHaveValue('B daha kısa.');
+      expect(box()).toHaveAttribute('readonly');
+      expect(box()).not.toBeDisabled();
+      const sending = within(region()).getByRole('button', { name: 'Gönderiliyor' });
+      expect(sending).toHaveAttribute('aria-disabled', 'true');
+      expect(sending).not.toBeDisabled();
+      // A second press while it is being sent sends nothing.
+      await userEvent.click(sending);
+      expect(api.callsTo(POST)).toHaveLength(1);
+
+      const [call] = api.callsTo(POST);
+      expect(call?.body).toEqual({
+        id: expect.stringMatching(/^[0-9a-f-]{36}$/) as string,
+        body: 'B daha kısa.',
+      });
+      expect(call?.headers.get(COMPANY_HEADER)).toBe(ARMADX.companyId);
+      // A person's act: it counts as activity (rule 3).
+      expect(call?.headers.get(BACKGROUND_HEADER)).toBeNull();
+      const sent = comment({
+        id: (call?.body as { id: string }).id,
+        author: FOUNDER,
+        body: 'B daha kısa.',
+        createdAt: '2026-10-07T10:30:00.000Z',
+      });
+      const before = api.calls.length;
+      answer(json(requestDetail({ comments: withComments([QUESTION, sent]) }), 201));
+      await waitFor(() => {
+        expect(listed()).toHaveLength(2);
+      });
+      expect(listed()[1]).toContain('B daha kısa.');
+      expect(box()).toHaveValue('');
+      expect(box()).not.toHaveAttribute('readonly');
+      expect(within(region()).getByRole('status')).toHaveTextContent('Yorumunuz eklendi.');
+      expect(within(region()).getByRole('heading', { name: 'Yorumlar 2' })).toBeVisible();
+      expect(within(region()).queryByRole('alert')).toBeNull();
+      // A comment settles nothing but the page: no list, no desk and no count is read again.
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(api.calls.slice(before)).toEqual([]);
+      expect(api.unexpected).toEqual([]);
+    });
+
+    it('Ctrl+Enter sends and Enter alone writes a new line', async () => {
+      const { api } = await openPage(withComments([]));
+      api.handle(POST, () => json(requestDetail({ comments: withComments([ANSWER]) }), 201));
+      // Nothing written: said at the box, nothing sent.
+      await userEvent.click(within(region()).getByRole('button', { name: 'Yorumu gönder' }));
+      expect(within(region()).getByRole('alert')).toHaveTextContent('Yorum yazın.');
+      expect(box()).toHaveAttribute('aria-invalid', 'true');
+      expect(box()).toHaveAccessibleDescription(expect.stringContaining('Yorum yazın.') as string);
+      await userEvent.type(box(), '   ');
+      await userEvent.keyboard('{Control>}{Enter}{/Control}');
+      expect(within(region()).getByRole('alert')).toHaveTextContent('Yorum yazın.');
+      // Too long: the limit is said, nothing is sent; exactly the limit has no problem.
+      fireEvent.change(box(), { target: { value: 'a'.repeat(10_001) } });
+      expect(within(region()).getByRole('alert')).toHaveTextContent(
+        'Yorum en çok 10.000 karakter olabilir.',
+      );
+      await userEvent.click(within(region()).getByRole('button', { name: 'Yorumu gönder' }));
+      fireEvent.change(box(), { target: { value: 'a'.repeat(10_000) } });
+      expect(within(region()).queryByRole('alert')).toBeNull();
+      expect(api.callsTo(POST)).toHaveLength(0);
+
+      await userEvent.clear(box());
+      await userEvent.type(box(), 'Birinci satır{Enter}İkinci satır');
+      expect(box()).toHaveValue('Birinci satır\nİkinci satır');
+      expect(api.callsTo(POST)).toHaveLength(0);
+      await userEvent.keyboard('{Control>}{Enter}{/Control}');
+      await waitFor(() => {
+        expect(listed()).toHaveLength(1);
+      });
+      expect(api.callsTo(POST).map((call) => (call.body as { body: string }).body)).toEqual([
+        'Birinci satır\nİkinci satır',
+      ]);
+      // Sent from the box: the focus is still in it.
+      expect(box()).toHaveFocus();
+    });
+
+    it('keeps the text and says why when the send fails; the next try carries the same id, a changed text a new one', async () => {
+      const { api } = await openPage(withComments([]));
+      const refusal = 'Beklenmeyen bir hata oluştu. Biraz sonra yeniden deneyin.';
+      api.handle(POST, () => apiError(500, 'internal_error', refusal));
+      await userEvent.type(box(), 'İlk deneme');
+      const send = () =>
+        userEvent.click(within(region()).getByRole('button', { name: 'Yorumu gönder' }));
+      await send();
+      expect(await within(region()).findByRole('alert')).toHaveTextContent(
+        `Yorum gönderilemedi. ${refusal}`,
+      );
+      expect(box()).toHaveValue('İlk deneme');
+      expect(box()).not.toHaveAttribute('readonly');
+      expect(listed()).toEqual([]);
+
+      // The answer of the first try may have been lost on the way: the same text goes with the
+      // same id, so the API stores it once.
+      await send();
+      await waitFor(() => {
+        expect(api.callsTo(POST)).toHaveLength(2);
+      });
+      const ids = () => api.callsTo(POST).map((call) => (call.body as { id: string }).id);
+      expect(ids()[1]).toBe(ids()[0]);
+
+      // A changed text is another comment; and the old reason is not said about it.
+      await userEvent.type(box(), ', düzeltildi');
+      expect(within(region()).queryByRole('alert')).toBeNull();
+      await send();
+      await waitFor(() => {
+        expect(api.callsTo(POST)).toHaveLength(3);
+      });
+      expect(ids()[2]).not.toBe(ids()[0]);
+      expect(api.callsTo(POST)[2]?.body).toMatchObject({ body: 'İlk deneme, düzeltildi' });
+      expect(await within(region()).findByRole('alert')).toHaveTextContent('Yorum gönderilemedi.');
+      expect(box()).toHaveValue('İlk deneme, düzeltildi');
+    });
+
+    it('keeps an unfinished comment in the tab, per request, until it is sent', async () => {
+      const OTHER_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+      const mine = requestDetail({ comments: withComments([]) });
+      const other = requestDetail({
+        id: OTHER_ID,
+        title: 'Kasım bülteni',
+        approval: null,
+        comments: withComments([]),
+      });
+      const api = mockApi({
+        'GET /session': sessionHandler(),
+        'GET /requests': () => json({ requests: [mine, other].map(summaryOf), truncated: false }),
+        [GET]: () => json(mine),
+        [`GET /requests/${OTHER_ID}`]: () => json(other),
+        [POST]: () => json(requestDetail({ comments: withComments([ANSWER]) }), 201),
+      });
+      renderApp(`/c/armadx/requests/${REQUEST_ID}`);
+      await screen.findByRole('region', { name: /^Yorumlar/ });
+      await userEvent.type(box(), 'Yarım kalan yorum');
+
+      const toList = async () => {
+        await userEvent.click(
+          within(screen.getByRole('navigation', { name: 'Ana menü' })).getByRole('link', {
+            name: 'Talepler',
+          }),
+        );
+        await screen.findByRole('region', { name: /Sizden beklenenler/ });
+      };
+      const toRequest = async (title: string) => {
+        await userEvent.click(await screen.findByRole('link', { name: new RegExp(`^${title}`) }));
+        await screen.findByRole('region', { name: /^Yorumlar/ });
+      };
+      // Left for the list and opened again: the text is back.
+      await toList();
+      await toRequest('LinkedIn için gönderi yaz');
+      expect(box()).toHaveValue('Yarım kalan yorum');
+      // It is a draft of this person, this company and this request, in the tab's storage only.
+      await waitFor(
+        () => {
+          expect(sessionStorage.getItem(draftOf(REQUEST_ID))).toBe(
+            JSON.stringify('Yarım kalan yorum'),
+          );
+        },
+        { timeout: 2000 },
+      );
+      expect(draftOf(REQUEST_ID)).toBe(
+        `agent-office.draft.${USER_ID}.${ARMADX.companyId}.comment.${REQUEST_ID}`,
+      );
+      const kept = Array.from({ length: localStorage.length }, (_, index) => {
+        const name = localStorage.key(index) ?? '';
+        return `${name}=${localStorage.getItem(name) ?? ''}`;
+      });
+      expect(kept.filter((entry) => /draft|Yarım kalan yorum/.test(entry))).toEqual([]);
+
+      // Another request has its own box.
+      await toList();
+      await toRequest('Kasım bülteni');
+      expect(box()).toHaveValue('');
+      expect(sessionStorage.getItem(draftOf(OTHER_ID))).toBeNull();
+
+      // Stored: the draft is gone with the text.
+      await toList();
+      await toRequest('LinkedIn için gönderi yaz');
+      expect(box()).toHaveValue('Yarım kalan yorum');
+      await userEvent.click(within(region()).getByRole('button', { name: 'Yorumu gönder' }));
+      await waitFor(() => {
+        expect(listed()).toHaveLength(1);
+      });
+      expect(box()).toHaveValue('');
+      expect(sessionStorage.getItem(draftOf(REQUEST_ID))).toBeNull();
+      expect(api.callsTo(POST)).toHaveLength(1);
+      // An emptied box leaves no draft behind either.
+      await userEvent.type(box(), 'x{Backspace}');
+      await new Promise((resolve) => setTimeout(resolve, 900));
+      expect(sessionStorage.getItem(draftOf(REQUEST_ID))).toBeNull();
+    });
+
+    it('a comment being typed does not follow the person to another request', async () => {
+      const NEW_ID = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+      const created = requestDetail({
+        id: NEW_ID,
+        title: 'Kasım bülteni',
+        status: 'open',
+        stage: 'routing',
+        turn: { kind: 'agent', code: 'KOR-1', name: 'Ofis Koordinatörü' },
+        waitingForMe: false,
+        unit: null,
+        agent: null,
+        journey: [],
+        approval: null,
+        requester: FOUNDER,
+        actions: { cancel: true, stop: false, reroute: false },
+        comments: withComments([]),
+      });
+      const api = mockApi({
+        'GET /session': sessionHandler(),
+        [GET]: () => json(requestDetail({ comments: withComments([]) })),
+        'POST /requests': () => json(created, 201),
+        [`GET /requests/${NEW_ID}`]: () => json(created),
+      });
+      const { router } = renderApp(`/c/armadx/requests/${REQUEST_ID}`);
+      await screen.findByRole('region', { name: /^Yorumlar/ });
+      await userEvent.type(box(), 'A talebi için yarım yorum');
+
+      // "Yeni talep" is opened on the page of request A and leads straight to the new request:
+      // the router keeps the screen mounted, only the id in the address changes.
+      await userEvent.click(sidebarButton());
+      const dialog = await screen.findByRole('dialog', { name: 'Yeni talep' });
+      await userEvent.type(within(dialog).getByRole('textbox'), 'Kasım bülteni');
+      await userEvent.click(within(dialog).getByRole('button', { name: 'Talebi gönder' }));
+      await waitFor(() => {
+        expect(currentLocation(router).pathname).toBe(`/c/armadx/requests/${NEW_ID}`);
+      });
+      expect(await screen.findByText('Yönlendiriliyor')).toBeVisible();
+      // The box of the new request is its own: nothing typed for A can be sent here.
+      expect(box()).toHaveValue('');
+      await userEvent.type(box(), 'Yeni talebin yorumu');
+      await waitFor(
+        () => {
+          expect(sessionStorage.getItem(draftOf(NEW_ID))).toBe(
+            JSON.stringify('Yeni talebin yorumu'),
+          );
+        },
+        { timeout: 2000 },
+      );
+      // Each draft under its own request; A's is still A's.
+      expect(sessionStorage.getItem(draftOf(REQUEST_ID))).toBe(
+        JSON.stringify('A talebi için yarım yorum'),
+      );
+      expect(api.callsTo(`POST /requests/${NEW_ID}/comments`)).toEqual([]);
+      expect(api.callsTo(POST)).toEqual([]);
+    });
+
+    it('a background refresh adds other people’s comments and never touches what is being typed', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+        // The requester reads; an agent works, so the page asks every five seconds.
+        const working = {
+          status: 'in_progress' as const,
+          stage: 'working' as const,
+          turn: { kind: 'agent' as const, code: 'SOS-2', name: 'Sosyal İçerik Yazım Ajanı' },
+          waitingForMe: false,
+          approval: null,
+          actions: { cancel: true, stop: false, reroute: false },
+        };
+        const api = mockApi({
+          'GET /session': sessionHandler(EMPLOYEE_SESSION),
+          [GET]: () => json(requestDetail({ ...working, comments: withComments([QUESTION]) })),
+        });
+        renderApp(`/c/armadx/requests/${REQUEST_ID}`);
+        await screen.findByRole('region', { name: /^Yorumlar/ });
+        await user.type(box(), 'Yarım bir cümle');
+        // The caret is inside the text, with a selection.
+        box().setSelectionRange(3, 8);
+        const typed = box();
+
+        // The founder answers meanwhile and the agent submits: the next refresh brings both.
+        api.handle(GET, () =>
+          json(
+            requestDetail({
+              stage: 'unit_approval',
+              turn: { kind: 'founder' },
+              waitingForMe: false,
+              approval: null,
+              actions: { cancel: true, stop: false, reroute: false },
+              comments: withComments([QUESTION, ANSWER]),
+            }),
+          ),
+        );
+        await vi.advanceTimersByTimeAsync(5_100);
+        await waitFor(() => {
+          expect(listed()).toHaveLength(2);
+        });
+        const intact = () => {
+          // The same box (never mounted anew), its text, its selection and the focus.
+          expect(box()).toBe(typed);
+          expect(typed).toHaveValue('Yarım bir cümle');
+          expect(typed).toHaveFocus();
+          expect([typed.selectionStart, typed.selectionEnd]).toEqual([3, 8]);
+        };
+        intact();
+        expect(stageLine()).toContain('Aşama: Birim onayında');
+        expect(within(region()).getByRole('status')).toHaveTextContent(
+          'Ömer Kadıoğlu yeni bir yorum yazdı.',
+        );
+        expect(within(region()).getByRole('heading', { name: 'Yorumlar 2' })).toBeVisible();
+
+        // The slower refresh of a request that waits for a person, and coming back to the tab.
+        const before = api.callsTo(GET).length;
+        await vi.advanceTimersByTimeAsync(31_000);
+        focusManager.setFocused(false);
+        focusManager.setFocused(true);
+        await vi.advanceTimersByTimeAsync(100);
+        await waitFor(() => {
+          expect(api.callsTo(GET).length).toBeGreaterThanOrEqual(before + 2);
+        });
+        intact();
+        expect(listed()).toHaveLength(2);
+        // The timer's requests are background requests: they do not extend the idle time.
+        expect(api.callsTo(GET)[1]?.headers.get(BACKGROUND_HEADER)).not.toBeNull();
+        expect(api.callsTo(GET)[before]?.headers.get(BACKGROUND_HEADER)).not.toBeNull();
+        expect(api.unexpected).toEqual([]);
+      } finally {
+        focusManager.setFocused(undefined);
+        vi.useRealTimers();
+      }
+    });
+
+    it('does not take the text from a person who loses the right to comment meanwhile', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+        const { api } = await openPage(withComments([QUESTION]));
+        await user.type(box(), 'Yarım kalan yorum');
+        // The routing is corrected to another unit meanwhile: this approver may not write any more.
+        api.handle(GET, () => json(requestDetail({ comments: withComments([QUESTION], false) })));
+        await vi.advanceTimersByTimeAsync(30_100);
+        expect(await within(region()).findByText(RIGHT_GONE)).toBeVisible();
+        // The text is still there to be copied, and cannot be sent or changed.
+        expect(box()).toHaveValue('Yarım kalan yorum');
+        expect(box()).toHaveAttribute('readonly');
+        expect(box()).toHaveAccessibleDescription(RIGHT_GONE);
+        expect(within(region()).queryByRole('button', { name: 'Yorumu gönder' })).toBeNull();
+        expect(within(region()).queryByText(WHO_MAY_WRITE)).toBeNull();
+        await user.type(box(), ' daha');
+        expect(box()).toHaveValue('Yarım kalan yorum');
+        expect(api.callsTo(POST)).toEqual([]);
+
+        await user.click(within(region()).getByRole('button', { name: 'Taslağı at' }));
+        expect(within(region()).getByText(WHO_MAY_WRITE)).toBeVisible();
+        expect(within(region()).queryByRole('textbox')).toBeNull();
+        expect(within(region()).queryByRole('button')).toBeNull();
+        expect(sessionStorage.getItem(draftOf(REQUEST_ID))).toBeNull();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('reads the page again when the API refuses the comment, and keeps the text', async () => {
+      const { api } = await openPage(withComments([QUESTION]));
+      await userEvent.type(box(), 'Yarım kalan yorum');
+      // The page on screen is older than the API's: the right went away meanwhile.
+      api.handle(GET, () => json(requestDetail({ comments: withComments([QUESTION], false) })));
+      api.handle(POST, () => apiError(403, 'comment_not_allowed', WHO_MAY_WRITE));
+      const before = api.callsTo(GET).length;
+      await userEvent.click(within(region()).getByRole('button', { name: 'Yorumu gönder' }));
+      expect(await within(region()).findByText(RIGHT_GONE)).toBeVisible();
+      expect(api.callsTo(GET)).toHaveLength(before + 1);
+      expect(box()).toHaveValue('Yarım kalan yorum');
+      expect(box()).toHaveAttribute('readonly');
+      expect(within(region()).queryByRole('button', { name: 'Yorumu gönder' })).toBeNull();
+      expect(listed()).toHaveLength(1);
+    });
+
+    it('a closed request takes comments like an open one', async () => {
+      const closed = {
+        status: 'cancelled' as const,
+        stage: 'cancelled' as const,
+        cause: 'rejected' as const,
+        turn: { kind: 'none' as const },
+        waitingForMe: false,
+        approval: null,
+        closure: { by: FOUNDER, reason: 'incomplete' as const, note: 'Açılış tarihi eksik.' },
+        actions: { cancel: false, stop: false, reroute: false },
+      };
+      const { api } = await openPage(withComments([QUESTION]), closed);
+      const why = comment({
+        id: '77777777-7777-4777-8777-777777777774',
+        author: FOUNDER,
+        body: 'Tarih olmadan yayınlayamayız.',
+        createdAt: '2026-10-07T12:00:00.000Z',
+      });
+      api.handle(POST, () =>
+        json(requestDetail({ ...closed, comments: withComments([QUESTION, why]) }), 201),
+      );
+      await userEvent.type(box(), 'Tarih olmadan yayınlayamayız.');
+      await userEvent.click(within(region()).getByRole('button', { name: 'Yorumu gönder' }));
+      await waitFor(() => {
+        expect(listed()).toHaveLength(2);
+      });
+      expect(api.callsTo(POST)).toHaveLength(1);
+      // The comment reopened nothing.
+      expect(stageLine()).toContain('Aşama: İptal edildi: sonuç reddedildi');
+    });
+
+    it('the comment section has no control that changes the request', async () => {
+      await openPage(withComments([QUESTION, ANSWER]));
+      expect(
+        within(region())
+          .getAllByRole('button')
+          .map((button) => button.textContent),
+      ).toEqual(['Yorumu gönder']);
+      expect(within(region()).getAllByRole('textbox')).toHaveLength(1);
+      for (const role of ['combobox', 'radio', 'checkbox', 'switch', 'link', 'menuitem']) {
+        expect(within(region()).queryAllByRole(role)).toEqual([]);
+      }
+      // A comment cannot be changed or removed: no row carries a control.
+      for (const item of within(region()).getAllByRole('listitem')) {
+        expect(item.querySelector('button, a, input')).toBeNull();
+      }
+    });
   });
 });
 

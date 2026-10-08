@@ -10,6 +10,7 @@ import {
   type ApprovalDesk,
   type CorrectRouting,
   type CreateRequest,
+  type CreateRequestComment,
   type OfficeAgent,
   type RequestDetail,
   type RequestIntake,
@@ -23,8 +24,9 @@ import { decisionDialogOpen } from './hold.ts';
 /**
  * Flow (A), "Talepler": the requests agents carry out. Every answer is validated with the shared
  * contract. Nothing here sets a status or an approver; the only things the panel sends are a
- * request text with its optional due day, a decision, a close and, for the founder and the approver
- * of the request, a correction of the routing.
+ * request text with its optional due day, a decision, a close, for the founder and the approver
+ * of the request a correction of the routing, and a comment, which changes nothing of the request.
+ * The comments of a request have no query and no key of their own: they are part of its page.
  *
  * Each query has a twin that sends the same request as a background request, for the periodic
  * refresh (lib/refresh.ts): such a request does not extend the session's idle time (rule 3).
@@ -129,6 +131,23 @@ export function createRequest(companyId: string, request: CreateRequest): Promis
   return apiRequest('/requests', {
     method: 'POST',
     body: request,
+    schema: requestDetailSchema,
+    companyId,
+  });
+}
+
+/**
+ * Adds a comment; the answer is the page of the request with the comment on it. The id is chosen
+ * by the box, so a try that is repeated adds nothing twice.
+ */
+export function addRequestComment(
+  companyId: string,
+  requestId: string,
+  comment: CreateRequestComment,
+): Promise<RequestDetail> {
+  return apiRequest(`/requests/${requestId}/comments`, {
+    method: 'POST',
+    body: comment,
     schema: requestDetailSchema,
     companyId,
   });

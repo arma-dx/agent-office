@@ -1,9 +1,11 @@
 import {
   approvalCardSchema,
+  requestCommentSchema,
   requestDetailSchema,
   todayNotificationSchema,
   todaySchema,
   type ApprovalCard,
+  type RequestComment,
   type RequestDetail,
   type RequestSummary,
   type Today,
@@ -118,6 +120,26 @@ export function requestDetail(overrides: Partial<RequestDetail> = {}): RequestDe
     serverTime: AT,
     ...overrides,
   });
+}
+
+/** A comment as the API answers it; the default is the requester's question. */
+export function comment(overrides: Partial<RequestComment> = {}): RequestComment {
+  return requestCommentSchema.parse({
+    id: '77777777-7777-4777-8777-777777777771',
+    author: EMPLOYEE,
+    body: 'Neden B seçildi?',
+    createdAt: AT,
+    ...overrides,
+  });
+}
+
+/** The `comments` field of a request's page; the default reader may write. */
+export function withComments(
+  items: RequestComment[],
+  mayWrite = true,
+  truncated = false,
+): RequestDetail['comments'] {
+  return { items, truncated, mayWrite };
 }
 
 /** The journey of the default request, for a test that changes one item of it. */
