@@ -266,7 +266,10 @@ async function detailOf(context: CompanyContext, row: RequestRow): Promise<Reque
     journey: toJourney(journeyRows, names),
     approval: pending?.may_decide === true ? toApprovalCard(pending, names) : null,
     result: approved ? toResult(approved, names) : null,
-    acceptance: waiting && isRequester ? { round: waiting.round } : null,
+    acceptance:
+      waiting && isRequester
+        ? { round: waiting.round, returnsToAgent: waiting.returns_to_agent }
+        : null,
     actions: {
       // The same rules as office.close_request and office.correct_routing, which are the ones
       // that decide: the requester cancels; the founder and the approver of the active step stop
@@ -579,6 +582,7 @@ export function registerRequestRoutes(
                   requestId: acceptance.task_id,
                   requestTitle: acceptance.request_title,
                   round: acceptance.round,
+                  returnsToAgent: acceptance.returns_to_agent,
                   openedAt: acceptance.created_at.toISOString(),
                   result: toResult(result, names),
                 },

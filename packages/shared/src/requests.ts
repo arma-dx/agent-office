@@ -404,11 +404,21 @@ export const requestResultSchema = z.object({
 });
 export type RequestResult = z.output<typeof requestResultSchema>;
 
+/**
+ * What "not what I asked for" does now (8 October decision 3): true, the work goes back to the
+ * same agent with the requester's words; false, the requester has said so once before on this
+ * request, and this time nothing starts by itself: the work falls to the founder. Counted by the
+ * server from the requester's earlier answers, as the database counts them; the round of the
+ * acceptance does not say it (a routing made while a result waited opens a new round too).
+ */
+const returnsToAgentSchema = z.boolean();
+
 /** A result of the reader's own request that waits for their acceptance. */
 export const acceptanceCardSchema = z.object({
   requestId: z.uuid(),
   requestTitle: z.string(),
   round: z.number().int().min(1),
+  returnsToAgent: returnsToAgentSchema,
   openedAt: instantSchema,
   result: requestResultSchema,
 });
@@ -515,7 +525,9 @@ export const requestDetailSchema = requestSummarySchema.extend({
   // The approved result; shown to everybody who may read the request once it is approved.
   result: requestResultSchema.nullable(),
   // The requester's approval waits, and the reader is the requester.
-  acceptance: z.object({ round: z.number().int().min(1) }).nullable(),
+  acceptance: z
+    .object({ round: z.number().int().min(1), returnsToAgent: returnsToAgentSchema })
+    .nullable(),
   // The acts the reader may use (7 October decision 7). The server refuses the rest anyway.
   actions: z.object({ cancel: z.boolean(), stop: z.boolean(), reroute: z.boolean() }),
   // The clock the stage and the durations were read on.

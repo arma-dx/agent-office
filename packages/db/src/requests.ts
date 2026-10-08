@@ -544,12 +544,19 @@ export interface AcceptanceRow {
   rejection_reason: string | null;
   decision_reason: string | null;
   approval_id: string;
+  // The requester has not asked for changes on this request before: the next "not what I asked
+  // for" goes back to the agent (the rule of office.flow_on_requester_approval, as a question).
+  returns_to_agent: boolean;
 }
 
 const ACCEPTANCE_SQL = `
   select q.id, q.task_id, t.title as request_title, q.requester_user_id, q.round, q.status,
          q.created_at, q.decided_at, q.invalidated_at, q.rejection_reason, q.decision_reason,
-         q.approval_id
+         q.approval_id,
+         not exists (
+           select 1 from office.requester_approvals p
+           where p.task_id = q.task_id and p.status = 'changes_requested'
+         ) as returns_to_agent
   from office.requester_approvals q
   join office.tasks t on t.id = q.task_id and t.kind = 'request'
   where q.company_id = office.ctx_company_id()`;

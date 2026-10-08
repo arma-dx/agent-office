@@ -453,7 +453,7 @@ describe('the page of a request', () => {
       waitingForMe: true,
       approval: null,
       result: RESULT,
-      acceptance: { round: 1 },
+      acceptance: { round: 1, returnsToAgent: true },
       actions: { cancel: true, stop: false, reroute: false },
     });
     const done = requestDetail({
@@ -507,7 +507,7 @@ describe('the page of a request', () => {
       waitingForMe: true,
       approval: null,
       result: RESULT,
-      acceptance: { round: 2 },
+      acceptance: { round: 2, returnsToAgent: false },
       actions: { cancel: true, stop: false, reroute: false },
     });
     const fallen = requestDetail({
@@ -1087,6 +1087,7 @@ describe('Onaylar', () => {
               requestId: '77777777-7777-4777-8777-777777777777',
               requestTitle: 'Kasım bülteni',
               round: 1,
+              returnsToAgent: true,
               openedAt: '2026-10-07T09:00:00.000Z',
               result: RESULT,
             },

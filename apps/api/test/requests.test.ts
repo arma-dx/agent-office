@@ -501,7 +501,7 @@ describe.skipIf(noDatabase)('requests', () => {
     const released = await read(employee, id);
     expect(released).toMatchObject({
       waitingForMe: true,
-      acceptance: { round: 1 },
+      acceptance: { round: 1, returnsToAgent: true },
       result: {
         approvalId,
         option: { code: 'B', text: 'Artık yeni ofisimizdeyiz.' },
@@ -509,7 +509,7 @@ describe.skipIf(noDatabase)('requests', () => {
       },
     });
     const mine = approvalDeskSchema.parse((await get(employee, '/api/approvals')).json());
-    expect(mine.acceptances).toMatchObject([{ requestId: id, round: 1 }]);
+    expect(mine.acceptances).toMatchObject([{ requestId: id, round: 1, returnsToAgent: true }]);
     // Only the requester accepts.
     const byFounder = await post(founder, `/api/requests/${id}/acceptance`, {
       decision: 'approved',
@@ -676,7 +676,13 @@ describe.skipIf(noDatabase)('requests', () => {
       decision: 'approved',
       selectedOption: 'A',
     });
-    expect((await read(employee, id)).acceptance).toEqual({ round: 2 });
+    // The requester said so once: the card says that this time the work does not go back.
+    expect((await read(employee, id)).acceptance).toEqual({ round: 2, returnsToAgent: false });
+    expect(
+      approvalDeskSchema
+        .parse((await get(employee, '/api/approvals')).json())
+        .acceptances.find((card) => card.requestId === id),
+    ).toMatchObject({ round: 2, returnsToAgent: false });
     const jobs = server.jobs.sent.length;
     const again = await post(employee, `/api/requests/${id}/acceptance`, {
       decision: 'changes_requested',
@@ -704,6 +710,64 @@ describe.skipIf(noDatabase)('requests', () => {
       turn: { kind: 'agent', code: 'HAF-2' },
     });
     expect((await read(employee, id)).stage).toBe('working');
+  });
+
+  it('whether "not what I asked for" goes back to the agent is counted from the requester’s answers, not from the round', async () => {
+    // 8 October decision 3. A routing made while the result waited for the requester closes that
+    // acceptance and the next result opens round 2; the requester has still said nothing.
+    const { id } = await open(employee);
+    await route(id, ids.employee);
+    await post(founder, `/api/approvals/${await submit(id, ids.employee)}/decision`, {
+      decision: 'approved',
+      selectedOption: 'A',
+    });
+    expect((await read(employee, id)).acceptance).toEqual({ round: 1, returnsToAgent: true });
+    const rerouted = await post(founder, `/api/requests/${id}/routing`, {
+      unitCode: 'HAF',
+      agentCode: 'HAF-2',
+      note: 'Daha kısa olsun.',
+    });
+    expect(rerouted.statusCode).toBe(200);
+    expect((await read(employee, id)).acceptance).toBeNull();
+    await post(founder, `/api/approvals/${await submit(id, ids.employee)}/decision`, {
+      decision: 'approved',
+      selectedOption: 'A',
+    });
+    expect((await read(employee, id)).acceptance).toEqual({ round: 2, returnsToAgent: true });
+    expect(
+      approvalDeskSchema
+        .parse((await get(employee, '/api/approvals')).json())
+        .acceptances.find((card) => card.requestId === id),
+    ).toMatchObject({ round: 2, returnsToAgent: true });
+    // And the server does what the card says: the first answer goes back to the agent.
+    const before = server.jobs.sent.length;
+    const first = await post(employee, `/api/requests/${id}/acceptance`, {
+      decision: 'changes_requested',
+      note: 'Tarih de yazsın.',
+    });
+    expect(requestDetailSchema.parse(first.json())).toMatchObject({
+      stage: 'revising',
+      turn: { kind: 'agent', code: 'HAF-2' },
+    });
+    expect(server.jobs.sent.slice(before)).toEqual([
+      { companyId: ids.arma, userId: ids.employee, taskId: id, agentCode: 'HAF-2' },
+    ]);
+    // After that one answer the next result is put before the requester as the last time.
+    await post(founder, `/api/approvals/${await submit(id, ids.employee)}/decision`, {
+      decision: 'approved',
+      selectedOption: 'A',
+    });
+    expect((await read(employee, id)).acceptance).toEqual({ round: 3, returnsToAgent: false });
+    const second = await post(employee, `/api/requests/${id}/acceptance`, {
+      decision: 'changes_requested',
+      note: 'Hâlâ olmadı.',
+    });
+    expect(requestDetailSchema.parse(second.json())).toMatchObject({
+      stage: 'fell_to_person',
+      cause: 'second_change_request',
+      turn: { kind: 'founder' },
+    });
+    expect(server.jobs.sent).toHaveLength(before + 1);
   });
 
   it('a rejected result closes the request and tells the requester who, why and in which words', async () => {
