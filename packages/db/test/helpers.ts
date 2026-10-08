@@ -155,3 +155,122 @@ export async function inAdminTransaction<T>(fn: (tx: Tx) => Promise<T>): Promise
     await pool.end();
   }
 }
+
+// Two transactions at once ----------------------------------------------------------------------------
+
+/**
+ * A transaction the test holds open on a connection of its own and ends itself, for the cases
+ * where two transactions meet (a result against a cancel, a decision against a close). What it
+ * commits stays in the test database: the test removes its requests again (removeRequests).
+ */
+export interface OpenTransaction {
+  tx: Tx;
+  // The server process of the connection (for untilBlocked).
+  pid: number;
+  commit(): Promise<void>;
+  rollback(): Promise<void>;
+}
+
+export async function openTransaction(
+  role: 'app' | 'worker',
+  context: ContextInput,
+): Promise<OpenTransaction> {
+  const client = await (role === 'app' ? appPool() : workerPool()).connect();
+  let ended = false;
+  // Ending twice does nothing, so a test can roll back in `finally` whatever happened before.
+  const end = async (statement: 'commit' | 'rollback'): Promise<void> => {
+    if (ended) {
+      return;
+    }
+    ended = true;
+    try {
+      await client.query(statement);
+      client.release();
+    } catch (error) {
+      client.release(error instanceof Error ? error : new Error(statement));
+      throw error;
+    }
+  };
+  try {
+    await client.query('begin');
+    const tx = new Tx(client);
+    await tx.setContext(context);
+    const [backend] = await tx.rows<{ pid: number }>('select pg_backend_pid() as pid');
+    return {
+      tx,
+      pid: backend?.pid ?? 0,
+      commit: () => end('commit'),
+      rollback: () => end('rollback'),
+    };
+  } catch (error) {
+    await rollbackAndRelease(client);
+    throw error;
+  }
+}
+
+/**
+ * Resolves when the statement that connection runs waits for a lock another transaction holds.
+ * The test starts a statement without awaiting it, waits here, and then lets the other
+ * transaction go on: the order of the two is then fixed, not left to timing.
+ */
+export async function untilBlocked(pid: number): Promise<void> {
+  const client = new pg.Client({ connectionString: connectionString('admin') });
+  await client.connect();
+  try {
+    for (let attempt = 0; attempt < 500; attempt += 1) {
+      const { rows } = await client.query(
+        `select 1 from pg_catalog.pg_stat_activity
+         where pid = $1 and wait_event_type = 'Lock' and state = 'active'`,
+        [pid],
+      );
+      if (rows.length > 0) {
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    throw new Error('The statement did not wait for a lock');
+  } finally {
+    await client.end();
+  }
+}
+
+/**
+ * Removes requests a test committed, with everything the flow wrote for them, and the audit rows
+ * written since `auditAfter` (the highest audit id before the test's first write). The flow lets
+ * nobody delete these, so the privileged role switches the triggers off for this one transaction;
+ * the other files read the tables as the fixtures left them.
+ */
+export async function removeRequests(
+  taskIds: readonly string[],
+  auditAfter: string,
+): Promise<void> {
+  const client = new pg.Client({ connectionString: connectionString('admin') });
+  await client.connect();
+  try {
+    await client.query('begin');
+    await client.query(`set local session_replication_role = 'replica'`);
+    for (const table of ['requester_approvals', 'approvals', 'task_routings']) {
+      await client.query(`delete from office.${table} where task_id = any ($1::uuid[])`, [taskIds]);
+    }
+    await client.query(
+      `delete from office.tool_calls where run_id in (
+         select id from office.runs where task_id = any ($1::uuid[])
+       )`,
+      [taskIds],
+    );
+    await client.query('delete from office.runs where task_id = any ($1::uuid[])', [taskIds]);
+    await client.query('delete from office.tasks where id = any ($1::uuid[])', [taskIds]);
+    await client.query('delete from office.audit_log where id > $1', [auditAfter]);
+    await client.query('commit');
+  } finally {
+    await client.end();
+  }
+}
+
+/** The highest audit id now (see removeRequests). */
+export async function auditMark(): Promise<string> {
+  const [row] = await adminQuery<{ id: string }>(
+    'select coalesce(max(id), 0)::text as id from office.audit_log',
+  );
+  return row?.id ?? '0';
+}

@@ -480,6 +480,54 @@ describe.skipIf(noDatabase)('routing a request', () => {
     });
   });
 
+  it('the coordinator does not route a request a person routed while its run was open', async () => {
+    // 7 October decision 7. The founder is offered the correction from the moment the request is
+    // opened; the coordinator's answer can arrive after it.
+    await inTransaction(async (tx) => {
+      await enableHaf(tx);
+      await tx.setContext(employeeA);
+      const task = await openRequest(tx);
+      await tx.setContext(agentRun(ids.employeeA, 'KOR-1'));
+      const run = await openRun(tx, task, 'KOR-1');
+      await tx.setContext(founderA);
+      const byPerson = JSON.stringify([{ unit: 'HAF', agent: 'HAF-1', reason: 'To memory' }]);
+      expect((await one<{ round: number }>(tx, CORRECT, [task, byPerson])).round).toBe(1);
+      const steps = (): Promise<unknown[]> =>
+        tx.rows(
+          `select round, unit_code, agent_code, status, routed_by_user_id, reason
+           from office.task_routings where task_id = $1 order by round, seq`,
+          [task],
+        );
+      const before = await steps();
+      expect(before).toEqual([
+        {
+          round: 1,
+          unit_code: 'HAF',
+          agent_code: 'HAF-1',
+          status: 'active',
+          routed_by_user_id: ids.founder,
+          reason: 'To memory',
+        },
+      ]);
+      // The coordinator's late answer, with an agent and without one (which would return and close
+      // the request the person has just given to an agent). 42501: the runner stops the run.
+      await tx.setContext(agentRun(ids.employeeA, 'KOR-1'));
+      for (const late of [HAF_STEP, JSON.stringify([{ unit: 'A-KES', agent: null }])]) {
+        expect(await tx.expectError(ROUTE, [task, late, run])).toEqual({
+          code: '42501',
+          message: 'The request was routed by somebody else while this run was open',
+        });
+      }
+      expect(await steps()).toEqual(before);
+      expect(await statusOf(tx, task)).toBe('in_progress');
+      expect(
+        await one(tx, 'select routing_corrected, unit_code from office.tasks where id = $1', [
+          task,
+        ]),
+      ).toEqual({ routing_corrected: false, unit_code: 'HAF' });
+    });
+  });
+
   it('a routing to a unit with no open agent returns the request to its requester and closes it', async () => {
     // 8 October decision 2. HAF-1 is stopped in Arma DX: no open agent of HAF can take the work.
     const reason = 'Belongs to memory; no agent there can write it';
