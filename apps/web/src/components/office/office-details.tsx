@@ -12,6 +12,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { userMessage } from '@/lib/api';
 import { useReturnFocus } from '@/lib/focus';
+import { useOfficeDialog } from '@/lib/office/hold';
 import { officeQueryOptions } from '@/lib/office/query';
 import { setAgentSwitch } from '@/lib/requests/query';
 import { useCompany } from '@/lib/session';
@@ -99,6 +100,8 @@ function AgentSwitchButton({ agent }: { agent: OfficeAgent }) {
   const [confirming, setConfirming] = useState(false);
   // The dialog is opened from state and has no trigger: the focus goes back to the button here.
   const focus = useReturnFocus();
+  // The office is not read again by itself under the open confirmation (lib/office/hold.ts).
+  useOfficeDialog(confirming);
   const next = isOpen(agent.state) ? 'stopped' : 'enabled';
   const change = useMutation({
     mutationFn: () => setAgentSwitch(company.companyId, agent.code, next),

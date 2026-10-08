@@ -11,8 +11,10 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { userMessage } from '@/lib/api';
 import { toOfficeUnits } from '@/lib/office/from-api';
 import { CENTRE_UNIT, selectionOf } from '@/lib/office/model';
-import { officeQueryOptions } from '@/lib/office/query';
+import { officeDialogOpen } from '@/lib/office/hold';
+import { fetchOffice, officeKey, officeQueryOptions } from '@/lib/office/query';
 import { useWideWindow } from '@/lib/office/use-wide-window';
+import { useBackgroundRefresh } from '@/lib/refresh';
 import { companyLabel, useCompany } from '@/lib/session';
 
 /**
@@ -42,6 +44,14 @@ function OfficeScreen() {
 
 function OfficeForCompany({ company }: { company: MembershipSummary }) {
   const query = useQuery(officeQueryOptions(company.companyId));
+  // The states of the desks and the numbers of the panel follow the work every half minute. The
+  // refresh is a background request and changes only what the answer says: the view, the selection
+  // and the keyboard focus stay where the person left them. Not under an open confirmation.
+  useBackgroundRefresh({
+    queryKey: officeKey(company.companyId),
+    fetch: (signal) => fetchOffice(company.companyId, { signal, background: true }),
+    paused: officeDialogOpen,
+  });
   // The selection is a mark on the scene and the content of the properties panel. The shell
   // remounts the page when the company changes, so it never crosses companies, and a reload clears
   // it.

@@ -1,11 +1,13 @@
 import {
+  BACKGROUND_HEADER,
   type CompanyAgentStatus,
   type MembershipSummary,
   type OfficeResponse,
 } from '@agent-office/shared';
+import { focusManager } from '@tanstack/react-query';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { OfficeUnit } from './lib/office/model.ts';
 import { WIDE_WINDOW_QUERY } from './lib/office/use-wide-window.ts';
 import { stubMatchMedia } from './test/match-media.ts';
@@ -184,5 +186,95 @@ describe('office page: live states', () => {
     await userEvent.click(await label('KOR-4'));
     expect(within(panel()).getByText('Bu ajan açık ve boşta.')).toBeVisible();
     expect(within(panel()).queryByRole('list', { name: 'Açık talepleri' })).toBeNull();
+  });
+
+  it('refreshes every half minute in the background, changes only what the answer says, and stops under an open confirmation', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      wide();
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      const api = mockApi({
+        'GET /session': sessionHandler(),
+        'GET /office': () =>
+          json(officeBody(ARMADX_OFFICE, OPEN, [work('SOS-2', { failed: one(R1) })])),
+      });
+      renderApp('/c/armadx/office');
+      await user.click(await label('SOS-2'));
+      const world = screen.getByTestId('office-world');
+      const view = world.getAttribute('transform');
+      const link = within(panel()).getByRole('link', { name: 'Hata: 1 talep, talebi aç' });
+      link.focus();
+
+      // The request was routed again: the error is gone and the agent runs two requests.
+      api.handle('GET /office', () =>
+        json(officeBody(ARMADX_OFFICE, OPEN, [work('SOS-2', { running: many(2) })])),
+      );
+      await vi.advanceTimersByTimeAsync(30_100);
+      await waitFor(() => {
+        expect(desk('SOS-2')).toHaveAttribute('data-state', 'running');
+      });
+      expect(api.callsTo('GET /office')).toHaveLength(2);
+      expect(api.callsTo('GET /office')[0]?.headers.get(BACKGROUND_HEADER)).toBeNull();
+      expect(api.callsTo('GET /office')[1]?.headers.get(BACKGROUND_HEADER)).not.toBeNull();
+      // The selection, the panel and the view stayed; the numbers follow.
+      expect(
+        screen.getByRole('button', { name: /^SOS-2 .*, Çalışıyor$/, pressed: true }),
+      ).toBeVisible();
+      expect(world.getAttribute('transform')).toBe(view);
+      expect(workRows()).toEqual(['Çalışıyor2 talep', 'Onay bekliyor0 talep', 'Hata0 talep']);
+      // The link that held the focus is gone: the focus is on the heading of the list, not lost.
+      expect(link).not.toBeInTheDocument();
+      expect(within(panel()).getByRole('heading', { name: 'Açık talepleri' })).toHaveFocus();
+
+      // Under an open confirmation nothing is read: what is confirmed must not change.
+      await user.click(within(panel()).getByRole('button', { name: 'Ajanı durdur' }));
+      await screen.findByRole('alertdialog', { name: 'SOS-2 bu şirkette durdurulsun mu?' });
+      await vi.advanceTimersByTimeAsync(61_000);
+      expect(api.callsTo('GET /office')).toHaveLength(2);
+      // Nor on coming back to the tab.
+      focusManager.setFocused(false);
+      focusManager.setFocused(true);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(api.callsTo('GET /office')).toHaveLength(2);
+      await user.click(screen.getByRole('button', { name: 'Vazgeç' }));
+      await waitFor(() => {
+        expect(screen.queryByRole('alertdialog')).toBeNull();
+      });
+      await vi.advanceTimersByTimeAsync(30_100);
+      await waitFor(() => {
+        expect(api.callsTo('GET /office')).toHaveLength(3);
+      });
+    } finally {
+      focusManager.setFocused(undefined);
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps the keyboard focus on a desk whose state changes by itself', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      wide();
+      const api = mockApi({
+        'GET /session': sessionHandler(),
+        'GET /office': () =>
+          json(officeBody(ARMADX_OFFICE, OPEN, [work('SOS-2', { failed: one(R1) })])),
+      });
+      renderApp('/c/armadx/office');
+      const button = await label('SOS-2');
+      button.focus();
+      expect(button).toHaveAccessibleName(/, Hata$/);
+      api.handle('GET /office', () =>
+        json(officeBody(ARMADX_OFFICE, OPEN, [work('SOS-2', { running: many(2) })])),
+      );
+      await vi.advanceTimersByTimeAsync(30_100);
+      await waitFor(() => {
+        expect(button).toHaveAccessibleName(/, Çalışıyor$/);
+      });
+      // The same element, still in the page, still with the focus.
+      expect(button).toBeInTheDocument();
+      expect(button).toHaveFocus();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
