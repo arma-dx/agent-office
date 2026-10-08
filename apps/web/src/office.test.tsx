@@ -635,6 +635,218 @@ describe('office page: the selection in the properties panel', () => {
   });
 });
 
+// The founder's switch for one agent in this company (CLAUDE.md: every agent has a stop switch per
+// company). The panel sends the change, shows nothing as changed before the API has stored it,
+// says the API's refusal, and offers the switch to nobody but the founder.
+describe('office page: the agent switch', () => {
+  const switchKey = (code: string) => `PUT /agents/${code}/switch`;
+  const KOR_1 = { code: 'KOR-1', name: 'Ofis Koordinatörü', ready: true };
+
+  /**
+   * The state the panel shows, read from the panel itself: while the confirmation is open the page
+   * behind it is hidden from the accessibility tree, so the panel cannot be found by its role.
+   */
+  function stateBehindDialog(panel: HTMLElement): Element | null {
+    return within(panel).getByText('Durum', { selector: 'dt' }).nextElementSibling;
+  }
+
+  /** An office whose switches the test changes, and a PUT that answers when the test lets it. */
+  function switchApi(switches: Record<string, CompanyAgentStatus>) {
+    let body = officeBody(ARMADX_OFFICE, switches);
+    let answer: (response: Response) => void = () => undefined;
+    const api = mockApi({
+      'GET /session': sessionHandler(),
+      'GET /office': () => json(body),
+      [switchKey('KOR-1')]: () =>
+        new Promise<Response>((resolve) => {
+          answer = resolve;
+        }),
+    });
+    return {
+      api,
+      /** The API stores the change and answers with the agent as it now is. */
+      store: (status: CompanyAgentStatus): void => {
+        body = officeBody(ARMADX_OFFICE, { ...switches, 'KOR-1': status });
+        answer(json({ ...KOR_1, status }));
+      },
+    };
+  }
+
+  it('stops an open agent after a confirmation, and shows it stopped only when the API has stored it', async () => {
+    wideWindow();
+    const { api, store } = switchApi({ 'KOR-1': 'enabled' });
+    renderApp('/c/armadx/office');
+    await userEvent.click(await screen.findByRole('button', { name: /^KOR-1 / }));
+    const panel = detailsPanel();
+    await userEvent.click(within(panel).getByRole('button', { name: 'Ajanı durdur' }));
+    const dialog = await screen.findByRole('alertdialog', {
+      name: 'KOR-1 bu şirkette durdurulsun mu?',
+    });
+    expect(dialog).toHaveTextContent(
+      'Yeni iş almaz; süren çalışması bir sonraki adımdan önce durur.',
+    );
+    // Opening the dialog sends nothing.
+    expect(api.callsTo(switchKey('KOR-1'))).toEqual([]);
+
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Ajanı durdur' }));
+    await waitFor(() => {
+      expect(api.callsTo(switchKey('KOR-1'))).toHaveLength(1);
+    });
+    const [call] = api.callsTo(switchKey('KOR-1'));
+    expect(call?.body).toEqual({ status: 'stopped' });
+    expect(call?.headers.get(COMPANY_HEADER)).toBe(ARMADX.companyId);
+    // Nothing is shown as changed while the API has not answered: the dialog stays, the buttons
+    // are busy, the state is the stored one and the office was not read again.
+    expect(screen.getByRole('alertdialog')).toBeVisible();
+    expect(within(dialog).getByRole('button', { name: 'Ajanı durdur' })).toHaveAttribute(
+      'aria-disabled',
+      'true',
+    );
+    expect(stateBehindDialog(panel)).toHaveTextContent('Etkin');
+    expect(desk('KOR-1')).toHaveAttribute('data-state', 'enabled');
+    expect(api.callsTo('GET /office')).toHaveLength(1);
+    // A second press while it is on its way sends nothing more.
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Ajanı durdur' }));
+    expect(api.callsTo(switchKey('KOR-1'))).toHaveLength(1);
+
+    store('stopped');
+    await waitFor(() => {
+      expect(screen.queryByRole('alertdialog')).toBeNull();
+    });
+    // The office is read again, and the panel and the scene show what it says.
+    expect(api.callsTo('GET /office')).toHaveLength(2);
+    expect(field('Durum')).toHaveTextContent('Durduruldu');
+    expect(within(panel).getByText('Bu ajan durduruldu, yeni iş almaz.')).toBeVisible();
+    expect(desk('KOR-1')).toHaveAttribute('data-state', 'stopped');
+    // The button stays with its new label and has the focus again.
+    await waitFor(() => {
+      expect(within(panel).getByRole('button', { name: 'Ajanı yeniden aç' })).toHaveFocus();
+    });
+    expect(within(panel).queryByRole('button', { name: 'Ajanı durdur' })).toBeNull();
+    expect(api.unexpected).toEqual([]);
+  });
+
+  it.each([
+    { was: null, label: 'Ajanı aç', sentence: 'Bu ajan kapalı.' },
+    { was: 'disabled' as const, label: 'Ajanı aç', sentence: 'Bu ajan kapalı.' },
+    {
+      was: 'stopped' as const,
+      label: 'Ajanı yeniden aç',
+      sentence: 'Bu ajan durduruldu, yeni iş almaz.',
+    },
+  ])('opens an agent whose switch is $was with "$label"', async ({ was, label, sentence }) => {
+    wideWindow();
+    const { api, store } = switchApi(was === null ? {} : { 'KOR-1': was });
+    renderApp('/c/armadx/office');
+    await userEvent.click(await screen.findByRole('button', { name: /^KOR-1 / }));
+    const panel = detailsPanel();
+    expect(within(panel).getByText(sentence)).toBeVisible();
+    await userEvent.click(within(panel).getByRole('button', { name: label }));
+    const dialog = await screen.findByRole('alertdialog', {
+      name: 'KOR-1 bu şirkette açılsın mı?',
+    });
+    // What opening means is said before it is confirmed.
+    expect(dialog).toHaveTextContent(
+      'Açık ajan kendisine yönlendirilen talepleri çalıştırır ve yapay zekâ modelini kullanır.',
+    );
+    await userEvent.click(within(dialog).getByRole('button', { name: label }));
+    await waitFor(() => {
+      expect(api.callsTo(switchKey('KOR-1')).map((call) => call.body)).toEqual([
+        { status: 'enabled' },
+      ]);
+    });
+    expect(stateBehindDialog(panel)).not.toHaveTextContent('Etkin');
+
+    store('enabled');
+    await waitFor(() => {
+      expect(screen.queryByRole('alertdialog')).toBeNull();
+    });
+    expect(field('Durum')).toHaveTextContent('Etkin');
+    expect(within(panel).getByText('Bu ajan etkin.')).toBeVisible();
+    expect(desk('KOR-1')).toHaveAttribute('data-state', 'enabled');
+    // The switch now offers the stop.
+    await waitFor(() => {
+      expect(within(panel).getByRole('button', { name: 'Ajanı durdur' })).toHaveFocus();
+    });
+  });
+
+  it('says the refusal of the API in the dialog and changes nothing', async () => {
+    wideWindow();
+    // The office answer said the card can run; the API is the second line and refuses.
+    const refusal =
+      'Bu ajan henüz açılamaz: kartının çalışacak sürümü yok. Kartın becerileri yazılıp tanımlar eşitlenince (pnpm db:sync-definitions) açılabilir.';
+    const api = mockApi({
+      'GET /session': sessionHandler(),
+      'GET /office': () => json(officeBody(ARMADX_OFFICE)),
+      [switchKey('KOR-2')]: () => apiError(409, 'agent_not_ready', refusal),
+    });
+    renderApp('/c/armadx/office');
+    await userEvent.click(await screen.findByRole('button', { name: /^KOR-2 / }));
+    const panel = detailsPanel();
+    const open = within(panel).getByRole('button', { name: 'Ajanı aç' });
+    await userEvent.click(open);
+    const dialog = await screen.findByRole('alertdialog', {
+      name: 'KOR-2 bu şirkette açılsın mı?',
+    });
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Ajanı aç' }));
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(refusal);
+    // The dialog stays with the message; the agent is as it was and the office was not read again.
+    expect(screen.getByRole('alertdialog')).toBeVisible();
+    expect(stateBehindDialog(panel)).toHaveTextContent('Kapalı');
+    expect(api.callsTo('GET /office')).toHaveLength(1);
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Vazgeç' }));
+    await waitFor(() => {
+      expect(screen.queryByRole('alertdialog')).toBeNull();
+      expect(open).toHaveFocus();
+    });
+    // The next try starts without the old message.
+    await userEvent.click(open);
+    expect(within(await screen.findByRole('alertdialog')).queryByRole('alert')).toBeNull();
+    expect(api.callsTo(switchKey('KOR-2'))).toHaveLength(1);
+  });
+
+  it('gives the focus back to the switch when the confirmation is closed with the keyboard', async () => {
+    wideWindow();
+    const { api } = switchApi({ 'KOR-1': 'enabled' });
+    renderApp('/c/armadx/office');
+    await userEvent.click(await screen.findByRole('button', { name: /^KOR-1 / }));
+    const stop = within(detailsPanel()).getByRole('button', { name: 'Ajanı durdur' });
+    stop.focus();
+    await userEvent.keyboard('{Enter}');
+    const dialog = await screen.findByRole('alertdialog');
+    // The safe choice has the focus in a confirmation.
+    await waitFor(() => {
+      expect(within(dialog).getByRole('button', { name: 'Vazgeç' })).toHaveFocus();
+    });
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => {
+      expect(screen.queryByRole('alertdialog')).toBeNull();
+      expect(stop).toHaveFocus();
+    });
+    expect(document.body).not.toHaveFocus();
+    expect(api.callsTo(switchKey('KOR-1'))).toEqual([]);
+  });
+
+  it('is not offered to an employee, whatever the state of the agent', async () => {
+    wideWindow();
+    const api = mockApi({
+      'GET /session': sessionHandler({ memberships: [EMPLOYEE] }),
+      'GET /office': () =>
+        json(officeBody(ARMADX_OFFICE, { 'KOR-1': 'enabled', 'HAF-1': 'stopped' }, ['KOR-3'])),
+    });
+    renderApp('/c/armadx/office');
+    for (const code of ['KOR-1', 'HAF-1', 'KOR-2', 'KOR-3']) {
+      await userEvent.click(await screen.findByRole('button', { name: new RegExp(`^${code} `) }));
+      const panel = detailsPanel();
+      expect(field('Kod')).toHaveTextContent(code);
+      expect(within(panel).queryByRole('button', { name: /Ajanı/ })).toBeNull();
+      // Nor the sentence that stands in for the button: it is about an act that is not theirs.
+      expect(within(panel).queryByText(/açılamaz/)).toBeNull();
+    }
+    expect(api.calls.filter((call) => call.method === 'PUT')).toEqual([]);
+  });
+});
+
 describe('office page: the scene beside the panel', () => {
   // jsdom has no layout. As in office-view.test.tsx the viewport, the cards and the labels get
   // their sizes here, and report() plays the resize observer after a change of the layout.

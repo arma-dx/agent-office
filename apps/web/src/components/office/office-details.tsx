@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { userMessage } from '@/lib/api';
+import { useReturnFocus } from '@/lib/focus';
 import { officeQueryOptions } from '@/lib/office/query';
 import { setAgentSwitch } from '@/lib/requests/query';
 import { useCompany } from '@/lib/session';
@@ -79,6 +80,9 @@ function UnitDetails({ unit, onSelect }: { unit: OfficeUnit; onSelect: (id: stri
  * An agent whose card has no version to run with cannot be opened: the API refuses it. The panel
  * knows that from the office answer (`ready`), so it says so in a sentence and offers no button
  * that would ask "açılsın mı?" and then refuse. Stopping stays offered for an agent that is open.
+ *
+ * The confirmation gives the focus back to the button that opened it, also after a stored change
+ * (the button stays, with its new label).
  */
 function AgentSwitch({ agent }: { agent: OfficeAgent }) {
   if (agent.state !== 'enabled' && !agent.ready) {
@@ -91,6 +95,8 @@ function AgentSwitchButton({ agent }: { agent: OfficeAgent }) {
   const company = useCompany();
   const queryClient = useQueryClient();
   const [confirming, setConfirming] = useState(false);
+  // The dialog is opened from state and has no trigger: the focus goes back to the button here.
+  const focus = useReturnFocus();
   const next = agent.state === 'enabled' ? 'stopped' : 'enabled';
   const change = useMutation({
     mutationFn: () => setAgentSwitch(company.companyId, agent.code, next),
@@ -114,6 +120,7 @@ function AgentSwitchButton({ agent }: { agent: OfficeAgent }) {
         variant="outline"
         className="self-start"
         onClick={() => {
+          focus.remember();
           change.reset();
           setConfirming(true);
         }}
@@ -126,7 +133,7 @@ function AgentSwitchButton({ agent }: { agent: OfficeAgent }) {
           if (!change.isPending) setConfirming(open);
         }}
       >
-        <AlertDialogContent>
+        <AlertDialogContent onCloseAutoFocus={focus.onCloseAutoFocus}>
           <AlertDialogTitle>
             {next === 'stopped'
               ? `${agent.code} bu şirkette durdurulsun mu?`
