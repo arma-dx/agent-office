@@ -973,6 +973,68 @@ describe.skipIf(noDatabase)('the approval of a request and the status that follo
     });
   });
 
+  it('the approver who is also the requester gives two separate approvals', async () => {
+    // 8 October decision 4. In the pilot the founder approves every unit, so the founder's own
+    // request is this case: approving the work does not accept it.
+    await inTransaction(async (tx) => {
+      const { task, approval } = await submittedRequest(tx, founderA);
+      await tx.setContext(founderA);
+      expect(
+        await one(
+          tx,
+          `select t.requester_user_id, r.approver_user_id from office.tasks t
+           join office.task_routings r on r.task_id = t.id and r.status = 'active'
+           where t.id = $1`,
+          [task],
+        ),
+      ).toEqual({ requester_user_id: ids.founder, approver_user_id: ids.founder });
+      // Nothing waits for the requester before the approver has decided.
+      expect(await tx.count('requester_approvals', 'task_id = $1', [task])).toBe(0);
+      expect(
+        await tx.exec(`update office.approvals set status = 'approved' where id = $1`, [approval]),
+      ).toBe(1);
+      // The first approval: the request still waits, now for the same person as its requester.
+      expect(await statusOf(tx, task)).toBe('awaiting_approval');
+      expect(
+        await tx.rows(
+          `select round, status, approval_id, requester_user_id from office.requester_approvals
+           where task_id = $1`,
+          [task],
+        ),
+      ).toEqual([
+        { round: 1, status: 'pending', approval_id: approval, requester_user_id: ids.founder },
+      ]);
+      // The second, as the requester: only this one ends the request.
+      expect(
+        await tx.exec(
+          `update office.requester_approvals set status = 'approved' where task_id = $1`,
+          [task],
+        ),
+      ).toBe(1);
+      expect(await statusOf(tx, task)).toBe('done');
+      // Two decisions in the trace, each its own record, both by the same person.
+      expect(
+        await tx.rows(
+          `select event, record_type, user_id from office.audit_log
+           where event in ('approval_approved', 'requester_approval_approved')
+             and record_id in (
+               select $1::uuid union all
+               select id from office.requester_approvals where task_id = $2
+             )
+           order by id`,
+          [approval, task],
+        ),
+      ).toEqual([
+        { event: 'approval_approved', record_type: 'approval', user_id: ids.founder },
+        {
+          event: 'requester_approval_approved',
+          record_type: 'requester_approval',
+          user_id: ids.founder,
+        },
+      ]);
+    });
+  });
+
   it('once a person is appointed, only that person and the founder decide', async () => {
     await inTransaction(async (tx) => {
       await tx.setContext(founderA);
