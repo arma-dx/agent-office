@@ -494,6 +494,47 @@ describe.skipIf(noDatabase)('requests', () => {
     expect([again.statusCode, errorCode(again)]).toEqual([409, 'approval_closed']);
   });
 
+  it('the hand-over to the requester moves the request: the list dates it by that moment', async () => {
+    const { id } = await open(employee);
+    await route(id, ids.employee);
+    const approvalId = await submit(id, ids.employee);
+    const state = async () => {
+      const [row] = await adminQuery<{ at: string; version: number; events: number }>(
+        `select t.updated_at::text as at, t.version,
+                (select count(*)::int from office.audit_log a
+                 where a.record_type = 'task' and a.record_id = t.id) as events
+         from office.tasks t where t.id = $1`,
+        [id],
+      );
+      return row ?? { at: '', version: 0, events: 0 };
+    };
+    const submitted = await state();
+    const approved = await post(founder, `/api/approvals/${approvalId}/decision`, {
+      decision: 'approved',
+      selectedOption: 'A',
+    });
+    expect(requestDetailSchema.parse(approved.json()).stage).toBe('requester_approval');
+    // The status was "awaiting_approval" before and after; the request still moved.
+    const handedOver = await state();
+    expect(
+      await adminQuery('select $1::timestamptz > $2::timestamptz as moved', [
+        handedOver.at,
+        submitted.at,
+      ]),
+    ).toEqual([{ moved: true }]);
+    // Nothing of the request itself changed: the same version, no new task event.
+    expect(handedOver).toMatchObject({ version: submitted.version, events: submitted.events });
+    const mine = requestListSchema.parse((await get(employee, '/api/requests?mine=true')).json());
+    expect(mine.requests[0]).toMatchObject({ id, stage: 'requester_approval', waitingForMe: true });
+    expect(
+      // The answer carries milliseconds; the database keeps microseconds.
+      await adminQuery(
+        `select $1::timestamptz = date_trunc('milliseconds', $2::timestamptz) as same`,
+        [mine.requests[0]?.updatedAt, handedOver.at],
+      ),
+    ).toEqual([{ same: true }]);
+  });
+
   it('a change request sends the work back to the same agent, in the requester’s name', async () => {
     const { id } = await open(employee);
     await route(id, ids.employee);
