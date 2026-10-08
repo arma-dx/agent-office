@@ -21,6 +21,7 @@ import {
 } from '../src/requests.ts';
 import { ids } from './fixtures.ts';
 import {
+  asRole,
   closePools,
   inAdminTransaction,
   inTransaction,
@@ -3204,6 +3205,716 @@ describe.skipIf(noDatabase)('stopping an agent only where it is open', () => {
       // The runner still reads the switch, as it must before every step.
       await tx.setContext(agentRun(ids.founder, 'KOR-1'));
       expect((await readAgentSwitch(tx.client, 'KOR-1'))?.status).toBe('enabled');
+    });
+  });
+});
+
+// Comments on a request (8 October decision 13): the requester, the approver of the request and
+// the founder write, through the API's role; whoever reads the request reads them; no agent run
+// and no connection of the worker does. A comment moves nothing of the request.
+const COMMENT = `insert into office.task_comments (company_id, task_id, body)
+  values (office.ctx_company_id(), $1, $2)`;
+const MAY_COMMENT = 'select office.may_comment_on_request($1) as may';
+const NOT_ONE_OF_THREE =
+  'Only the requester, the approver of the request or the founder comments on it';
+const TASK_NOT_FOUND = 'task_comments.task_id linked record not found';
+
+describe.skipIf(noDatabase)(
+  'comments on a request are written by three people and read by people only',
+  () => {
+    afterAll(closePools);
+
+    const commentsOf = (tx: Tx, task: string): Promise<number> =>
+      tx.count('task_comments', 'task_id = $1', [task]);
+
+    async function mayComment(tx: Tx, context: ContextInput, task: string): Promise<boolean> {
+      await tx.setContext(context);
+      return (await one<{ may: boolean }>(tx, MAY_COMMENT, [task])).may;
+    }
+
+    /** Who may comment, asked for the four people of Arma DX these tests use. */
+    async function mayAll(tx: Tx, task: string): Promise<Record<string, boolean>> {
+      return {
+        requester: await mayComment(tx, employeeA, task),
+        founder: await mayComment(tx, founderA, task),
+        approver: await mayComment(tx, approverA, task),
+        colleague: await mayComment(tx, colleagueA, task),
+      };
+    }
+    const THE_THREE = { requester: true, founder: true, approver: true, colleague: false };
+    const WITHOUT_APPROVER = { requester: true, founder: true, approver: false, colleague: false };
+
+    /** As the founder, appoints the person as the approver of HAF in Arma DX. */
+    async function appoint(tx: Tx, user: string): Promise<void> {
+      await tx.setContext(founderA);
+      expect(
+        await tx.exec(
+          `update office.approvers set user_id = $2 where company_id = $1 and unit_code = 'HAF'`,
+          [ids.arma, user],
+        ),
+      ).toBe(1);
+    }
+
+    /**
+     * A request of the employee that the coordinator routed to HAF-1 from its own run, with the
+     * right holder appointed for HAF: the unit agent is about to work.
+     */
+    async function routedToHaf(tx: Tx): Promise<string> {
+      await appoint(tx, ids.approverA);
+      await enableHaf(tx);
+      await tx.setContext(employeeA);
+      const task = await openRequest(tx);
+      await tx.setContext(agentRun(ids.employeeA, 'KOR-1'));
+      const run = await openRun(tx, task, 'KOR-1');
+      await tx.rows(ROUTE, [task, HAF_STEP, run]);
+      await tx.exec(
+        `update office.runs set status = 'completed', finished_at = now() where id = $1`,
+        [run],
+      );
+      return task;
+    }
+
+    /** HAF-1 submits its result on the request; returns the approval. */
+    async function submit(tx: Tx, task: string): Promise<string> {
+      await tx.setContext(agentRun(ids.employeeA, 'HAF-1'));
+      const run = await openRun(tx, task, 'HAF-1');
+      return (await one<{ id: string }>(tx, SUBMIT, [task, run, null])).id;
+    }
+
+    const stepsOf = (tx: Tx, task: string): Promise<Record<string, unknown>[]> =>
+      tx.rows(
+        `select round, seq, unit_code, status from office.task_routings
+         where task_id = $1 order by round, seq`,
+        [task],
+      );
+
+    it('the requester and the founder write; an insider who is neither, and a right holder who is not appointed, are refused and still read', async () => {
+      await inTransaction(async (tx) => {
+        // The fixture request: opened by the employee, routed to KOR (nobody is appointed there),
+        // its result approved, the requester's approval pending.
+        await tx.setContext(employeeA);
+        expect(await tx.exec(COMMENT, [ids.requestA, 'Why was B chosen?'])).toBe(1);
+        await tx.setContext(founderA);
+        expect(await tx.exec(COMMENT, [ids.requestA, 'B is shorter.'])).toBe(1);
+        for (const other of [colleagueA, approverA]) {
+          await tx.setContext(other);
+          expect(await tx.expectError(COMMENT, [ids.requestA, 'x'])).toEqual({
+            code: '42501',
+            message: NOT_ONE_OF_THREE,
+          });
+          expect(await commentsOf(tx, ids.requestA)).toBe(2);
+        }
+        expect(
+          await tx.rows(
+            `select body, author_user_id, author_agent_code, project_id
+             from office.task_comments where task_id = $1 order by body`,
+            [ids.requestA],
+          ),
+        ).toEqual([
+          {
+            body: 'B is shorter.',
+            author_user_id: ids.founder,
+            author_agent_code: null,
+            project_id: null,
+          },
+          {
+            body: 'Why was B chosen?',
+            author_user_id: ids.employeeA,
+            author_agent_code: null,
+            project_id: null,
+          },
+        ]);
+      });
+    });
+
+    it('a row that names another author, another time or another project is written with the context’s', async () => {
+      await inTransaction(async (tx) => {
+        await tx.setContext(employeeA);
+        const row = await one<Record<string, unknown>>(
+          tx,
+          `insert into office.task_comments
+             (company_id, task_id, body, author_user_id, created_at, project_id)
+           values ($1, $2, 'Mine', $3, now() - interval '1 year', $4)
+           returning author_user_id, author_agent_code, project_id, created_at = now() as stamped`,
+          [ids.arma, ids.requestA, ids.founder, ids.projectA],
+        );
+        expect(row).toEqual({
+          author_user_id: ids.employeeA,
+          author_agent_code: null,
+          project_id: null,
+          stamped: true,
+        });
+        // A row that names another company than the context's is refused by the table's own rule.
+        expect(
+          (
+            await tx.expectError(
+              `insert into office.task_comments (company_id, task_id, body) values ($1, $2, 'x')`,
+              [ids.pillika, ids.requestA],
+            )
+          ).code,
+        ).toBe('42501');
+        expect((await tx.expectError(COMMENT, [ids.requestA, '   '])).code, 'a blank comment').toBe(
+          '23514',
+        );
+      });
+    });
+
+    it('the appointed approver of the active step writes, from the routing to the decision', async () => {
+      await inTransaction(async (tx) => {
+        const task = await routedToHaf(tx);
+        expect(await mayAll(tx, task)).toEqual(THE_THREE);
+        await tx.setContext(approverA);
+        expect(await tx.exec(COMMENT, [task, 'While the agent works'])).toBe(1);
+        await submit(tx, task);
+        expect(await statusOf(tx, task)).toBe('awaiting_approval');
+        expect(await mayAll(tx, task)).toEqual(THE_THREE);
+        await tx.setContext(approverA);
+        expect(await tx.exec(COMMENT, [task, 'While the result waits'])).toBe(1);
+        // The requester's "not what I asked for" makes the step active again, the second one
+        // leaves it done with the request in the founder's hands: the approver writes in both.
+        expect(
+          await tx.exec(`update office.approvals set status = 'approved' where task_id = $1`, [
+            task,
+          ]),
+        ).toBe(1);
+        const back = `update office.requester_approvals set status = 'changes_requested',
+          decision_reason = 'Not this' where task_id = $1 and status = 'pending'`;
+        await tx.setContext(employeeA);
+        expect(await tx.exec(back, [task])).toBe(1);
+        expect(await stepsOf(tx, task)).toEqual([
+          { round: 1, seq: 1, unit_code: 'HAF', status: 'active' },
+        ]);
+        expect(await mayAll(tx, task)).toEqual(THE_THREE);
+      });
+    });
+
+    it('once no step is active the approver is the one of the step that was active last: while the requester decides, when the request is done, and after a rejection', async () => {
+      await inTransaction(async (tx) => {
+        const task = await routedToHaf(tx);
+        const approval = await submit(tx, task);
+        await tx.setContext(approverA);
+        await tx.exec(`update office.approvals set status = 'approved' where id = $1`, [approval]);
+        // The approved result waits for the requester: no step is active.
+        expect(await stepsOf(tx, task)).toEqual([
+          { round: 1, seq: 1, unit_code: 'HAF', status: 'done' },
+        ]);
+        expect(await statusOf(tx, task)).toBe('awaiting_approval');
+        expect(await mayAll(tx, task)).toEqual(THE_THREE);
+        await tx.setContext(approverA);
+        expect(await tx.exec(COMMENT, [task, 'Approved: B fits the brief'])).toBe(1);
+        await tx.setContext(employeeA);
+        await tx.exec(
+          `update office.requester_approvals set status = 'approved' where task_id = $1`,
+          [task],
+        );
+        expect(await statusOf(tx, task)).toBe('done');
+        expect(await mayAll(tx, task)).toEqual(THE_THREE);
+
+        // A rejection closes the request and cancels the step: the approver who rejected is the
+        // one who can say why.
+        const rejected = await routedToHaf(tx);
+        const result = await submit(tx, rejected);
+        await tx.setContext(approverA);
+        await tx.exec(
+          `update office.approvals set status = 'rejected', rejection_reason = 'incomplete'
+           where id = $1`,
+          [result],
+        );
+        expect(await statusOf(tx, rejected)).toBe('cancelled');
+        expect(await stepsOf(tx, rejected)).toEqual([
+          { round: 1, seq: 1, unit_code: 'HAF', status: 'cancelled' },
+        ]);
+        expect(await mayAll(tx, rejected)).toEqual(THE_THREE);
+        await tx.setContext(approverA);
+        expect(await tx.exec(COMMENT, [rejected, 'Rejected: the figures are missing'])).toBe(1);
+      });
+    });
+
+    it('a routing to another unit takes the comment from the approver it replaced; a returned request has no approver', async () => {
+      await inTransaction(async (tx) => {
+        const task = await routedToHaf(tx);
+        await tx.setContext(founderA);
+        await tx.rows(CORRECT, [task, JSON.stringify([{ unit: 'KOR', agent: 'KOR-1' }])]);
+        // Nobody is appointed for KOR: the requester and the founder are left.
+        expect(await mayAll(tx, task)).toEqual(WITHOUT_APPROVER);
+        await tx.setContext(approverA);
+        expect(await tx.expectError(COMMENT, [task, 'x'])).toEqual({
+          code: '42501',
+          message: NOT_ONE_OF_THREE,
+        });
+        await tx.setContext(employeeA);
+        await tx.rows('select office.close_request($1)', [task]);
+        expect(await statusOf(tx, task)).toBe('cancelled');
+        expect(await mayAll(tx, task)).toEqual(WITHOUT_APPROVER);
+      });
+      await inTransaction(async (tx) => {
+        // HAF-1 is stopped in the fixtures: the coordinator names the unit and no open agent can
+        // take the work. The returned step still records who would have approved.
+        await appoint(tx, ids.approverA);
+        await tx.setContext(employeeA);
+        const task = await openRequest(tx);
+        await tx.setContext(agentRun(ids.employeeA, 'KOR-1'));
+        const run = await openRun(tx, task, 'KOR-1');
+        await tx.rows(ROUTE, [task, JSON.stringify([{ unit: 'HAF', agent: null }]), run]);
+        expect(
+          await tx.rows(
+            `select status, approver_user_id from office.task_routings where task_id = $1`,
+            [task],
+          ),
+        ).toEqual([{ status: 'returned', approver_user_id: ids.approverA }]);
+        expect(await statusOf(tx, task)).toBe('cancelled');
+        expect(await mayAll(tx, task)).toEqual(WITHOUT_APPROVER);
+      });
+      // A request cancelled before any routing: the requester and the founder, nobody else.
+      await inTransaction(async (tx) => {
+        await tx.setContext(employeeA);
+        const task = await openRequest(tx);
+        await tx.rows('select office.close_request($1)', [task]);
+        expect(await mayAll(tx, task)).toEqual(WITHOUT_APPROVER);
+      });
+    });
+
+    it('with several steps, the approver of the step that was active at the close writes; the one of a step that was only planned does not', async () => {
+      const HAF = { unit: 'HAF', agent: 'HAF-1' };
+      const KOR = { unit: 'KOR', agent: 'KOR-1' };
+      await inTransaction(async (tx) => {
+        const task = await routedToHaf(tx);
+        await tx.setContext(founderA);
+        await tx.rows(CORRECT, [task, JSON.stringify([HAF, KOR])]);
+        await tx.rows('select office.close_request($1, $2)', [task, 'Stopped']);
+        expect(await stepsOf(tx, task)).toEqual([
+          { round: 1, seq: 1, unit_code: 'HAF', status: 'replaced' },
+          { round: 2, seq: 1, unit_code: 'HAF', status: 'cancelled' },
+          { round: 2, seq: 2, unit_code: 'KOR', status: 'cancelled' },
+        ]);
+        expect(await mayAll(tx, task)).toEqual(THE_THREE);
+      });
+      await inTransaction(async (tx) => {
+        const task = await routedToHaf(tx);
+        await tx.setContext(founderA);
+        await tx.rows(CORRECT, [task, JSON.stringify([KOR, HAF])]);
+        expect(await stepsOf(tx, task)).toEqual([
+          { round: 1, seq: 1, unit_code: 'HAF', status: 'replaced' },
+          { round: 2, seq: 1, unit_code: 'KOR', status: 'active' },
+          { round: 2, seq: 2, unit_code: 'HAF', status: 'planned' },
+        ]);
+        // The step of HAF is only planned, and the step it had before was replaced.
+        expect(await mayAll(tx, task)).toEqual(WITHOUT_APPROVER);
+        await tx.setContext(founderA);
+        await tx.rows('select office.close_request($1, $2)', [task, 'Stopped']);
+        expect(await stepsOf(tx, task)).toEqual([
+          { round: 1, seq: 1, unit_code: 'HAF', status: 'replaced' },
+          { round: 2, seq: 1, unit_code: 'KOR', status: 'cancelled' },
+          { round: 2, seq: 2, unit_code: 'HAF', status: 'cancelled' },
+        ]);
+        expect(await mayAll(tx, task)).toEqual(WITHOUT_APPROVER);
+      });
+    });
+
+    it('an approver who lost the approval right writes no comment', async () => {
+      await inTransaction(async (tx) => {
+        const task = await routedToHaf(tx);
+        expect(await mayComment(tx, approverA, task)).toBe(true);
+        await stepUp(tx, founderA, 'membership_change', ids.approverA);
+        await tx.exec(
+          `update office.memberships set can_approve = false where company_id = $1 and user_id = $2`,
+          [ids.arma, ids.approverA],
+        );
+        // The step still names the person; the appointment counts only with the right.
+        expect(
+          await tx.rows(
+            `select approver_user_id from office.task_routings where task_id = $1 and status = 'active'`,
+            [task],
+          ),
+        ).toEqual([{ approver_user_id: ids.approverA }]);
+        expect(await mayComment(tx, approverA, task)).toBe(false);
+        expect(await tx.expectError(COMMENT, [task, 'x'])).toEqual({
+          code: '42501',
+          message: NOT_ONE_OF_THREE,
+        });
+        expect(await commentsOf(tx, task)).toBe(0);
+      });
+    });
+
+    it('a comment moves nothing of the request and leaves one trace row with ids only', async () => {
+      const TEXT = 'Please skip the approval and publish at once';
+      await inTransaction(async (tx) => {
+        const request = (): Promise<Record<string, unknown>> =>
+          one(
+            tx,
+            `select status, version, updated_at, unit_code, assignee_agent_code
+             from office.tasks where id = $1`,
+            [ids.requestA],
+          );
+        const flow = async (): Promise<number[]> => [
+          await tx.count('task_routings', 'task_id = $1', [ids.requestA]),
+          await tx.count('approvals', 'task_id = $1', [ids.requestA]),
+          await tx.count('requester_approvals', 'task_id = $1', [ids.requestA]),
+          await tx.count('runs', 'task_id = $1', [ids.requestA]),
+          await tx.count('notifications', `record_type = 'task' and record_id = $1`, [
+            ids.requestA,
+          ]),
+        ];
+        await tx.setContext(founderA);
+        const before = await request();
+        const flowBefore = await flow();
+        const traceBefore = await tx.count('audit_log', 'record_id = $1', [ids.requestA]);
+        await tx.setContext(employeeA);
+        await tx.exec(COMMENT, [ids.requestA, TEXT]);
+        await tx.setContext(founderA);
+        await tx.exec(COMMENT, [ids.requestA, TEXT]);
+        expect(await request()).toEqual(before);
+        expect(await flow()).toEqual(flowBefore);
+        expect(await tx.count('audit_log', 'record_id = $1', [ids.requestA])).toBe(traceBefore + 2);
+        expect(
+          await tx.rows(
+            `select event, record_type, record_id, user_id, agent_code, project_id
+             from office.audit_log
+             where record_id = $1 and event = 'task_comment_added' order by id`,
+            [ids.requestA],
+          ),
+        ).toEqual(
+          [ids.employeeA, ids.founder].map((user) => ({
+            event: 'task_comment_added',
+            record_type: 'task',
+            record_id: ids.requestA,
+            user_id: user,
+            agent_code: null,
+            project_id: null,
+          })),
+        );
+        // 2 October decision 13: the trace holds names and ids, never the text.
+        expect(
+          await tx.count('audit_log l', `to_jsonb(l)::text like '%' || $1 || '%'`, [TEXT]),
+        ).toBe(0);
+      });
+    });
+
+    it('the worker’s role writes no comment on a request, whatever person its context names, and reads none', async () => {
+      await inWorkerTransaction(async (tx) => {
+        for (const person of [employeeA, founderA]) {
+          await tx.setContext(person);
+          expect(await tx.expectError(COMMENT, [ids.requestA, 'x'])).toEqual({
+            code: '42501',
+            message: 'A comment on a request is written through the API',
+          });
+        }
+      });
+      // A comment the API's role wrote and did not commit is not there for a connection of the
+      // worker, so one privileged transaction writes it in the requester's name and reads it
+      // with each role.
+      await inAdminTransaction(async (tx) => {
+        await tx.setContext(employeeA);
+        await tx.exec(COMMENT, [ids.requestA, 'For people']);
+        await asRole(tx, 'app');
+        expect(await commentsOf(tx, ids.requestA)).toBe(1);
+        await asRole(tx, 'worker');
+        for (const person of [employeeA, founderA]) {
+          await tx.setContext(person);
+          expect(await tx.count('tasks', 'id = $1', [ids.requestA])).toBe(1);
+          expect(await commentsOf(tx, ids.requestA)).toBe(0);
+          // The comment of a task between people is still there for the worker's role.
+          expect(await commentsOf(tx, ids.taskA)).toBe(1);
+        }
+      });
+    });
+
+    it('an agent run neither writes nor reads a comment of a request, with either role, inside or outside the project', async () => {
+      const NO_AGENT = { code: '42501', message: 'An agent writes no comment on a request' };
+      await inAdminTransaction(async (tx) => {
+        await tx.setContext(employeeA);
+        await tx.exec(COMMENT, [ids.requestA, 'For people']);
+        // A request inside a project, with a comment of its requester (a member of the project).
+        const inProject = await openRequest(tx, ids.projectA);
+        await tx.exec(COMMENT, [inProject, 'For the people of the project']);
+
+        for (const role of ['app', 'worker'] as const) {
+          await asRole(tx, role);
+          for (const agent of ['KOR-1', 'HAF-1']) {
+            for (const user of [ids.employeeA, ids.founder]) {
+              await tx.setContext(agentRun(user, agent));
+              expect(await tx.count('tasks', 'id = $1', [ids.requestA])).toBe(1);
+              expect(await commentsOf(tx, ids.requestA)).toBe(0);
+              expect(await tx.expectError(COMMENT, [ids.requestA, 'x'])).toEqual(NO_AGENT);
+              expect((await one<{ may: boolean }>(tx, MAY_COMMENT, [ids.requestA])).may).toBe(
+                false,
+              );
+              // No comment of any request is in what the run reads of the table.
+              expect(
+                await tx.count(
+                  'task_comments k',
+                  `exists (
+                     select 1 from office.tasks t where t.id = k.task_id and t.kind = 'request'
+                   )`,
+                ),
+              ).toBe(0);
+            }
+          }
+          // A run in the project reads the request and none of its comments.
+          await tx.setContext({ ...agentRun(ids.employeeA, 'KOR-1'), projectId: ids.projectA });
+          expect(await tx.count('tasks', 'id = $1', [inProject])).toBe(1);
+          expect(await commentsOf(tx, inProject)).toBe(0);
+          expect(await tx.expectError(COMMENT, [inProject, 'x'])).toEqual(NO_AGENT);
+        }
+        // Not an empty answer for everybody: the people of the request read them.
+        await asRole(tx, 'app');
+        await tx.setContext(employeeA);
+        expect(await commentsOf(tx, ids.requestA)).toBe(1);
+        expect(await commentsOf(tx, inProject)).toBe(1);
+      });
+    });
+
+    it('a comment of a request stays closed to an agent run and to the worker’s role when the request itself is hidden from them', async () => {
+      await inAdminTransaction(async (tx) => {
+        await tx.setContext(employeeA);
+        await tx.exec(COMMENT, [ids.requestA, 'For people']);
+        // What a later rule could look like (rule 12 in code: records closed to agent runs). It
+        // goes with the transaction.
+        await tx.exec(
+          `create policy later_rule on office.tasks as restrictive for select to office_app
+           using (office.ctx_agent_code() is null)`,
+        );
+        for (const role of ['worker', 'app'] as const) {
+          await asRole(tx, role);
+          await tx.setContext(agentRun(ids.employeeA, 'KOR-1'));
+          expect(await tx.count('tasks', 'id = $1', [ids.requestA])).toBe(0);
+          expect(await commentsOf(tx, ids.requestA)).toBe(0);
+          expect(await tx.expectError(COMMENT, [ids.requestA, 'x'])).toEqual({
+            code: '23503',
+            message: TASK_NOT_FOUND,
+          });
+        }
+        await asRole(tx, 'worker');
+        await tx.setContext(employeeA);
+        expect(await commentsOf(tx, ids.requestA)).toBe(0);
+        // People still read it through the API's role.
+        await asRole(tx, 'app');
+        await tx.setContext(colleagueA);
+        expect(await commentsOf(tx, ids.requestA)).toBe(1);
+      });
+    });
+
+    it('nobody changes or deletes a comment', async () => {
+      const CHANGE = `update office.task_comments set body = 'Other' where task_id = $1`;
+      const REMOVE = 'delete from office.task_comments where task_id = $1';
+      await inTransaction(async (tx) => {
+        await tx.setContext(employeeA);
+        await tx.exec(COMMENT, [ids.requestA, 'Written once']);
+        for (const person of [employeeA, founderA]) {
+          await tx.setContext(person);
+          expect((await tx.expectError(CHANGE, [ids.requestA])).code).toBe('42501');
+          expect((await tx.expectError(REMOVE, [ids.requestA])).code).toBe('42501');
+        }
+        expect(
+          await tx.rows('select body from office.task_comments where task_id = $1', [ids.requestA]),
+        ).toEqual([{ body: 'Written once' }]);
+      });
+      await inWorkerTransaction(async (tx) => {
+        for (const context of [employeeA, founderA, agentRun(ids.founder, 'KOR-1')]) {
+          await tx.setContext(context);
+          expect((await tx.expectError(CHANGE, [ids.taskA])).code).toBe('42501');
+          expect((await tx.expectError(REMOVE, [ids.taskA])).code).toBe('42501');
+        }
+      });
+    });
+
+    it('comments stay inside the company and need a context', async () => {
+      const NAMED = `insert into office.task_comments (company_id, task_id, body)
+        values ($1, $2, 'x')`;
+      const REFUSED = { code: '23503', message: TASK_NOT_FOUND };
+      await inTransaction(async (tx) => {
+        await tx.setContext(employeeA);
+        await tx.exec(COMMENT, [ids.requestA, 'Inside Arma DX']);
+        for (const outside of [
+          founderP,
+          employeeP,
+          // A Pillika employee who claims the Arma DX context is not a member there.
+          { companyId: ids.arma, userId: ids.employeeP },
+        ]) {
+          await tx.setContext(outside);
+          expect(await commentsOf(tx, ids.requestA)).toBe(0);
+          expect(await tx.expectError(COMMENT, [ids.requestA, 'x'])).toEqual(REFUSED);
+          for (const company of [ids.arma, ids.pillika]) {
+            expect(await tx.expectError(NAMED, [company, ids.requestA])).toEqual(REFUSED);
+          }
+          expect((await one<{ may: boolean }>(tx, MAY_COMMENT, [ids.requestA])).may).toBe(false);
+        }
+        await tx.setContext({});
+        expect(await tx.count('task_comments')).toBe(0);
+        expect(await tx.expectError(NAMED, [ids.arma, ids.requestA])).toEqual(REFUSED);
+        expect((await one<{ may: boolean }>(tx, MAY_COMMENT, [ids.requestA])).may).toBe(false);
+      });
+      // The privileged role reads every row, and is still nobody of the request.
+      await inAdminTransaction(async (tx) => {
+        await tx.setContext({});
+        expect(await tx.expectError(NAMED, [ids.arma, ids.requestA])).toEqual({
+          code: '42501',
+          message: NOT_ONE_OF_THREE,
+        });
+      });
+    });
+
+    it('the comments of a project request are read and written by the project’s members and the founder', async () => {
+      await inTransaction(async (tx) => {
+        await tx.setContext(employeeA);
+        const task = await openRequest(tx, ids.projectA);
+        expect(await tx.exec(COMMENT, [task, 'Inside the project'])).toBe(1);
+        expect(
+          await tx.rows('select project_id from office.task_comments where task_id = $1', [task]),
+        ).toEqual([{ project_id: ids.projectA }]);
+        // Not members of the project, with or without the approval right.
+        for (const other of [colleagueA, approverA]) {
+          await tx.setContext(other);
+          expect(await commentsOf(tx, task)).toBe(0);
+          expect(await tx.expectError(COMMENT, [task, 'x'])).toEqual({
+            code: '23503',
+            message: TASK_NOT_FOUND,
+          });
+        }
+        await tx.setContext(founderA);
+        expect(await commentsOf(tx, task)).toBe(1);
+        expect(await tx.exec(COMMENT, [task, 'The founder reads every project'])).toBe(1);
+        await tx.setContext(employeeA);
+        expect(await commentsOf(tx, task)).toBe(2);
+      });
+    });
+
+    it('an external person reads and writes no comment of a request, also one opened to them by hand', async () => {
+      await inTransaction(async (tx) => {
+        await tx.setContext(employeeA);
+        await tx.exec(COMMENT, [ids.requestA, 'Among insiders']);
+        await tx.setContext(externalA);
+        expect(await tx.count('tasks', 'id = $1', [ids.requestA])).toBe(0);
+        expect(await commentsOf(tx, ids.requestA)).toBe(0);
+        expect(await tx.expectError(COMMENT, [ids.requestA, 'x'])).toEqual({
+          code: '23503',
+          message: TASK_NOT_FOUND,
+        });
+        // No route of the API opens a request to an external person; a row made by hand could
+        // (docs/SONRA.md D-i). The comments stay closed all the same.
+        await stepUp(tx, founderA, 'access_grant', ids.externalA);
+        await tx.exec(
+          `insert into office.access_grants (company_id, user_id, record_type, record_id)
+           values ($1, $2, 'task', $3)`,
+          [ids.arma, ids.externalA, ids.requestA],
+        );
+        await tx.setContext(externalA);
+        expect(await tx.count('tasks', 'id = $1', [ids.requestA])).toBe(1);
+        expect(await commentsOf(tx, ids.requestA)).toBe(0);
+        expect(await tx.expectError(COMMENT, [ids.requestA, 'x'])).toEqual({
+          code: '42501',
+          message: NOT_ONE_OF_THREE,
+        });
+        expect((await one<{ may: boolean }>(tx, MAY_COMMENT, [ids.requestA])).may).toBe(false);
+      });
+    });
+
+    it('comments of a task between people keep their rules', async () => {
+      await inWorkerTransaction(async (tx) => {
+        // An agent run with the worker's role comments on a task between people and reads it.
+        await tx.setContext(agentRun(ids.founder, 'KOR-1'));
+        expect(await commentsOf(tx, ids.taskA)).toBe(1);
+        expect(await tx.exec(COMMENT, [ids.taskA, 'From the run'])).toBe(1);
+        expect(
+          await tx.rows(
+            `select author_user_id, author_agent_code from office.task_comments
+             where task_id = $1 and body = 'From the run'`,
+            [ids.taskA],
+          ),
+        ).toEqual([{ author_user_id: null, author_agent_code: 'KOR-1' }]);
+        expect((await one<{ may: boolean }>(tx, MAY_COMMENT, [ids.taskA])).may).toBe(false);
+        // A person in the worker's context too, as before.
+        await tx.setContext(employeeA);
+        expect(await tx.exec(COMMENT, [ids.taskA, 'In a person’s name'])).toBe(1);
+        expect(await commentsOf(tx, ids.taskA)).toBe(3);
+      });
+      await inTransaction(async (tx) => {
+        // Every insider who reads the task comments on it, not three people.
+        await tx.setContext(colleagueA);
+        expect(await tx.exec(COMMENT, [ids.taskA, 'From a colleague'])).toBe(1);
+        // An external person on a task opened to them reads its comments and adds one.
+        await tx.setContext(externalA);
+        expect(await commentsOf(tx, ids.taskAShared)).toBe(1);
+        expect(
+          await tx.exec(
+            `insert into office.task_comments (company_id, task_id, body, author_user_id)
+             values ($1, $2, 'From the accountant', $3)`,
+            [ids.arma, ids.taskAShared, ids.externalA],
+          ),
+        ).toBe(1);
+        expect(await commentsOf(tx, ids.taskAShared)).toBe(2);
+        // And none of a task that was not opened to them.
+        expect(await commentsOf(tx, ids.taskA)).toBe(0);
+        expect((await tx.expectError(COMMENT, [ids.taskA, 'x'])).code).toBe('23503');
+        // The question about requests is not about tasks between people.
+        await tx.setContext(founderA);
+        expect((await one<{ may: boolean }>(tx, MAY_COMMENT, [ids.taskA])).may).toBe(false);
+      });
+    });
+  },
+);
+
+// The due day of a request (docs/SONRA.md W-h): information only. tasks.due_at takes it when the
+// request is opened; afterwards nobody changes it, as nobody changes anything of a request by hand.
+const DUE_AT = `(($1::date + time '23:59:59') at time zone 'Europe/Istanbul')`;
+
+describe.skipIf(noDatabase)('the due day of a request', () => {
+  afterAll(closePools);
+
+  it('a request takes its due day when it is opened and nobody changes it afterwards', async () => {
+    const refusal = { code: '42501', message: 'A request changes only through its flow' };
+    await inTransaction(async (tx) => {
+      await tx.setContext(employeeA);
+      const { id: task } = await one<{ id: string }>(
+        tx,
+        `insert into office.tasks (company_id, kind, title, description, due_at)
+         values (office.ctx_company_id(), 'request', 'A request', 'What is wanted', ${DUE_AT})
+         returning id`,
+        ['2026-10-20'],
+      );
+      const dueOf = (): Promise<{ day: string | null }> =>
+        one(
+          tx,
+          `select (due_at at time zone 'Europe/Istanbul')::date::text as day
+           from office.tasks where id = $1`,
+          [task],
+        );
+      expect(await dueOf()).toEqual({ day: '2026-10-20' });
+      for (const person of [employeeA, founderA]) {
+        await tx.setContext(person);
+        for (const change of [
+          `due_at = now()`,
+          `due_at = null`,
+          `due_at = due_at + interval '1 day'`,
+        ]) {
+          expect(
+            await tx.expectError(`update office.tasks set ${change} where id = $1`, [task]),
+          ).toEqual(refusal);
+        }
+      }
+      expect(await dueOf()).toEqual({ day: '2026-10-20' });
+      // Opening it left the one trace row of a new request.
+      expect(
+        await tx.rows('select event from office.audit_log where record_id = $1 order by id', [
+          task,
+        ]),
+      ).toEqual([{ event: 'request_created' }]);
+    });
+    await inAdminTransaction(async (tx) => {
+      // The privileged role is refused like everybody, and the flow's own role has no privilege
+      // on the column: no function of the flow can move the day.
+      expect(
+        await tx.expectError(`update office.tasks set due_at = now() where id = $1`, [
+          ids.requestA,
+        ]),
+      ).toEqual(refusal);
+      expect(
+        await one(
+          tx,
+          `select has_column_privilege('office_trigger', 'office.tasks', 'due_at', 'update') as flow,
+                  has_column_privilege('office_trigger', 'office.tasks', 'status', 'update') as status`,
+        ),
+      ).toEqual({ flow: false, status: true });
     });
   });
 });

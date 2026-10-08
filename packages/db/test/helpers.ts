@@ -156,6 +156,25 @@ export async function inAdminTransaction<T>(fn: (tx: Tx) => Promise<T>): Promise
   }
 }
 
+/**
+ * Inside a privileged transaction, goes on as one of the two restricted roles (`set local role`),
+ * or as the privileged role again (null). For the cases where one transaction must write with one
+ * role and read with the other: a row the API's role wrote and did not commit is not there for a
+ * connection of the worker.
+ */
+export async function asRole(tx: Tx, role: 'app' | 'worker' | null): Promise<void> {
+  if (role === null) {
+    await tx.exec('reset role');
+    return;
+  }
+  // The login roles are named by the setup from a constant of lowercase letters and underscores.
+  const name = new URL(connectionString(role)).username;
+  if (!/^[a-z_]+$/.test(name)) {
+    throw new Error('Unexpected name of a test role');
+  }
+  await tx.exec(`set local role ${name}`);
+}
+
 // Two transactions at once ----------------------------------------------------------------------------
 
 /**
@@ -249,7 +268,9 @@ export async function removeRequests(
   try {
     await client.query('begin');
     await client.query(`set local session_replication_role = 'replica'`);
-    for (const table of ['requester_approvals', 'approvals', 'task_routings']) {
+    // The comments first: with the triggers off the foreign key's cascade is off too, and a
+    // comment of a removed request would stay behind as a row without a task.
+    for (const table of ['task_comments', 'requester_approvals', 'approvals', 'task_routings']) {
       await client.query(`delete from office.${table} where task_id = any ($1::uuid[])`, [taskIds]);
     }
     await client.query(

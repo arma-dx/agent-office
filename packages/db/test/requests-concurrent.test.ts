@@ -190,6 +190,60 @@ describe.skipIf(noDatabase)('a request across transactions', () => {
     expect(await approvalsOf(task)).toEqual([{ status: 'pending', closed: false, step: 'active' }]);
   });
 
+  it('a comment and a close of the same request wait for each other and both are stored', async () => {
+    // A comment takes no lock of its own, but its foreign key holds the request row against a
+    // change, and every act of a person locks that row first: the two wait for each other. The
+    // comment holds nothing else an act needs, so neither order can end in a deadlock.
+    const COMMENT = `insert into office.task_comments (company_id, task_id, body)
+      values (office.ctx_company_id(), $1, $2)`;
+    const CLOSE = 'select office.close_request($1)';
+    const commentsOf = (task: string): Promise<Record<string, unknown>[]> =>
+      adminQuery(
+        'select author_user_id, body from office.task_comments where task_id = $1 order by created_at',
+        [task],
+      );
+
+    // The close is in flight: the founder's comment waits and is stored on the closed request.
+    const closedFirst = await openRequest();
+    const requester = await openTransaction('app', employeeA);
+    const founder = await openTransaction('app', founderA);
+    try {
+      await requester.tx.rows(CLOSE, [closedFirst]);
+      const commented = outcomeOf(founder.tx.rows(COMMENT, [closedFirst, 'After the close']));
+      await untilBlocked(founder.pid);
+      await requester.commit();
+      expect(await commented).toBe('ok');
+      await founder.commit();
+    } finally {
+      await requester.rollback();
+      await founder.rollback();
+    }
+    expect(await statusOf(closedFirst)).toBe('cancelled');
+    expect(await commentsOf(closedFirst)).toEqual([
+      { author_user_id: ids.founder, body: 'After the close' },
+    ]);
+
+    // The comment is in flight: the requester's close waits and goes through.
+    const commentedFirst = await openRequest();
+    const writer = await openTransaction('app', founderA);
+    const closer = await openTransaction('app', employeeA);
+    try {
+      await writer.tx.rows(COMMENT, [commentedFirst, 'Before the close']);
+      const closed = outcomeOf(closer.tx.rows(CLOSE, [commentedFirst]));
+      await untilBlocked(closer.pid);
+      await writer.commit();
+      expect(await closed).toBe('ok');
+      await closer.commit();
+    } finally {
+      await writer.rollback();
+      await closer.rollback();
+    }
+    expect(await statusOf(commentedFirst)).toBe('cancelled');
+    expect(await commentsOf(commentedFirst)).toEqual([
+      { author_user_id: ids.founder, body: 'Before the close' },
+    ]);
+  });
+
   it('the worker’s role decides nothing on the pending result of a request, in whose name ever', async () => {
     // The worker cannot open a request in its own transaction, so this case needs committed rows:
     // a result that waits for the founder (nobody is appointed for KOR in the fixtures).
