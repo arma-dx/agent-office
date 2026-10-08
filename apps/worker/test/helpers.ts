@@ -38,6 +38,45 @@ export async function closeTestPools(): Promise<void> {
   }
 }
 
+type AnyFunction = (...args: unknown[]) => unknown;
+
+/**
+ * A pool whose statements can be met by something else at a chosen point: `before` runs once, just
+ * ahead of the first statement of a transaction whose text contains `marker` (another connection
+ * commits something, or the statement is made to fail: what `before` throws is thrown instead of
+ * sending it). Everything else goes to the pool unchanged.
+ */
+export function meeting(pool: pg.Pool, marker: string, before: () => Promise<void>): pg.Pool {
+  let met = false;
+  const through = (target: object, property: string | symbol): unknown => {
+    const value: unknown = Reflect.get(target, property, target);
+    return typeof value === 'function' ? (value as AnyFunction).bind(target) : value;
+  };
+  const wrap = (client: pg.PoolClient): pg.PoolClient =>
+    new Proxy(client, {
+      get(target, property) {
+        if (property !== 'query') return through(target, property);
+        return async (...args: unknown[]): Promise<unknown> => {
+          if (!met && typeof args[0] === 'string' && args[0].includes(marker)) {
+            met = true;
+            await before();
+          }
+          return (target.query as AnyFunction).apply(target, args);
+        };
+      },
+    });
+  return new Proxy(pool, {
+    get(target, property) {
+      if (property !== 'connect') return through(target, property);
+      // With a callback (the pool's own query does that) the client is not wrapped.
+      return async (...args: unknown[]): Promise<unknown> =>
+        args.length > 0
+          ? (target.connect as AnyFunction).apply(target, args)
+          : wrap(await target.connect());
+    },
+  });
+}
+
 /** One-off query with the privileged role, to prepare or to verify the state. */
 export async function admin<T extends pg.QueryResultRow = Record<string, unknown>>(
   sql: string,

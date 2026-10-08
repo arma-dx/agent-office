@@ -205,6 +205,12 @@ class ToolRefusal extends Error {
 }
 
 /**
+ * Thrown inside the opening transaction to give it up: the step of the request changed between
+ * the first read and the insert of the run.
+ */
+class StepMoved extends Error {}
+
+/**
  * The date the model is told as a fact: the office's day, not the UTC day (between midnight and
  * 03:00 in Türkiye the two differ, and "bugün" in a request means the office's).
  */
@@ -405,7 +411,7 @@ export async function runAgentJob(
       };
   // Runs of this agent that were still open for a step that has since been replaced.
   const superseded: string[] = [];
-  const opened = await agentStep(deps.pool, context, async (client): Promise<Opened> => {
+  const openRun = async (client: pg.PoolClient): Promise<Opened> => {
     // Two jobs for one request wait for each other here.
     await client.query('select pg_advisory_xact_lock(hashtextextended($1, 0))', [job.taskId]);
     // The stop switch (rule: a stopped agent takes no new work).
@@ -632,6 +638,13 @@ export async function runAgentJob(
       throw new Error('The run could not be opened');
     }
     const stepId = inserted.rows[0]?.routing_id ?? null;
+    if (!coordinator && stepId !== task.step_id) {
+      // A person routed the request again between the first read of this transaction and the
+      // insert (a routing does not wait for a job). The database tied the run to the step that
+      // is active now, and everything read above (the note, the earlier results, the marks) is
+      // of the step before it. Nothing of this transaction is kept.
+      throw new StepMoved();
+    }
     await audit(client, 'run_started', { runId, recordType: 'task', recordId: job.taskId });
 
     // The card and the model must allow the run; if not, the run is closed where it was opened,
@@ -673,15 +686,27 @@ export async function runAgentJob(
         ...(revision ? { revision } : {}),
       },
     };
-  }).catch((error: unknown): Opened => {
-    // check_violation from the run's own triggers: the agent was stopped or the request closed
-    // between the checks above and the insert.
-    if (sqlState(error) === '23514') {
+  };
+  const open = (): Promise<Opened> =>
+    agentStep(deps.pool, context, openRun).catch((error: unknown): Opened => {
       // The transaction was rolled back, and with it the closing of older runs.
       superseded.length = 0;
+      // check_violation from the run's own triggers: the agent was stopped or the request closed
+      // between the checks above and the insert.
+      if (sqlState(error) === '23514') {
+        return { kind: 'refused', outcome: 'job_stale' };
+      }
+      throw error;
+    });
+  // A step that moved under the opening is read again, once, from the start: the run then opens
+  // for the new step, with what that step carries. If it moved a second time in that instant the
+  // job gives way; the job of the newest routing starts the work.
+  const opened = await open().catch((error: unknown) => {
+    if (!(error instanceof StepMoved)) throw error;
+    return open().catch((again: unknown): Opened => {
+      if (!(again instanceof StepMoved)) throw again;
       return { kind: 'refused', outcome: 'job_stale' };
-    }
-    throw error;
+    });
   });
 
   for (const run of superseded) {

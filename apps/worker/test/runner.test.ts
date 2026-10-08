@@ -10,6 +10,7 @@ import {
   closeTestPools,
   ids,
   job,
+  meeting,
   noDatabase,
   openRequest,
   runner,
@@ -1673,6 +1674,45 @@ describe.skipIf(noDatabase)('a run belongs to the step it was opened for', () =>
       { run_id: fresh?.runId, status: 'pending', round: 2 },
     ]);
     expect(await statusOf(taskId)).toBe('awaiting_approval');
+  });
+
+  it('a correction that commits while the run is being opened is read before the run starts', async () => {
+    const taskId = await routedRequest();
+    const model = new ScriptedModel([toolUse('submit_for_approval', RESULT)]);
+    const { deps } = await runner(model);
+    // The founder's correction to the same agent commits inside the opening transaction: after
+    // the runner read the request and its step, before it writes the run. The database ties the
+    // run to the new step; the runner must not start it with what it read of the old one.
+    const pool = meeting(deps.pool, 'select id, routing_id from office.runs', () =>
+      correctToSameAgent(taskId, NOTE),
+    );
+    const result = await runAgentJob({ ...deps, pool }, job(taskId, 'SOS-2', ids.founder));
+    expect(result).toMatchObject({ outcome: 'submitted', modelCalls: 1 });
+    expect(firstUserText(model)).toContain('<routing_note>');
+    expect(firstUserText(model)).toContain(NOTE);
+    expect(await approvalsOf(taskId)).toEqual([
+      { run_id: result.runId, status: 'pending', round: 2 },
+    ]);
+    // The opening that was given up left nothing: one run of the agent, with one start.
+    expect(
+      await admin(
+        `select c.status, r.round from office.runs c
+         join office.task_routings r on r.id = c.routing_id
+         where c.task_id = $1 and c.agent_code = 'SOS-2'`,
+        [taskId],
+      ),
+    ).toEqual([{ status: 'completed', round: 2 }]);
+    expect(await eventsOf(taskId, 'run_%')).toEqual([
+      'run_started',
+      'run_completed',
+      'run_started',
+      'run_completed',
+    ]);
+    // The job the correction put on the queue finds its work done.
+    const idle = await runner(new ScriptedModel([]));
+    expect((await runAgentJob(idle.deps, job(taskId, 'SOS-2', ids.founder))).outcome).toBe(
+      'duplicate_job',
+    );
   });
 
   it('a result that meets another run’s waiting approval is not recorded as submitted', async () => {
