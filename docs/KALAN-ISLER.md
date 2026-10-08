@@ -37,6 +37,8 @@ Henüz olmayanlar: veritabanı (göç dosyası yok), giriş, işlevli ekran (yal
 
 8 Ekim 2026 (devam): kurucu ilk gerçek talebi gönderdi; akış uçtan uca çalıştı. Koordinasyon merkezi koşullu bir cümleyi eksik bilgi sayıp yönlendirmedi; yönlendirme talimatı düzeltildi ve gerçek modelle sınandı. Kurucu Projeler ön planının dokuz sorusunu yanıtladı (karar 14-22); 0.4c yedi adıma bölündü.
 
+8 Ekim 2026 (akşam): Projeler'in ilk adımı kuruldu (0.4c adım 1): menüde "Projeler", proje listesi, "Yeni proje" penceresi, proje sayfası, üyeler, yapay zekâ izni ve müşterinin sözleşme izinleri. Adım tasarlanırken türetilen seçimler `docs/SONRA.md` içinde P1-a ila P1-z olarak duruyor; hepsi kurucu onayı bekliyor. Dört yeni göç yerel veritabanına henüz uygulanmadı (son uygulanan `20261008101500`); uygulanana kadar yerelde Projeler ekranı sunucu hatası verir. Sıradaki adım talep formunda proje alanı (adım 2).
+
 ## Sprint 0
 
 ### 0.1 Arayüz temeli
@@ -385,17 +387,18 @@ Bu işten çıkarılanlar:
 
 ### 0.4c Projeler
 
-8 Ekim, karar 11 ve 14-22. Projeler "İş" grubunda ayrı bir bölümdür (karar 14). Çalışanlar da proje açar ve üye ekler; yapay zekâ iznini yalnızca kurucu, passkey ile açar (karar 15 ve 22). Türetilen yorumlar ve varsayımlar `docs/SONRA.md` içinde P-a ila P-u.
+8 Ekim, karar 11 ve 14-22. Projeler "İş" grubunda ayrı bir bölümdür (karar 14). Çalışanlar da proje açar ve üye ekler; yapay zekâ iznini yalnızca kurucu, passkey ile açar (karar 15 ve 22). Türetilen yorumlar ve varsayımlar `docs/SONRA.md` içinde P-a ila P-u. Adım 1 tasarlanırken ve yapılırken türetilenler aynı dosyada P1-a ila P1-z.
 
 Adım 1: en küçük Projeler
 
-- [ ] Kenar çubuğunda "Projeler" satırı ve proje listesi (kurucu hepsini, çalışan üyesi olduğu projeleri görür)
-- [ ] Yeni proje: ad, açıklama, müşteri (var olanı seçme ya da adıyla ekleme; karar 16), üyeler
-- [ ] Proje sayfası: ad, durum (beş durum), renk ve simge, hedef tarih, özellik paneli (karar 17)
-- [ ] Üye ekleme ve çıkarma
-- [ ] Yapay zekâ izni: yalnızca kurucu, passkey ile; müşterinin sözleşme izinleri
-- [ ] Projeyi kapatma ve geri açma
-- [ ] Şirket ayrımı ve görünürlük testleri (kısıtlı rollerle)
+- [x] Kenar çubuğunda "Projeler" satırı ve proje listesi (kurucu hepsini, çalışan üyesi olduğu projeleri görür; açık projeler üstte, kapalılar altta; dış kişiye ve Kurucu alanında sunulmaz, SONRA P1-i)
+- [x] Yeni proje: ad, açıklama, müşteri (var olanı seçme ya da adıyla ekleme; karar 16), üyeler (ayrıca durum, renk, simge ve hedef tarih; kurucunun eklediği yeni müşteride sözleşme izinleri, yapay zekâ izni passkey ile; projenin kendi izni pencerede yok, SONRA P1-d)
+- [x] Proje sayfası: ad, durum (beş durum), renk ve simge, hedef tarih, özellik paneli (karar 17) (açıklama ve "Projeyi düzenle" penceresi dahil; sekme yok, SONRA P1-u; panel 1280 pikselden itibaren kendiliğinden açık, SONRA P1-p)
+- [x] Üye ekleme ve çıkarma (passkey istemez; çalışan kendini çıkaramaz, SONRA P1-g; dış kişi yapılan üyenin proje üyelikleri kalkar ve Kullanıcılar ekranı bunu söyler, SONRA P1-h)
+- [x] Yapay zekâ izni: yalnızca kurucu, passkey ile; müşterinin sözleşme izinleri (izni kapatmak passkey istemez; müşterinin yapay zekâ iznini açmak passkey ister; SONRA P1-b, P1-c; izin açıkken projenin müşterisi değişmez, SONRA P1-t; passkey onayı kurucunun gördüğü müşteriye bağlı, SONRA P1-y)
+- [x] Projeyi kapatma ve geri açma (durum alanıyla: Tamamlandı ve İptal kapatır; proje silinmez; kapalı projede yeni talep açılmaması adım 2'de, SONRA P1-j)
+- [x] Şirket ayrımı ve görünürlük testleri (kısıtlı rollerle) (veritabanı, API ve panel testleri; iz kaydı olayları dahil, SONRA P1-n)
+- [ ] Dört yeni göçün (`20261008101600` ila `20261008101900`) yerel veritabanına ve test ortamına uygulanması (uygulanmadan Projeler'in adresleri sunucu hatası verir; test ortamında önce ilk göçün ön denetimi yapılır: adı boşlukla biten ya da 120 karakteri aşan proje ve müşteri, yalnızca harf büyüklüğü farklı iki müşteri adı olmamalı; yerelde denetlendi, kayıt yok)
 
 Adım 2: talep formunda proje alanı
 

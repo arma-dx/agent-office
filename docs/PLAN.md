@@ -65,9 +65,9 @@ Pilotta panel internete açık; ileride yalnızca ofis ağından, dışarıdan V
 | note_links | Notlardaki `[[...]]` bağlantıları; geri bağlantılar ve grafik görünümü buradan |
 | documents | Drive'dan gelen kaynak dosyalar; her biri bir kaynak notuna bağlı |
 | station_candidates | Pillika için toplanan istasyon verisi: kaynak, konum, operatör, soket tipleri, güç, erişim, tarih, doğrulama durumu, eşleşen kayıt |
-| customers, opportunities | Basit müşteri listesi: kurum, kişi, fırsat, aşama, değer, sonraki adım; müşteri düzeyinde AI izni (izni olmayan müşteriye bağlı bütün kayıtlar ajan çalışmalarına kapalı) ve sözleşmenin kodla otomatik işlemeye izin verip vermediği |
-| projects | Proje, müşteri, bütçe, kilometre taşları, AI izni (müşteri sözleşmesi AI kullanımına izin vermiyorsa o projede ajan çalışmaz) |
-| project_members | Projenin üyeleri; proje kapsamlı satırları yalnızca üyeler ve kurucu görür |
+| customers, opportunities | Basit müşteri listesi: kurum, kişi, fırsat, aşama, değer, sonraki adım; müşteri düzeyinde AI izni (izni olmayan müşteriye bağlı bütün kayıtlar ajan çalışmalarına kapalı) ve sözleşmenin kodla otomatik işlemeye izin verip vermediği; müşteri adı şirket içinde tekildir; sözleşme izinlerini yalnızca kurucu işaretler, AI iznini passkey ile açar |
+| projects | Proje: ad, açıklama, müşteri (isteğe bağlı), beş durum, renk ve simge, hedef tarih, açan kişi, bütçe, kilometre taşları, AI izni (müşteri sözleşmesi AI kullanımına izin vermiyorsa o projede ajan çalışmaz; izni yalnızca kurucu, passkey ile açar; izin açıkken projenin müşterisi değişmez). Proje silinmez, kapatılır |
+| project_members | Projenin üyeleri (o şirketin kurucusu ve çalışanları); projeyi açan kişi üyesidir; proje kapsamlı satırları yalnızca üyeler ve kurucu görür |
 | integrations | Bağlantı ayarları ve yetkileri, şirket bazında; Google bağlantı token'ları şifreli, yalnızca worker kullanır |
 
 ## Durumlar ve roller
@@ -76,11 +76,12 @@ Onaylandı. Arayüzde Türkçe adlar, veritabanında parantez içindeki değerle
 
 - Görev durumu: Açık (`open`), Sürüyor (`in_progress`), Onay bekliyor (`awaiting_approval`), Yanıt bekliyor (`awaiting_reply`, 2 Ekim), Tamamlandı (`done`), İptal (`cancelled`)
 - Onay durumu: Bekliyor (`pending`), Onaylandı (`approved`), Düzeltme istendi (`changes_requested`), Reddedildi (`rejected`)
+- Proje durumu: Beklemede (`backlog`), Planlandı (`planned`), Sürüyor (`in_progress`), Tamamlandı (`completed`), İptal (`cancelled`); Tamamlandı ve İptal projeyi kapatır (8 Ekim, karar 17; kapatma kuralı kurucu onayı bekliyor, `docs/SONRA.md` P-c)
 
 | Rol | Yetki |
 | --- | --- |
 | Kurucu (`founder`) | Bütün şirketleri görür, bütün onayları verir, kullanıcı ve ajan ayarlarını yönetir; iki şirketi birlikte yalnızca holding görünümünde (salt okunur) görür; Kurucu özel alanının tek üyesidir |
-| Çalışan (`employee`) | Üyesi olduğu şirketin görev ve notlarıyla çalışır; proje kapsamlı kayıtları yalnızca üyesi olduğu projelerde görür; onay yetkisi kurucu verirse açılır |
+| Çalışan (`employee`) | Üyesi olduğu şirketin görev ve notlarıyla çalışır; proje kapsamlı kayıtları yalnızca üyesi olduğu projelerde görür; proje açar ve üyesi olduğu projenin üyelerini yönetir (8 Ekim, karar 15); onay yetkisi kurucu verirse açılır |
 | Dış kişi (`external`) | Mali müşavir ve avukat gibi; kendi Google hesabıyla davetle girer; yalnızca kendisine açılan görev ve notları görür |
 
 ## Yetki seviyeleri

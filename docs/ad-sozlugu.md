@@ -393,6 +393,12 @@ Skill klasörü: `skills/<ad>/SKILL.md` ve yanında `templates/`, `examples/`, `
 - Veritabanı hata kodu: `55000` (`set_project_ai_permission`: projenin müşterisi onaylanandan farklı; API `project_changed` der)
 - API yanıt alanları: projede `closed`, `targetDate`, `aiAllowed`, `agentsMayWork`, `customer`, `memberCount`, `createdBy`, `members`, `actions` (`edit`, `manageMembers`, `setAiPermission`, `setCustomerPermissions`); müşteri seçeneğinde `aiAllowed` ve `automatedProcessingAllowed` (çalışana `null` gider)
 - Sabitler: `PROJECT_NAME_MAX` (120), `CUSTOMER_NAME_MAX` (120), `PROJECT_DESCRIPTION_MAX` (5000), `PROJECT_MEMBER_MAX` (50), `PROJECT_LIST_LIMIT` (500); `DEFAULT_PROJECT_STATUS` (`planned`), `DEFAULT_PROJECT_COLOR` (`gray`), `DEFAULT_PROJECT_ICON` (`folder`)
+- Arayüz renk değişkenleri: `--project-gray`, `--project-red`, `--project-orange`, `--project-green`, `--project-teal`, `--project-blue`, `--project-purple`, `--project-pink` (proje simgesinin zemini; üstündeki simge `--surface` rengindedir). Sınıfları `bg-project-<renk>`.
+- Panel adresleri: `/c/$company/projects` (liste), `/c/$company/projects/$projectId` (proje sayfası). Menüdeki etiket "Projeler".
+- Panel: sorgu anahtarları `projects` (liste), `project` (proje sayfası), `customers` (seçilecek müşteriler), `project-member-candidates` (üye yapılabilecek kişiler); klasörler `lib/projects` ve `components/projects`; bileşenler `ProjectTile` (proje simgesi), `ProjectFields` (iki pencerenin ortak alanları), `NewProjectDialog`, `EditProjectDialog`, `ProjectMembers`, `ProjectProperties`.
+- Durum dili: `PROJECT_STATUS` (beş proje durumunun sözü, simgesi ve rengi; `lib/status.ts`), durum türü `project`.
+- Menü: `MenuSpace` (`any`: her yerde, `company`: yalnızca şirkette; Kurucu alanında sunulmaz), menü satırlarında `space` alanı.
+- Kodda izin değişikliği türleri: `project_on`, `project_off`, `customer_ai_on`, `customer_ai_off`, `automated_on`, `automated_off`; müşteri seçiminde `new` ("Yeni müşteri ekle") ve boş değer ("Müşteri yok").
 
 ## Notlar
 
