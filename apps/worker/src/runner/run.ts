@@ -131,6 +131,25 @@ const REMINDER = `<runner_notice>
 Çalışman bitiş aracı çağrılmadan sona erdi; yazdığın metin kaydedilmedi. Sonuç yalnızca bitiş aracınla kaydedilir. Sonucu sunacaksan şimdi bitiş aracını çağır. İşi yapamıyorsan aracı çağırma; nedenini bir iki cümleyle yeniden yaz.
 </runner_notice>`;
 
+/**
+ * What the model is told with a refused tool call, by refusal code: the common rules promise that
+ * a result with "ok: false" says in "problems" what to correct. Fixed sentences; nothing of the
+ * input is repeated. A refused input has sentences of its own (inputProblems).
+ */
+const ONLY_GIVEN_TOOLS = 'yalnızca sana verilen araçları kullan';
+const REFUSAL_PROBLEMS: Readonly<Record<string, string>> = {
+  unit_not_routable:
+    'unit_code, agent_code: kendi birimine ya da kendine yönlendiremezsin; units_and_agents bloğundaki başka bir birimi seç',
+  unit_or_agent_not_available:
+    'unit_code, agent_code: units_and_agents bloğundaki bir birim ve o birimin orada yazan ajanlarından biri olmalı; birimde uygun ajan yoksa agent_code boş metin ("") olmalı',
+  parallel_call_refused:
+    'Bir yanıtta yalnızca ilk araç çağrısı işlenir; bu çağrı çalıştırılmadı. Gerekiyorsa sonraki yanıtında yeniden çağır',
+  tool_not_in_catalog: `Böyle bir araç yok; ${ONLY_GIVEN_TOOLS}`,
+  tool_not_on_card: `Bu araç görev kartında yok; ${ONLY_GIVEN_TOOLS}`,
+  tool_not_built: `Bu araç bu sürümde kullanılamıyor; ${ONLY_GIVEN_TOOLS}`,
+  approval_path_not_built: `Bu araç bu sürümde kullanılamıyor; ${ONLY_GIVEN_TOOLS}`,
+};
+
 interface CardVersion {
   id: string;
   model: string;
@@ -735,6 +754,8 @@ export async function runAgentJob(
     problems: readonly string[] = [],
   ): Promise<ToolResult> => {
     const known = catalog.has(block.name);
+    const fixed = REFUSAL_PROBLEMS[code];
+    const told = problems.length > 0 ? problems : fixed === undefined ? [] : [fixed];
     await agentStep(deps.pool, context, async (client) => {
       if (known) {
         await client.query(
@@ -756,7 +777,7 @@ export async function runAgentJob(
       content: JSON.stringify({
         ok: false,
         error_code: code,
-        ...(problems.length > 0 ? { problems } : {}),
+        ...(told.length > 0 ? { problems: told } : {}),
       }),
       is_error: true,
     };

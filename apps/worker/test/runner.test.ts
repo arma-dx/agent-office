@@ -508,6 +508,56 @@ describe.skipIf(noDatabase)('the coordinator’s run', () => {
     expect(firstUserText(model)).toContain('\\u003crunner_notice>');
   });
 
+  it('a refused call tells the model what to correct, as the common rules promise', async () => {
+    const taskId = await openRequest(ids.founder, 'Sözleşmeye bakılsın');
+    const model = new ScriptedModel([
+      // An agent that is not an agent of the named unit.
+      toolUse('route_task', { unit_code: 'HUK', agent_code: 'SOS-2', reason: 'Hukuk işi.' }),
+      // The coordinator's own unit.
+      toolUse('route_task', { unit_code: 'KOR', agent_code: '', reason: 'Hukuk işi.' }),
+      // A tool of another card, and a second call in the same answer.
+      toolUses([
+        { name: 'send_email', input: { to: 'x@example.com' } },
+        { name: 'route_task', input: ROUTE_TO_SOS },
+      ]),
+      // A tool of the card the runner has no handler for.
+      toolUse('update_task', { status: 'done' }),
+      toolUse('route_task', ROUTE_TO_SOS),
+    ]);
+    const { deps } = await runner(model);
+    const result = await runAgentJob(deps, job(taskId, 'KOR-1', ids.founder));
+    expect(result).toMatchObject({ outcome: 'routed', modelCalls: 5 });
+    // Every result the model was given, in order.
+    const told = (model.requests.at(-1)?.messages ?? []).flatMap((turn) =>
+      Array.isArray(turn.content)
+        ? turn.content.flatMap((block) =>
+            block.type === 'tool_result' && typeof block.content === 'string'
+              ? [JSON.parse(block.content) as { error_code: string; problems?: string[] }]
+              : [],
+          )
+        : [],
+    );
+    expect(told.map((entry) => entry.error_code)).toEqual([
+      'unit_or_agent_not_available',
+      'unit_not_routable',
+      'tool_not_on_card',
+      'parallel_call_refused',
+      'approval_path_not_built',
+    ]);
+    // The rules say: "problems alanında neyin düzeltilmesi gerektiği yazar".
+    expect(systemOf(model)).toContain('`problems` alanında neyin düzeltilmesi gerektiği yazar');
+    for (const entry of told) {
+      expect(entry.problems).toHaveLength(1);
+    }
+    expect(told[0]?.problems?.[0]).toContain('units_and_agents bloğundaki bir birim');
+    expect(told[1]?.problems?.[0]).toContain('kendi birimine ya da kendine yönlendiremezsin');
+    expect(told[2]?.problems?.[0]).toContain('görev kartında yok');
+    expect(told[3]?.problems?.[0]).toContain('yalnızca ilk araç çağrısı işlenir');
+    expect(told[4]?.problems?.[0]).toContain('bu sürümde kullanılamıyor');
+    // Fixed sentences: nothing of what the model wrote comes back in them.
+    expect(JSON.stringify(told)).not.toMatch(/Hukuk işi|example\.com/);
+  });
+
   it('the limit holds inside one answer: forty calls in a turn do not run past ten', async () => {
     const taskId = await openRequest(ids.founder, REQUEST);
     const many = Array.from({ length: 40 }, () => ({ name: 'route_task', input: ROUTE_TO_SOS }));
