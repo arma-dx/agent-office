@@ -68,7 +68,7 @@ Sürüyor. Göçler `supabase/migrations`, testler `packages/db/test` (kısıtl�
 
 Altyapı:
 
-- [ ] Supabase hesabı ve iki proje: test ve canlı (test projesi açıldı ve 6 Ekim'de bütün göçler gönderildi; canlı için Pro plan kararı bekleniyor; adımlar `docs/supabase-kurulum.md`)
+- [ ] Supabase hesabı ve iki proje: test ve canlı (test projesi açıldı; 8 Ekim akşamı 48 göçün hepsi orada. Canlı proje ve Pro plan, proje sürüm 1'e geçtiğinde: 8 Ekim, karar 33; adımlar `docs/supabase-kurulum.md` içinde)
 - [x] Veri bölgesinin seçimi: AB, Frankfurt (2 Ekim, karar 14)
 - [x] Yerel veritabanı: `supabase start` ve `supabase db reset` çalışır durumda (göçler ve testler yerel Supabase'de, süper kullanıcı olmayan `postgres` rolüyle geçiyor)
 - [x] Yetkili göç rolü ile kısıtlı uygulama rolünün ayrılması; uygulama rolünde `BYPASSRLS` yok
@@ -329,7 +329,7 @@ Sunucu:
 - [x] İstem: talimat ve veri ayrı; talep metni işaretli veri bloğunda (kural 7)
 - [x] Araç çağrısı ve süre sınırı; durdurma düğmesi; AI izni denetimi (kural 12)
 - [x] Claude istemcisi tek dosyada; model adı ve fiyatı yapılandırmadan; maliyet kaydı
-- [ ] (Senden) Anthropic API anahtarı ve geliştirme için düşük harcama sınırı (karar 12)
+- [x] (Senden) Anthropic API anahtarı ve geliştirme için düşük harcama sınırı (karar 12; anahtar ve sınır 8 Ekim'de hazır)
 - [x] Gerçek modelle tek deneme çağrısı (8 Ekim: kurucunun makinesinde `smoke:claude` iki modelle de geçti; maliyet hesabı fiyat tablosuyla tuttu)
 
 Arayüz:
@@ -379,6 +379,7 @@ Adım 4: Ajanın soru sorması (ilk gerçek çalışmalardan sonra; sorusu kuruc
 Adım 5: Birden çok ajanın sırayla çalışması (ilk gerçek çalışmalardan sonra; soruları kurucuya o zaman sorulur)
 
 - [ ] Birden çok ajanın sırayla çalışması (7 Ekim, karar 1)
+- [ ] Haber ve bilgi toplama ajanı (8 Ekim, karar 35): ön plan (birim, kart taslağı, araçlar, akıştaki yeri, sorular); ajan, onaydan sonra uygun aşamada kurulur
 
 Bu işten çıkarılanlar:
 
@@ -398,7 +399,7 @@ Adım 1: en küçük Projeler
 - [x] Yapay zekâ izni: yalnızca kurucu, passkey ile; müşterinin sözleşme izinleri (izni kapatmak passkey istemez; müşterinin yapay zekâ iznini açmak passkey ister; SONRA P1-b, P1-c; izin açıkken projenin müşterisi değişmez, SONRA P1-t; passkey onayı kurucunun gördüğü müşteriye bağlı, SONRA P1-y)
 - [x] Projeyi kapatma ve geri açma (durum alanıyla: Tamamlandı ve İptal kapatır; proje silinmez; kapalı projede yeni talep açılmaması adım 2'de, SONRA P1-j)
 - [x] Şirket ayrımı ve görünürlük testleri (kısıtlı rollerle) (veritabanı, API ve panel testleri; iz kaydı olayları dahil, SONRA P1-n)
-- [ ] Dört yeni göçün (`20261008101600` ila `20261008101900`) yerel veritabanına ve test ortamına uygulanması (uygulanmadan Projeler'in adresleri sunucu hatası verir; test ortamında önce ilk göçün ön denetimi yapılır: adı boşlukla biten ya da 120 karakteri aşan proje ve müşteri, yalnızca harf büyüklüğü farklı iki müşteri adı olmamalı; yerelde denetlendi, kayıt yok)
+- [x] Dört yeni göçün (`20261008101600` ila `20261008101900`) yerel veritabanına ve test ortamına uygulanması (8 Ekim akşamı: yerelde uygulandı; test projesine 30 göç gönderildi, 48 göçün hepsi orada)
 
 Adım 2: talep formunda proje alanı
 
