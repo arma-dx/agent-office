@@ -71,7 +71,11 @@ export const CAUSE_SENTENCE: Record<RequestCause, string> = {
   coordinator_closed: 'Koordinasyon merkezi bu şirkette açık olmadığı için talep yönlendirilemedi.',
   no_routing: 'Koordinasyon merkezi bu talebi bir birime yönlendiremedi.',
   agent_stopped: 'Ajan durdurulduğu için iş yarıda kaldı.',
-  not_started: 'Ajanın çalışması başlatılamadı; iş ajana kendiliğinden dönmez.',
+  // Read only while the agent is open: while it is stopped the cause is agent_stopped (or
+  // coordinator_closed). So the notice can say that the agent is open and must say that this
+  // alone starts nothing.
+  not_started:
+    'Ajanın çalışması başlatılamadı: iş verildiğinde ajan kapalıydı ya da çalışmaya hazır değildi. Ajan şimdi açık, ama iş kendiliğinden başlamaz.',
   no_submission: 'Ajan sonucu onaya sunmadan çalışmasını bitirdi.',
   run_failed: 'Ajanın çalışması bir hata nedeniyle tamamlanamadı.',
   limit_reached: 'Ajan çalışma sınırına takıldı.',
@@ -114,7 +118,9 @@ export const CAUSE_NEXT: Partial<Record<RequestCause, string>> = {
   no_routing: '"Yönlendirmeyi düzelt" ile talebi bir birime ve ajana kendiniz verebilirsiniz.',
   agent_stopped:
     'Ajanı Ofis görünümünden yeniden açmak bu talebi kendiliğinden başlatmaz. Açtıktan sonra "Yönlendirmeyi düzelt" ile işi yeniden verin.',
-  not_started: '"Yönlendirmeyi düzelt" ile işi ajana yeniden verin; yeni bir çalışma başlar.',
+  // Also for a request the coordinator never routed: the person makes the first routing.
+  not_started:
+    '"Yönlendirmeyi düzelt" ile işi bir ajana yeniden verin; yeni bir çalışma başlar. İş gerekmiyorsa talebi kapatabilirsiniz.',
   no_submission:
     '"Yönlendirmeyi düzelt" ile işi aynı ajana yeniden verebilir (yeni bir çalışma başlar) ya da talebi kapatabilirsiniz.',
   run_failed:

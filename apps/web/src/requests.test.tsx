@@ -905,6 +905,64 @@ describe('the page of a request', () => {
     expect(api.unexpected).toEqual([]);
   });
 
+  // The agent was stopped when the approver asked for changes, so no run was called for; the
+  // founder opened it again, which starts nothing (the plan's decision for SV-4, SONRA Y-j). The
+  // request stays with a person and the page says so and names the way on.
+  const neverStarted = (overrides: Parameters<typeof requestDetail>[0] = {}) =>
+    requestDetail({
+      status: 'in_progress',
+      stage: 'fell_to_person',
+      cause: 'not_started',
+      turn: { kind: 'founder' },
+      approval: null,
+      ...overrides,
+    });
+  const NOT_STARTED =
+    'Ajanın çalışması başlatılamadı: iş verildiğinde ajan kapalıydı ya da çalışmaya hazır değildi. Ajan şimdi açık, ama iş kendiliğinden başlamaz.';
+
+  it('a request whose run was never started tells the one who can act how the work is given again', async () => {
+    mockApi({
+      'GET /session': sessionHandler(),
+      [`GET /requests/${REQUEST_ID}`]: () => json(neverStarted()),
+    });
+    renderApp(`/c/armadx/requests/${REQUEST_ID}`);
+    expect(await screen.findByText(NOT_STARTED)).toBeVisible();
+    expect(stageLine()).toContain('Aşama: Sizden bekleniyor: çalışma başlamadı Sıra: sizde');
+    // The way on is named and offered; nothing says that the agent will take the work by itself
+    // or that opening an agent would start it.
+    expect(
+      screen.getByText(
+        '"Yönlendirmeyi düzelt" ile işi bir ajana yeniden verin; yeni bir çalışma başlar. İş gerekmiyorsa talebi kapatabilirsiniz.',
+      ),
+    ).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Yönlendirmeyi düzelt' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'İşi durdur' })).toBeVisible();
+    expect(screen.getByRole('main')).not.toHaveTextContent(
+      /Ofis görünümünden|Ajan çalışıyor|Ajan düzeltiyor|gecikti/,
+    );
+  });
+
+  it('a request whose run was never started tells its requester that a person will take the next step', async () => {
+    mockApi({
+      'GET /session': sessionHandler(EMPLOYEE_SESSION),
+      [`GET /requests/${REQUEST_ID}`]: () =>
+        json(
+          neverStarted({
+            waitingForMe: false,
+            actions: { cancel: true, stop: false, reroute: false },
+          }),
+        ),
+    });
+    renderApp(`/c/armadx/requests/${REQUEST_ID}`);
+    expect(await screen.findByText(NOT_STARTED)).toBeVisible();
+    expect(stageLine()).toContain('Aşama: İnsana düştü: çalışma başlamadı Sıra: Kurucu');
+    expect(screen.getByText('Talep kayıtlı. Sıradaki adımı Kurucu atacak.')).toBeVisible();
+    // The requester cannot route and is not told to.
+    expect(screen.queryByRole('button', { name: 'Yönlendirmeyi düzelt' })).toBeNull();
+    expect(screen.getByRole('main')).not.toHaveTextContent(/Yönlendirmeyi düzelt/);
+    expect(screen.getByRole('button', { name: 'Talebi iptal et' })).toBeVisible();
+  });
+
   it('the correction dialog says so and offers no send when no unit has an open agent', async () => {
     const fallen = requestDetail({
       status: 'in_progress',
