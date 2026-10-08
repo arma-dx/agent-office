@@ -1097,6 +1097,87 @@ describe('the page of a request', () => {
     expect(screen.getByRole('region', { name: 'Sonuç' })).toHaveTextContent('Artık İzmir’deyiz.');
   });
 
+  it('draws a closed approval as an event in the journey, not with the icon of a rejection', async () => {
+    // The routing was corrected while a result waited for the unit and, later, while one waited
+    // for the requester: both closed without anybody deciding. A later result was rejected.
+    const at = '2026-10-07T09:10:00.000Z';
+    const closedApproval = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1';
+    const closedAcceptance = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2';
+    const rejected = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3';
+    mockApi({
+      'GET /session': sessionHandler(),
+      [`GET /requests/${REQUEST_ID}`]: () =>
+        json(
+          requestDetail({
+            status: 'cancelled',
+            stage: 'cancelled',
+            cause: 'rejected',
+            turn: { kind: 'none' },
+            waitingForMe: false,
+            approval: null,
+            closure: { by: FOUNDER, reason: 'incomplete', note: null },
+            actions: { cancel: false, stop: false, reroute: false },
+            journey: [
+              ...DEFAULT_JOURNEY,
+              {
+                kind: 'approval',
+                id: closedApproval,
+                at,
+                status: 'closed',
+                attempt: 1,
+                agent: { code: 'SOS-2', name: 'Sosyal İçerik Yazım Ajanı' },
+                decidedBy: null,
+                reason: null,
+                note: null,
+              },
+              {
+                kind: 'acceptance',
+                id: closedAcceptance,
+                at,
+                round: 1,
+                status: 'closed',
+                reason: null,
+                note: null,
+              },
+              {
+                kind: 'approval',
+                id: rejected,
+                at,
+                status: 'rejected',
+                attempt: 1,
+                agent: { code: 'SOS-2', name: 'Sosyal İçerik Yazım Ajanı' },
+                decidedBy: FOUNDER,
+                reason: 'incomplete',
+                note: null,
+              },
+            ],
+          }),
+        ),
+    });
+    renderApp(`/c/armadx/requests/${REQUEST_ID}`);
+    const journey = await screen.findByRole('region', { name: 'Yolculuk' });
+    const row = (text: string): HTMLElement => {
+      const item = within(journey)
+        .getAllByRole('listitem')
+        .find((candidate) => candidate.textContent.includes(text));
+      if (!item) throw new Error(`No journey row says: ${text}`);
+      return item;
+    };
+    // The same neutral mark as the other events of the journey ("talebi gönderdi"), and no icon.
+    for (const text of [
+      'Bekleyen onay kapandı: talep değişti.',
+      'Talep sahibinin onayı kapandı: talep değişti.',
+      'Ayşe Yılmaz talebi gönderdi.',
+    ]) {
+      expect(row(text).querySelector('[data-journey-mark="event"]')).not.toBeNull();
+      expect(row(text).querySelector('svg')).toBeNull();
+    }
+    // A rejection keeps the icon and the tone of "Reddedildi".
+    const rejection = row('Ömer Kadıoğlu sonucu reddetti: Eksik.');
+    expect(rejection.querySelector('[data-journey-mark="event"]')).toBeNull();
+    expect(rejection.querySelector('svg')).toHaveClass('text-status-error');
+  });
+
   it('says where a money mark comes from', async () => {
     mockApi({
       'GET /session': sessionHandler(),

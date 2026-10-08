@@ -906,7 +906,13 @@ export function RerouteDialog({
 
 /** The mark of a row that is an event, not a record with a status of its own. */
 function EventMark() {
-  return <span aria-hidden="true" className="size-1.5 rounded-full bg-ink-secondary" />;
+  return (
+    <span
+      aria-hidden="true"
+      data-journey-mark="event"
+      className="size-1.5 rounded-full bg-ink-secondary"
+    />
+  );
 }
 
 function JourneyRow({
@@ -1037,11 +1043,13 @@ export function Journey({ request }: { request: RequestDetail }) {
                 <JourneyRow
                   key={item.id}
                   icon={
-                    <StatusIcon
-                      kind="approval"
-                      status={item.status === 'closed' ? 'rejected' : item.status}
-                      labelled={false}
-                    />
+                    // Closed because the request changed: an event, not a decision. Nobody
+                    // rejected anything, so it does not get the icon of "Reddedildi".
+                    item.status === 'closed' ? (
+                      <EventMark />
+                    ) : (
+                      <StatusIcon kind="approval" status={item.status} labelled={false} />
+                    )
                   }
                   time={item.at}
                 >
@@ -1069,19 +1077,11 @@ export function Journey({ request }: { request: RequestDetail }) {
                 <JourneyRow
                   key={item.id}
                   icon={
-                    <StatusIcon
-                      kind="approval"
-                      status={
-                        item.status === 'approved'
-                          ? 'approved'
-                          : item.status === 'changes_requested'
-                            ? 'changes_requested'
-                            : item.status === 'closed'
-                              ? 'rejected'
-                              : 'pending'
-                      }
-                      labelled={false}
-                    />
+                    item.status === 'closed' ? (
+                      <EventMark />
+                    ) : (
+                      <StatusIcon kind="approval" status={item.status} labelled={false} />
+                    )
                   }
                   time={item.at}
                 >
