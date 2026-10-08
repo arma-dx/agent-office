@@ -208,9 +208,13 @@ export const REASON_LABEL: Record<RejectionReason, string> = {
   other: 'Diğer',
 };
 
-/** The fixed verb of a tool, by its catalog name; an unknown tool is shown by its name. */
+/**
+ * The fixed verb of a tool, by its catalog name; an unknown tool is shown by its name. The
+ * coordinator's tool is called for every answer it gives, also "no unit fits": its verb names the
+ * decision, not a routing that may not have happened (the run's summary says which it was).
+ */
 const TOOL_VERB: Record<string, string> = {
-  route_task: 'Talebi yönlendirdi',
+  route_task: 'Yönlendirme kararını bildirdi',
   submit_for_approval: 'Onaya sundu',
   read_task: 'Talebi okudu',
   list_agents: 'Ajan listesine baktı',
