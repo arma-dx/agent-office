@@ -16,6 +16,7 @@ export * from './requests.ts';
 export {
   AGENT_RUN_DEAD_QUEUE,
   AGENT_RUN_QUEUE,
+  DEAD_LETTER_RETRY,
   QUEUE_SCHEMA,
   agentRunJobSchema,
   agentRunSender,

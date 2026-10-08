@@ -92,15 +92,38 @@ export const agentRunJobSchema = z.strictObject({
 export type AgentRunJob = z.output<typeof agentRunJobSchema>;
 
 /**
+ * How long the dead letter queue keeps trying a job whose handler failed. That handler only closes
+ * runs nobody owns any more (no model call, nothing to repeat), and it is the only thing that will
+ * ever close a run left open inside its time limit; with the queue's defaults (two retries, at
+ * once) a database that is away for a few seconds would make it give up for good. Ten retries with
+ * a doubling wait, capped at ten minutes, cover an outage of more than an hour.
+ */
+export const DEAD_LETTER_RETRY = {
+  retryLimit: 10,
+  retryDelay: 30,
+  retryBackoff: true,
+  retryDelayMax: 10 * 60,
+} as const;
+
+/**
  * Creates the two queues if they are not there. A run is never retried by the queue: every model
  * call costs money and a retry would open a second run; a failed job lands in the dead letter
- * queue.
+ * queue, whose own jobs are retried (DEAD_LETTER_RETRY); a dead letter queue that an earlier
+ * version created with the defaults is given the same patience.
  */
 export async function ensureAgentRunQueues(
-  queue: Pick<PgBoss, 'createQueue' | 'getQueue'>,
+  queue: Pick<PgBoss, 'createQueue' | 'getQueue' | 'updateQueue'>,
 ): Promise<void> {
-  if (!(await queue.getQueue(AGENT_RUN_DEAD_QUEUE))) {
-    await queue.createQueue(AGENT_RUN_DEAD_QUEUE);
+  const dead = await queue.getQueue(AGENT_RUN_DEAD_QUEUE);
+  if (!dead) {
+    await queue.createQueue(AGENT_RUN_DEAD_QUEUE, DEAD_LETTER_RETRY);
+  } else if (
+    dead.retryLimit !== DEAD_LETTER_RETRY.retryLimit ||
+    dead.retryDelay !== DEAD_LETTER_RETRY.retryDelay ||
+    !dead.retryBackoff ||
+    dead.retryDelayMax !== DEAD_LETTER_RETRY.retryDelayMax
+  ) {
+    await queue.updateQueue(AGENT_RUN_DEAD_QUEUE, DEAD_LETTER_RETRY);
   }
   if (!(await queue.getQueue(AGENT_RUN_QUEUE))) {
     await queue.createQueue(AGENT_RUN_QUEUE, {
@@ -126,6 +149,8 @@ export async function sendAgentRunLookAgain(
 ): Promise<void> {
   const id = await queue.send(AGENT_RUN_DEAD_QUEUE, agentRunJobSchema.parse(job), {
     startAfter: Math.max(1, Math.ceil(afterSeconds)),
+    // The reminder is the last thing that looks at the run: it is not given up after one failure.
+    ...DEAD_LETTER_RETRY,
   });
   if (id === null) {
     throw new Error('The dead letter job was not accepted by the queue');

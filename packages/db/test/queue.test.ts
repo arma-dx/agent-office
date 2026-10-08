@@ -6,12 +6,14 @@ import {
   AGENT_RUN_DEAD_QUEUE,
   AGENT_RUN_EXPIRE_MARGIN_SECONDS,
   AGENT_RUN_QUEUE,
+  DEAD_LETTER_RETRY,
   agentRunExpireSeconds,
   agentRunJobSchema,
   agentRunSender,
   createQueue,
   ensureAgentRunQueues,
   jobDataSchema,
+  sendAgentRunLookAgain,
   sendJob,
 } from '../src/queue.ts';
 
@@ -106,6 +108,8 @@ describe.skipIf(database === null)('queue in the database', () => {
       await ensureAgentRunQueues(queue);
       expect((await queue.getQueue(AGENT_RUN_QUEUE))?.retryLimit).toBe(0);
       expect((await queue.getQueue(AGENT_RUN_QUEUE))?.deadLetter).toBe(AGENT_RUN_DEAD_QUEUE);
+      // The dead letter queue does not give a job up after two tries at once.
+      expect(await queue.getQueue(AGENT_RUN_DEAD_QUEUE)).toMatchObject(DEAD_LETTER_RETRY);
       const sender = agentRunSender(queue);
       const job = {
         companyId: randomUUID(),
@@ -136,5 +140,50 @@ describe.skipIf(database === null)('queue in the database', () => {
       await pool.end();
     }
     expect(errors).toEqual([]);
+  });
+
+  it('gives a dead letter queue that was created with the defaults the same patience', async () => {
+    const errors: unknown[] = [];
+    const queue = createQueue(database?.app ?? '', (error) => errors.push(error), 'sender');
+    await queue.start();
+    try {
+      // An earlier version created it without options.
+      if (!(await queue.getQueue(AGENT_RUN_DEAD_QUEUE))) {
+        await queue.createQueue(AGENT_RUN_DEAD_QUEUE);
+      }
+      await queue.updateQueue(AGENT_RUN_DEAD_QUEUE, {
+        retryLimit: 2,
+        retryDelay: 0,
+        retryBackoff: false,
+        retryDelayMax: null,
+      });
+      expect((await queue.getQueue(AGENT_RUN_DEAD_QUEUE))?.retryLimit).toBe(2);
+      await ensureAgentRunQueues(queue);
+      expect(await queue.getQueue(AGENT_RUN_DEAD_QUEUE)).toMatchObject(DEAD_LETTER_RETRY);
+    } finally {
+      await queue.stop({ graceful: false });
+    }
+    expect(errors).toEqual([]);
+  });
+
+  it('a reminder to look at a run again is retried too, and carries ids only', async () => {
+    const sent: unknown[][] = [];
+    const queue = {
+      send: (...args: unknown[]): Promise<string> => {
+        sent.push(args);
+        return Promise.resolve('job-id');
+      },
+    };
+    const job = {
+      companyId: randomUUID(),
+      userId: randomUUID(),
+      taskId: randomUUID(),
+      agentCode: 'SOS-2',
+    };
+    await sendAgentRunLookAgain(queue, job, 180.2);
+    expect(sent).toEqual([[AGENT_RUN_DEAD_QUEUE, job, { startAfter: 181, ...DEAD_LETTER_RETRY }]]);
+    // Anything but the four ids is refused before it reaches the queue (rule 10).
+    await expect(sendAgentRunLookAgain(queue, { ...job, note: 'text' }, 10)).rejects.toThrow();
+    expect(sent).toHaveLength(1);
   });
 });

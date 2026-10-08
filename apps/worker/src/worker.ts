@@ -109,15 +109,30 @@ export async function handleAgentRunJob(deps: RunnerDeps, data: unknown): Promis
  * and is not touched, because a job that is alive may own it; but the question is not dropped
  * either: the handler puts a reminder on this same queue for the moment the limit will have
  * passed. Without it nothing would look again and the request would say "ajan çalışıyor" for ever.
+ *
+ * A failure here is retried by the queue (DEAD_LETTER_RETRY in packages/db). As in
+ * handleAgentRunJob, the error that was caught never reaches the queue's tables: the log gets its
+ * kind and the SQL state, the queue a bare code.
  */
 export async function handleDeadLetterJob(
   deps: Pick<RunnerDeps, 'pool' | 'log'>,
   lookAgain: (job: unknown, afterSeconds: number) => Promise<void>,
   data: unknown,
 ): Promise<void> {
-  const seconds = await closeLostRun(deps, data, 'overdue');
+  let failed = false;
+  let seconds: number | null = null;
+  try {
+    seconds = await closeLostRun(deps, data, 'overdue');
+    if (seconds !== null) await lookAgain(data, seconds);
+  } catch (error) {
+    failed = true;
+    deps.log('dead_letter_failed', { type: errorKind(error), state: sqlStateOf(error) });
+  }
+  if (failed) {
+    // Thrown outside the catch on purpose, as in handleAgentRunJob.
+    throw new Error('dead_letter_error');
+  }
   if (seconds === null) return;
-  await lookAgain(data, seconds);
   const job = agentRunJobSchema.safeParse(data);
   deps.log('run_watched', {
     task: job.success ? job.data.taskId : null,
