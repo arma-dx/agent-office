@@ -467,13 +467,33 @@ export async function listPendingApprovals(client: Queryable): Promise<ResultApp
   return rows;
 }
 
+/**
+ * Takes the lock of a request for the rest of the transaction, as a close and a correction of the
+ * routing do first. A decision and the requester's answer call it before they touch an approval,
+ * so that every act of a person locks the request first and two of them wait for each other
+ * instead of meeting in a deadlock. Locks nothing when the person cannot read the request.
+ */
+export async function lockRequest(client: Queryable, requestId: string): Promise<void> {
+  await client.query('select office.lock_request($1)', [requestId]);
+}
+
 /** One result approval, locked for a decision; null when the person cannot read it. */
 export async function lockResultApproval(
   client: Queryable,
   approvalId: string,
 ): Promise<ResultApprovalRow | null> {
-  // The lock is taken on the approval alone: the row policy lets the person update it only if they
-  // may read it, and a second decision waits here for the first.
+  // The request first (see lockRequest), then the approval: the row policy lets the person update
+  // it only if they may read it, and a second decision waits here for the first.
+  const found = await client.query<{ task_id: string }>(
+    `select a.task_id from office.approvals a
+     where a.id = $1 and a.routing_id is not null and a.task_id is not null`,
+    [approvalId],
+  );
+  const taskId = found.rows[0]?.task_id;
+  if (taskId === undefined) {
+    return null;
+  }
+  await lockRequest(client, taskId);
   const locked = await client.query(
     'select 1 from office.approvals a where a.id = $1 for update of a',
     [approvalId],

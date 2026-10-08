@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { agentStep, createPool } from '@agent-office/db';
+import { agentStep, createPool, withContext } from '@agent-office/db';
 import {
   COMPANY_HEADER,
   COORDINATOR_AGENT_CODE,
@@ -64,6 +64,8 @@ describe.skipIf(noDatabase)('requests', () => {
   let external: string;
   const founderKey = new SoftwareAuthenticator(PANEL_ORIGIN);
   const workerPool = createPool(database?.worker ?? '', 'agent-office-api-test-worker', () => {});
+  // A connection of the API's role that a test holds open itself, next to the server's own.
+  const besidePool = createPool(database?.app ?? '', 'agent-office-api-test-beside', () => {});
 
   beforeAll(async () => {
     server = createTestServer();
@@ -109,6 +111,7 @@ describe.skipIf(noDatabase)('requests', () => {
       alter table office.memberships enable trigger require_step_up;
     `);
     await workerPool.end();
+    await besidePool.end();
     await server.close();
     await closeAdminPool();
   });
@@ -1280,6 +1283,119 @@ describe.skipIf(noDatabase)('requests', () => {
       stage: 'working',
       cause: null,
     });
+  });
+
+  /** Resolves when a request the server is handling waits for a lock another transaction holds. */
+  async function untilServerWaits(): Promise<void> {
+    for (let attempt = 0; attempt < 500; attempt += 1) {
+      const waiting = await adminQuery(
+        `select 1 from pg_catalog.pg_stat_activity
+         where application_name = 'agent-office-api-test' and wait_event_type = 'Lock'
+           and state = 'active'`,
+      );
+      if (waiting.length > 0) {
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    throw new Error('No request of the server waited for a lock');
+  }
+
+  it('a decision and the requester’s answer take the request’s lock first, as a close does', async () => {
+    const founderContext = { companyId: ids.arma, userId: ids.founder };
+    // Is this row free to lock (nobody holds it)? Asked with the privileged role, in one statement.
+    const free = async (table: string, column: string, value: string): Promise<boolean> => {
+      try {
+        await adminQuery(`select 1 from office.${table} where ${column} = $1 for update nowait`, [
+          value,
+        ]);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    const { id } = await open(employee);
+    await route(id, ids.employee);
+    const approvalId = await submit(id, ids.employee);
+
+    // Somebody holds the request, as a close or a correction of the routing does from its first
+    // statement. The decision waits for the request and has not touched the approval.
+    let decision: Promise<LightMyRequestResponse> | undefined;
+    await withContext(besidePool, founderContext, async (holder) => {
+      await holder.query('select office.lock_request($1)', [id]);
+      decision = post(founder, `/api/approvals/${approvalId}/decision`, {
+        decision: 'approved',
+        selectedOption: 'A',
+      });
+      await untilServerWaits();
+      expect(await free('approvals', 'id', approvalId)).toBe(true);
+    });
+    const approved = await decision;
+    expect(approved?.statusCode).toBe(200);
+
+    // The same for the requester's answer.
+    let answer: Promise<LightMyRequestResponse> | undefined;
+    await withContext(besidePool, founderContext, async (holder) => {
+      await holder.query('select office.lock_request($1)', [id]);
+      answer = post(employee, `/api/requests/${id}/acceptance`, { decision: 'approved' });
+      await untilServerWaits();
+      expect(await free('requester_approvals', 'task_id', id)).toBe(true);
+    });
+    const accepted = await answer;
+    expect(accepted?.statusCode).toBe(200);
+    expect(requestDetailSchema.parse(accepted?.json()).status).toBe('done');
+
+    // The lock is for a person who may read the request: it is nothing to an outsider, to another
+    // company's context or to the worker's role.
+    await withContext(besidePool, { companyId: ids.arma, userId: ids.external }, async (client) => {
+      await client.query('select office.lock_request($1)', [id]);
+      expect(await free('tasks', 'id', id)).toBe(true);
+    });
+    await withContext(
+      besidePool,
+      { companyId: ids.pillika, userId: ids.founder },
+      async (client) => {
+        await client.query('select office.lock_request($1)', [id]);
+        expect(await free('tasks', 'id', id)).toBe(true);
+      },
+    );
+    await expect(
+      agentStep(
+        workerPool,
+        { companyId: ids.arma, userId: ids.employee, agentCode: 'KOR-1' },
+        (client) => client.query('select office.lock_request($1)', [id]),
+      ),
+    ).rejects.toMatchObject({ code: '42501' });
+  });
+
+  it('the loser of a deadlock is told that the request changed, not that the server failed', async () => {
+    const { id } = await open(employee);
+    await route(id, ids.employee);
+    const approvalId = await submit(id, ids.employee);
+    // An order no route takes any more: the approval is held first, then the request is asked
+    // for. The requester's cancel holds the request and waits for the approval; the decision then
+    // waits for the step the cancel has closed. PostgreSQL ends the one that waited first.
+    let cancel: Promise<LightMyRequestResponse> | undefined;
+    await withContext(besidePool, { companyId: ids.arma, userId: ids.founder }, async (holder) => {
+      await holder.query('select 1 from office.approvals where id = $1 for update', [approvalId]);
+      cancel = post(employee, `/api/requests/${id}/close`);
+      await untilServerWaits();
+      await holder.query(
+        `update office.approvals set status = 'rejected', rejection_reason = 'out_of_scope'
+           where id = $1`,
+        [approvalId],
+      );
+    });
+    const lost = await cancel;
+    expect([lost?.statusCode, lost === undefined ? null : errorCode(lost)]).toEqual([
+      409,
+      'request_changed',
+    ]);
+    expect(apiErrorSchema.parse(lost?.json()).error.message).toBe(
+      'Bu talep az önce değişti. Sayfayı yenileyip yeniden deneyin.',
+    );
+    // The other act stands: the page the person reads again says what happened.
+    expect(await read(employee, id)).toMatchObject({ status: 'cancelled', cause: 'rejected' });
   });
 
   it('only the founder opens and stops an agent, and only an agent of the company', async () => {

@@ -62,6 +62,8 @@ export const apiErrorCodeSchema = z.enum([
   'passkey_reset_not_allowed',
   // Requests (flow A) and their approvals.
   'request_closed',
+  // Another person's act on the same request ended this one; the page is read again.
+  'request_changed',
   'approval_closed',
   'option_required',
   'action_not_allowed',

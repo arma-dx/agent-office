@@ -14,6 +14,7 @@ import {
   listRoutings,
   listRuns,
   listSteps,
+  lockRequest,
   lockResultApproval,
   ownRequestExists,
   peopleNames,
@@ -99,6 +100,11 @@ import type { RouteDeps } from '../services.ts';
 
 const INSIDERS = { founderOnly: false, insidersOnly: true } as const;
 
+// deadlock_detected: two transactions each held what the other needed and PostgreSQL ended this
+// one. Every act of a person locks the request first, so two of them wait for each other; this is
+// what is left for an order nobody foresaw. Answered as a conflict, never as a server error.
+const DEADLOCK = '40P01';
+
 const requestParams = z.object({ requestId: z.uuid() });
 const approvalParams = z.object({ approvalId: z.uuid() });
 const listQuery = z.object({ mine: z.enum(['true', 'false']).optional() });
@@ -111,6 +117,16 @@ const actionNotAllowed = (): ApiError =>
     403,
     'action_not_allowed',
     'Bu işlemi yalnızca talep sahibi, birimin onaylayıcısı ya da kurucu yapabilir.',
+  );
+
+// The loser of a deadlock with another person's act on the same request (PostgreSQL 40P01). Which
+// act won is not known here (the request may be closed, or routed again, or decided), so the
+// sentence does not guess: the page is read again and says what happened.
+const requestChanged = (): ApiError =>
+  new ApiError(
+    409,
+    'request_changed',
+    'Bu talep az önce değişti. Sayfayı yenileyip yeniden deneyin.',
   );
 
 const approvalClosed = (): ApiError =>
@@ -391,6 +407,7 @@ export function registerRequestRoutes(
         if (code === 'P0002') throw notFound();
         // invalid_parameter_value: a stop without the reason the requester must be able to read.
         if (code === '22023') throw reasonRequired();
+        if (code === DEADLOCK) throw requestChanged();
         throw error;
       }
       const row = await readRequest(context.client, COORDINATOR_AGENT_CODE, requestId);
@@ -469,6 +486,7 @@ export function registerRequestRoutes(
         // check_violation: the agent was stopped or the request closed meanwhile.
         if (code === '23514') throw routingNotPossible();
         if (code === 'P0002') throw notFound();
+        if (code === DEADLOCK) throw requestChanged();
         throw error;
       }
       // The run's identity stays the requester, whoever corrected the routing.
@@ -497,17 +515,28 @@ export function registerRequestRoutes(
       if (!(await readRequest(client, COORDINATOR_AGENT_CODE, requestId))) {
         throw notFound();
       }
-      const decided = await decideAcceptance(
-        client,
-        requestId,
-        body.data.decision === 'approved'
-          ? { decision: 'approved' }
-          : {
-              decision: 'changes_requested',
-              reason: body.data.reason ?? null,
-              note: body.data.note,
-            },
-      );
+      // The request first, as a close and a correction do: the answer then waits for them
+      // instead of meeting them half way.
+      await lockRequest(client, requestId);
+      let decided: boolean;
+      await client.query('savepoint decide_acceptance');
+      try {
+        decided = await decideAcceptance(
+          client,
+          requestId,
+          body.data.decision === 'approved'
+            ? { decision: 'approved' }
+            : {
+                decision: 'changes_requested',
+                reason: body.data.reason ?? null,
+                note: body.data.note,
+              },
+        );
+      } catch (error) {
+        await client.query('rollback to savepoint decide_acceptance');
+        if (databaseErrorCode(error) === DEADLOCK) throw requestChanged();
+        throw error;
+      }
       if (!decided) {
         // Nothing of this request waits for this person: not the requester, already answered, or
         // closed by a stop or a new routing.
@@ -625,6 +654,7 @@ export function registerRequestRoutes(
         // check_violation: the basis changed or the approval was closed meanwhile.
         if (code === '23514') throw approvalClosed();
         if (code === '42501') throw notFound();
+        if (code === DEADLOCK) throw requestChanged();
         throw error;
       }
       if (decision.decision === 'changes_requested' && approval.attempt < 2) {
