@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { ContextInput } from '../src/context.ts';
 import { ids } from './fixtures.ts';
@@ -397,52 +398,132 @@ describe.skipIf(noDatabase)('tenant isolation', () => {
     });
   });
 
-  it("only the founder grants a customer's AI permission", async () => {
+  it("only the founder sets a customer's contract permissions, through the function, with a passkey for the AI permission", async () => {
+    const set = 'select office.set_customer_permissions($1, $2, $3)';
+    const permissions = (tx: Tx, id: string) =>
+      tx.rows(
+        'select ai_allowed, automated_processing_allowed from office.customers where id = $1',
+        [id],
+      );
+    const used = async (tx: Tx, id: string) =>
+      (
+        await tx.rows<{ used: boolean }>(
+          'select consumed_at is not null as used from office.step_ups where id = $1',
+          [id],
+        )
+      )[0]?.used;
     await inTransaction(async (tx) => {
+      // An employee: neither permission, on or off, with or without a passkey of their own.
+      await stepUp(
+        tx,
+        person(ids.arma, ids.employeeA),
+        'customer_ai_permission',
+        ids.customerANoAi,
+      );
+      for (const values of [
+        [ids.customerANoAi, true, null],
+        [ids.customerA, false, null],
+        [ids.customerA, null, true],
+        [ids.customerA, null, false],
+      ]) {
+        expect((await tx.expectError(set, values)).code).toBe('42501');
+      }
+      // An agent run.
+      await tx.setContext(agent(ids.arma, 'KOR-1'));
+      expect((await tx.expectError(set, [ids.customerA, false, null])).code).toBe('42501');
+      expect((await tx.expectError(set, [ids.customerA, null, true])).code).toBe('42501');
+
+      await tx.setContext(person(ids.arma, ids.founder));
+      // Automated processing: on and off without a passkey.
+      await tx.exec(set, [ids.customerANoAi, null, true]);
+      expect(await permissions(tx, ids.customerANoAi)).toEqual([
+        { ai_allowed: false, automated_processing_allowed: true },
+      ]);
+      await tx.exec(set, [ids.customerANoAi, null, false]);
+      expect(await permissions(tx, ids.customerANoAi)).toEqual([
+        { ai_allowed: false, automated_processing_allowed: false },
+      ]);
+
+      // The AI permission: on only with a passkey for exactly this customer and this purpose.
+      // The employee's own re-verification above does not count for the founder.
+      expect((await tx.expectError(set, [ids.customerANoAi, true, null])).code).toBe('28000');
+      const founder = person(ids.arma, ids.founder);
+      const wrong = [
+        await stepUp(tx, founder, 'customer_ai_permission', ids.customerA),
+        await stepUp(tx, founder, 'project_ai_permission', ids.customerANoAi),
+        await stepUp(tx, founder, 'membership_change', ids.customerANoAi),
+      ];
+      expect((await tx.expectError(set, [ids.customerANoAi, true, null])).code).toBe('28000');
+      expect(await permissions(tx, ids.customerANoAi)).toEqual([
+        { ai_allowed: false, automated_processing_allowed: false },
+      ]);
+      const right = await stepUp(tx, founder, 'customer_ai_permission', ids.customerANoAi);
+      // A null argument leaves that permission as it is.
+      await tx.exec(set, [ids.customerANoAi, true, null]);
+      expect(await permissions(tx, ids.customerANoAi)).toEqual([
+        { ai_allowed: true, automated_processing_allowed: false },
+      ]);
+      expect(await used(tx, right)).toBe(true);
+      for (const id of wrong) {
+        expect(await used(tx, id)).toBe(false);
+      }
+      // Open already: asking again needs no passkey and changes nothing.
+      await tx.exec(set, [ids.customerANoAi, true, true]);
+      expect(await permissions(tx, ids.customerANoAi)).toEqual([
+        { ai_allowed: true, automated_processing_allowed: true },
+      ]);
+
+      // Off without a passkey; on again needs a new one.
+      await tx.exec(set, [ids.customerANoAi, false, null]);
+      expect(await permissions(tx, ids.customerANoAi)).toEqual([
+        { ai_allowed: false, automated_processing_allowed: true },
+      ]);
+      expect((await tx.expectError(set, [ids.customerANoAi, true, null])).code).toBe('28000');
+
+      expect((await tx.expectError(set, [null, true, null])).code).toBe('22023');
+      // The other company's customer does not exist here, for its founder either.
+      expect((await tx.expectError(set, [ids.customerP, false, null])).code).toBe('P0002');
+    });
+  });
+
+  it('a permission on a new customer row needs the founder and a passkey, or no person in the context', async () => {
+    const insert = `insert into office.customers (id, company_id, name, ai_allowed,
+        automated_processing_allowed) values ($1, $2, $3, $4, $5)`;
+    await inAdminTransaction(async (tx) => {
       await tx.setContext(person(ids.arma, ids.employeeA));
       expect(
-        (
-          await tx.expectError('update office.customers set ai_allowed = true where id = $1', [
-            ids.customerANoAi,
-          ])
-        ).code,
+        (await tx.expectError(insert, [randomUUID(), ids.arma, 'With AI', true, false])).code,
       ).toBe('42501');
       expect(
-        (
-          await tx.expectError(
-            'update office.customers set automated_processing_allowed = true where id = $1',
-            [ids.customerA],
-          )
-        ).code,
+        (await tx.expectError(insert, [randomUUID(), ids.arma, 'With code', false, true])).code,
       ).toBe('42501');
-      expect(
-        (
-          await tx.expectError(
-            `insert into office.customers (company_id, name, ai_allowed) values ($1, 'New', true)`,
-            [ids.arma],
-          )
-        ).code,
-      ).toBe('42501');
-      expect(
-        await tx.exec('update office.customers set name = $2 where id = $1', [
-          ids.customerA,
-          'New name',
-        ]),
-      ).toBe(1);
       await tx.setContext(agent(ids.arma, 'KOR-1'));
       expect(
-        (
-          await tx.expectError('update office.customers set ai_allowed = false where id = $1', [
-            ids.customerA,
-          ])
-        ).code,
+        (await tx.expectError(insert, [randomUUID(), ids.arma, 'By a run', true, false])).code,
       ).toBe('42501');
-      await tx.setContext(person(ids.arma, ids.founder));
+      await tx.setContext(person(ids.pillika, ids.founder));
       expect(
-        await tx.exec('update office.customers set ai_allowed = true where id = $1', [
-          ids.customerANoAi,
-        ]),
-      ).toBe(1);
+        (await tx.expectError(insert, [randomUUID(), ids.arma, 'Other company', false, true])).code,
+      ).toBe('42501');
+
+      const founder = person(ids.arma, ids.founder);
+      await tx.setContext(founder);
+      const id = randomUUID();
+      expect((await tx.expectError(insert, [id, ids.arma, 'With AI', true, false])).code).toBe(
+        '28000',
+      );
+      // Automated processing alone needs the founder, not a passkey.
+      expect(await tx.exec(insert, [randomUUID(), ids.arma, 'With code', false, true])).toBe(1);
+      // The passkey names the id of the customer that is being added.
+      await stepUp(tx, founder, 'customer_ai_permission', id);
+      expect(
+        (await tx.expectError(insert, [randomUUID(), ids.arma, 'Another id', true, false])).code,
+      ).toBe('28000');
+      expect(await tx.exec(insert, [id, ids.arma, 'With AI', true, false])).toBe(1);
+
+      // An administrator, without a person in the context.
+      await tx.setContext({});
+      expect(await tx.exec(insert, [randomUUID(), ids.arma, 'By hand', true, true])).toBe(1);
     });
   });
 

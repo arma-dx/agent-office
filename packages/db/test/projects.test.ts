@@ -2,8 +2,9 @@ import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { afterAll, describe, expect, it } from 'vitest';
 import type { ContextInput } from '../src/context.ts';
-import { ids } from './fixtures.ts';
+import { FOUNDER_PASSKEY, ids } from './fixtures.ts';
 import {
+  adminQuery,
   closePools,
   inAdminTransaction,
   inTransaction,
@@ -11,7 +12,7 @@ import {
   noDatabase,
   type Tx,
 } from './helpers.ts';
-import { stepUp } from './step-up.ts';
+import { createChallenge, openTestSession, stepUp } from './step-up.ts';
 
 // The Projects section, step 1 (8 October decisions 14 to 22; docs/SONRA.md P-a to P-j, W-i): the
 // fields of a project, who opens and changes one, who its members are, and who sets the AI
@@ -33,6 +34,45 @@ const founderSpace: ContextInput = { companyId: ids.founderSpace, userId: ids.fo
 const ADD_MEMBER =
   'insert into office.project_members (company_id, project_id, user_id) values ($1, $2, $3)';
 const REMOVE_MEMBER = 'delete from office.project_members where project_id = $1 and user_id = $2';
+
+const SET_AI = 'select office.set_project_ai_permission($1, $2, $3) as changed';
+const SET_CUSTOMER = 'select office.set_customer_permissions($1, $2, $3)';
+
+/** Calls the permission function of a project; `customer` is the customer the founder saw. */
+async function setAi(
+  tx: Tx,
+  projectId: string,
+  allowed: boolean,
+  customer: string | null = null,
+): Promise<boolean> {
+  const [row] = await tx.rows<{ changed: boolean }>(SET_AI, [projectId, allowed, customer]);
+  if (!row) {
+    throw new Error('set_project_ai_permission returned no row');
+  }
+  return row.changed;
+}
+
+async function aiAllowed(tx: Tx, projectId: string): Promise<boolean | undefined> {
+  const [row] = await tx.rows<{ ai_allowed: boolean }>(
+    'select ai_allowed from office.projects where id = $1',
+    [projectId],
+  );
+  return row?.ai_allowed;
+}
+
+async function used(tx: Tx, stepUpId: string): Promise<boolean | undefined> {
+  const [row] = await tx.rows<{ used: boolean }>(
+    'select consumed_at is not null as used from office.step_ups where id = $1',
+    [stepUpId],
+  );
+  return row?.used;
+}
+
+/** How many projects an agent run of that person reads with the project in its context. */
+async function agentReads(tx: Tx, userId: string, projectId: string): Promise<number> {
+  await tx.setContext({ companyId: ids.arma, userId, agentCode: 'KOR-1', projectId });
+  return tx.count('projects');
+}
 
 async function memberIds(tx: Tx, projectId: string): Promise<string[]> {
   const rows = await tx.rows<{ user_id: string }>(
@@ -578,10 +618,15 @@ describe.skipIf(noDatabase)('projects between companies', () => {
           expect((await tx.expectError(sql, values)).code, sql).toBe('42501');
         }
         // A project of the own company cannot take a customer of the other one.
+        const own = randomUUID();
+        await tx.exec(`insert into office.projects (id, company_id, name) values ($1, $2, 'Own')`, [
+          own,
+          ids.pillika,
+        ]);
         expect(
           (
             await tx.expectError('update office.projects set customer_id = $2 where id = $1', [
-              ids.projectP,
+              own,
               ids.customerA,
             ])
           ).code,
@@ -614,6 +659,445 @@ describe.skipIf(noDatabase)('projects between companies', () => {
           expect((await tx.expectError(sql, values)).code, sql).toBe('42501');
         }
       }
+    });
+  });
+});
+
+describe.skipIf(noDatabase)('the AI permission of a project', () => {
+  afterAll(closePools);
+
+  it('AI permission: no plain update changes it, for the founder, a member or the worker', async () => {
+    const on = 'update office.projects set ai_allowed = true where id = $1';
+    const off = 'update office.projects set ai_allowed = false where id = $1';
+    await inTransaction(async (tx) => {
+      for (const context of [founderA, employeeA]) {
+        await tx.setContext(context);
+        expect((await tx.expectError(on, [ids.projectANoAi])).code).toBe('42501');
+        expect((await tx.expectError(off, [ids.projectA])).code).toBe('42501');
+      }
+      // A passkey does not turn the plain statement into a path.
+      await stepUp(tx, founderA, 'project_ai_permission', ids.projectANoAi);
+      expect((await tx.expectError(on, [ids.projectANoAi])).code).toBe('42501');
+    });
+    await inWorkerTransaction(async (tx) => {
+      for (const context of [founderA, { ...founderA, agentCode: 'KOR-1' }]) {
+        await tx.setContext(context);
+        expect((await tx.expectError(on, [ids.projectANoAi])).code).toBe('42501');
+        expect((await tx.expectError(off, [ids.projectA])).code).toBe('42501');
+      }
+    });
+    // The guard fires on every update of a project, not only on one that names the column: a
+    // value another trigger changed on the way is held to the same rule.
+    expect(
+      await adminQuery(
+        `select t.tgattr::text as columns, t.tgtype & 2 = 2 as before
+         from pg_catalog.pg_trigger t
+         where t.tgrelid = 'office.projects'::regclass and t.tgname = 'guard_ai_permission'`,
+      ),
+    ).toEqual([{ columns: '', before: true }]);
+  });
+
+  it('AI permission: an employee cannot change it through the function, member or not, on or off', async () => {
+    await inTransaction(async (tx) => {
+      for (const context of [employeeA, approverA]) {
+        await tx.setContext(context);
+        expect((await tx.expectError(SET_AI, [ids.projectANoAi, true, null])).code).toBe('42501');
+        expect((await tx.expectError(SET_AI, [ids.projectA, false, null])).code).toBe('42501');
+      }
+      // Not with a passkey of their own either.
+      await stepUp(tx, employeeA, 'project_ai_permission', ids.projectANoAi);
+      expect((await tx.expectError(SET_AI, [ids.projectANoAi, true, null])).code).toBe('42501');
+      // And the founder cannot ride on the employee's re-verification.
+      await tx.setContext(founderA);
+      expect((await tx.expectError(SET_AI, [ids.projectANoAi, true, null])).code).toBe('28000');
+      expect(await aiAllowed(tx, ids.projectANoAi)).toBe(false);
+    });
+  });
+
+  it("AI permission: the worker's role cannot call the function, as a person or as an agent run", async () => {
+    await inWorkerTransaction(async (tx) => {
+      for (const context of [founderA, { ...founderA, agentCode: 'KOR-1' }]) {
+        await tx.setContext(context);
+        expect((await tx.expectError(SET_AI, [ids.projectA, false, null])).code).toBe('42501');
+        expect((await tx.expectError(SET_AI, [ids.projectANoAi, true, null])).code).toBe('42501');
+        expect((await tx.expectError(SET_CUSTOMER, [ids.customerA, false, false])).code).toBe(
+          '42501',
+        );
+      }
+    });
+    // An agent run on the API's connection is refused by the function itself.
+    await inTransaction(async (tx) => {
+      await tx.setContext({ ...founderA, agentCode: 'KOR-1' });
+      expect((await tx.expectError(SET_AI, [ids.projectA, false, null])).code).toBe('42501');
+      expect((await tx.expectError(SET_CUSTOMER, [ids.customerA, false, false])).code).toBe(
+        '42501',
+      );
+    });
+  });
+
+  it('AI permission: the founder opens it only with a re-verification for this project', async () => {
+    await inTransaction(async (tx) => {
+      await tx.setContext(founderA);
+      const open = [ids.projectANoAi, true, null];
+      expect((await tx.expectError(SET_AI, open)).code).toBe('28000');
+      const wrong = [
+        await stepUp(tx, founderA, 'project_ai_permission', ids.projectACustomerNoAi),
+        await stepUp(tx, founderA, 'customer_ai_permission', ids.projectANoAi),
+        await stepUp(tx, founderA, 'membership_change', ids.projectANoAi),
+      ];
+      // The same project id, confirmed in the other company.
+      const elsewhere = await stepUp(tx, founderP, 'project_ai_permission', ids.projectANoAi);
+      expect(await used(tx, elsewhere)).toBe(false);
+      await tx.setContext(founderA);
+      expect((await tx.expectError(SET_AI, open)).code).toBe('28000');
+      expect(await aiAllowed(tx, ids.projectANoAi)).toBe(false);
+
+      const right = await stepUp(tx, founderA, 'project_ai_permission', ids.projectANoAi);
+      expect(await setAi(tx, ids.projectANoAi, true)).toBe(true);
+      expect(await aiAllowed(tx, ids.projectANoAi)).toBe(true);
+      expect(await used(tx, right)).toBe(true);
+      for (const id of wrong) {
+        expect(await used(tx, id)).toBe(false);
+      }
+      await tx.setContext(founderP);
+      expect(await used(tx, elsewhere)).toBe(false);
+      await tx.setContext(founderA);
+
+      // Used once: after a close the next opening needs a new one.
+      expect(await setAi(tx, ids.projectANoAi, false)).toBe(true);
+      expect((await tx.expectError(SET_AI, open)).code).toBe('28000');
+      expect(await aiAllowed(tx, ids.projectANoAi)).toBe(false);
+    });
+  });
+
+  it('AI permission: the founder closes it without a passkey; the value it already has changes nothing and uses nothing up', async () => {
+    await inTransaction(async (tx) => {
+      await tx.setContext(founderA);
+      expect(await setAi(tx, ids.projectANoAi, false)).toBe(false);
+      const unused = await stepUp(tx, founderA, 'project_ai_permission', ids.projectA);
+      // Open already: nothing changes, whatever customer is named, and the passkey stays unused.
+      expect(await setAi(tx, ids.projectA, true, ids.customerA)).toBe(false);
+      expect(await setAi(tx, ids.projectA, true, null)).toBe(false);
+      expect(await used(tx, unused)).toBe(false);
+      expect(await setAi(tx, ids.projectA, false)).toBe(true);
+      expect(await aiAllowed(tx, ids.projectA)).toBe(false);
+      expect(await used(tx, unused)).toBe(false);
+      // Malformed calls.
+      expect((await tx.expectError(SET_AI, [null, true, null])).code).toBe('22023');
+      expect((await tx.expectError(SET_AI, [ids.projectA, null, null])).code).toBe('22023');
+      expect((await tx.expectError(SET_AI, [randomUUID(), true, null])).code).toBe('P0002');
+    });
+  });
+
+  it('AI permission: the opening is for the customer the founder saw; a changed customer refuses it and uses nothing up', async () => {
+    await inTransaction(async (tx) => {
+      // The founder looks at a project without a customer and confirms with the passkey.
+      const confirmed = await stepUp(tx, founderA, 'project_ai_permission', ids.projectANoAi);
+      // A member changes the customer before the opening arrives.
+      await tx.setContext(employeeA);
+      expect(
+        await tx.exec('update office.projects set customer_id = $2 where id = $1', [
+          ids.projectANoAi,
+          ids.customerANoAi,
+        ]),
+      ).toBe(1);
+      await tx.setContext(founderA);
+      expect((await tx.expectError(SET_AI, [ids.projectANoAi, true, null])).code).toBe('55000');
+      expect((await tx.expectError(SET_AI, [ids.projectANoAi, true, ids.customerA])).code).toBe(
+        '55000',
+      );
+      expect(await aiAllowed(tx, ids.projectANoAi)).toBe(false);
+      expect(await used(tx, confirmed)).toBe(false);
+      // The unused confirmation opens no other project.
+      const other = randomUUID();
+      await tx.exec(`insert into office.projects (id, company_id, name) values ($1, $2, 'Other')`, [
+        other,
+        ids.arma,
+      ]);
+      expect((await tx.expectError(SET_AI, [other, true, null])).code).toBe('28000');
+      // And no customer.
+      expect((await tx.expectError(SET_CUSTOMER, [ids.customerANoAi, true, null])).code).toBe(
+        '28000',
+      );
+      expect(await used(tx, confirmed)).toBe(false);
+      // Once the project has the customer the founder saw again, the same opening passes.
+      await tx.setContext(employeeA);
+      await tx.exec('update office.projects set customer_id = null where id = $1', [
+        ids.projectANoAi,
+      ]);
+      await tx.setContext(founderA);
+      expect(await setAi(tx, ids.projectANoAi, true, null)).toBe(true);
+      expect(await used(tx, confirmed)).toBe(true);
+    });
+  });
+
+  it('AI permission: the privileged role with a person in the context is held to the same rule', async () => {
+    const on = 'update office.projects set ai_allowed = true where id = $1';
+    await inAdminTransaction(async (tx) => {
+      await tx.setContext(employeeA);
+      expect((await tx.expectError(on, [ids.projectANoAi])).code).toBe('42501');
+      await tx.setContext({ ...founderA, agentCode: 'KOR-1' });
+      expect((await tx.expectError(on, [ids.projectANoAi])).code).toBe('42501');
+      await tx.setContext(founderP);
+      expect((await tx.expectError(on, [ids.projectANoAi])).code).toBe('42501');
+      await tx.setContext(founderA);
+      expect((await tx.expectError(on, [ids.projectANoAi])).code).toBe('28000');
+      // Closing needs the founder, not a passkey.
+      await tx.setContext(employeeA);
+      expect(
+        (
+          await tx.expectError('update office.projects set ai_allowed = false where id = $1', [
+            ids.projectA,
+          ])
+        ).code,
+      ).toBe('42501');
+      // An administrator, without a person in the context.
+      await tx.setContext({});
+      expect(await tx.exec(on, [ids.projectANoAi])).toBe(1);
+      expect(await aiAllowed(tx, ids.projectANoAi)).toBe(true);
+    });
+  });
+
+  // The row policy is the same for the API's and the worker's role (it is written for office_app);
+  // the run's context is set on the one connection that can also make the founder's change.
+  it('AI permission: what an agent run sees follows the value', async () => {
+    await inTransaction(async (tx) => {
+      expect(await agentReads(tx, ids.employeeA, ids.projectA)).toBe(1);
+      await tx.setContext(founderA);
+      expect(await setAi(tx, ids.projectA, false)).toBe(true);
+      expect(await agentReads(tx, ids.employeeA, ids.projectA)).toBe(0);
+      expect(await agentReads(tx, ids.founder, ids.projectA)).toBe(0);
+      await stepUp(tx, founderA, 'project_ai_permission', ids.projectA);
+      expect(await setAi(tx, ids.projectA, true, ids.customerA)).toBe(true);
+      expect(await agentReads(tx, ids.employeeA, ids.projectA)).toBe(1);
+    });
+  });
+
+  it('projects: the customer does not change while the AI permission is open, for a member and for the founder; it changes while the permission is closed, and for a write without a person in the context', async () => {
+    const change = 'update office.projects set customer_id = $2 where id = $1';
+    await inTransaction(async (tx) => {
+      for (const context of [employeeA, founderA]) {
+        await tx.setContext(context);
+        expect((await tx.expectError(change, [ids.projectA, ids.customerANoAi])).code).toBe(
+          '23514',
+        );
+        expect((await tx.expectError(change, [ids.projectA, null])).code).toBe('23514');
+        // The customer it has is no change.
+        expect(await tx.exec(change, [ids.projectA, ids.customerA])).toBe(1);
+        // The other fields are free.
+        expect(
+          await tx.exec(`update office.projects set name = 'Renamed' where id = $1`, [
+            ids.projectA,
+          ]),
+        ).toBe(1);
+      }
+      // A project whose permission is closed.
+      await tx.setContext(employeeA);
+      expect(await tx.exec(change, [ids.projectANoAi, ids.customerA])).toBe(1);
+      // After the founder closed the permission.
+      await tx.setContext(founderA);
+      expect(await setAi(tx, ids.projectA, false)).toBe(true);
+      await tx.setContext(employeeA);
+      expect(await tx.exec(change, [ids.projectA, ids.customerANoAi])).toBe(1);
+    });
+    await inAdminTransaction(async (tx) => {
+      expect(await tx.exec(change, [ids.projectA, ids.customerANoAi])).toBe(1);
+      // The privileged role with a person in the context is refused like everybody.
+      await tx.setContext(founderA);
+      expect((await tx.expectError(change, [ids.projectA, ids.customerA])).code).toBe('23514');
+    });
+  });
+
+  // The run's context is set on the API's connection: the row policy is the same for both roles.
+  it("rule 12: nobody makes agents work in a project whose customer's contract forbids AI by changing its customer", async () => {
+    const change = 'update office.projects set customer_id = $2 where id = $1';
+    await inTransaction(async (tx) => {
+      // The fixtures give this project an open permission and a customer without one.
+      await tx.setContext(founderA);
+      await tx.exec(ADD_MEMBER, [ids.arma, ids.projectACustomerNoAi, ids.employeeA]);
+      expect(await agentReads(tx, ids.employeeA, ids.projectACustomerNoAi)).toBe(0);
+      for (const context of [employeeA, founderA]) {
+        await tx.setContext(context);
+        expect((await tx.expectError(change, [ids.projectACustomerNoAi, null])).code).toBe('23514');
+        expect((await tx.expectError(change, [ids.projectACustomerNoAi, ids.customerA])).code).toBe(
+          '23514',
+        );
+      }
+      expect(await agentReads(tx, ids.employeeA, ids.projectACustomerNoAi)).toBe(0);
+      expect(await agentReads(tx, ids.founder, ids.projectACustomerNoAi)).toBe(0);
+
+      // The other way round: the founder closes a customer's permission and its projects close
+      // to agents at once.
+      expect(await agentReads(tx, ids.employeeA, ids.projectA)).toBe(1);
+      await tx.setContext(founderA);
+      await tx.exec(SET_CUSTOMER, [ids.customerA, false, null]);
+      expect(await agentReads(tx, ids.employeeA, ids.projectA)).toBe(0);
+    });
+  });
+
+  it("AI permission: both functions know nothing of the other company's project and customer, and refuse without a context", async () => {
+    await inTransaction(async (tx) => {
+      await tx.setContext(founderP);
+      expect((await tx.expectError(SET_AI, [ids.projectA, false, null])).code).toBe('P0002');
+      expect((await tx.expectError(SET_AI, [ids.projectANoAi, true, null])).code).toBe('P0002');
+      expect((await tx.expectError(SET_CUSTOMER, [ids.customerA, false, false])).code).toBe(
+        'P0002',
+      );
+      await tx.setContext(employeeP);
+      expect((await tx.expectError(SET_AI, [ids.projectA, false, null])).code).toBe('42501');
+      expect((await tx.expectError(SET_CUSTOMER, [ids.customerA, false, false])).code).toBe(
+        '42501',
+      );
+      const nobody: ContextInput[] = [{}, { userId: ids.founder }, { companyId: ids.arma }];
+      for (const context of nobody) {
+        await tx.setContext(context);
+        expect((await tx.expectError(SET_AI, [ids.projectA, false, null])).code).toBe('42501');
+        expect((await tx.expectError(SET_CUSTOMER, [ids.customerA, false, false])).code).toBe(
+          '42501',
+        );
+      }
+      await tx.setContext(founderA);
+      expect(await aiAllowed(tx, ids.projectA)).toBe(true);
+    });
+  });
+});
+
+describe.skipIf(noDatabase)('customers of the Projects section', () => {
+  afterAll(closePools);
+
+  const customer = (tx: Tx, id: string) =>
+    tx.rows(
+      'select name, ai_allowed, automated_processing_allowed from office.customers where id = $1',
+      [id],
+    );
+
+  it('customers: an employee adds a customer by name with both permissions closed', async () => {
+    await inTransaction(async (tx) => {
+      await tx.setContext(approverA);
+      const id = randomUUID();
+      expect(
+        await tx.exec(
+          `insert into office.customers (id, company_id, name) values ($1, $2, 'Gamma')`,
+          [id, ids.arma],
+        ),
+      ).toBe(1);
+      expect(await customer(tx, id)).toEqual([
+        { name: 'Gamma', ai_allowed: false, automated_processing_allowed: false },
+      ]);
+      // An external person adds none.
+      await tx.setContext(externalA);
+      expect(
+        (
+          await tx.expectError(
+            `insert into office.customers (company_id, name) values ($1, 'Delta')`,
+            [ids.arma],
+          )
+        ).code,
+      ).toBe('42501');
+    });
+  });
+
+  it('customers: none is added in the founder space', async () => {
+    await inTransaction(async (tx) => {
+      await tx.setContext(founderSpace);
+      expect(
+        (
+          await tx.expectError(
+            `insert into office.customers (company_id, name) values ($1, 'Private')`,
+            [ids.founderSpace],
+          )
+        ).code,
+      ).toBe('23514');
+    });
+  });
+
+  it('customers: the application neither renames nor deletes a customer and sets no permission by a statement', async () => {
+    await inTransaction(async (tx) => {
+      for (const context of [employeeA, founderA]) {
+        await tx.setContext(context);
+        const refused: [string, unknown[]][] = [
+          [`update office.customers set name = 'Renamed' where id = $1`, [ids.customerA]],
+          ['delete from office.customers where id = $1', [ids.customerA]],
+          [
+            `insert into office.customers (company_id, name, ai_allowed) values ($1, 'New', true)`,
+            [ids.arma],
+          ],
+          [
+            `insert into office.customers (company_id, name, automated_processing_allowed)
+             values ($1, 'New', false)`,
+            [ids.arma],
+          ],
+          [
+            `insert into office.customers (company_id, name, contacts) values ($1, 'New', '[]')`,
+            [ids.arma],
+          ],
+          ['update office.customers set ai_allowed = true where id = $1', [ids.customerANoAi]],
+          ['update office.customers set ai_allowed = false where id = $1', [ids.customerA]],
+          [
+            'update office.customers set automated_processing_allowed = true where id = $1',
+            [ids.customerA],
+          ],
+        ];
+        for (const [sql, values] of refused) {
+          expect((await tx.expectError(sql, values)).code, sql).toBe('42501');
+        }
+      }
+    });
+    await inWorkerTransaction(async (tx) => {
+      for (const context of [founderA, { ...founderA, agentCode: 'KOR-1' }]) {
+        await tx.setContext(context);
+        for (const sql of [
+          `insert into office.customers (company_id, name) values ('${ids.arma}', 'By the worker')`,
+          `insert into office.customers (id, company_id, name)
+           values ('${randomUUID()}', '${ids.arma}', 'By the worker')`,
+          `update office.customers set name = 'By the worker' where id = '${ids.customerA}'`,
+          `delete from office.customers where id = '${ids.customerA}'`,
+        ]) {
+          expect((await tx.expectError(sql)).code, sql).toBe('42501');
+        }
+      }
+    });
+  });
+
+  it('re-verification: the two new purposes name a company and a subject', async () => {
+    await inTransaction(async (tx) => {
+      const session = await openTestSession(tx, ids.founder);
+      await tx.setContext(founderA);
+      const record = async (purpose: string, company: string | null, subject: string | null) => {
+        const hash = Buffer.alloc(32, 7);
+        const challenge = await createChallenge(tx, session, 'step_up', hash);
+        return [session.key, challenge, FOUNDER_PASSKEY, 0, purpose, company, subject, hash];
+      };
+      const RECORD = 'select office.record_step_up($1, $2, $3, $4, $5, $6, $7, $8) as id';
+      for (const purpose of ['project_ai_permission', 'customer_ai_permission']) {
+        const subject = randomUUID();
+        expect(
+          (await tx.expectError(RECORD, await record(purpose, null, subject))).code,
+          purpose,
+        ).toBe('22023');
+        expect(
+          (await tx.expectError(RECORD, await record(purpose, ids.arma, null))).code,
+          purpose,
+        ).toBe('22023');
+        // Only in the context of that company.
+        expect(
+          (await tx.expectError(RECORD, await record(purpose, ids.pillika, subject))).code,
+          purpose,
+        ).toBe('42501');
+        const [row] = await tx.rows<{ id: string }>(
+          RECORD,
+          await record(purpose, ids.arma, subject),
+        );
+        expect(
+          await tx.rows(
+            'select purpose, company_id, subject_id, consumed_at from office.step_ups where id = $1',
+            [row?.id],
+          ),
+        ).toEqual([{ purpose, company_id: ids.arma, subject_id: subject, consumed_at: null }]);
+      }
+      expect(
+        (await tx.expectError(RECORD, await record('project_delete', ids.arma, randomUUID()))).code,
+      ).toBe('22023');
     });
   });
 });

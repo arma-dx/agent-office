@@ -200,12 +200,12 @@ export async function loadFixtures(client: pg.Client): Promise<void> {
       ('${ids.arma}', 'HAF-1', 'stopped'),
       ('${ids.pillika}', 'P-IST-1', 'enabled');
 
-    -- Only the founder grants AI permission; customers are added in the founder's context.
-    ${contextSql(ids.arma, ids.founder)}
+    -- Customers and projects are written without a person in the context, as an administrator
+    -- would: a person's permission change needs the founder and a passkey.
+    ${NO_CONTEXT_SQL}
     insert into office.customers (id, company_id, name, ai_allowed) values
       ('${ids.customerA}', '${ids.arma}', 'Customer with AI permission', true),
       ('${ids.customerANoAi}', '${ids.arma}', 'Customer without AI permission', false);
-    ${contextSql(ids.pillika, ids.founder)}
     insert into office.customers (id, company_id, name, ai_allowed) values
       ('${ids.customerP}', '${ids.pillika}', 'Pillika customer', true);
 
@@ -214,9 +214,7 @@ export async function loadFixtures(client: pg.Client): Promise<void> {
       ('${ids.arma}', '${ids.customerANoAi}', 'Opportunity without AI permission'),
       ('${ids.pillika}', '${ids.customerP}', 'Opportunity P');
 
-    -- Projects are written without a person in the context: a person's project starts without AI
-    -- permission and makes its opener a member.
-    ${NO_CONTEXT_SQL}
+    -- A person's project would start without AI permission and make its opener a member.
     insert into office.projects (id, company_id, customer_id, name, ai_allowed) values
       ('${ids.projectA}', '${ids.arma}', '${ids.customerA}', 'Project A', true),
       ('${ids.projectANoAi}', '${ids.arma}', null, 'Project without AI permission', false),
