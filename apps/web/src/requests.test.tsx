@@ -1,8 +1,9 @@
 import { COMPANY_HEADER, BACKGROUND_HEADER } from '@agent-office/shared';
+import { startAuthentication } from '@simplewebauthn/browser';
 import { focusManager } from '@tanstack/react-query';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   apiError,
   ARMADX,
@@ -24,7 +25,19 @@ import {
   requestDetail,
   summaryOf,
 } from './test/request-fixtures.ts';
+import { ASSERTION, challengeId, signed, STEP_UP_OPTIONS, stepUpIssuer } from './test/passkeys.ts';
 import { currentLocation, renderApp } from './test/render-app.tsx';
+
+// The browser's passkey prompt: the person confirms, unless a test says otherwise.
+vi.mock('@simplewebauthn/browser', () => ({
+  startAuthentication: vi.fn(),
+  startRegistration: vi.fn(),
+  browserSupportsWebAuthn: vi.fn(() => true),
+}));
+
+beforeEach(() => {
+  vi.mocked(startAuthentication).mockReset().mockResolvedValue(ASSERTION);
+});
 
 // Flow (A) in the panel: the form that asks one thing, the list that says where every request is
 // and whose turn it is, the page with the journey, and the two decisions. The panel sets no status
@@ -468,6 +481,145 @@ describe('the page of a request', () => {
       decision: 'changes_requested',
       reason: 'other',
       note: 'Daha sade olsun.',
+    });
+  });
+
+  // A result that goes outside (every SOS-2 result) can only be approved this way: the decision is
+  // sent together with a passkey answer made for exactly this approval and this option (rule 3
+  // and 4). The API refuses anything else, so a slip here would show as "nothing can be approved".
+  describe('an important approval', () => {
+    const decisionKey = `POST /approvals/${APPROVAL_ID}/decision`;
+    const approved = requestDetail({
+      stage: 'requester_approval',
+      turn: { kind: 'person', ...EMPLOYEE },
+      waitingForMe: false,
+      approval: null,
+      result: RESULT,
+    });
+
+    /** Opens the page, chooses the option (if the result has any) and presses "Onayla". */
+    async function openPasskeyDialog(option: 'A' | 'B' | null): Promise<{
+      card: HTMLElement;
+      dialog: HTMLElement;
+      confirm: HTMLElement;
+    }> {
+      renderApp(`/c/armadx/requests/${REQUEST_ID}`);
+      const card = await screen.findByRole('region', { name: 'Yeni ofis için LinkedIn gönderisi' });
+      if (option !== null) {
+        await userEvent.click(
+          within(card).getByRole('radio', { name: new RegExp(`Seçenek ${option}`) }),
+        );
+      }
+      await userEvent.click(within(card).getByRole('button', { name: 'Onayla' }));
+      const dialog = await screen.findByRole('alertdialog', { name: 'Sonucu onayla' });
+      const confirm = within(dialog).getByRole('button', { name: 'Passkey ile onayla' });
+      // The button waits for the challenge.
+      await waitFor(() => {
+        expect(confirm).not.toHaveAttribute('aria-disabled');
+      });
+      return { card, dialog, confirm };
+    }
+
+    it('is sent with the chosen option and the signed challenge, and the page shows the answer', async () => {
+      const stepUp = stepUpIssuer();
+      const api = mockApi({
+        'GET /session': sessionHandler(),
+        [`GET /requests/${REQUEST_ID}`]: () => json(requestDetail()),
+        'POST /step-up/options': stepUp.handler,
+        [decisionKey]: () => json(approved),
+      });
+      const { dialog, confirm } = await openPasskeyDialog('B');
+      // The dialog names what is approved and that it goes outside.
+      expect(dialog).toHaveTextContent(
+        'Seçenek B onaylanacak ve talep sahibine iletilecek. Bu içerik şirket dışına gidecek.',
+      );
+      // The challenge is asked for this approval and this option; nothing is decided yet.
+      expect(stepUp.issued.map((challenge) => challenge.body)).toEqual([
+        {
+          purpose: 'approve',
+          companyId: ARMADX.companyId,
+          subjectId: APPROVAL_ID,
+          details: { decision: 'approved', selectedOption: 'B' },
+        },
+      ]);
+      expect(api.callsTo(decisionKey)).toHaveLength(0);
+      expect(startAuthentication).not.toHaveBeenCalled();
+
+      await userEvent.click(confirm);
+      // The page is what the API answered.
+      expect(await screen.findByRole('region', { name: 'Sonuç' })).toHaveTextContent(
+        'Artık İzmir’deyiz.',
+      );
+      expect(startAuthentication).toHaveBeenCalledTimes(1);
+      expect(startAuthentication).toHaveBeenCalledWith({ optionsJSON: STEP_UP_OPTIONS });
+      const calls = api.callsTo(decisionKey);
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.body).toEqual({
+        decision: 'approved',
+        selectedOption: 'B',
+        stepUp: signed(challengeId(1)),
+      });
+      expect(calls[0]?.headers.get(COMPANY_HEADER)).toBe(ARMADX.companyId);
+      expect(screen.queryByRole('alertdialog')).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Onayla' })).toBeNull();
+      expect(stageLine()).toContain('Aşama: Talep sahibinin onayında Sıra: Ayşe Yılmaz');
+      expect(api.unexpected).toEqual([]);
+    });
+
+    it('is sent without an option for a result that has none', async () => {
+      const stepUp = stepUpIssuer();
+      const api = mockApi({
+        'GET /session': sessionHandler(),
+        [`GET /requests/${REQUEST_ID}`]: () =>
+          json(requestDetail({ approval: { ...APPROVAL_CARD, options: [] } })),
+        'POST /step-up/options': stepUp.handler,
+        [decisionKey]: () => json(approved),
+      });
+      const { dialog, confirm } = await openPasskeyDialog(null);
+      expect(dialog).toHaveTextContent('Sonuç onaylanacak ve talep sahibine iletilecek.');
+      expect(stepUp.issued[0]?.body).toEqual({
+        purpose: 'approve',
+        companyId: ARMADX.companyId,
+        subjectId: APPROVAL_ID,
+        // The same shape the API builds from the decision: no option was chosen.
+        details: { decision: 'approved', selectedOption: null },
+      });
+      await userEvent.click(confirm);
+      await screen.findByRole('region', { name: 'Sonuç' });
+      expect(api.callsTo(decisionKey).map((call) => call.body)).toEqual([
+        { decision: 'approved', stepUp: signed(challengeId(1)) },
+      ]);
+    });
+
+    it('says the refusal of the API in the dialog and shows nothing as decided', async () => {
+      const refusal =
+        'Bu onay kapanmış: karar verilmiş ya da dayandığı talep değişmiş. Sayfayı yenileyin.';
+      const stepUp = stepUpIssuer();
+      const api = mockApi({
+        'GET /session': sessionHandler(),
+        [`GET /requests/${REQUEST_ID}`]: () => json(requestDetail()),
+        'POST /step-up/options': stepUp.handler,
+        [decisionKey]: () => apiError(409, 'approval_closed', refusal),
+      });
+      const { card, dialog, confirm } = await openPasskeyDialog('A');
+      await userEvent.click(confirm);
+      expect(await within(dialog).findByRole('alert')).toHaveTextContent(refusal);
+      expect(api.callsTo(decisionKey).map((call) => call.body)).toEqual([
+        { decision: 'approved', selectedOption: 'A', stepUp: signed(challengeId(1)) },
+      ]);
+      // The dialog stays with the message, and the page behind it shows no result.
+      expect(screen.getByRole('alertdialog', { name: 'Sonucu onayla' })).toBeVisible();
+      expect(screen.queryByRole('region', { name: 'Sonuç', hidden: true })).toBeNull();
+      // The challenge the API has seen is used up: the next try gets a new one.
+      await waitFor(() => {
+        expect(stepUp.issued).toHaveLength(2);
+      });
+      await userEvent.click(within(dialog).getByRole('button', { name: 'Vazgeç' }));
+      await waitFor(() => {
+        expect(screen.queryByRole('alertdialog')).toBeNull();
+        expect(within(card).getByRole('button', { name: 'Onayla' })).toHaveFocus();
+      });
+      expect(api.callsTo(decisionKey)).toHaveLength(1);
     });
   });
 
