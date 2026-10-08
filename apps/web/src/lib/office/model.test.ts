@@ -97,7 +97,7 @@ describe('selectionOf', () => {
     expect(selection).toEqual({
       kind: 'agent',
       unit: ARMADX_OFFICE[1],
-      agent: { code: 'KOR-3', name: 'Onay Masası Ajanı', state: 'closed' },
+      agent: { code: 'KOR-3', name: 'Onay Masası Ajanı', state: 'closed', ready: true },
     });
   });
 

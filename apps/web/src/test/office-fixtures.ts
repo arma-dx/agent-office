@@ -9,7 +9,12 @@ function unit(
   return {
     code,
     name,
-    agents: agents.map(([agentCode, agentName]) => ({ code: agentCode, name: agentName, state })),
+    agents: agents.map(([agentCode, agentName]) => ({
+      code: agentCode,
+      name: agentName,
+      state,
+      ready: true,
+    })),
   };
 }
 
@@ -63,6 +68,7 @@ export const REPORT_OFFICE: OfficeUnit[] = REPORT_COUNTS.map((count, index) => (
     code: `B${index + 1}-${i + 1}`,
     name: `Örnek ajan ${i + 1}`,
     state: MIXED_STATES[(index + i) % MIXED_STATES.length] ?? 'closed',
+    ready: true,
   })),
 }));
 

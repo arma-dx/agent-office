@@ -15,6 +15,7 @@ import { setAgentSwitch } from '@/lib/requests/query';
 import { useCompany } from '@/lib/session';
 import { busyProps } from '@/lib/utils';
 import {
+  AGENT_NOT_READY_SENTENCE,
   AGENT_STATE_LABEL,
   AGENT_STATE_SENTENCE,
   agentId,
@@ -74,8 +75,19 @@ function UnitDetails({ unit, onSelect }: { unit: OfficeUnit; onSelect: (id: stri
  * company). Opening lets the agent take the requests routed to it; stopping keeps it from taking
  * new work and ends its open run before the next step. Nothing is shown as changed before the API
  * has stored it.
+ *
+ * An agent whose card has no version to run with cannot be opened: the API refuses it. The panel
+ * knows that from the office answer (`ready`), so it says so in a sentence and offers no button
+ * that would ask "açılsın mı?" and then refuse. Stopping stays offered for an agent that is open.
  */
 function AgentSwitch({ agent }: { agent: OfficeAgent }) {
+  if (agent.state !== 'enabled' && !agent.ready) {
+    return <p className="text-ink-secondary">{AGENT_NOT_READY_SENTENCE}</p>;
+  }
+  return <AgentSwitchButton agent={agent} />;
+}
+
+function AgentSwitchButton({ agent }: { agent: OfficeAgent }) {
   const company = useCompany();
   const queryClient = useQueryClient();
   const [confirming, setConfirming] = useState(false);

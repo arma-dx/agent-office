@@ -50,13 +50,26 @@ describe('toOfficeUnits', () => {
     expect(toOfficeUnits(RESPONSE)[1]).toEqual({
       code: 'A-KES',
       name: 'Keşif ve Dönüşüm Danışmanlığı',
-      agents: [{ code: 'A-KES-2', name: 'Süreç Analizi Ajanı', state: 'closed' }],
+      agents: [{ code: 'A-KES-2', name: 'Süreç Analizi Ajanı', state: 'closed', ready: true }],
     });
-    // Nothing but code, name and state reaches the drawing.
+    // Nothing but code, name, state and whether the card can run reaches the drawing.
     expect(Object.keys(toOfficeUnits(RESPONSE)[0]?.agents[0] ?? {})).toEqual([
       'code',
       'name',
       'state',
+      'ready',
+    ]);
+  });
+
+  it('carries whether the card of each agent has a version to run with', () => {
+    const ready = toOfficeUnits(RESPONSE).flatMap((unit) =>
+      unit.agents.map((agent) => [agent.code, agent.ready]),
+    );
+    expect(ready).toEqual([
+      ['KOR-10', true],
+      ['KOR-2', false],
+      ['A-KES-2', true],
+      ['HAF-1', true],
     ]);
   });
 });

@@ -26,10 +26,14 @@ import {
 import { ARMADX_OFFICE, FOUNDER_OFFICE, PILLIKA_OFFICE } from './test/office-fixtures.ts';
 import { renderApp } from './test/render-app.tsx';
 
-/** The answer of GET /api/office for a pilot office; no company has a switch unless one is given. */
+/**
+ * The answer of GET /api/office for a pilot office; no company has a switch unless one is given,
+ * and every card has a version to run with unless its agent is named in `notReady`.
+ */
 function officeBody(
   units: readonly OfficeUnit[],
   switches: Record<string, CompanyAgentStatus> = {},
+  notReady: readonly string[] = [],
 ): OfficeResponse {
   return {
     units: units.map((unit) => ({
@@ -39,7 +43,7 @@ function officeBody(
         code: agent.code,
         name: agent.name,
         status: switches[agent.code] ?? null,
-        ready: true,
+        ready: !notReady.includes(agent.code),
       })),
     })),
   };
@@ -541,6 +545,44 @@ describe('office page: the selection in the properties panel', () => {
     await userEvent.click(screen.getByRole('button', { name: /^KOR-1 / }));
     expect(field('Durum')).toHaveTextContent('Etkin');
     expect(within(panel).getByText('Bu ajan etkin.')).toBeVisible();
+  });
+
+  it('offers no button to open an agent whose card has no version to run with, and says why', async () => {
+    wideWindow();
+    // KOR-2 was never opened and HAF-1 was stopped; neither card can run. KOR-3 is open although
+    // its card lost its version: it can still be stopped.
+    const api = officeApi(
+      officeBody(ARMADX_OFFICE, { 'HAF-1': 'stopped', 'KOR-3': 'enabled' }, [
+        'KOR-2',
+        'HAF-1',
+        'KOR-3',
+      ]),
+    );
+    renderApp('/c/armadx/office');
+    await userEvent.click(await screen.findByRole('button', { name: /^KOR-2 / }));
+    const panel = detailsPanel();
+    const sentence = 'Bu ajan henüz açılamaz: kartının çalışacak sürümü yok.';
+    expect(within(panel).getByText(sentence)).toBeVisible();
+    expect(
+      within(panel)
+        .getAllByRole('button')
+        .map((button) => button.textContent),
+    ).toEqual(['Koordinasyon Katmanı', 'Seçimi kaldır']);
+
+    await userEvent.click(screen.getByRole('button', { name: /^HAF-1 / }));
+    expect(within(panel).getByText(sentence)).toBeVisible();
+    expect(within(panel).queryByRole('button', { name: /Ajanı/ })).toBeNull();
+
+    // An open agent is never left without its stop switch.
+    await userEvent.click(screen.getByRole('button', { name: /^KOR-3 / }));
+    expect(within(panel).getByRole('button', { name: 'Ajanı durdur' })).toBeVisible();
+    expect(within(panel).queryByText(sentence)).toBeNull();
+
+    // An agent whose card can run keeps the button.
+    await userEvent.click(screen.getByRole('button', { name: /^KOR-1 / }));
+    expect(within(panel).getByRole('button', { name: 'Ajanı aç' })).toBeVisible();
+    expect(within(panel).queryByText(sentence)).toBeNull();
+    expect(api.callsTo('PUT /agents/KOR-2/switch')).toEqual([]);
   });
 
   it('closes the panel when the selected thing is no longer in the answer', async () => {

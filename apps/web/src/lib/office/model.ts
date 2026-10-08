@@ -14,6 +14,11 @@ export interface OfficeAgent {
   readonly code: string;
   readonly name: string;
   readonly state: AgentState;
+  /**
+   * The card has a version to run with. An agent without one cannot be opened (the API refuses
+   * it), so the panel does not offer to. It says nothing about the card's own status field.
+   */
+  readonly ready: boolean;
 }
 
 export interface OfficeUnit {
@@ -39,6 +44,12 @@ export const AGENT_STATE_SENTENCE: Record<AgentState, string> = {
   enabled: 'Bu ajan etkin.',
   stopped: 'Bu ajan durduruldu, yeni iş almaz.',
 };
+
+/**
+ * What the founder reads in place of the button that would open an agent whose card has no version
+ * to run with. The same words as the first sentence of the API's refusal (agent_not_ready).
+ */
+export const AGENT_NOT_READY_SENTENCE = 'Bu ajan henüz açılamaz: kartının çalışacak sürümü yok.';
 
 /**
  * The state drawn for a company's switch. No row and `disabled` look the same: for this company

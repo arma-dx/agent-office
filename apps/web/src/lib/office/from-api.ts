@@ -14,6 +14,7 @@ export function toOfficeUnits(response: OfficeResponse): OfficeUnit[] {
       code: agent.code,
       name: agent.name,
       state: stateOf(agent.status),
+      ready: agent.ready,
     })),
   }));
 }

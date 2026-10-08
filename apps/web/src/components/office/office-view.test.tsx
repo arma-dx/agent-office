@@ -14,19 +14,21 @@ const UNITS: OfficeUnit[] = [
     code: 'KOR',
     name: 'Koordinasyon Katmanı',
     agents: [
-      { code: 'KOR-1', name: 'Ofis Koordinatörü', state: 'stopped' },
-      { code: 'KOR-2', name: 'Görev Takip Ajanı', state: 'enabled' },
+      { code: 'KOR-1', name: 'Ofis Koordinatörü', state: 'stopped', ready: true },
+      { code: 'KOR-2', name: 'Görev Takip Ajanı', state: 'enabled', ready: true },
     ],
   },
   {
     code: 'P-IST',
     name: 'İstasyon Verisi ve Şarj Operasyonları',
-    agents: [{ code: 'P-IST-1', name: 'İstasyon Veri Toplama Ajanı', state: 'closed' }],
+    agents: [
+      { code: 'P-IST-1', name: 'İstasyon Veri Toplama Ajanı', state: 'closed', ready: true },
+    ],
   },
   {
     code: 'HAF',
     name: 'Kurumsal Hafıza',
-    agents: [{ code: 'HAF-1', name: 'Bilgi Tabanı Ajanı', state: 'closed' }],
+    agents: [{ code: 'HAF-1', name: 'Bilgi Tabanı Ajanı', state: 'closed', ready: true }],
   },
 ];
 
