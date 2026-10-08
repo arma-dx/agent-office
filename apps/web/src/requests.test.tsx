@@ -436,15 +436,30 @@ describe('the page of a request', () => {
 
     await userEvent.click(within(card).getByRole('button', { name: 'Düzeltme iste' }));
     const dialog = await screen.findByRole('dialog', { name: 'Düzeltme iste' });
+    // Before anything is sent the fields say what must be filled: the reason must, and the note
+    // may stay empty and says so in its label.
+    const reason = within(dialog).getByRole('combobox', { name: 'Neden' });
+    expect(reason).toBeRequired();
+    expect(reason).not.toHaveAccessibleDescription();
+    expect(
+      within(dialog).getByRole('textbox', { name: 'Açıklama (isteğe bağlı)' }),
+    ).not.toBeRequired();
     await userEvent.click(within(dialog).getByRole('button', { name: 'Düzeltme iste' }));
     expect(within(dialog).getByText('Bir neden seçin.')).toBeVisible();
-    await userEvent.selectOptions(within(dialog).getByRole('combobox', { name: 'Neden' }), 'Diğer');
+    // An error belongs to its field: it is read again when the person returns to the field.
+    expect(reason).toHaveAccessibleDescription('Bir neden seçin.');
+    await userEvent.selectOptions(reason, 'Diğer');
+    expect(reason).not.toHaveAccessibleDescription();
+    // "Diğer" makes the note required, and the label no longer calls it optional.
+    const note = within(dialog).getByRole('textbox', { name: 'Açıklama' });
+    expect(note).toBeRequired();
     await userEvent.click(within(dialog).getByRole('button', { name: 'Düzeltme iste' }));
     expect(within(dialog).getByText('Açıklama yazın.')).toBeVisible();
-    await userEvent.type(
-      within(dialog).getByRole('textbox', { name: 'Açıklama' }),
-      'Daha sade olsun.',
+    expect(note).toHaveAccessibleDescription(
+      'İş, yazdığınız açıklamayla aynı ajana geri döner. Açıklama yazın.',
     );
+    await userEvent.type(note, 'Daha sade olsun.');
+    expect(note).toHaveAccessibleDescription('İş, yazdığınız açıklamayla aynı ajana geri döner.');
     await userEvent.click(within(dialog).getByRole('button', { name: 'Düzeltme iste' }));
     await waitFor(() => {
       expect(stageLine()).toContain('Aşama: Ajan düzeltiyor Sıra: SOS-2');
@@ -490,8 +505,12 @@ describe('the page of a request', () => {
     const dialog = await screen.findByRole('dialog', { name: 'İstediğim bu değil' });
     expect(within(dialog).queryByRole('combobox')).toBeNull();
     expect(dialog).toHaveTextContent('aynı ajana bir kez geri döner');
+    // The requester's own words are always required here.
+    const words = within(dialog).getByRole('textbox', { name: 'Açıklama' });
+    expect(words).toBeRequired();
     await userEvent.click(within(dialog).getByRole('button', { name: 'Gönder' }));
     expect(within(dialog).getByText('Açıklama yazın.')).toBeVisible();
+    expect(words).toHaveAccessibleDescription(/Açıklama yazın\.$/);
     expect(api.callsTo(`POST /requests/${REQUEST_ID}/acceptance`)).toHaveLength(0);
     await userEvent.keyboard('{Escape}');
     await waitFor(() => {
@@ -843,7 +862,11 @@ describe('the page of a request', () => {
     // Nothing chosen: the form says which field is missing and sends nothing.
     await userEvent.click(send);
     expect(within(again).getByRole('alert')).toHaveTextContent('Bir birim seçin.');
-    await userEvent.selectOptions(within(again).getByRole('combobox', { name: 'Birim' }), 'SOS');
+    const unitBox = within(again).getByRole('combobox', { name: 'Birim' });
+    expect(unitBox).toBeRequired();
+    expect(unitBox).toHaveAccessibleDescription('Bir birim seçin.');
+    await userEvent.selectOptions(unitBox, 'SOS');
+    expect(unitBox).not.toHaveAccessibleDescription();
     // A unit alone is not enough: an agent must be chosen.
     const agentBox = within(again).getByRole('combobox', { name: 'Ajan' });
     expect(agentBox).toBeEnabled();
@@ -856,8 +879,10 @@ describe('the page of a request', () => {
     await userEvent.click(send);
     expect(within(again).getByRole('alert')).toHaveTextContent('Bir ajan seçin.');
     expect(agentBox).toBeInvalid();
+    expect(agentBox).toBeRequired();
+    // The help and, while it is shown, the error.
     expect(agentBox).toHaveAccessibleDescription(
-      /Yalnızca bu şirkette açık olan ajanlar listelenir/,
+      /^Yalnızca bu şirkette açık olan ajanlar listelenir.* Bir ajan seçin\.$/,
     );
     expect(api.callsTo(`POST /requests/${REQUEST_ID}/routing`)).toHaveLength(0);
     await userEvent.selectOptions(agentBox, 'SOS-2');
@@ -983,8 +1008,13 @@ describe('the page of a request', () => {
     await userEvent.click(stop);
     const confirm = await screen.findByRole('alertdialog', { name: 'İş durdurulsun mu?' });
     expect(confirm).toHaveTextContent('durdurmak yerine yönlendirmeyi düzeltebilirsiniz');
+    // Stopping somebody else's request needs a reason, and the field says so beforehand.
+    const why = within(confirm).getByRole('textbox', { name: 'Neden' });
+    expect(why).toBeRequired();
+    expect(why).toHaveAccessibleDescription('Talep sahibi bu nedeni okur.');
     await userEvent.click(within(confirm).getByRole('button', { name: 'İşi durdur' }));
     expect(within(confirm).getByRole('alert')).toHaveTextContent('Bir neden yazın.');
+    expect(why).toHaveAccessibleDescription('Talep sahibi bu nedeni okur. Bir neden yazın.');
     expect(api.callsTo(`POST /requests/${REQUEST_ID}/close`)).toHaveLength(0);
     await userEvent.keyboard('{Escape}');
     await waitFor(() => {
@@ -1121,7 +1151,10 @@ describe('the page of a request', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Talebi iptal et' }));
     const confirm = await screen.findByRole('alertdialog', { name: 'Talep iptal edilsin mi?' });
     expect(api.callsTo(`POST /requests/${REQUEST_ID}/close`)).toHaveLength(0);
-    // A cancel needs no reason.
+    // A cancel needs no reason, and the field says so.
+    expect(
+      within(confirm).getByRole('textbox', { name: 'Neden (isteğe bağlı)' }),
+    ).not.toBeRequired();
     await userEvent.click(within(confirm).getByRole('button', { name: 'Talebi iptal et' }));
     await waitFor(() => {
       expect(stageLine()).toContain('Aşama: İptal edildi: talep sahibi iptal etti');

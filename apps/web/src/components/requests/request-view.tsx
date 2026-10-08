@@ -101,6 +101,10 @@ function Mark({ icon, children }: { icon: ReactNode; children: string }) {
  * A reason for sending work back. The approver picks a class from the fixed list (2 October
  * decision 10) and may add a note; the requester is asked only for their own sentence
  * (`askClass` false): they are not the ones who classify.
+ *
+ * A field says before anything is sent whether it must be filled (aria-required, and the note's
+ * label carries "(isteğe bağlı)" while it may stay empty), and an error is tied to its field, so
+ * that it is read again when the person returns to the field.
  */
 function ReasonDialog({
   title,
@@ -158,7 +162,9 @@ function ReasonDialog({
               <NativeSelect
                 id={`${id}-reason`}
                 value={reason}
+                aria-required
                 aria-invalid={reasonProblem !== null}
+                aria-describedby={reasonProblem ? `${id}-reason-error` : undefined}
                 onChange={(event) => {
                   const parsed = rejectionReasonSchema.safeParse(event.target.value);
                   setReason(parsed.success ? parsed.data : '');
@@ -172,7 +178,7 @@ function ReasonDialog({
                 ))}
               </NativeSelect>
               {reasonProblem ? (
-                <p role="alert" className="text-sm text-destructive">
+                <p id={`${id}-reason-error`} role="alert" className="text-sm text-destructive">
                   {reasonProblem}
                 </p>
               ) : null}
@@ -180,21 +186,22 @@ function ReasonDialog({
           ) : null}
           <div className="flex flex-col gap-1.5">
             <label htmlFor={`${id}-note`} className="text-sm font-medium">
-              Açıklama
+              {needsNote ? 'Açıklama' : 'Açıklama (isteğe bağlı)'}
             </label>
             <Textarea
               id={`${id}-note`}
               rows={3}
               maxLength={DECISION_NOTE_MAX}
               value={note}
+              aria-required={needsNote}
               aria-invalid={noteProblem !== null}
-              aria-describedby={`${id}-help`}
+              aria-describedby={noteProblem ? `${id}-help ${id}-note-error` : `${id}-help`}
               onChange={(event) => {
                 setNote(event.target.value);
               }}
             />
             {noteProblem ? (
-              <p role="alert" className="text-sm text-destructive">
+              <p id={`${id}-note-error`} role="alert" className="text-sm text-destructive">
                 {noteProblem}
               </p>
             ) : null}
@@ -786,7 +793,9 @@ export function RerouteDialog({
                 <NativeSelect
                   id={`${id}-unit`}
                   value={chosen ? unit : ''}
+                  aria-required
                   aria-invalid={unitProblem !== null}
+                  aria-describedby={unitProblem ? `${id}-unit-error` : undefined}
                   aria-busy={options.isPending}
                   onChange={(event) => {
                     setUnit(event.target.value);
@@ -806,7 +815,7 @@ export function RerouteDialog({
                   ))}
                 </NativeSelect>
                 {unitProblem ? (
-                  <p role="alert" className="text-sm text-destructive">
+                  <p id={`${id}-unit-error`} role="alert" className="text-sm text-destructive">
                     {unitProblem}
                   </p>
                 ) : null}
@@ -818,8 +827,11 @@ export function RerouteDialog({
                 <NativeSelect
                   id={`${id}-agent`}
                   value={agentCode}
+                  aria-required
                   aria-invalid={agentProblem !== null}
-                  aria-describedby={`${id}-agent-help`}
+                  aria-describedby={
+                    agentProblem ? `${id}-agent-help ${id}-agent-error` : `${id}-agent-help`
+                  }
                   disabled={!chosen}
                   onChange={(event) => {
                     setAgent(event.target.value);
@@ -833,7 +845,7 @@ export function RerouteDialog({
                   ))}
                 </NativeSelect>
                 {agentProblem ? (
-                  <p role="alert" className="text-sm text-destructive">
+                  <p id={`${id}-agent-error`} role="alert" className="text-sm text-destructive">
                     {agentProblem}
                   </p>
                 ) : null}

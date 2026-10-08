@@ -227,15 +227,18 @@ function RequestScreen() {
               rows={2}
               maxLength={CLOSE_REASON_MAX}
               value={reason}
+              aria-required={closing === 'stop'}
               aria-invalid={reasonMissing}
-              aria-describedby={`${reasonId}-help`}
+              aria-describedby={
+                reasonMissing ? `${reasonId}-help ${reasonId}-error` : `${reasonId}-help`
+              }
               onChange={(event) => {
                 setReason(event.target.value);
                 setReasonMissing(false);
               }}
             />
             {reasonMissing ? (
-              <p role="alert" className="text-sm text-destructive">
+              <p id={`${reasonId}-error`} role="alert" className="text-sm text-destructive">
                 Bir neden yazın.
               </p>
             ) : null}
