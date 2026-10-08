@@ -33,6 +33,8 @@ Henüz olmayanlar: veritabanı (göç dosyası yok), giriş, işlevli ekran (yal
 
 8 Ekim 2026 (devam): talep akışının ince dilimi kuruldu (0.4) ve bağımsız incelemeden geçirildi; doğrulanan bulgular düzeltildi. Açık kalan iki madde API anahtarını bekliyor: anahtar ve gerçek modelle ilk deneme çağrısı. Sıradaki iş talep akışının kalanı (0.4a); ön planı kurucunun onayını bekliyor.
 
+8 Ekim 2026 (öğleden sonra): kurucu 0.4a ön planının sorularını yanıtladı (`docs/kararlar/2026-10-08.md`, karar 7-13). 0.4a beş adıma bölündü; ilk adım Bugün listesi ve bildirimler. Projeler ayrı ve ayrıntılı bir bölüm olarak eklendi (0.4c; karar 11); kapsamı için ön plan hazırlanıyor. Talep formuna ek 0.4a'dan çıkarıldı (karar 12).
+
 ## Sprint 0
 
 ### 0.1 Arayüz temeli
@@ -344,17 +346,47 @@ Testler:
 
 ### 0.4a Talep akışının kalanı
 
-Dilimde bilerek olmayanlar. Dilimden hemen sonra yapılır (8 Ekim, karar 6).
+Dilimde bilerek olmayanlar. Dilimden hemen sonra yapılır (8 Ekim, karar 6). Sıra ve içerik kurucunun 8 Ekim yanıtlarıyla belirlendi (karar 7-13); sormadan yapılan varsayımlar `docs/SONRA.md` içinde W-a ila W-m.
 
-- [ ] Ajanın insana soru sorması ve "Yanıt bekliyor" durumu (karar 7: talep sahibi ajanın sorusunu yanıtlar)
-- [ ] Talebe yorum yazma (karar 7)
-- [ ] Birden çok ajanın sırayla çalışması (karar 1)
-- [ ] Proje içinde talep; talep formunda proje ve son tarih
-- [ ] Talep formunda ek (Karar: M13)
-- [ ] Talep formunda yarım kalan metnin saklanması (Karar: U13)
-- [ ] Bildirimler ve Bugün listesi
-- [ ] Ofis görünümünde canlı durumlar
-- [ ] "Her yerde durdur": ajanı iki şirkette birden durdurma
+Adım 1: Bugün listesi ve bildirimler (karar 7 ve 8)
+
+- [ ] Bugün ekranında "Sizden beklenenler" listesi: birim onayı bekleyen sonuçlar, talep sahibinin onayını bekleyen sonuçlar, insana düşen talepler
+- [ ] Kenar çubuğunda Bugün satırında bekleyen iş sayısı
+- [ ] Bildirim: kişinin talebi kendisi bir şey yapmadan kapandığında (geri çevrildi, reddedildi, durduruldu); sabit cümleyle, yalnızca panelde
+- [ ] Listenin ve bildirimlerin yarım dakikada bir yenilenmesi (oturumun hareketsizlik süresini uzatmadan)
+- [ ] Passkey sıfırlama bildiriminin kişiye gösterilmesi (5 Ekim, karar 3)
+
+Adım 2: Ofiste canlı durumlar ve "Her yerde durdur" (karar 9 ve 10)
+
+- [ ] Masada ajanın durumu: Boşta, Çalışıyor, Onay bekliyor, Hata
+- [ ] Ajan panelinde sayılar
+- [ ] "Her yerde durdur": ajan açık olduğu her şirkette durur; şirket şirket sonuç
+
+Adım 3: Son tarih ve yorum (karar 13); proje alanı Projeler'i (0.4c) bekler
+
+- [ ] Talep formunda son tarih (yalnızca bilgi)
+- [ ] Talebe yorum yazma: talep sahibi, birimin onaylayıcısı ve kurucu; ajan görmez
+- [ ] Talep formunda proje alanı; çalışmanın proje bağlamı; kural 12 denetiminin kodla yapılması (Projeler'den sonra)
+
+Adım 4: Ajanın soru sorması (ilk gerçek çalışmalardan sonra; sorusu kurucuya o zaman sorulur)
+
+- [ ] Ajanın insana soru sorması ve "Yanıt bekliyor" durumu (7 Ekim, karar 7: talep sahibi ajanın sorusunu yanıtlar)
+
+Adım 5: Birden çok ajanın sırayla çalışması (ilk gerçek çalışmalardan sonra; soruları kurucuya o zaman sorulur)
+
+- [ ] Birden çok ajanın sırayla çalışması (7 Ekim, karar 1)
+
+Bu işten çıkarılanlar:
+
+- Talep formunda ek: ayrı bir iş olarak sonra yapılır (8 Ekim, karar 12; Karar: M13)
+- Talep formunda yarım kalan metnin saklanması: ilk dilimde yapıldı (yalnızca sekmede durur; U13 ile birlikte kurucu onayı bekliyor)
+
+### 0.4c Projeler
+
+8 Ekim, karar 11: Projeler sol menüde ayrı bir bölümdür; yeni proje oluşturulur, projeye GitHub bağlanır, projeye dosya eklenir. Paperclip'teki proje bölümünün mantığıyla kurulur, ondan daha gelişmiş ve daha ayrıntılı olur. Kapsamı ve sırası kurucuya sunulacak ön planla netleşir; onay gelmeden bir şey kurulmaz.
+
+- [ ] Paperclip'in proje bölümünün incelenmesi ve ön plan (akış, sorular)
+- [ ] (Ön plan onaylanınca maddeler buraya yazılır)
 
 ### 0.4b Görevler: ekip içi görevler (M2)
 

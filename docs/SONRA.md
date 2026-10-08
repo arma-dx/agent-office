@@ -378,6 +378,24 @@ Sormadan yapılan varsayımlar (ince dilimin planında; hepsi **kurucu onayı be
 - Y-k (6 Ekim karar 5): Ofis görünümünde, açık olmayan ve kartının çalışacak sürümü bulunmayan ajan için kurucuya "Ajanı aç" düğmesi yerine tek cümle gösterilir: "Bu ajan henüz açılamaz: kartının çalışacak sürümü yok." Önceden düğme her ajanda vardı; kurucu onaylıyor, API reddediyordu. Karar 5 üç durumu (Kapalı, Etkin, Durduruldu) sabitler; cümle yeni bir durum değildir, figür ve durum sözü değişmez. Cümle API'nin ret cümlesinin ilk yarısıdır ve yalnızca eksik sürüme bakar, kartın `status` alanına değil (taslak kartın anlamı M40'ta açık). Açık ajanın durdurma düğmesi kartı ne olursa olsun kalır.
 - Y-l (açık soru, karar yok): birden çok kanal için istenen içerik. SOS-2'nin kartı çıktısını "kanal başına iki ya da üç seçenekli metin" diye yazar; `social-content` skill'i "aynı içerik için iki ya da üç seçenek" der; sonuç aracı (`submit_for_approval`) ise toplamda en az iki, en çok üç seçenek alır. Talep iki kanal isterse (örneğin LinkedIn ve Instagram) ajanın ne sunacağı hiçbir yerde yazmıyor: bir talep tek kanal için mi yazılır (öteki kanal ayrı talep olur), yoksa her seçenek bütün kanalların metnini birlikte mi taşır? Çalıştırıcının kart metninin ardına eklediği not (bu sürümde hangi araçların açık olduğu) bu durumu kapsamaz. Kart, skill ve araç bu soru için değiştirilmedi; kurucu karar verince üçü birlikte düzeltilir.
 
+Talep akışının kalanı (0.4a) için sormadan yapılan varsayımlar (ön planda kurucuya bildirildi, itiraz gelmedi, açık onay da verilmedi; hepsi **kurucu onayı bekliyor**):
+
+- W-a: Haber yalnızca panelin içinde verilir; e-posta ve tarayıcı bildirimi Bildirimler işine (KALAN-ISLER 2.6) kalır.
+- W-b: Bildirim cümleleri sabittir; ajanın yazdığı metin bildirime girmez. Kişinin kendi yaptığı iş için kendisine bildirim çıkmaz.
+- W-c: Bugün ve menüdeki sayı yalnızca seçili şirketi gösterir; sayı kişiden beklenen işleri sayar, bildirimler sayıya girmez.
+- W-d: Ofiste "Etkin" yerine "Boşta" yazar. Bir ajanın birden çok işi varsa masada en çok dikkat isteyen görünür: önce Hata, sonra Onay bekliyor, sonra Çalışıyor. Ajan yanıt beklerken masa "Boşta" görünür (U26'nın kalanı).
+- W-e: Ofisteki durumlar bakan kişinin görebildiği işlerden hesaplanır (U27).
+- W-f: "Her yerde durdur" şimdilik Ofis'te, seçili ajanın panelinde durur; passkey istemez; her şirkette ayrı kayıt düşer; yeniden açma şirket şirket yapılır.
+- W-g: KOR-1 ve SOS-2, talebin projesi varsa o projenin içinde çalışır.
+- W-h: Son tarih yalnızca bilgidir: bir gün seçilir, günü geçince "son tarihi geçti" yazar, talep gönderildikten sonra değişmez.
+- W-i: Yeni projede yapay zekâ izni kapalı başlar ve yalnızca kurucu açar (R8). Talep sürerken izin kapatılırsa ajan o talepte bir daha çalışmaz; talep insana düşer.
+- W-j: Ajan sorusunu yalnızca talep sahibine sorar. Yanıt gelmezse talep bekler.
+- W-k: Soruyu ve yanıtı talep sahibi, birimin onaylayıcısı ve kurucu okur.
+- W-l: Yanıt metni de talep metni gibi modele gider; kişisel veri yazılabilir, uyarı çıkmaz (8 Ekim karar 5'in yanıta genişletilmesi).
+- W-m: Yarım kalan talep, yorum ve yanıt metni yalnızca o sekmede durur.
+
+8 Ekim karar 7-13 ile kapananlar: U26'nın "neye hata denir" kısmı (karar 10), U32 (karar 9: açık olduğu şirketlerde durdurulur), 5 Ekim karar 10'un Bugün yarısı ve karar 11'in belirli aralıklarla yenileme kısmı (karar 7). Açılan: Projeler bölümünün kapsamı (karar 11; ön plan hazırlanıyor).
+
 İlk dilimin incelemesinden kalan açık sorular ve bilerek ertelenenler:
 
 - T15 (açık soru): Talep sahibi şirketten ayrılır ya da dış kişi olursa açık talepleri ne olur? Bugün çalışmalar talep sahibinin adına koştuğu için böyle bir talep hiç çalışamaz; sayfa yine de "Yönlendirmeyi düzelt" önerir. Seçenekler: üyelik değişince talepler sabit bir nedenle kapanır; ya da kurucuya düşer ve yalnızca "İşi durdur" önerilir. Karar gelene kadar dokunulmadı.
