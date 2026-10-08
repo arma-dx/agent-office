@@ -259,6 +259,11 @@ export async function removeRequests(
       [taskIds],
     );
     await client.query('delete from office.runs where task_id = any ($1::uuid[])', [taskIds]);
+    // What the flow told the requesters of these requests (request_returned, _rejected, _stopped).
+    await client.query(
+      `delete from office.notifications where record_type = 'task' and record_id = any ($1::uuid[])`,
+      [taskIds],
+    );
     await client.query('delete from office.tasks where id = any ($1::uuid[])', [taskIds]);
     await client.query('delete from office.audit_log where id > $1', [auditAfter]);
     await client.query('commit');

@@ -1,3 +1,4 @@
+import { REQUEST_NOTIFICATION_TEMPLATES } from '@agent-office/shared';
 import { afterAll, describe, expect, it } from 'vitest';
 import type { ContextInput } from '../src/context.ts';
 import { listRequests, readRequest } from '../src/requests.ts';
@@ -2066,6 +2067,222 @@ describe.skipIf(noDatabase)('the list of requests', () => {
       // A task between people and another company's request are not requests to this reader.
       expect(await readRequest(tx.client, 'KOR-1', ids.taskA)).toBeNull();
       expect(await readRequest(tx.client, 'KOR-1', ids.requestP)).toBeNull();
+    });
+  });
+});
+
+describe.skipIf(noDatabase)('the requester is told when a request closes behind their back', () => {
+  afterAll(closePools);
+
+  // 8 October decision 8: a notification appears only when the person's request was closed without
+  // their doing anything: returned, rejected, stopped. The flow writes it in the transaction of the
+  // close; a row carries ids and codes and never a text.
+  const NOTES = `select template, recipient_user_id, record_type, record_id, project_id, channel,
+      sender_agent_code, sender_user_id, read_at
+    from office.notifications where record_id = $1 order by created_at, id`;
+  const AS_TEXT = `select to_jsonb(n)::text as row from office.notifications n where n.record_id = $1`;
+  const CLOSE_WITH = 'select office.close_request($1, $2)';
+
+  // Read by the founder: the log policy shows the founder every notification of the company.
+  async function notes(tx: Tx, task: string): Promise<Record<string, unknown>[]> {
+    await tx.setContext(founderA);
+    return tx.rows(NOTES, [task]);
+  }
+
+  async function noteText(tx: Tx, task: string): Promise<string> {
+    await tx.setContext(founderA);
+    return (await one<{ row: string }>(tx, AS_TEXT, [task])).row;
+  }
+
+  function note(template: string, task: string, sender: Record<string, unknown>): unknown {
+    return {
+      template,
+      recipient_user_id: ids.employeeA,
+      record_type: 'task',
+      record_id: task,
+      project_id: null,
+      channel: 'panel',
+      sender_agent_code: null,
+      sender_user_id: null,
+      read_at: null,
+      ...sender,
+    };
+  }
+
+  it('a returned request tells its requester: one row of ids and codes, sent by the coordinator', async () => {
+    const reason = 'Belongs to memory; no agent there can write it';
+    await inTransaction(async (tx) => {
+      await tx.setContext(employeeA);
+      const task = await openRequest(tx);
+      await tx.setContext(agentRun(ids.employeeA, 'KOR-1'));
+      const run = await openRun(tx, task, 'KOR-1');
+      await tx.rows(ROUTE, [task, JSON.stringify([{ unit: 'HAF', agent: null, reason }]), run]);
+      expect(await statusOf(tx, task)).toBe('cancelled');
+      // The run goes in the requester's name, and the act is the coordinator's: the requester is
+      // told.
+      expect(await notes(tx, task)).toEqual([
+        note('request_returned', task, { sender_agent_code: 'KOR-1' }),
+      ]);
+      // Nothing the coordinator wrote is in the row.
+      const text = await noteText(tx, task);
+      expect(text).toContain('request_returned');
+      expect(text).not.toContain(reason);
+      expect(text).not.toContain('Belongs');
+    });
+  });
+
+  it('a rejected result tells the requester, unless the requester is the one who rejected', async () => {
+    const REJECT = `update office.approvals set status = 'rejected', rejection_reason = 'other',
+        decision_reason = 'Not a text we publish' where id = $1`;
+    await inTransaction(async (tx) => {
+      const { task, approval } = await submittedRequest(tx);
+      // Nothing is told while the request goes on.
+      expect(await notes(tx, task)).toEqual([]);
+      await tx.setContext(founderA);
+      expect(await tx.exec(REJECT, [approval])).toBe(1);
+      expect(await statusOf(tx, task)).toBe('cancelled');
+      expect(await notes(tx, task)).toEqual([
+        note('request_rejected', task, { sender_user_id: ids.founder }),
+      ]);
+      // The approver's words stay on the approval.
+      expect(await noteText(tx, task)).not.toContain('Not a text we publish');
+
+      // The founder's own request, rejected by the founder: nobody is told of their own act.
+      const own = await submittedRequest(tx, founderA);
+      await tx.setContext(founderA);
+      expect(await tx.exec(REJECT, [own.approval])).toBe(1);
+      expect(await statusOf(tx, own.task)).toBe('cancelled');
+      expect(await notes(tx, own.task)).toEqual([]);
+    });
+  });
+
+  it('a stop tells the requester; a cancel and a founder closing their own request tell nobody', async () => {
+    await inTransaction(async (tx) => {
+      await tx.setContext(employeeA);
+      const stopped = await openRequest(tx);
+      await tx.setContext(founderA);
+      await tx.rows(CLOSE_WITH, [stopped, 'Sent twice by mistake']);
+      expect(await statusOf(tx, stopped)).toBe('cancelled');
+      expect(await notes(tx, stopped)).toEqual([
+        note('request_stopped', stopped, { sender_user_id: ids.founder }),
+      ]);
+      // The reason is on the request, for whoever may read the request.
+      expect(await noteText(tx, stopped)).not.toContain('Sent twice');
+
+      await tx.setContext(employeeA);
+      const cancelled = await openRequest(tx);
+      await tx.rows(CLOSE_WITH, [cancelled, 'No longer needed']);
+      expect(await statusOf(tx, cancelled)).toBe('cancelled');
+      expect(await notes(tx, cancelled)).toEqual([]);
+
+      await tx.setContext(founderA);
+      const own = await openRequest(tx);
+      await tx.rows(CLOSE_WITH, [own, 'No longer needed']);
+      expect(await statusOf(tx, own)).toBe('cancelled');
+      expect(await notes(tx, own)).toEqual([]);
+    });
+  });
+
+  it('a request that goes on tells nobody', async () => {
+    await inTransaction(async (tx) => {
+      const { task, run, approval } = await submittedRequest(tx);
+      const decide = async (id: string, status: string): Promise<void> => {
+        await tx.setContext(founderA);
+        expect(
+          await tx.exec(
+            `update office.approvals set status = $2,
+               rejection_reason = case when $2 = 'approved' then null else 'incomplete' end
+             where id = $1`,
+            [id, status],
+          ),
+        ).toBe(1);
+      };
+      const ACCEPT = `update office.requester_approvals set status = $2, decision_reason = $3
+        where task_id = $1 and status = 'pending'`;
+      // The approver asks for changes; the agent submits again; the approver approves.
+      await decide(approval, 'changes_requested');
+      expect(await notes(tx, task)).toEqual([]);
+      await tx.setContext(agentRun(ids.employeeA, 'HAF-1'));
+      const second = (await one<{ id: string }>(tx, SUBMIT, [task, run, approval])).id;
+      await decide(second, 'approved');
+      expect(await notes(tx, task)).toEqual([]);
+      // The requester asks for changes; the reworked result is approved and accepted.
+      await tx.setContext(employeeA);
+      expect(await tx.exec(ACCEPT, [task, 'changes_requested', 'Shorter'])).toBe(1);
+      expect(await notes(tx, task)).toEqual([]);
+      await tx.setContext(agentRun(ids.employeeA, 'HAF-1'));
+      const third = (await one<{ id: string }>(tx, SUBMIT, [task, run, null])).id;
+      await decide(third, 'approved');
+      await tx.setContext(employeeA);
+      expect(await tx.exec(ACCEPT, [task, 'approved', null])).toBe(1);
+      expect(await statusOf(tx, task)).toBe('done');
+      expect(await notes(tx, task)).toEqual([]);
+    });
+  });
+
+  it('a requester who left the company gets no notification and the request closes all the same', async () => {
+    await inTransaction(async (tx) => {
+      await tx.setContext(colleagueA);
+      const task = await openRequest(tx);
+      await stepUp(tx, founderA, 'membership_change', ids.sharedEmployee);
+      await tx.setContext(founderA);
+      expect(
+        await tx.exec(`delete from office.memberships where company_id = $1 and user_id = $2`, [
+          ids.arma,
+          ids.sharedEmployee,
+        ]),
+      ).toBe(1);
+      // The notification's recipient must be a member (foreign key); the refusal ends inside the
+      // flow and the close goes on.
+      await tx.rows(CLOSE_WITH, [task, 'The requester has left']);
+      expect(
+        await one(tx, `select status, closed_by_user_id from office.tasks where id = $1`, [task]),
+      ).toEqual({ status: 'cancelled', closed_by_user_id: ids.founder });
+      expect(await tx.rows(NOTES, [task])).toEqual([]);
+      // The transaction is not aborted: the next statement works.
+      expect(await tx.rows('select 1 as ok')).toEqual([{ ok: 1 }]);
+    });
+  });
+
+  it('the flow’s templates are written by the flow alone', async () => {
+    const WRITE = `insert into office.notifications
+        (company_id, recipient_user_id, template, record_type, record_id)
+      values ($1, $2, $3, 'task', $4)`;
+    const NOTIFY = `select office.flow_notify_requester($1, 'request_stopped')`;
+    const values = (template: string): unknown[] => [
+      ids.arma,
+      ids.employeeA,
+      template,
+      ids.requestA,
+    ];
+    await inTransaction(async (tx) => {
+      for (const context of [founderA, approverA, employeeA]) {
+        await tx.setContext(context);
+        for (const template of REQUEST_NOTIFICATION_TEMPLATES) {
+          expect(
+            (await tx.expectError(WRITE, values(template))).code,
+            `${template} ${JSON.stringify(context)}`,
+          ).toBe('42501');
+        }
+        // The inner function of the flow is not the application's to call.
+        expect((await tx.expectError(NOTIFY, [ids.requestA])).code).toBe('42501');
+      }
+      expect(await tx.count('notifications', 'record_id = $1', [ids.requestA])).toBe(0);
+    });
+    await inWorkerTransaction(async (tx) => {
+      for (const context of [agentRun(ids.employeeA, 'KOR-1'), founderA]) {
+        await tx.setContext(context);
+        for (const template of REQUEST_NOTIFICATION_TEMPLATES) {
+          expect(
+            (await tx.expectError(WRITE, values(template))).code,
+            `${template} ${JSON.stringify(context)}`,
+          ).toBe('42501');
+        }
+        expect((await tx.expectError(NOTIFY, [ids.requestA])).code).toBe('42501');
+      }
+      // Every other template is written by an agent run as before.
+      await tx.setContext(agentRun(ids.employeeA, 'KOR-1'));
+      expect(await tx.exec(WRITE, values('approval_pending'))).toBe(1);
     });
   });
 });
