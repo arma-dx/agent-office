@@ -2,7 +2,16 @@ import { COMPANY_HEADER, BACKGROUND_HEADER } from '@agent-office/shared';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { apiError, ARMADX, json, mockApi, sessionHandler, USER_ID } from './test/mock-api.ts';
+import {
+  apiError,
+  ARMADX,
+  json,
+  mockApi,
+  noContent,
+  PILLIKA,
+  sessionHandler,
+  USER_ID,
+} from './test/mock-api.ts';
 import {
   APPROVAL_CARD,
   APPROVAL_ID,
@@ -1038,6 +1047,52 @@ describe('the page of a request', () => {
       'href',
       '/c/armadx/requests',
     );
+  });
+
+  it('links back to the list from the top bar', async () => {
+    mockApi({
+      'GET /session': sessionHandler(),
+      [`GET /requests/${REQUEST_ID}`]: () => json(requestDetail()),
+    });
+    renderApp(`/c/armadx/requests/${REQUEST_ID}`);
+    await screen.findByRole('region', { name: 'Yeni ofis için LinkedIn gönderisi' });
+    // The top bar is the header that holds the page's h1 (the page and its cards have headers too),
+    // and the h1 names the request, not the list.
+    const title = screen.getByRole('heading', { level: 1, name: 'LinkedIn için gönderi yaz' });
+    const bar = title.closest('header');
+    if (!bar) throw new Error('No top bar');
+    expect(within(bar).getByRole('link', { name: 'Talepler' })).toHaveAttribute(
+      'href',
+      '/c/armadx/requests',
+    );
+  });
+
+  it('opens the list of the other company when the company is changed: its request is not there', async () => {
+    const api = mockApi({
+      'GET /session': sessionHandler(),
+      [`GET /requests/${REQUEST_ID}`]: () => json(requestDetail()),
+      'GET /requests': () => json({ requests: [], truncated: false }),
+      'PUT /session/company': () => noContent(),
+    });
+    const { router } = renderApp(`/c/armadx/requests/${REQUEST_ID}`);
+    await screen.findByRole('region', { name: 'Yeni ofis için LinkedIn gönderisi' });
+    await userEvent.click(screen.getByRole('button', { name: /Şirket: Arma DX/ }));
+    await userEvent.click(
+      within(await screen.findByRole('menu')).getByRole('menuitemradio', { name: 'Pillika' }),
+    );
+    await waitFor(() => {
+      expect(currentLocation(router).pathname).toBe('/c/pillika/requests');
+    });
+    expect(await screen.findByRole('heading', { name: 'Henüz talep yok' })).toBeVisible();
+    expect(screen.queryByRole('heading', { name: 'Talep bulunamadı' })).toBeNull();
+    // Pillika is asked for its list and never for the request of Arma DX.
+    expect(api.callsTo('GET /requests').map((call) => call.headers.get(COMPANY_HEADER))).toEqual([
+      PILLIKA.companyId,
+    ]);
+    expect(
+      api.callsTo(`GET /requests/${REQUEST_ID}`).map((call) => call.headers.get(COMPANY_HEADER)),
+    ).toEqual([ARMADX.companyId]);
+    expect(api.unexpected).toEqual([]);
   });
 
   it('refreshes in the background, faster while a machine has the turn', async () => {

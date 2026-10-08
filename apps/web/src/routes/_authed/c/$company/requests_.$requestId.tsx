@@ -41,7 +41,11 @@ import { busyProps } from '@/lib/utils';
  * the requester accepts in their cards. Whoever stops somebody else's request says why.
  */
 export const Route = createFileRoute('/_authed/c/$company/requests_/$requestId')({
-  staticData: { location: { label: 'Talep', parent: 'Talepler' } },
+  // The list the request belongs to: the top bar links back to it, and a change of company opens
+  // it there (a request of one company does not exist in the other).
+  staticData: {
+    location: { label: 'Talep', parent: { label: 'Talepler', to: '/c/$company/requests' } },
+  },
   component: RequestScreen,
 });
 
