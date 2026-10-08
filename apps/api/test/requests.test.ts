@@ -276,6 +276,37 @@ describe.skipIf(noDatabase)('requests', () => {
     expect(row).toEqual({ kind: 'request', requester_user_id: ids.employee });
   });
 
+  it('the same request sent twice at the same moment is opened once and answered twice', async () => {
+    // A double click, or a retry while the first send is still in flight: the second does not see
+    // the first one's row yet and meets it at the primary key.
+    for (let round = 0; round < 8; round += 1) {
+      const before = server.jobs.sent.length;
+      const id = randomUUID();
+      const text = `Aynı anda iki kez gönderilen talep ${String(round)}`;
+      const answers = await Promise.all([
+        post(employee, '/api/requests', { id, text }),
+        post(employee, '/api/requests', { id, text }),
+      ]);
+      expect(answers.map((res) => res.statusCode)).toEqual([201, 201]);
+      for (const res of answers) {
+        expect(requestDetailSchema.parse(res.json())).toMatchObject({ id, text, status: 'open' });
+      }
+      expect(await adminQuery('select 1 from office.tasks where id = $1', [id])).toHaveLength(1);
+      expect(server.jobs.sent.slice(before)).toEqual([
+        { companyId: ids.arma, userId: ids.employee, taskId: id, agentCode: 'KOR-1' },
+      ]);
+    }
+    // The id of somebody else's request is still not this person's to reuse, at the same moment
+    // or later.
+    const id = randomUUID();
+    const [mine, theirs] = await Promise.all([
+      post(employee, '/api/requests', { id, text: 'Benim talebim' }),
+      post(colleague, '/api/requests', { id, text: 'Başkasının talebi' }),
+    ]);
+    expect([mine.statusCode, theirs.statusCode].sort()).toEqual([201, 400]);
+    expect(await adminQuery('select 1 from office.tasks where id = $1', [id])).toHaveLength(1);
+  });
+
   it('takes a text that starts with a separator line: the title is the first line that says something', async () => {
     // Such a text was accepted by the schema and then failed at the table's title check (500).
     const pasted = await open(

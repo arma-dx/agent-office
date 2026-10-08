@@ -312,6 +312,8 @@ export function registerRequestRoutes(
           // Nothing is stored: the person keeps the text in the form and is told why.
           throw new ApiError(409, 'requests_not_open', INTAKE_MESSAGE[intake.reason]);
         }
+        let opened = true;
+        await client.query('savepoint open_request');
         try {
           await insertRequest(client, {
             id: body.data.id,
@@ -319,20 +321,29 @@ export function registerRequestRoutes(
             text: body.data.text,
           });
         } catch (error) {
-          // unique_violation: the id belongs to a record this person did not open.
-          if (databaseErrorCode(error) === '23505') {
+          await client.query('rollback to savepoint open_request');
+          if (databaseErrorCode(error) !== '23505') {
+            throw error;
+          }
+          // unique_violation: the id is taken. Either by this person's own send that was still in
+          // flight when this one looked (a double click, a retry that overtook the first answer):
+          // it has committed by now, so it is answered below like every repeated send and nothing
+          // is started a second time. Or by a record this person did not open: refused.
+          if (!(await ownRequestExists(client, body.data.id))) {
             throw invalidRequest();
           }
-          throw error;
+          opened = false;
         }
-        // The coordinator's run, in the name of the requester; ids only (rule 10). The job is
-        // stored with the request: both or neither.
-        await jobs.send(client, {
-          companyId,
-          userId: session.userId,
-          taskId: body.data.id,
-          agentCode: COORDINATOR_AGENT_CODE,
-        });
+        if (opened) {
+          // The coordinator's run, in the name of the requester; ids only (rule 10). The job is
+          // stored with the request: both or neither.
+          await jobs.send(client, {
+            companyId,
+            userId: session.userId,
+            taskId: body.data.id,
+            agentCode: COORDINATOR_AGENT_CODE,
+          });
+        }
       }
       const row = await readRequest(client, COORDINATOR_AGENT_CODE, body.data.id);
       if (!row) {
