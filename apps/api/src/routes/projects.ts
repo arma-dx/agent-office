@@ -14,6 +14,7 @@ import {
   removeProjectMember,
   setCustomerPermissions,
   setProjectAiPermission,
+  setProjectMemberRole,
   updateProject,
   type ProjectChanges,
   type ProjectRow,
@@ -25,17 +26,24 @@ import {
   customerPermissionDetails,
   customerPermissionsSchema,
   customerSchema,
+  mayAddProjectMembers,
+  memberRemoval,
+  memberRoleChanges,
   projectAiPermissionDetails,
   projectAiPermissionSchema,
   projectDetailSchema,
   projectListSchema,
   projectMemberCandidatesSchema,
+  projectMemberRoleSchema,
   projectSummarySchema,
+  setProjectMemberRoleSchema,
   updateProjectSchema,
   type Customer,
   type CustomerList,
+  type ProjectActor,
   type ProjectDetail,
   type ProjectList,
+  type ProjectMemberRole,
   type ProjectSummary,
 } from '@agent-office/shared';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
@@ -52,16 +60,20 @@ import { stepUpRequired, verifyStepUp } from '../passkeys.ts';
 import type { RouteDeps } from '../services.ts';
 
 /**
- * The Projects section (8 October decisions 11 and 14 to 22), step 1.
+ * The Projects section (8 October decisions 11 and 14 to 22), step 1, and the owner and the
+ * managers of a project (decision 44).
  *
  *   GET   /api/projects                    the projects the person may read, open ones first
  *   POST  /api/projects                    a founder or an employee opens a project and is its
- *                                          member; a customer can be added by name with it
+ *                                          owner; a customer can be added by name with it
  *   GET   /api/projects/member-candidates  who can be made a member: active founders, employees
  *   GET   /api/projects/:projectId         one answer for the whole page
  *   PATCH /api/projects/:projectId         a member or the founder changes its fields
- *   PUT    /api/projects/:projectId/members/:userId  a member or the founder adds a member
- *   DELETE /api/projects/:projectId/members/:userId  ... and removes one
+ *   PUT    /api/projects/:projectId/members/:userId  the owner, a manager or the founder adds
+ *                                                    a member
+ *   DELETE /api/projects/:projectId/members/:userId  ... and removes one (a manager only plain
+ *                                                    members; never the owner)
+ *   PUT    /api/projects/:projectId/members/:userId/role  the owner or the founder gives a role
  *   PUT   /api/projects/:projectId/ai-permission      the founder opens (with a passkey) or
  *                                                     closes the AI permission of a project
  *   GET   /api/customers                   the customers of the company to choose from, by name
@@ -110,12 +122,60 @@ const memberNotAllowed = (): ApiError =>
     'Seçilen kişi projeye üye olamaz: projeye yalnızca şirketin kurucusu ve çalışanları üye olur. Kişiyi listeden yeniden seçin.',
   );
 
-const ownMembership = (): ApiError =>
+const membersNotAllowed = (act: 'add' | 'remove'): ApiError =>
+  new ApiError(
+    403,
+    'project_members_not_allowed',
+    act === 'add'
+      ? 'Projeye üye eklemeyi yalnızca projenin sahibi, yöneticileri ve kurucu yapabilir.'
+      : 'Projeden üye çıkarmayı yalnızca projenin sahibi, yöneticileri ve kurucu yapabilir.',
+  );
+
+const managerProtected = (): ApiError =>
+  new ApiError(
+    403,
+    'project_manager_protected',
+    'Bir yöneticiyi projeden yalnızca projenin sahibi ya da kurucu çıkarabilir.',
+  );
+
+const ownerFixed = (act: 'remove' | 'role'): ApiError =>
   new ApiError(
     409,
-    'own_project_membership',
-    'Kendinizi projeden çıkaramazsınız. Sizi başka bir üye ya da kurucu çıkarabilir.',
+    'project_owner_fixed',
+    act === 'remove'
+      ? 'Projenin sahibi projeden çıkarılamaz. Önce sahiplik başka bir üyeye devredilir.'
+      : 'Sahibin rolü doğrudan değiştirilemez. Sahipliği devretmek için başka bir üyeyi sahip yapın.',
   );
+
+const rolesNotAllowed = (): ApiError =>
+  new ApiError(
+    403,
+    'project_roles_not_allowed',
+    'Projede rolleri yalnızca projenin sahibi ya da kurucu değiştirebilir.',
+  );
+
+// Three sentences, one per role: an owner is told to hand the ownership over, never that "the
+// owner" can remove them.
+const OWN_MEMBERSHIP: Record<ProjectMemberRole, string> = {
+  owner:
+    'Kendinizi projeden çıkaramazsınız. Projenin sahibisiniz; önce sahipliği başka bir üyeye devredin.',
+  manager: 'Kendinizi projeden çıkaramazsınız. Sizi projenin sahibi ya da kurucu çıkarabilir.',
+  member:
+    'Kendinizi projeden çıkaramazsınız. Sizi projenin sahibi, bir yöneticisi ya da kurucu çıkarabilir.',
+};
+
+const ownMembership = (role: ProjectMemberRole | null): ApiError =>
+  new ApiError(409, 'own_project_membership', OWN_MEMBERSHIP[role ?? 'member']);
+
+const membersChanged = (): ApiError =>
+  new ApiError(
+    409,
+    'project_members_changed',
+    'Projenin üyeleri az önce değişti. Sayfayı yenileyip yeniden deneyin.',
+  );
+
+const roleNotForPerson = (): ApiError =>
+  new ApiError(409, 'member_not_allowed', 'Devre dışı bir hesaba projede rol verilemez.');
 
 const customerLocked = (): ApiError =>
   new ApiError(
@@ -182,14 +242,26 @@ function toSummary(row: ProjectRow): ProjectSummary {
   });
 }
 
+/** Who the reader is to this project (decision 44). */
+function actorOf(context: CompanyContext, row: ProjectRow): ProjectActor {
+  return {
+    userId: context.session.userId.toLowerCase(),
+    founder: row.reader_is_founder,
+    projectRole: projectMemberRoleSchema.nullable().catch(null).parse(row.reader_project_role),
+  };
+}
+
 /**
  * The answer of the project page. A reader of a project is its member or the founder, which is
- * who may change its fields and its members; the permissions are the founder's alone. Of the
+ * who may change its fields; its members are added and removed by the owner, the managers and
+ * the founder, and roles are given by the owner and the founder (decision 44): every member of
+ * the answer says what the reader may do with it. The permissions are the founder's alone. Of the
  * customer an employee gets the name and whether its AI permission is open (the page must say why
  * agents do not work), never the automated processing permission.
  */
 async function detailOf(context: CompanyContext, row: ProjectRow): Promise<ProjectDetail> {
   const { client } = context;
+  const actor = actorOf(context, row);
   const members = await listProjectMembers(client, row.id);
   const names = await peopleNames(
     client,
@@ -213,15 +285,22 @@ async function detailOf(context: CompanyContext, row: ProjectRow): Promise<Proje
       row.created_by_user_id !== null
         ? { userId: row.created_by_user_id, name: names.get(row.created_by_user_id) ?? null }
         : null,
-    members: members.map((member) => ({
-      userId: member.user_id,
-      name: member.name,
-      role: member.role === 'founder' || member.role === 'employee' ? member.role : null,
-      active: member.active,
-    })),
+    members: members.map((member) => {
+      const projectRole = projectMemberRoleSchema.parse(member.project_role);
+      const target = { userId: member.user_id.toLowerCase(), projectRole, active: member.active };
+      return {
+        userId: member.user_id,
+        name: member.name,
+        role: member.role === 'founder' || member.role === 'employee' ? member.role : null,
+        active: member.active,
+        projectRole,
+        removable: memberRemoval(actor, target) === 'ok',
+        roleChanges: memberRoleChanges(actor, target),
+      };
+    }),
     actions: {
       edit: true,
-      manageMembers: true,
+      addMembers: mayAddProjectMembers(actor),
       setAiPermission: row.reader_is_founder,
       setCustomerPermissions: row.reader_is_founder && row.customer_id !== null,
     },
@@ -264,8 +343,9 @@ export function registerProjectRoutes(app: FastifyInstance, { runner, config }: 
 
   /**
    * Opens a project (decision 15). The panel chooses the id, so a send that is repeated answers
-   * the first project and writes nothing a second time. The opener is its member; the members
-   * named with it are added in the same transaction. The project starts without AI permission:
+   * the first project and writes nothing a second time. The opener is its member and its owner
+   * (decision 44); the members named with it are added by that owner in the same transaction,
+   * as plain members. The project starts without AI permission:
    * there is no field for it.
    *
    * A customer added here (decision 16) starts with both contract permissions closed. Only the
@@ -460,9 +540,10 @@ export function registerProjectRoutes(app: FastifyInstance, { runner, config }: 
   );
 
   /**
-   * A member or the founder adds a member: an active founder or employee of the company
-   * (docs/SONRA.md P-j); the database refuses anybody else. No passkey (5 October decision 4).
-   * Adding a person who is a member already changes nothing.
+   * The owner, a manager or the founder adds a member (decision 44): an active founder or
+   * employee of the company (docs/SONRA.md P-j); the database refuses anybody else. The person is
+   * added as a plain member. No passkey (5 October decision 4). Adding a person who is a member
+   * already changes nothing.
    */
   app.put(
     '/api/projects/:projectId/members/:userId',
@@ -470,7 +551,10 @@ export function registerProjectRoutes(app: FastifyInstance, { runner, config }: 
       runner.withCompany(request, reply, INSIDERS, async (context) => {
         const { projectId, userId } = memberOf(request);
         const { client } = context;
-        await projectOf(context, projectId);
+        const row = await projectOf(context, projectId);
+        if (!mayAddProjectMembers(actorOf(context, row))) {
+          throw membersNotAllowed('add');
+        }
         await client.query('savepoint add_member');
         try {
           await addProjectMember(client, projectId, userId);
@@ -482,9 +566,10 @@ export function registerProjectRoutes(app: FastifyInstance, { runner, config }: 
           if (code === '23503' || code === '23514') throw memberNotAllowed();
           if (code === '42501') {
             // insufficient_privilege: the row policy refused the insert. The person lost the
-            // project between the read above and the insert (they were removed, or their role
-            // changed): answered like a project they cannot read. Anything else stays an error.
+            // project between the read above and the insert (404), or lost the role that lets
+            // them add.
             await projectOf(context, projectId);
+            throw membersNotAllowed('add');
           }
           throw error;
         }
@@ -493,21 +578,93 @@ export function registerProjectRoutes(app: FastifyInstance, { runner, config }: 
   );
 
   /**
-   * A member or the founder removes a member. An employee does not remove themselves (nobody
-   * loses sight of a project by a slip); the founder may, and still reads the project.
+   * The owner, a manager or the founder removes a member (decision 44): the owner and the founder
+   * remove managers and plain members, a manager plain members only; the owner is never removed
+   * (the ownership is handed over first). An employee does not remove themselves, whatever their
+   * role (nobody loses sight of a project by a slip); the founder may, and still reads the
+   * project. The database's row policy is the rule: it removes the row or does not, and the
+   * route only says why.
    */
   app.delete(
     '/api/projects/:projectId/members/:userId',
     async (request, reply): Promise<ProjectDetail> =>
       runner.withCompany(request, reply, INSIDERS, async (context) => {
         const { projectId, userId } = memberOf(request);
-        await projectOf(context, projectId);
-        if (userId === context.session.userId.toLowerCase() && context.role !== 'founder') {
-          throw ownMembership();
-        }
-        if ((await removeProjectMember(context.client, projectId, userId)) === 0) {
+        const { client } = context;
+        // Why the database removes no row, as the answer to give; null when it would remove one.
+        const refusal = async (): Promise<ApiError | null> => {
+          const row = await projectOf(context, projectId);
+          const actor = actorOf(context, row);
+          const member = (await listProjectMembers(client, projectId)).find(
+            (candidate) => candidate.user_id.toLowerCase() === userId,
+          );
           // Not a member of this project.
-          throw notFound();
+          if (!member) return notFound();
+          switch (
+            memberRemoval(actor, {
+              userId,
+              projectRole: projectMemberRoleSchema.parse(member.project_role),
+            })
+          ) {
+            case 'self':
+              return ownMembership(actor.projectRole);
+            case 'not_allowed':
+              return membersNotAllowed('remove');
+            case 'owner':
+              return ownerFixed('remove');
+            case 'manager_protected':
+              return managerProtected();
+            case 'ok':
+              return null;
+          }
+        };
+        const before = await refusal();
+        if (before) throw before;
+        if ((await removeProjectMember(client, projectId, userId)) === 0) {
+          // The members or the roles changed between the read and the delete.
+          throw (await refusal()) ?? membersChanged();
+        }
+        return detailOf(context, await projectOf(context, projectId));
+      }),
+  );
+
+  /**
+   * The owner of a project or the founder gives a member a role (decision 44): appoints a manager
+   * from among the members, dismisses one, or hands the ownership over to another member; the
+   * owner until now then becomes a plain member, in the same transaction. The owner's own role is
+   * never changed directly. The database's function is the rule; the route says why it refused.
+   * No passkey (5 October decision 4). Asking for the role a member already has changes nothing.
+   */
+  app.put(
+    '/api/projects/:projectId/members/:userId/role',
+    async (request, reply): Promise<ProjectDetail> =>
+      runner.withCompany(request, reply, INSIDERS, async (context) => {
+        const { projectId, userId } = memberOf(request);
+        const body = setProjectMemberRoleSchema.safeParse(request.body);
+        if (!body.success) {
+          throw invalidRequest();
+        }
+        const { client } = context;
+        const row = await projectOf(context, projectId);
+        const actor = actorOf(context, row);
+        if (!actor.founder && actor.projectRole !== 'owner') {
+          throw rolesNotAllowed();
+        }
+        await client.query('savepoint member_role');
+        try {
+          await setProjectMemberRole(client, projectId, userId, body.data.role);
+        } catch (error) {
+          await client.query('rollback to savepoint member_role');
+          const code = databaseErrorCode(error);
+          if (code === '42501') {
+            // The caller lost the project (404) or the ownership meanwhile.
+            await projectOf(context, projectId);
+            throw rolesNotAllowed();
+          }
+          if (code === 'P0002') throw notFound();
+          if (code === '55000') throw ownerFixed('role');
+          if (code === '23514') throw roleNotForPerson();
+          throw error;
         }
         return detailOf(context, await projectOf(context, projectId));
       }),

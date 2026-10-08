@@ -17,13 +17,14 @@ import { createChallenge, openTestSession, stepUp } from './step-up.ts';
 
 // The Projects section, step 1 (8 October decisions 14 to 22; docs/SONRA.md P-a to P-j, W-i): the
 // fields of a project, who opens and changes one, who its members are, and who sets the AI
-// permission of a project and the contract permissions of a customer. Every rule here is the
-// database's own; the API and the panel only ask.
+// permission of a project and the contract permissions of a customer. And part 1b (8 October
+// decision 44): the owner, the managers and the plain members of a project, who adds, removes and
+// gives roles. Every rule here is the database's own; the API and the panel only ask.
 
 const MIGRATIONS = new URL('../../../supabase/migrations/', import.meta.url);
 
 const founderA: ContextInput = { companyId: ids.arma, userId: ids.founder };
-// A member of projectA and of projectANoAi.
+// A plain member of projectA and of projectANoAi (neither has an owner in the fixtures).
 const employeeA: ContextInput = { companyId: ids.arma, userId: ids.employeeA };
 // An employee of Arma DX who is a member of no project.
 const approverA: ContextInput = { companyId: ids.arma, userId: ids.approverA };
@@ -31,10 +32,14 @@ const externalA: ContextInput = { companyId: ids.arma, userId: ids.externalA };
 const founderP: ContextInput = { companyId: ids.pillika, userId: ids.founder };
 const employeeP: ContextInput = { companyId: ids.pillika, userId: ids.employeeP };
 const founderSpace: ContextInput = { companyId: ids.founderSpace, userId: ids.founder };
+// A third employee of Arma DX (also works at the other company); a member of no project.
+const sharedA: ContextInput = { companyId: ids.arma, userId: ids.sharedEmployee };
 
 const ADD_MEMBER =
   'insert into office.project_members (company_id, project_id, user_id) values ($1, $2, $3)';
 const REMOVE_MEMBER = 'delete from office.project_members where project_id = $1 and user_id = $2';
+
+const SET_ROLE = 'select office.set_project_member_role($1, $2, $3) as changed';
 
 const SET_AI = 'select office.set_project_ai_permission($1, $2, $3) as changed';
 const SET_CUSTOMER = 'select office.set_customer_permissions($1, $2, $3)';
@@ -81,6 +86,45 @@ async function memberIds(tx: Tx, projectId: string): Promise<string[]> {
     [projectId],
   );
   return rows.map((row) => row.user_id);
+}
+
+/** The role of every member of a project, as the context reads them. */
+async function memberRoles(tx: Tx, projectId: string): Promise<Record<string, string>> {
+  const rows = await tx.rows<{ user_id: string; role: string }>(
+    'select user_id, role from office.project_members where project_id = $1',
+    [projectId],
+  );
+  return Object.fromEntries(rows.map((row) => [row.user_id, row.role]));
+}
+
+/** Calls the role function with the context as it is; returns whether anything changed. */
+async function setRole(tx: Tx, projectId: string, userId: string, role: string): Promise<boolean> {
+  const [row] = await tx.rows<{ changed: boolean }>(SET_ROLE, [projectId, userId, role]);
+  if (!row) {
+    throw new Error('set_project_member_role returned no row');
+  }
+  return row.changed;
+}
+
+/**
+ * Gives a member a role as the founder of Arma DX, through the database's function: the only way
+ * a role is given (8 October decision 44). Leaves the founder's context set.
+ */
+async function giveRole(tx: Tx, projectId: string, userId: string, role: string): Promise<boolean> {
+  await tx.setContext(founderA);
+  return setRole(tx, projectId, userId, role);
+}
+
+/**
+ * projectA with one person in each role: employeeA (its member in the fixtures) the owner,
+ * approverA a manager, sharedEmployee a plain member. Leaves the founder's context set.
+ */
+async function projectWithRoles(tx: Tx): Promise<void> {
+  await tx.setContext(founderA);
+  await tx.exec(ADD_MEMBER, [ids.arma, ids.projectA, ids.approverA]);
+  await tx.exec(ADD_MEMBER, [ids.arma, ids.projectA, ids.sharedEmployee]);
+  await giveRole(tx, ids.projectA, ids.employeeA, 'owner');
+  await giveRole(tx, ids.projectA, ids.approverA, 'manager');
 }
 
 /** A project written by the privileged role without a person in the context; returns its id. */
@@ -491,32 +535,179 @@ describe.skipIf(noDatabase)('who opens and changes a project', () => {
 describe.skipIf(noDatabase)('project members', () => {
   afterAll(closePools);
 
-  it('project members: a member adds a founder or an employee of the company and removes another member', async () => {
+  it('project members: the owner and a manager add a founder or an employee of the company; a plain member adds nobody', async () => {
     await inTransaction(async (tx) => {
+      // The fixture's member of projectA is a plain member: decision 44 gives them no say.
+      await tx.setContext(employeeA);
+      expect(await memberRoles(tx, ids.projectA)).toEqual({ [ids.employeeA]: 'member' });
+      expect((await tx.expectError(ADD_MEMBER, [ids.arma, ids.projectA, ids.approverA])).code).toBe(
+        '42501',
+      );
+      expect(await memberIds(tx, ids.projectA)).toEqual([ids.employeeA]);
+
+      // The owner adds; who is added is a plain member.
+      await giveRole(tx, ids.projectA, ids.employeeA, 'owner');
       await tx.setContext(employeeA);
       expect(await tx.exec(ADD_MEMBER, [ids.arma, ids.projectA, ids.approverA])).toBe(1);
       expect(await tx.exec(ADD_MEMBER, [ids.arma, ids.projectA, ids.founder])).toBe(1);
-      expect(await memberIds(tx, ids.projectA)).toEqual([
-        ids.founder,
-        ids.employeeA,
-        ids.approverA,
-      ]);
-      expect(await tx.exec(REMOVE_MEMBER, [ids.projectA, ids.approverA])).toBe(1);
-      expect(await memberIds(tx, ids.projectA)).toEqual([ids.founder, ids.employeeA]);
-      // A membership is added and removed, never rewritten.
+      expect(await memberRoles(tx, ids.projectA)).toEqual({
+        [ids.founder]: 'member',
+        [ids.employeeA]: 'owner',
+        [ids.approverA]: 'member',
+      });
+
+      // A manager adds too.
+      await giveRole(tx, ids.projectA, ids.approverA, 'manager');
+      await tx.setContext(approverA);
+      expect(await tx.exec(ADD_MEMBER, [ids.arma, ids.projectA, ids.sharedEmployee])).toBe(1);
+      expect(await memberRoles(tx, ids.projectA)).toEqual({
+        [ids.founder]: 'member',
+        [ids.employeeA]: 'owner',
+        [ids.approverA]: 'manager',
+        [ids.sharedEmployee]: 'member',
+      });
+
+      // A membership is added and removed, never rewritten: not the person, not the role.
+      for (const context of [employeeA, approverA, founderA]) {
+        await tx.setContext(context);
+        expect(
+          (
+            await tx.expectError(
+              'update office.project_members set user_id = $2 where project_id = $1',
+              [ids.projectA, ids.approverA],
+            )
+          ).code,
+        ).toBe('42501');
+        expect(
+          (
+            await tx.expectError(
+              `update office.project_members set role = 'owner'
+               where project_id = $1 and user_id = $2`,
+              [ids.projectA, ids.sharedEmployee],
+            )
+          ).code,
+        ).toBe('42501');
+      }
+    });
+  });
+
+  it('project members: a plain member cannot remove or add', async () => {
+    await inTransaction(async (tx) => {
+      await projectWithRoles(tx);
+      await tx.setContext(founderA);
+      expect(await tx.exec(ADD_MEMBER, [ids.arma, ids.projectA, ids.founder])).toBe(1);
+      const before = await memberRoles(tx, ids.projectA);
+      expect(before).toEqual({
+        [ids.founder]: 'member',
+        [ids.employeeA]: 'owner',
+        [ids.approverA]: 'manager',
+        [ids.sharedEmployee]: 'member',
+      });
+
+      await tx.setContext(sharedA);
+      // Another plain member, a manager, the owner, themselves: no row leaves.
+      for (const target of [ids.founder, ids.approverA, ids.employeeA, ids.sharedEmployee]) {
+        expect(await tx.exec(REMOVE_MEMBER, [ids.projectA, target]), target).toBe(0);
+      }
+      // "Everybody of the project" removes nobody either.
+      expect(
+        await tx.exec('delete from office.project_members where project_id = $1', [ids.projectA]),
+      ).toBe(0);
+      // Adding is refused whoever is named: a colleague, an external person, a member.
+      for (const person of [ids.externalA, ids.formerEmployee]) {
+        expect(
+          (await tx.expectError(ADD_MEMBER, [ids.arma, ids.projectA, person])).code,
+          person,
+        ).toBe('42501');
+      }
       expect(
         (
-          await tx.expectError(
-            'update office.project_members set user_id = $2 where project_id = $1',
-            [ids.projectA, ids.approverA],
-          )
+          await tx.expectError(`${ADD_MEMBER} on conflict (project_id, user_id) do nothing`, [
+            ids.arma,
+            ids.projectA,
+            ids.founder,
+          ])
         ).code,
       ).toBe('42501');
+      expect(await memberRoles(tx, ids.projectA)).toEqual(before);
+    });
+  });
+
+  it('project members: a manager removes plain members only: not a manager, not the owner, not themselves', async () => {
+    await inTransaction(async (tx) => {
+      await projectWithRoles(tx);
+      await tx.setContext(founderA);
+      expect(await tx.exec(ADD_MEMBER, [ids.arma, ids.projectA, ids.founder])).toBe(1);
+      await giveRole(tx, ids.projectA, ids.sharedEmployee, 'manager');
+
+      await tx.setContext(approverA);
+      // The owner, the other manager and themselves stay.
+      for (const target of [ids.employeeA, ids.sharedEmployee, ids.approverA]) {
+        expect(await tx.exec(REMOVE_MEMBER, [ids.projectA, target]), target).toBe(0);
+      }
+      // A plain member leaves.
+      expect(await tx.exec(REMOVE_MEMBER, [ids.projectA, ids.founder])).toBe(1);
+      expect(await memberRoles(tx, ids.projectA)).toEqual({
+        [ids.employeeA]: 'owner',
+        [ids.approverA]: 'manager',
+        [ids.sharedEmployee]: 'manager',
+      });
+      // "Everybody of the project" takes the plain members and nobody else.
+      expect(await tx.exec(ADD_MEMBER, [ids.arma, ids.projectA, ids.founder])).toBe(1);
+      expect(
+        await tx.exec('delete from office.project_members where project_id = $1', [ids.projectA]),
+      ).toBe(1);
+      expect(await memberRoles(tx, ids.projectA)).toEqual({
+        [ids.employeeA]: 'owner',
+        [ids.approverA]: 'manager',
+        [ids.sharedEmployee]: 'manager',
+      });
+    });
+  });
+
+  it('project members: the owner removes managers and members and is never removed, by a manager, by the founder or by themselves', async () => {
+    await inTransaction(async (tx) => {
+      await projectWithRoles(tx);
+      // The owner's row stays, whoever asks.
+      for (const context of [approverA, founderA, employeeA, sharedA]) {
+        await tx.setContext(context);
+        expect(
+          await tx.exec(REMOVE_MEMBER, [ids.projectA, ids.employeeA]),
+          String(context.userId),
+        ).toBe(0);
+      }
+      await tx.setContext(founderA);
+      expect(
+        await tx.exec('delete from office.project_members where project_id = $1 and role = $2', [
+          ids.projectA,
+          'owner',
+        ]),
+      ).toBe(0);
+      expect(await memberRoles(tx, ids.projectA)).toEqual({
+        [ids.employeeA]: 'owner',
+        [ids.approverA]: 'manager',
+        [ids.sharedEmployee]: 'member',
+      });
+
+      // The owner removes a manager and a plain member.
+      await tx.setContext(employeeA);
+      expect(await tx.exec(REMOVE_MEMBER, [ids.projectA, ids.approverA])).toBe(1);
+      expect(await tx.exec(REMOVE_MEMBER, [ids.projectA, ids.sharedEmployee])).toBe(1);
+      expect(await memberRoles(tx, ids.projectA)).toEqual({ [ids.employeeA]: 'owner' });
+
+      // The founder removes a manager too, member of the project or not.
+      await tx.setContext(founderA);
+      expect(await tx.exec(ADD_MEMBER, [ids.arma, ids.projectA, ids.approverA])).toBe(1);
+      await giveRole(tx, ids.projectA, ids.approverA, 'manager');
+      expect(await tx.exec(REMOVE_MEMBER, [ids.projectA, ids.approverA])).toBe(1);
+      expect(await memberRoles(tx, ids.projectA)).toEqual({ [ids.employeeA]: 'owner' });
     });
   });
 
   it('project members: an external person is refused and a person outside the company too', async () => {
     await inTransaction(async (tx) => {
+      await giveRole(tx, ids.projectA, ids.employeeA, 'owner');
+      // The owner and the founder may add, so they are told why these two cannot be added.
       for (const context of [employeeA, founderA]) {
         await tx.setContext(context);
         expect(
@@ -529,8 +720,9 @@ describe.skipIf(noDatabase)('project members', () => {
     });
   });
 
-  it('project members: a deactivated account is not added, by a member, the founder or the privileged role', async () => {
+  it('project members: a deactivated account is not added, by the owner, the founder or the privileged role', async () => {
     await inTransaction(async (tx) => {
+      await giveRole(tx, ids.projectA, ids.employeeA, 'owner');
       // The founder deactivates the account (a membership change: needs the passkey step).
       await stepUp(tx, founderA, 'membership_change', ids.approverA);
       await tx.exec('update office.users set active = false where id = $1', [ids.approverA]);
@@ -552,11 +744,20 @@ describe.skipIf(noDatabase)('project members', () => {
     });
   });
 
-  it('project members: an employee does not remove themselves; the founder may', async () => {
+  it('project members: an employee does not remove themselves, whatever their role; the founder may unless the founder is the owner', async () => {
     await inTransaction(async (tx) => {
-      await tx.setContext(employeeA);
-      expect(await tx.exec(REMOVE_MEMBER, [ids.projectA, ids.employeeA])).toBe(0);
-      expect(await memberIds(tx, ids.projectA)).toEqual([ids.employeeA]);
+      // A plain member, a manager, the owner: nobody loses sight of a project by a slip.
+      for (const role of ['member', 'manager', 'owner']) {
+        if (role !== 'member') {
+          await giveRole(tx, ids.projectA, ids.employeeA, role);
+        }
+        await tx.setContext(employeeA);
+        expect(await tx.exec(REMOVE_MEMBER, [ids.projectA, ids.employeeA]), role).toBe(0);
+        expect(await memberRoles(tx, ids.projectA), role).toEqual({ [ids.employeeA]: role });
+      }
+    });
+    await inTransaction(async (tx) => {
+      await giveRole(tx, ids.projectA, ids.employeeA, 'manager');
       await tx.setContext(founderA);
       expect(await tx.exec(ADD_MEMBER, [ids.arma, ids.projectA, ids.founder])).toBe(1);
       expect(await tx.exec(REMOVE_MEMBER, [ids.projectA, ids.founder])).toBe(1);
@@ -566,6 +767,16 @@ describe.skipIf(noDatabase)('project members', () => {
       expect(await tx.count('projects', 'id = $1', [ids.projectA])).toBe(1);
       await tx.setContext(employeeA);
       expect(await tx.count('projects', 'id = $1', [ids.projectA])).toBe(0);
+    });
+    await inTransaction(async (tx) => {
+      // The founder who owns the project is its owner like anybody else: handed over first.
+      await tx.setContext(founderA);
+      expect(await tx.exec(ADD_MEMBER, [ids.arma, ids.projectA, ids.founder])).toBe(1);
+      await giveRole(tx, ids.projectA, ids.founder, 'owner');
+      expect(await tx.exec(REMOVE_MEMBER, [ids.projectA, ids.founder])).toBe(0);
+      await giveRole(tx, ids.projectA, ids.employeeA, 'owner');
+      expect(await tx.exec(REMOVE_MEMBER, [ids.projectA, ids.founder])).toBe(1);
+      expect(await memberRoles(tx, ids.projectA)).toEqual({ [ids.employeeA]: 'owner' });
     });
   });
 
@@ -600,30 +811,42 @@ describe.skipIf(noDatabase)('project members', () => {
 
   it('project members: who may not add a member to a project is refused the same way whoever they name', async () => {
     await inTransaction(async (tx) => {
-      await tx.setContext(approverA);
-      // An external person of the own company: the refusal does not say so.
-      expect((await tx.expectError(ADD_MEMBER, [ids.arma, ids.projectA, ids.externalA])).code).toBe(
-        '42501',
-      );
-      // A row that names another company, its project and one of its external people.
-      expect(
-        (await tx.expectError(ADD_MEMBER, [ids.pillika, ids.projectP, ids.externalP])).code,
-      ).toBe('42501');
-      expect(
-        (await tx.expectError(ADD_MEMBER, [ids.pillika, ids.projectP, ids.employeeP])).code,
-      ).toBe('42501');
-      // Somebody who is a member already: not "0 rows", which would tell.
-      expect(
-        (
-          await tx.expectError(`${ADD_MEMBER} on conflict (project_id, user_id) do nothing`, [
-            ids.arma,
-            ids.projectA,
-            ids.employeeA,
-          ])
-        ).code,
-      ).toBe('42501');
-      // A member, who may add, is told why.
+      await tx.setContext(founderA);
+      expect(await tx.exec(ADD_MEMBER, [ids.arma, ids.projectA, ids.sharedEmployee])).toBe(1);
+      await giveRole(tx, ids.projectA, ids.employeeA, 'owner');
+      // A colleague who is no member of the project, and a plain member of it.
+      for (const context of [approverA, sharedA]) {
+        await tx.setContext(context);
+        // An external person of the own company: the refusal does not say so.
+        expect(
+          (await tx.expectError(ADD_MEMBER, [ids.arma, ids.projectA, ids.externalA])).code,
+          String(context.userId),
+        ).toBe('42501');
+        // A row that names another company, its project and one of its external people.
+        expect(
+          (await tx.expectError(ADD_MEMBER, [ids.pillika, ids.projectP, ids.externalP])).code,
+        ).toBe('42501');
+        expect(
+          (await tx.expectError(ADD_MEMBER, [ids.pillika, ids.projectP, ids.employeeP])).code,
+        ).toBe('42501');
+        // Somebody who is a member already: not "0 rows", which would tell.
+        expect(
+          (
+            await tx.expectError(`${ADD_MEMBER} on conflict (project_id, user_id) do nothing`, [
+              ids.arma,
+              ids.projectA,
+              ids.employeeA,
+            ])
+          ).code,
+        ).toBe('42501');
+      }
+      // The owner, who may add, is told why; a manager too.
       await tx.setContext(employeeA);
+      expect((await tx.expectError(ADD_MEMBER, [ids.arma, ids.projectA, ids.externalA])).code).toBe(
+        '23514',
+      );
+      await giveRole(tx, ids.projectA, ids.sharedEmployee, 'manager');
+      await tx.setContext(sharedA);
       expect((await tx.expectError(ADD_MEMBER, [ids.arma, ids.projectA, ids.externalA])).code).toBe(
         '23514',
       );
@@ -631,10 +854,308 @@ describe.skipIf(noDatabase)('project members', () => {
   });
 });
 
+describe.skipIf(noDatabase)('project roles', () => {
+  afterAll(closePools);
+
+  it('project roles: the owner and the founder appoint and dismiss a manager; nobody else does', async () => {
+    await inTransaction(async (tx) => {
+      await tx.setContext(founderA);
+      expect(await tx.exec(ADD_MEMBER, [ids.arma, ids.projectA, ids.approverA])).toBe(1);
+      expect(await tx.exec(ADD_MEMBER, [ids.arma, ids.projectA, ids.sharedEmployee])).toBe(1);
+      await giveRole(tx, ids.projectA, ids.employeeA, 'owner');
+
+      for (const context of [employeeA, founderA]) {
+        await tx.setContext(context);
+        expect(
+          await setRole(tx, ids.projectA, ids.approverA, 'manager'),
+          String(context.userId),
+        ).toBe(true);
+        // Asking for the role the member has changes nothing.
+        expect(await setRole(tx, ids.projectA, ids.approverA, 'manager')).toBe(false);
+        expect(await memberRoles(tx, ids.projectA)).toEqual({
+          [ids.employeeA]: 'owner',
+          [ids.approverA]: 'manager',
+          [ids.sharedEmployee]: 'member',
+        });
+        expect(await setRole(tx, ids.projectA, ids.approverA, 'member')).toBe(true);
+        expect(await setRole(tx, ids.projectA, ids.approverA, 'member')).toBe(false);
+        expect(await memberRoles(tx, ids.projectA)).toEqual({
+          [ids.employeeA]: 'owner',
+          [ids.approverA]: 'member',
+          [ids.sharedEmployee]: 'member',
+        });
+      }
+
+      // A manager and a plain member give no role: not to another, not to themselves.
+      await giveRole(tx, ids.projectA, ids.approverA, 'manager');
+      const refused: [ContextInput, string, string][] = [
+        [approverA, ids.sharedEmployee, 'manager'],
+        [approverA, ids.approverA, 'member'],
+        [approverA, ids.approverA, 'owner'],
+        [approverA, ids.employeeA, 'member'],
+        [sharedA, ids.sharedEmployee, 'manager'],
+        [sharedA, ids.sharedEmployee, 'owner'],
+        [sharedA, ids.approverA, 'member'],
+        // An external person, an agent run in the owner's and in the founder's name, nobody.
+        [externalA, ids.approverA, 'member'],
+        [{ ...employeeA, agentCode: 'KOR-1' }, ids.approverA, 'member'],
+        [{ ...founderA, agentCode: 'KOR-1', projectId: ids.projectA }, ids.approverA, 'member'],
+        [{}, ids.approverA, 'member'],
+        [{ companyId: ids.arma }, ids.approverA, 'member'],
+      ];
+      for (const [context, person, role] of refused) {
+        await tx.setContext(context);
+        expect(
+          (await tx.expectError(SET_ROLE, [ids.projectA, person, role])).code,
+          `${JSON.stringify(context)} ${person} ${role}`,
+        ).toBe('42501');
+      }
+      // Somebody who cannot read the project is told that there is no such member: an employee
+      // who is no member of it, and the founder from the context of the other company.
+      await tx.setContext(approverA);
+      expect(
+        (await tx.expectError(SET_ROLE, [ids.projectANoAi, ids.employeeA, 'manager'])).code,
+      ).toBe('P0002');
+      await tx.setContext(founderP);
+      expect((await tx.expectError(SET_ROLE, [ids.projectA, ids.approverA, 'member'])).code).toBe(
+        'P0002',
+      );
+      // For the owner and the founder: a person who is no member, a role that does not exist.
+      for (const context of [employeeA, founderA]) {
+        await tx.setContext(context);
+        expect((await tx.expectError(SET_ROLE, [ids.projectA, ids.founder, 'manager'])).code).toBe(
+          'P0002',
+        );
+        expect((await tx.expectError(SET_ROLE, [ids.projectA, ids.approverA, 'admin'])).code).toBe(
+          '22023',
+        );
+        expect((await tx.expectError(SET_ROLE, [ids.projectA, ids.approverA, null])).code).toBe(
+          '22023',
+        );
+      }
+      // Nothing of all that changed a role.
+      await tx.setContext(founderA);
+      expect(await memberRoles(tx, ids.projectA)).toEqual({
+        [ids.employeeA]: 'owner',
+        [ids.approverA]: 'manager',
+        [ids.sharedEmployee]: 'member',
+      });
+    });
+    // The worker's role cannot call the function at all, in the founder's or the owner's name.
+    await inWorkerTransaction(async (tx) => {
+      for (const context of [founderA, employeeA, { ...founderA, agentCode: 'KOR-1' }]) {
+        await tx.setContext(context);
+        expect(
+          (await tx.expectError(SET_ROLE, [ids.projectA, ids.employeeA, 'manager'])).code,
+        ).toBe('42501');
+      }
+    });
+  });
+
+  it("project roles: the ownership is handed over by the owner or the founder to a member; the former owner becomes a plain member; the owner's own role does not change", async () => {
+    await inTransaction(async (tx) => {
+      await projectWithRoles(tx);
+      // The owner's own role is never changed directly, by the owner or by the founder.
+      for (const context of [employeeA, founderA]) {
+        await tx.setContext(context);
+        for (const role of ['member', 'manager']) {
+          expect(
+            (await tx.expectError(SET_ROLE, [ids.projectA, ids.employeeA, role])).code,
+            role,
+          ).toBe('55000');
+        }
+        // The role the owner has: nothing to do.
+        expect(await setRole(tx, ids.projectA, ids.employeeA, 'owner')).toBe(false);
+      }
+
+      // The owner hands over to a manager: one owner, and the former owner is a plain member.
+      await tx.setContext(employeeA);
+      expect(await setRole(tx, ids.projectA, ids.approverA, 'owner')).toBe(true);
+      expect(await memberRoles(tx, ids.projectA)).toEqual({
+        [ids.employeeA]: 'member',
+        [ids.approverA]: 'owner',
+        [ids.sharedEmployee]: 'member',
+      });
+      // The former owner has no say any more.
+      expect((await tx.expectError(SET_ROLE, [ids.projectA, ids.employeeA, 'owner'])).code).toBe(
+        '42501',
+      );
+      expect(await tx.exec(REMOVE_MEMBER, [ids.projectA, ids.sharedEmployee])).toBe(0);
+
+      // The founder, who is no member, hands over to a plain member.
+      await tx.setContext(founderA);
+      expect(await setRole(tx, ids.projectA, ids.sharedEmployee, 'owner')).toBe(true);
+      expect(await memberRoles(tx, ids.projectA)).toEqual({
+        [ids.employeeA]: 'member',
+        [ids.approverA]: 'member',
+        [ids.sharedEmployee]: 'owner',
+      });
+      // Not to somebody who is no member of the project.
+      expect((await tx.expectError(SET_ROLE, [ids.projectA, ids.founder, 'owner'])).code).toBe(
+        'P0002',
+      );
+    });
+    // One owner at most, also for a write by hand with the privileged role.
+    await inAdminTransaction(async (tx) => {
+      await tx.exec(ADD_MEMBER, [ids.arma, ids.projectA, ids.approverA]);
+      await tx.exec(
+        `update office.project_members set role = 'owner' where project_id = $1 and user_id = $2`,
+        [ids.projectA, ids.employeeA],
+      );
+      expect(
+        (
+          await tx.expectError(
+            `update office.project_members set role = 'owner'
+             where project_id = $1 and user_id = $2`,
+            [ids.projectA, ids.approverA],
+          )
+        ).code,
+      ).toBe('23505');
+      // And only the three roles.
+      expect(
+        (
+          await tx.expectError(
+            `update office.project_members set role = 'admin'
+             where project_id = $1 and user_id = $2`,
+            [ids.projectA, ids.approverA],
+          )
+        ).code,
+      ).toBe('23514');
+    });
+  });
+
+  it('project roles: a deactivated account is given no role and can be dismissed', async () => {
+    await inTransaction(async (tx) => {
+      await projectWithRoles(tx);
+      await stepUp(tx, founderA, 'membership_change', ids.approverA);
+      expect(
+        await tx.exec('update office.users set active = false where id = $1', [ids.approverA]),
+      ).toBe(1);
+      const roles = (approver: string) => ({
+        [ids.employeeA]: 'owner',
+        [ids.approverA]: approver,
+        [ids.sharedEmployee]: 'member',
+      });
+      // A deactivated manager is not made the owner, by the owner or by the founder; the owner
+      // until now keeps the role.
+      for (const context of [employeeA, founderA]) {
+        await tx.setContext(context);
+        expect((await tx.expectError(SET_ROLE, [ids.projectA, ids.approverA, 'owner'])).code).toBe(
+          '23514',
+        );
+        expect(await memberRoles(tx, ids.projectA)).toEqual(roles('manager'));
+      }
+      // The deactivated manager is dismissed.
+      await tx.setContext(employeeA);
+      expect(await setRole(tx, ids.projectA, ids.approverA, 'member')).toBe(true);
+      // A deactivated plain member is given no role at all.
+      for (const context of [employeeA, founderA]) {
+        await tx.setContext(context);
+        for (const role of ['manager', 'owner']) {
+          expect(
+            (await tx.expectError(SET_ROLE, [ids.projectA, ids.approverA, role])).code,
+            role,
+          ).toBe('23514');
+        }
+        expect(await memberRoles(tx, ids.projectA)).toEqual(roles('member'));
+      }
+      // And is removed like any plain member.
+      await tx.setContext(employeeA);
+      expect(await tx.exec(REMOVE_MEMBER, [ids.projectA, ids.approverA])).toBe(1);
+    });
+  });
+
+  it('project roles: the opener of a project is its owner; a project whose owner becomes external or leaves the company has none, and the founder names one', async () => {
+    const turnExternal = `update office.memberships set role = 'external'
+       where company_id = $1 and user_id = $2`;
+    const leave = 'delete from office.memberships where company_id = $1 and user_id = $2';
+    for (const change of [turnExternal, leave]) {
+      await inTransaction(async (tx) => {
+        await tx.setContext(sharedA);
+        const id = randomUUID();
+        await tx.exec(`insert into office.projects (id, company_id, name) values ($1, $2, 'Own')`, [
+          id,
+          ids.arma,
+        ]);
+        expect(await memberRoles(tx, id)).toEqual({ [ids.sharedEmployee]: 'owner' });
+        // The opener acts as the owner at once: adds a member and makes them a manager.
+        expect(await tx.exec(ADD_MEMBER, [ids.arma, id, ids.approverA])).toBe(1);
+        expect(await setRole(tx, id, ids.approverA, 'manager')).toBe(true);
+
+        // The company-level act is not held back by the project (docs/SONRA.md P1b-h).
+        await stepUp(tx, founderA, 'membership_change', ids.sharedEmployee);
+        expect(await tx.exec(change, [ids.arma, ids.sharedEmployee]), change).toBe(1);
+        expect(await memberRoles(tx, id)).toEqual({ [ids.approverA]: 'manager' });
+        // Nobody of the project can take the ownership.
+        await tx.setContext(approverA);
+        expect((await tx.expectError(SET_ROLE, [id, ids.approverA, 'owner'])).code).toBe('42501');
+        // The founder names the owner.
+        await tx.setContext(founderA);
+        expect(await setRole(tx, id, ids.approverA, 'owner')).toBe(true);
+        expect(await memberRoles(tx, id)).toEqual({ [ids.approverA]: 'owner' });
+      });
+    }
+    // A project written without a person in the context has no member and no owner.
+    await inAdminTransaction(async (tx) => {
+      await tx.setContext({});
+      const id = await adminProject(tx);
+      expect(await memberRoles(tx, id)).toEqual({});
+    });
+  });
+
+  it("project roles: the API's role writes no role by a statement", async () => {
+    await inTransaction(async (tx) => {
+      await projectWithRoles(tx);
+      for (const context of [founderA, employeeA, approverA, sharedA]) {
+        await tx.setContext(context);
+        const refused: [string, unknown[]][] = [
+          [
+            `insert into office.project_members (company_id, project_id, user_id, role)
+             values ($1, $2, $3, 'manager')`,
+            [ids.arma, ids.projectA, ids.founder],
+          ],
+          [
+            `insert into office.project_members (company_id, project_id, user_id, role)
+             values ($1, $2, $3, 'member')`,
+            [ids.arma, ids.projectA, ids.founder],
+          ],
+          [
+            `update office.project_members set role = 'manager'
+             where project_id = $1 and user_id = $2`,
+            [ids.projectA, ids.sharedEmployee],
+          ],
+          [
+            `${ADD_MEMBER} on conflict (project_id, user_id) do update set role = 'owner'`,
+            [ids.arma, ids.projectA, ids.sharedEmployee],
+          ],
+        ];
+        for (const [sql, values] of refused) {
+          expect((await tx.expectError(sql, values)).code, `${String(context.userId)} ${sql}`).toBe(
+            '42501',
+          );
+        }
+      }
+      expect(
+        await tx.rows(
+          `select has_column_privilege('office.project_members', 'role', 'insert') as inserts,
+                  has_column_privilege('office.project_members', 'role', 'update') as updates,
+                  has_column_privilege('office.project_members', 'user_id', 'insert') as adds`,
+        ),
+      ).toEqual([{ inserts: false, updates: false, adds: true }]);
+      await tx.setContext(founderA);
+      expect(await memberRoles(tx, ids.projectA)).toEqual({
+        [ids.employeeA]: 'owner',
+        [ids.approverA]: 'manager',
+        [ids.sharedEmployee]: 'member',
+      });
+    });
+  });
+});
+
 describe.skipIf(noDatabase)('projects between companies', () => {
   afterAll(closePools);
 
-  it("projects: with a Pillika context nothing of Arma DX's projects, members and customers is read or changed", async () => {
+  it("projects: with a Pillika context nothing of Arma DX's projects, members and customers is read or changed, and no member of an Arma DX project is added, removed or given a role", async () => {
     await inTransaction(async (tx) => {
       for (const context of [founderP, employeeP]) {
         await tx.setContext(context);
@@ -645,6 +1166,13 @@ describe.skipIf(noDatabase)('projects between companies', () => {
           await tx.exec(`update office.projects set name = 'Taken' where id = $1`, [ids.projectA]),
         ).toBe(0);
         expect(await tx.exec(REMOVE_MEMBER, [ids.projectA, ids.employeeA])).toBe(0);
+        // For this context the project has no members: nobody is given a role in it.
+        for (const role of ['manager', 'owner']) {
+          expect(
+            (await tx.expectError(SET_ROLE, [ids.projectA, ids.employeeA, role])).code,
+            role,
+          ).toBe('P0002');
+        }
         const refused: [string, unknown[]][] = [
           [`insert into office.projects (company_id, name) values ($1, 'In Arma DX')`, [ids.arma]],
           [ADD_MEMBER, [ids.arma, ids.projectA, ids.approverA]],
@@ -672,7 +1200,7 @@ describe.skipIf(noDatabase)('projects between companies', () => {
       // Nothing changed for Arma DX.
       await tx.setContext(founderA);
       expect(await tx.count('projects')).toBe(3);
-      expect(await memberIds(tx, ids.projectA)).toEqual([ids.employeeA]);
+      expect(await memberRoles(tx, ids.projectA)).toEqual({ [ids.employeeA]: 'member' });
     });
   });
 
@@ -691,6 +1219,7 @@ describe.skipIf(noDatabase)('projects between companies', () => {
         const refused: [string, unknown[]][] = [
           [`insert into office.projects (company_id, name) values ($1, 'Nobody')`, [ids.arma]],
           [ADD_MEMBER, [ids.arma, ids.projectA, ids.approverA]],
+          [SET_ROLE, [ids.projectA, ids.employeeA, 'manager']],
         ];
         for (const [sql, values] of refused) {
           expect((await tx.expectError(sql, values)).code, sql).toBe('42501');

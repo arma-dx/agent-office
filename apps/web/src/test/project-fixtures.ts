@@ -17,24 +17,38 @@ export const CUSTOMER_ID = 'c1111111-1111-4111-8111-111111111111';
 export const OTHER_CUSTOMER_ID = 'c2222222-2222-4222-8222-222222222222';
 const AT = '2026-10-08T09:00:00.000Z';
 
-/** The reader of most tests: the founder of the session fixture. */
+/**
+ * The reader of most tests: the founder of the session fixture, who opened the fixture's project
+ * and so is its owner (8 October decision 44). Nobody removes the owner or changes the owner's
+ * role directly.
+ */
 export const FOUNDER_MEMBER: ProjectMember = {
   userId: USER_ID,
   name: 'Ömer Kadıoğlu',
   role: 'founder',
   active: true,
+  projectRole: 'owner',
+  removable: false,
+  roleChanges: [],
 };
+/** Plain members, with the flags the owner (and the founder) reads: removable, any role. */
 export const AYSE: ProjectMember = {
   userId: '33333333-3333-4333-8333-333333333333',
   name: 'Ayşe Yılmaz',
   role: 'employee',
   active: true,
+  projectRole: 'member',
+  removable: true,
+  roleChanges: ['manager', 'owner'],
 };
 export const CAGAN: ProjectMember = {
   userId: '44444444-4444-4444-8444-444444444444',
   name: 'Çağan Ünal',
   role: 'employee',
   active: true,
+  projectRole: 'member',
+  removable: true,
+  roleChanges: ['manager', 'owner'],
 };
 
 /** Everybody who can be a member, as GET /projects/member-candidates answers. */
@@ -62,8 +76,8 @@ export const CUSTOMER_NAMES: CustomerOption[] = CUSTOMERS.map((customer) => ({
 }));
 
 /**
- * A project as the API answers it to the founder: under way, with a customer whose contract does
- * not allow AI, its own AI permission closed, two members.
+ * A project as the API answers it to the founder, who opened it and is its owner: under way,
+ * with a customer whose contract does not allow AI, its own AI permission closed, two members.
  */
 export function projectDetail(overrides: Partial<ProjectDetail> = {}): ProjectDetail {
   const members = overrides.members ?? [FOUNDER_MEMBER, AYSE];
@@ -90,7 +104,7 @@ export function projectDetail(overrides: Partial<ProjectDetail> = {}): ProjectDe
     members,
     actions: {
       edit: true,
-      manageMembers: true,
+      addMembers: true,
       setAiPermission: true,
       setCustomerPermissions: true,
     },

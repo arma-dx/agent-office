@@ -84,6 +84,13 @@ export const apiErrorCodeSchema = z.enum([
   'project_customer_locked',
   // The project is not what the founder confirmed with the passkey; the page is read again.
   'project_changed',
+  // Project members (8 October decision 44): who adds, removes and gives roles.
+  'project_members_not_allowed',
+  'project_manager_protected',
+  'project_owner_fixed',
+  'project_roles_not_allowed',
+  // The members changed between the read and the act; the page is read again.
+  'project_members_changed',
 ]);
 export type ApiErrorCode = z.output<typeof apiErrorCodeSchema>;
 

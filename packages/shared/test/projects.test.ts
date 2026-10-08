@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  apiErrorCodeSchema,
   customerPermissionDetails,
   customerPermissionDetailsSchema,
   projectAiPermissionDetails,
@@ -20,9 +21,18 @@ import {
   createProjectSchema,
   customerPermissionsSchema,
   isClosedProjectStatus,
+  mayAddProjectMembers,
+  memberRemoval,
+  memberRoleChanges,
   projectAiPermissionSchema,
   projectDetailSchema,
+  projectMemberRoleSchema,
+  projectMemberSchema,
+  setProjectMemberRoleSchema,
   updateProjectSchema,
+  type MemberRemoval,
+  type ProjectActor,
+  type ProjectMemberRole,
 } from '../src/projects.ts';
 
 const uuid = (n: number): string => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
@@ -324,10 +334,20 @@ describe('the contracts of the Projects section', () => {
       description: null,
       createdAt: '2026-10-08T09:00:00.000Z',
       createdBy: null,
-      members: [{ userId: uuid(3), name: 'Ada Yılmaz', role: 'employee', active: true }],
+      members: [
+        {
+          userId: uuid(3),
+          name: 'Ada Yılmaz',
+          role: 'employee',
+          active: true,
+          projectRole: 'owner',
+          removable: false,
+          roleChanges: [],
+        },
+      ],
       actions: {
         edit: true,
-        manageMembers: true,
+        addMembers: true,
         setAiPermission: false,
         setCustomerPermissions: false,
       },
@@ -337,5 +357,175 @@ describe('the contracts of the Projects section', () => {
     expect(
       projectDetailSchema.safeParse({ ...detail, customer: { id: uuid(2), name: 'Beta' } }).success,
     ).toBe(false);
+  });
+});
+
+// 8 October decision 44: a member does not remove a member; the owner and the managers do. The
+// database's row policies are the rule; these functions ask the same rule for the answer's flags.
+describe('the owner, the managers and the members of a project', () => {
+  const ME = uuid(10);
+  const OTHER = uuid(11);
+  const founder: ProjectActor = { userId: ME, founder: true, projectRole: null };
+  const owner: ProjectActor = { userId: ME, founder: false, projectRole: 'owner' };
+  const manager: ProjectActor = { userId: ME, founder: false, projectRole: 'manager' };
+  const member: ProjectActor = { userId: ME, founder: false, projectRole: 'member' };
+  const outsider: ProjectActor = { userId: ME, founder: false, projectRole: null };
+  const ROLES: ProjectMemberRole[] = ['owner', 'manager', 'member'];
+
+  it('who adds: the founder, the owner and a manager; a plain member and a person who is no member do not', () => {
+    expect(mayAddProjectMembers(founder)).toBe(true);
+    expect(mayAddProjectMembers(owner)).toBe(true);
+    expect(mayAddProjectMembers(manager)).toBe(true);
+    expect(mayAddProjectMembers(member)).toBe(false);
+    expect(mayAddProjectMembers(outsider)).toBe(false);
+    // The founder adds whatever their own role in the project is.
+    for (const projectRole of ROLES) {
+      expect(mayAddProjectMembers({ ...founder, projectRole })).toBe(true);
+    }
+  });
+
+  it('who removes whom: every pair of actor and target', () => {
+    // Rows: the actor. Columns: another person who is the owner, a manager, a plain member.
+    const others: [string, ProjectActor, [MemberRemoval, MemberRemoval, MemberRemoval]][] = [
+      ['founder, no member', founder, ['owner', 'ok', 'ok']],
+      ['founder, a member', { ...founder, projectRole: 'member' }, ['owner', 'ok', 'ok']],
+      ['founder, a manager', { ...founder, projectRole: 'manager' }, ['owner', 'ok', 'ok']],
+      ['owner', owner, ['owner', 'ok', 'ok']],
+      ['manager', manager, ['owner', 'manager_protected', 'ok']],
+      ['member', member, ['not_allowed', 'not_allowed', 'not_allowed']],
+      ['no member', outsider, ['not_allowed', 'not_allowed', 'not_allowed']],
+    ];
+    for (const [name, actor, answers] of others) {
+      ROLES.forEach((projectRole, index) => {
+        expect(
+          memberRemoval(actor, { userId: OTHER, projectRole }),
+          `${name}: ${projectRole}`,
+        ).toBe(answers[index]);
+      });
+    }
+    // Themselves: an employee never, whatever their role; the founder unless the founder owns it.
+    for (const actor of [owner, manager, member]) {
+      expect(
+        memberRemoval(actor, { userId: ME, projectRole: actor.projectRole ?? 'member' }),
+        actor.projectRole ?? '',
+      ).toBe('self');
+    }
+    expect(
+      memberRemoval({ ...founder, projectRole: 'member' }, { userId: ME, projectRole: 'member' }),
+    ).toBe('ok');
+    expect(
+      memberRemoval({ ...founder, projectRole: 'manager' }, { userId: ME, projectRole: 'manager' }),
+    ).toBe('ok');
+    expect(
+      memberRemoval({ ...founder, projectRole: 'owner' }, { userId: ME, projectRole: 'owner' }),
+    ).toBe('owner');
+  });
+
+  it('who gives which role: only the owner and the founder; never to the owner; a deactivated member is only dismissed', () => {
+    for (const actor of [founder, { ...founder, projectRole: 'member' as const }, owner]) {
+      expect(memberRoleChanges(actor, { projectRole: 'member', active: true })).toEqual([
+        'manager',
+        'owner',
+      ]);
+      expect(memberRoleChanges(actor, { projectRole: 'manager', active: true })).toEqual([
+        'member',
+        'owner',
+      ]);
+      // The owner's own role is not changed directly: the ownership is handed over.
+      expect(memberRoleChanges(actor, { projectRole: 'owner', active: true })).toEqual([]);
+      expect(memberRoleChanges(actor, { projectRole: 'owner', active: false })).toEqual([]);
+      // A deactivated account is given no role; a deactivated manager can be dismissed.
+      expect(memberRoleChanges(actor, { projectRole: 'member', active: false })).toEqual([]);
+      expect(memberRoleChanges(actor, { projectRole: 'manager', active: false })).toEqual([
+        'member',
+      ]);
+    }
+    for (const actor of [manager, member, outsider]) {
+      for (const projectRole of ROLES) {
+        for (const active of [true, false]) {
+          expect(
+            memberRoleChanges(actor, { projectRole, active }),
+            `${actor.projectRole ?? 'none'}: ${projectRole}`,
+          ).toEqual([]);
+        }
+      }
+    }
+  });
+
+  it('a member of the answer carries its project role, whether it is removable and the roles it may be given; actions carry addMembers', () => {
+    const person = {
+      userId: uuid(3),
+      name: 'Ada Yılmaz',
+      role: 'employee',
+      active: true,
+      projectRole: 'manager',
+      removable: true,
+      roleChanges: ['member', 'owner'],
+    };
+    expect(projectMemberSchema.parse(person)).toEqual(person);
+    for (const field of ['projectRole', 'removable', 'roleChanges'] as const) {
+      const without = Object.fromEntries(Object.entries(person).filter(([name]) => name !== field));
+      expect(projectMemberSchema.safeParse(without).success, field).toBe(false);
+    }
+    expect(projectMemberSchema.safeParse({ ...person, projectRole: 'admin' }).success).toBe(false);
+    expect(projectMemberSchema.safeParse({ ...person, roleChanges: ['admin'] }).success).toBe(
+      false,
+    );
+    expect(projectMemberRoleSchema.options).toEqual(['owner', 'manager', 'member']);
+
+    const detail = {
+      id: uuid(1),
+      name: 'Yeni site',
+      status: 'planned',
+      closed: false,
+      color: 'gray',
+      icon: 'folder',
+      targetDate: null,
+      aiAllowed: false,
+      agentsMayWork: false,
+      customer: null,
+      memberCount: 1,
+      description: null,
+      createdAt: '2026-10-08T09:00:00.000Z',
+      createdBy: null,
+      members: [person],
+    };
+    const actions = { edit: true, setAiPermission: false, setCustomerPermissions: false };
+    expect(
+      projectDetailSchema.safeParse({ ...detail, actions: { ...actions, addMembers: false } })
+        .success,
+    ).toBe(true);
+    // The flag of the old rule ("every member manages members") is not the answer any more.
+    expect(
+      projectDetailSchema.safeParse({ ...detail, actions: { ...actions, manageMembers: true } })
+        .success,
+    ).toBe(false);
+    // The codes of the refusals are part of the contract.
+    for (const code of [
+      'project_members_not_allowed',
+      'project_manager_protected',
+      'project_owner_fixed',
+      'project_roles_not_allowed',
+      'project_members_changed',
+    ]) {
+      expect(apiErrorCodeSchema.safeParse(code).success, code).toBe(true);
+    }
+  });
+
+  it('the role body takes one of the three roles and nothing else', () => {
+    for (const role of ROLES) {
+      expect(setProjectMemberRoleSchema.parse({ role })).toEqual({ role });
+    }
+    for (const body of [
+      {},
+      { role: 'admin' },
+      { role: 'Owner' },
+      { role: null },
+      { role: ['owner'] },
+      { role: 'manager', userId: uuid(3) },
+      { role: 'manager', projectRole: 'owner' },
+    ]) {
+      expect(setProjectMemberRoleSchema.safeParse(body).success, JSON.stringify(body)).toBe(false);
+    }
   });
 });

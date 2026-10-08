@@ -4,8 +4,9 @@ import { taskPersonSchema } from './tasks.ts';
 
 /**
  * Projects (8 October decisions 11 and 14 to 22), step 1: the list, a new project, the project
- * page, its members and the AI permission. The API validates every body with these schemas and
- * builds every answer with them; the panel validates every answer.
+ * page, its members and the AI permission; and part 1b (decision 44): the owner, the managers and
+ * the plain members of a project. The API validates every body with these schemas and builds
+ * every answer with them; the panel validates every answer.
  *
  * No body here sets the AI permission of a project except the one made for it, and none sets a
  * customer's contract permissions except the founder's two (a customer added with a new project,
@@ -132,7 +133,8 @@ export const changedProjectCustomerSchema = z.discriminatedUnion('kind', [
 
 /**
  * POST /api/projects. The id is chosen by the panel, so a send that is repeated answers the first
- * record and opens no second project. The opener is always a member; memberIds names the others.
+ * record and opens no second project. The opener is always a member and the owner of the project;
+ * memberIds names the others, who are added as plain members.
  * There is no field for the AI permission: a project starts without it (docs/SONRA.md W-i).
  */
 export const createProjectSchema = z.strictObject({
@@ -269,6 +271,56 @@ export const projectListSchema = z.object({
 });
 export type ProjectList = z.output<typeof projectListSchema>;
 
+/** The role of a member in a project (8 October decision 44); the database holds the same three. */
+export const projectMemberRoleSchema = z.enum(['owner', 'manager', 'member']);
+export type ProjectMemberRole = z.output<typeof projectMemberRoleSchema>;
+
+/** Who acts on the members of a project: the company's founder, or a person with a project role. */
+export interface ProjectActor {
+  userId: string;
+  founder: boolean;
+  // null: not a member of the project (only the founder reads it then).
+  projectRole: ProjectMemberRole | null;
+}
+
+/** The founder, the owner and the managers add a member. */
+export function mayAddProjectMembers(actor: ProjectActor): boolean {
+  return actor.founder || actor.projectRole === 'owner' || actor.projectRole === 'manager';
+}
+
+export type MemberRemoval = 'ok' | 'self' | 'not_allowed' | 'owner' | 'manager_protected';
+
+/**
+ * May the actor take this member off the project, and if not, why. The database's row policy is
+ * the rule (members_remove); this is the same rule asked as a question, for the answer's flags
+ * and for the sentence of a refusal.
+ */
+export function memberRemoval(
+  actor: ProjectActor,
+  target: { userId: string; projectRole: ProjectMemberRole },
+): MemberRemoval {
+  if (!actor.founder && target.userId === actor.userId) return 'self';
+  if (!mayAddProjectMembers(actor)) return 'not_allowed';
+  if (target.projectRole === 'owner') return 'owner';
+  if (actor.founder || actor.projectRole === 'owner') return 'ok';
+  return target.projectRole === 'member' ? 'ok' : 'manager_protected';
+}
+
+/** The roles the actor may give this member now; empty for everybody but the owner and the founder. */
+export function memberRoleChanges(
+  actor: ProjectActor,
+  target: { projectRole: ProjectMemberRole; active: boolean },
+): ProjectMemberRole[] {
+  if (!actor.founder && actor.projectRole !== 'owner') return [];
+  if (target.projectRole === 'owner') return [];
+  if (target.projectRole === 'manager') return target.active ? ['member', 'owner'] : ['member'];
+  return target.active ? ['manager', 'owner'] : [];
+}
+
+/** PUT /api/projects/:projectId/members/:userId/role (the owner of the project, the founder). */
+export const setProjectMemberRoleSchema = z.strictObject({ role: projectMemberRoleSchema });
+export type SetProjectMemberRole = z.input<typeof setProjectMemberRoleSchema>;
+
 export const projectMemberSchema = z.object({
   userId: z.uuid(),
   // null: the name could not be read (the person is no member of the company any more).
@@ -276,6 +328,11 @@ export const projectMemberSchema = z.object({
   role: z.enum(['founder', 'employee']).nullable(),
   // false: the person's account is deactivated.
   active: z.boolean(),
+  projectRole: projectMemberRoleSchema,
+  // The reader may take this member off the project now.
+  removable: z.boolean(),
+  // The roles the reader may give this member now (empty: none).
+  roleChanges: z.array(projectMemberRoleSchema),
 });
 export type ProjectMember = z.output<typeof projectMemberSchema>;
 
@@ -298,7 +355,8 @@ export const projectDetailSchema = projectSummarySchema.extend({
   actions: z.object({
     // Name, description, customer, status, colour, icon, target date.
     edit: z.boolean(),
-    manageMembers: z.boolean(),
+    // The reader may add members: the owner, a manager, the founder.
+    addMembers: z.boolean(),
     // The founder alone.
     setAiPermission: z.boolean(),
     setCustomerPermissions: z.boolean(),

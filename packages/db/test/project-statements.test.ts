@@ -16,6 +16,7 @@ import {
   removeProjectMember,
   setCustomerPermissions,
   setProjectAiPermission,
+  setProjectMemberRole,
   updateProject,
   type NewProject,
 } from '../src/projects.ts';
@@ -27,7 +28,7 @@ import { stepUp } from './step-up.ts';
 // person reads is the row policies' decision; these tests show that no statement widens it.
 
 const founderA: ContextInput = { companyId: ids.arma, userId: ids.founder };
-// A member of projectA and of projectANoAi.
+// A plain member of projectA and of projectANoAi (neither has an owner in the fixtures).
 const employeeA: ContextInput = { companyId: ids.arma, userId: ids.employeeA };
 // An employee of Arma DX who is a member of no project.
 const approverA: ContextInput = { companyId: ids.arma, userId: ids.approverA };
@@ -104,6 +105,8 @@ describe.skipIf(noDatabase)('statements of the Projects section', () => {
         member_count: 2,
         created_by_user_id: ids.employeeA,
         reader_is_founder: false,
+        // Who opens a project is its owner (8 October decision 44).
+        reader_project_role: 'owner',
       });
       expect(mine[0]?.created_at).toBeInstanceOf(Date);
       expect(mine[2]).toMatchObject({
@@ -116,6 +119,7 @@ describe.skipIf(noDatabase)('statements of the Projects section', () => {
         member_count: 1,
         target_date: null,
         created_by_user_id: null,
+        reader_project_role: 'member',
       });
       // The limit is the caller's.
       expect((await listProjects(tx.client, 2)).map((row) => row.name)).toEqual([
@@ -134,10 +138,13 @@ describe.skipIf(noDatabase)('statements of the Projects section', () => {
         'Project A',
       ]);
       expect(all.every((row) => row.reader_is_founder)).toBe(true);
+      // Member of none: no project role in any of them.
+      expect(all.map((row) => row.reader_project_role)).toEqual([null, null, null, null]);
 
       // A colleague who is a member of one; an external person; the other company; nobody.
       await tx.setContext(approverA);
       expect(await names(tx)).toEqual(['Newest']);
+      expect((await listProjects(tx.client, 100))[0]?.reader_project_role).toBe('member');
       await tx.setContext(externalA);
       expect(await names(tx)).toEqual([]);
       await tx.setContext(founderP);
@@ -241,27 +248,65 @@ describe.skipIf(noDatabase)('statements of the Projects section', () => {
     });
   });
 
-  it('listProjectMembers: names, roles and the active flag of the members, for a member; nothing for a colleague who is not one', async () => {
+  it('listProjectMembers: names, roles, the active flag and the project role of the members, for a member; nothing for a colleague who is not one', async () => {
     await inTransaction(async (tx) => {
       await tx.setContext(founderA);
+      await setProjectMemberRole(tx.client, ids.projectA, ids.employeeA, 'owner');
+      // The owner adds the members; who is added is a plain member.
+      await tx.setContext(employeeA);
       await addProjectMember(tx.client, ids.projectA, ids.founder);
       await addProjectMember(tx.client, ids.projectA, ids.approverA);
+      await addProjectMember(tx.client, ids.projectA, ids.sharedEmployee);
       // Adding twice changes nothing.
       await addProjectMember(tx.client, ids.projectA, ids.approverA);
+      await setProjectMemberRole(tx.client, ids.projectA, ids.approverA, 'manager');
       // A member whose account is deactivated afterwards stays listed, marked.
       await stepUp(tx, founderA, 'membership_change', ids.approverA);
       await tx.exec('update office.users set active = false where id = $1', [ids.approverA]);
 
+      const listed = [
+        {
+          user_id: ids.founder,
+          name: 'Kurucu',
+          role: 'founder',
+          active: true,
+          project_role: 'member',
+        },
+        {
+          user_id: ids.employeeA,
+          name: 'Çalışan A',
+          role: 'employee',
+          active: true,
+          project_role: 'owner',
+        },
+        {
+          user_id: ids.approverA,
+          name: 'Yetkili Çalışan A',
+          role: 'employee',
+          active: false,
+          project_role: 'manager',
+        },
+        {
+          user_id: ids.sharedEmployee,
+          name: 'Ortak Çalışan',
+          role: 'employee',
+          active: true,
+          project_role: 'member',
+        },
+      ];
+      // Every member reads the same list, a plain one too.
+      for (const context of [employeeA, { companyId: ids.arma, userId: ids.sharedEmployee }]) {
+        await tx.setContext(context);
+        expect(byId(await listProjectMembers(tx.client, ids.projectA))).toEqual(listed);
+      }
+      // A plain member removes nobody (8 October decision 44).
+      expect(await removeProjectMember(tx.client, ids.projectA, ids.founder)).toBe(0);
       await tx.setContext(employeeA);
-      expect(byId(await listProjectMembers(tx.client, ids.projectA))).toEqual([
-        { user_id: ids.founder, name: 'Kurucu', role: 'founder', active: true },
-        { user_id: ids.employeeA, name: 'Çalışan A', role: 'employee', active: true },
-        { user_id: ids.approverA, name: 'Yetkili Çalışan A', role: 'employee', active: false },
-      ]);
       expect(await removeProjectMember(tx.client, ids.projectA, ids.founder)).toBe(1);
       expect(await removeProjectMember(tx.client, ids.projectA, ids.founder)).toBe(0);
-      // An employee does not remove themselves.
+      // An employee does not remove themselves, and the owner is never removed.
       expect(await removeProjectMember(tx.client, ids.projectA, ids.employeeA)).toBe(0);
+      expect(await removeProjectMember(tx.client, ids.projectA, ids.sharedEmployee)).toBe(1);
       expect(
         byId(await listProjectMembers(tx.client, ids.projectA)).map((row) => row.user_id),
       ).toEqual([ids.employeeA, ids.approverA]);
@@ -274,8 +319,90 @@ describe.skipIf(noDatabase)('statements of the Projects section', () => {
       ]) {
         await tx.setContext(context);
         expect(await listProjectMembers(tx.client, ids.projectA)).toEqual([]);
-        expect(await removeProjectMember(tx.client, ids.projectA, ids.employeeA)).toBe(0);
+        expect(await removeProjectMember(tx.client, ids.projectA, ids.approverA)).toBe(0);
       }
+    });
+  });
+
+  it("readProject: the reader's own project role, null for the founder who is no member", async () => {
+    await inTransaction(async (tx) => {
+      await tx.setContext(founderA);
+      await addProjectMember(tx.client, ids.projectA, ids.approverA);
+      for (const [role, own] of [
+        [null, 'member'],
+        ['manager', 'manager'],
+        ['owner', 'owner'],
+      ] as const) {
+        if (role !== null) {
+          await tx.setContext(founderA);
+          await setProjectMemberRole(tx.client, ids.projectA, ids.employeeA, role);
+        }
+        await tx.setContext(employeeA);
+        expect(await readProject(tx.client, ids.projectA), own).toMatchObject({
+          reader_is_founder: false,
+          reader_project_role: own,
+        });
+        // Another member reads their own role, not the first one's.
+        await tx.setContext(approverA);
+        expect((await readProject(tx.client, ids.projectA))?.reader_project_role).toBe('member');
+      }
+      // The founder reads the project without a role in it; as a member, with that role.
+      await tx.setContext(founderA);
+      expect(await readProject(tx.client, ids.projectA)).toMatchObject({
+        reader_is_founder: true,
+        reader_project_role: null,
+      });
+      await addProjectMember(tx.client, ids.projectA, ids.founder);
+      expect(await readProject(tx.client, ids.projectA)).toMatchObject({
+        reader_is_founder: true,
+        reader_project_role: 'member',
+      });
+    });
+  });
+
+  it('setProjectMemberRole: true when the role changed, false when the member had it', async () => {
+    await inTransaction(async (tx) => {
+      await tx.setContext(founderA);
+      await addProjectMember(tx.client, ids.projectA, ids.approverA);
+      const roleOf = async (userId: string): Promise<string | undefined> =>
+        (await listProjectMembers(tx.client, ids.projectA)).find((row) => row.user_id === userId)
+          ?.project_role;
+      expect(await setProjectMemberRole(tx.client, ids.projectA, ids.approverA, 'member')).toBe(
+        false,
+      );
+      expect(await setProjectMemberRole(tx.client, ids.projectA, ids.approverA, 'manager')).toBe(
+        true,
+      );
+      expect(await setProjectMemberRole(tx.client, ids.projectA, ids.approverA, 'manager')).toBe(
+        false,
+      );
+      expect(await roleOf(ids.approverA)).toBe('manager');
+      expect(await setProjectMemberRole(tx.client, ids.projectA, ids.employeeA, 'owner')).toBe(
+        true,
+      );
+      // The hand-over is one call: the owner until now is a plain member afterwards.
+      expect(await setProjectMemberRole(tx.client, ids.projectA, ids.approverA, 'owner')).toBe(
+        true,
+      );
+      expect(await roleOf(ids.approverA)).toBe('owner');
+      expect(await roleOf(ids.employeeA)).toBe('member');
+      // The database's refusal reaches the caller as its error: a plain member gives no role.
+      await tx.setContext(employeeA);
+      expect(
+        (
+          await tx.expectError('select office.set_project_member_role($1, $2, $3)', [
+            ids.projectA,
+            ids.employeeA,
+            'owner',
+          ])
+        ).code,
+      ).toBe('42501');
+      await expect(
+        tx.client
+          .query('savepoint refused')
+          .then(() => setProjectMemberRole(tx.client, ids.projectA, ids.employeeA, 'owner')),
+      ).rejects.toMatchObject({ code: '42501' });
+      await tx.client.query('rollback to savepoint refused');
     });
   });
 

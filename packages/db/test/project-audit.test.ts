@@ -18,12 +18,14 @@ import { stepUp } from './step-up.ts';
 // decision 13). The rows are read back as the founder, the only reader of the log.
 
 const founderA: ContextInput = { companyId: ids.arma, userId: ids.founder };
-// A member of projectA and of projectANoAi.
+// A plain member of projectA and of projectANoAi (neither has an owner in the fixtures).
 const employeeA: ContextInput = { companyId: ids.arma, userId: ids.employeeA };
 // An employee of Arma DX who is a member of no project.
 const approverA: ContextInput = { companyId: ids.arma, userId: ids.approverA };
+const sharedA: ContextInput = { companyId: ids.arma, userId: ids.sharedEmployee };
 
-// The event names of the Projects section (migration 20261008101900_project_audit).
+// The event names of the Projects section (migrations 20261008101900_project_audit and
+// 20261008102100_project_owner_and_managers).
 const EVENTS = [
   'project_created',
   'project_name_changed',
@@ -42,6 +44,9 @@ const EVENTS = [
   'project_ai_permission_closed',
   'project_member_added',
   'project_member_removed',
+  'project_member_role_owner',
+  'project_member_role_manager',
+  'project_member_role_member',
   'customer_created',
   'customer_name_changed',
   'customer_changed',
@@ -54,6 +59,7 @@ const EVENTS = [
 const ADD_MEMBER =
   'insert into office.project_members (company_id, project_id, user_id) values ($1, $2, $3)';
 const REMOVE_MEMBER = 'delete from office.project_members where project_id = $1 and user_id = $2';
+const SET_ROLE = 'select office.set_project_member_role($1, $2, $3)';
 const SET_AI = 'select office.set_project_ai_permission($1, $2, $3)';
 const SET_CUSTOMER = 'select office.set_customer_permissions($1, $2, $3)';
 
@@ -131,7 +137,7 @@ function customerRow(event: string, userId: string | null, customerId: string): 
 describe.skipIf(noDatabase)('audit rows of projects and customers', () => {
   afterAll(closePools);
 
-  it('audit: opening a project writes project_created and then project_member_added, with the opener as actor', async () => {
+  it('audit: opening a project writes project_created, project_member_added and project_member_role_owner, with the opener as actor', async () => {
     await inTransaction(async (tx) => {
       const from = await mark(tx);
       await tx.setContext(approverA);
@@ -149,10 +155,13 @@ describe.skipIf(noDatabase)('audit rows of projects and customers', () => {
       expect(await since(tx, from)).toEqual([
         projectRow('project_created', ids.approverA, planned),
         memberRow('project_member_added', ids.approverA, planned, ids.approverA),
+        // The opener is the owner (8 October decision 44).
+        memberRow('project_member_role_owner', ids.approverA, planned, ids.approverA),
         projectRow('project_created', ids.approverA, parked),
         // A project opened in another status than the first says so.
         projectRow('project_status_backlog', ids.approverA, parked),
         memberRow('project_member_added', ids.approverA, parked, ids.approverA),
+        memberRow('project_member_role_owner', ids.approverA, parked, ids.approverA),
       ]);
     });
   });
@@ -218,18 +227,57 @@ describe.skipIf(noDatabase)('audit rows of projects and customers', () => {
 
   it('audit: adding and removing a member names the person and the project', async () => {
     await inTransaction(async (tx) => {
+      // The adder is the owner of the project: a plain member adds and removes nobody.
+      await tx.setContext(founderA);
+      await tx.exec(SET_ROLE, [ids.projectA, ids.employeeA, 'owner']);
       const from = await mark(tx);
       await tx.setContext(employeeA);
       await tx.exec(ADD_MEMBER, [ids.arma, ids.projectA, ids.approverA]);
       await tx.exec(REMOVE_MEMBER, [ids.projectA, ids.approverA]);
-      // Adding a person who is refused leaves nothing.
+      // Adding a person who is refused leaves nothing; so does a removal that removes nobody.
       await tx.expectError(ADD_MEMBER, [ids.arma, ids.projectA, ids.externalA]);
+      expect(await tx.exec(REMOVE_MEMBER, [ids.projectA, ids.employeeA])).toBe(0);
       await tx.setContext(founderA);
-      await tx.exec(REMOVE_MEMBER, [ids.projectA, ids.employeeA]);
+      await tx.exec(ADD_MEMBER, [ids.arma, ids.projectA, ids.sharedEmployee]);
+      await tx.exec(REMOVE_MEMBER, [ids.projectA, ids.sharedEmployee]);
       expect(await since(tx, from)).toEqual([
+        // A plain member's first role is the membership itself: no role event.
         memberRow('project_member_added', ids.employeeA, ids.projectA, ids.approverA),
         memberRow('project_member_removed', ids.employeeA, ids.projectA, ids.approverA),
-        memberRow('project_member_removed', ids.founder, ids.projectA, ids.employeeA),
+        memberRow('project_member_added', ids.founder, ids.projectA, ids.sharedEmployee),
+        memberRow('project_member_removed', ids.founder, ids.projectA, ids.sharedEmployee),
+      ]);
+    });
+  });
+
+  it('audit: a role that is given leaves project_member_role_<role> for each person whose role changed, with the actor', async () => {
+    await inTransaction(async (tx) => {
+      await tx.setContext(founderA);
+      await tx.exec(ADD_MEMBER, [ids.arma, ids.projectA, ids.approverA]);
+      await tx.exec(ADD_MEMBER, [ids.arma, ids.projectA, ids.sharedEmployee]);
+      const from = await mark(tx);
+      // The founder names the owner of a project that has none: one row.
+      await tx.setContext(founderA);
+      await tx.exec(SET_ROLE, [ids.projectA, ids.employeeA, 'owner']);
+      // The owner appoints and dismisses a manager.
+      await tx.setContext(employeeA);
+      await tx.exec(SET_ROLE, [ids.projectA, ids.approverA, 'manager']);
+      // The role the member has: nothing changes and nothing is written.
+      await tx.exec(SET_ROLE, [ids.projectA, ids.approverA, 'manager']);
+      await tx.exec(SET_ROLE, [ids.projectA, ids.approverA, 'member']);
+      // A refused change leaves nothing.
+      await tx.expectError(SET_ROLE, [ids.projectA, ids.employeeA, 'member']);
+      await tx.setContext(sharedA);
+      await tx.expectError(SET_ROLE, [ids.projectA, ids.sharedEmployee, 'manager']);
+      // The hand-over: the owner until now and the new owner, one row each.
+      await tx.setContext(employeeA);
+      await tx.exec(SET_ROLE, [ids.projectA, ids.sharedEmployee, 'owner']);
+      expect(await since(tx, from)).toEqual([
+        memberRow('project_member_role_owner', ids.founder, ids.projectA, ids.employeeA),
+        memberRow('project_member_role_manager', ids.employeeA, ids.projectA, ids.approverA),
+        memberRow('project_member_role_member', ids.employeeA, ids.projectA, ids.approverA),
+        memberRow('project_member_role_member', ids.employeeA, ids.projectA, ids.employeeA),
+        memberRow('project_member_role_owner', ids.employeeA, ids.projectA, ids.sharedEmployee),
       ]);
     });
   });
@@ -392,6 +440,9 @@ describe.skipIf(noDatabase)('audit rows of projects and customers', () => {
         [project],
       );
       await tx.exec(ADD_MEMBER, [ids.arma, project, ids.approverA]);
+      await tx.exec(SET_ROLE, [project, ids.approverA, 'manager']);
+      await tx.exec(SET_ROLE, [project, ids.approverA, 'member']);
+      await tx.exec(SET_ROLE, [project, ids.approverA, 'owner']);
       await stepUp(tx, founderA, 'project_ai_permission', project);
       await tx.exec(SET_AI, [project, true, customer]);
       await tx.setContext(founderA);
@@ -409,10 +460,16 @@ describe.skipIf(noDatabase)('audit rows of projects and customers', () => {
         'customer_created',
         'project_created',
         'project_member_added',
+        'project_member_role_owner',
         'project_name_changed',
         'project_description_changed',
         'project_status_completed',
         'project_member_added',
+        'project_member_role_manager',
+        'project_member_role_member',
+        // The hand-over: the opener becomes a plain member, the other member the owner.
+        'project_member_role_member',
+        'project_member_role_owner',
         'project_ai_permission_opened',
       ]);
       for (const row of rows) {

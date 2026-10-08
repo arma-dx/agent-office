@@ -30,6 +30,8 @@ export interface ProjectRow {
   created_at: Date;
   created_by_user_id: string | null;
   reader_is_founder: boolean;
+  // owner, manager or member; null when the reader is no member of the project (the founder).
+  reader_project_role: string | null;
 }
 
 const PROJECT_SQL = `
@@ -41,7 +43,8 @@ const PROJECT_SQL = `
            select count(*)::int from office.project_members pm where pm.project_id = p.id
          ) as member_count,
          p.created_at, p.created_by_user_id,
-         office.is_founder() as reader_is_founder
+         office.is_founder() as reader_is_founder,
+         office.project_role(p.id) as reader_project_role
   from office.projects p
   left join office.customers c on c.id = p.customer_id
   where p.company_id = office.ctx_company_id()`;
@@ -88,8 +91,8 @@ export interface NewProject {
 }
 
 /**
- * Opens a project in the context company. The database makes the opener its member in the same
- * statement, writes who and when, and starts it without AI permission. The row is not asked back
+ * Opens a project in the context company. The database makes the opener its member and its owner
+ * in the same statement, writes who and when, and starts it without AI permission. The row is not asked back
  * ("returning"): the read policy looks at the new row before the opener is its member, so an
  * employee's insert would be refused. The caller reads the project afterwards.
  */
@@ -169,18 +172,21 @@ export interface ProjectMemberRow {
   name: string | null;
   role: string | null;
   active: boolean;
+  // The role in the project: owner, manager or member (8 October decision 44).
+  project_role: string;
 }
 
 /**
- * The members of a project. The people come from the narrow team function, so an employee reads
- * the names and roles of colleagues and nothing else of them.
+ * The members of a project with their role in it. The people come from the narrow team function,
+ * so an employee reads the names and company roles of colleagues and nothing else of them.
  */
 export async function listProjectMembers(
   client: Queryable,
   projectId: string,
 ): Promise<ProjectMemberRow[]> {
   const { rows } = await client.query<ProjectMemberRow>(
-    `select pm.user_id, cp.name, cp.role, coalesce(cp.active, false) as active
+    `select pm.user_id, pm.role as project_role, cp.name, cp.role,
+            coalesce(cp.active, false) as active
      from office.project_members pm
      left join office.company_people() cp on cp.user_id = pm.user_id
      where pm.project_id = $1 and pm.company_id = office.ctx_company_id()
@@ -190,7 +196,11 @@ export async function listProjectMembers(
   return rows;
 }
 
-/** Adds a member; a person who is a member already changes nothing. */
+/**
+ * Adds a member, always as a plain member; a person who is a member already changes nothing. The
+ * database lets the owner, a manager or the founder add (8 October decision 44) and refuses
+ * anybody else (42501).
+ */
 export async function addProjectMember(
   client: Queryable,
   projectId: string,
@@ -204,7 +214,11 @@ export async function addProjectMember(
   );
 }
 
-/** Removes a member; returns the number of rows (0: not a member, or not the person's to remove). */
+/**
+ * Removes a member; returns the number of rows (0: not a member, or not the caller's to remove).
+ * The owner and the founder remove managers and members, a manager plain members; the owner is
+ * never removed, and nobody but the founder removes themselves.
+ */
 export async function removeProjectMember(
   client: Queryable,
   projectId: string,
@@ -216,6 +230,23 @@ export async function removeProjectMember(
     [projectId, userId],
   );
   return result.rowCount ?? 0;
+}
+
+/**
+ * Gives a member a role (decision 44). The database decides who may (the owner, the founder) and
+ * what a hand-over of the ownership does to the owner until now. Returns whether anything changed.
+ */
+export async function setProjectMemberRole(
+  client: Queryable,
+  projectId: string,
+  userId: string,
+  role: string,
+): Promise<boolean> {
+  const { rows } = await client.query<{ changed: boolean }>(
+    'select office.set_project_member_role($1, $2, $3) as changed',
+    [projectId, userId, role],
+  );
+  return rows[0]?.changed === true;
 }
 
 /**

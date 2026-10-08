@@ -284,20 +284,18 @@ function AddMember({
 
 /**
  * The members of a project (8 October 2026, decision 15): the people who, with the founder, see
- * the project and the records tied to it. Every reader of the page is a member or the founder and
- * may add and remove members (`actions.manageMembers`); an employee cannot take themselves off,
- * the founder can and still sees the project. Nothing is shown as changed before the API has
+ * the project and the records tied to it. Who adds and who removes is the API's answer (decision
+ * 44: the owner, the managers and the founder): the add form follows `actions.addMembers` and the
+ * button of a row follows `member.removable`. Nothing is shown as changed before the API has
  * stored it.
  */
 export function ProjectMembers({ project }: { project: ProjectDetail }) {
-  const company = useCompany();
   const session = useSession();
   const headingId = useId();
   const heading = useRef<HTMLHeadingElement>(null);
   const focus = useReturnFocus();
   const [removing, setRemoving] = useState<ProjectMember | null>(null);
   const members = sortedByName(project.members);
-  const manage = project.actions.manageMembers;
   return (
     <section aria-labelledby={headingId} className="flex flex-col gap-3">
       {/* The heading takes the focus when a row goes away with its button. */}
@@ -312,14 +310,12 @@ export function ProjectMembers({ project }: { project: ProjectDetail }) {
         <ul className="rounded-lg border border-line">
           {members.map((member) => {
             const own = member.userId === session.user.id;
-            // Nobody but the founder takes themselves off a project.
-            const removable = manage && (!own || company.role === 'founder');
             return (
               <MemberRow
                 key={member.userId}
                 member={member}
                 own={own}
-                {...(removable
+                {...(member.removable
                   ? {
                       onRemove: () => {
                         focus.remember();
@@ -332,7 +328,7 @@ export function ProjectMembers({ project }: { project: ProjectDetail }) {
           })}
         </ul>
       )}
-      {manage ? <AddMember project={project} heading={heading} /> : null}
+      {project.actions.addMembers ? <AddMember project={project} heading={heading} /> : null}
       {removing ? (
         <RemoveMemberDialog
           project={project}

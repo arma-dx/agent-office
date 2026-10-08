@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { createPool, withContext } from '@agent-office/db';
 import {
+  apiErrorSchema,
   customerListSchema,
   customerPermissionDetails,
   customerSchema,
@@ -36,8 +37,10 @@ import {
 } from './passkey-helpers.ts';
 
 // The Projects section through the API (8 October decisions 14 to 22): the list, a new project
-// with its customer and members, the project page and its edit, the members, and the two
-// permissions only the founder sets. Tests commit, so each uses ids
+// with its customer and members, the project page and its edit, the members with their roles
+// (decision 44: the owner, the managers, the plain members), and the two permissions only the
+// founder sets. Projects are opened through the API, so the opener is the owner. Tests commit, so
+// each uses ids
 // and names of its own; a project is never deleted, so what a test opens stays in the database.
 
 // Records of the other company, a customer of Arma DX and a deactivated employee of it, written
@@ -54,6 +57,8 @@ describe.skipIf(noDatabase)('projects', () => {
   let founder: string;
   let employee: string;
   let colleague: string;
+  // A third employee of Arma DX (the fixtures' newcomer).
+  let third: string;
   let external: string;
   const founderKey = new SoftwareAuthenticator(PANEL_ORIGIN);
   // A connection of the API's role that a test holds open itself, next to the server's own.
@@ -67,6 +72,7 @@ describe.skipIf(noDatabase)('projects', () => {
     founder = await sessionOf(server, accounts.founder);
     employee = await sessionOf(server, accounts.employee);
     colleague = await sessionOf(server, accounts.holder);
+    third = await sessionOf(server, accounts.newcomer);
     external = await sessionOf(server, accounts.external);
     await freshPasskey(server, founder, founderKey, ids.founder, 'Kurucu telefonu');
     await adminExec(`
@@ -118,6 +124,44 @@ describe.skipIf(noDatabase)('projects', () => {
     expect(res.statusCode, res.body).toBe(200);
     return projectDetailSchema.parse(res.json());
   }
+
+  /** Gives a member of a project a role (the owner's and the founder's act). */
+  const setRole = (
+    session: string,
+    projectId: string,
+    userId: string,
+    role: string,
+    company: string = ids.arma,
+  ) => call(session, 'PUT', `/api/projects/${projectId}/members/${userId}/role`, { role }, company);
+
+  /** The same, expected to be stored; returns the answer. */
+  async function giveRole(
+    session: string,
+    projectId: string,
+    userId: string,
+    role: string,
+  ): Promise<ProjectDetail> {
+    const res = await setRole(session, projectId, userId, role);
+    expect(res.statusCode, res.body).toBe(200);
+    return projectDetailSchema.parse(res.json());
+  }
+
+  /** The project role of every member of an answer, by the person's id. */
+  const rolesOf = (project: ProjectDetail): Record<string, string> =>
+    Object.fromEntries(project.members.map((member) => [member.userId, member.projectRole]));
+
+  /** What the reader may do with every member of an answer, by the person's id. */
+  const flagsOf = (project: ProjectDetail) =>
+    Object.fromEntries(
+      project.members.map((member) => [
+        member.userId,
+        { role: member.projectRole, removable: member.removable, gives: member.roleChanges },
+      ]),
+    );
+
+  /** The Turkish sentence of an error answer. */
+  const messageOf = (res: LightMyRequestResponse): string =>
+    apiErrorSchema.parse(res.json()).error.message;
 
   async function customers(session: string, company: string = ids.arma) {
     const res = await call(session, 'GET', '/api/customers', undefined, company);
@@ -214,7 +258,7 @@ describe.skipIf(noDatabase)('projects', () => {
 
   // List, create, read ---------------------------------------------------------------------------
 
-  it('opens a project for an employee: 201, planned, the opener is its only member, the AI permission is closed', async () => {
+  it('opens a project for an employee: 201, planned, the opener is its owner and its only member, the AI permission is closed', async () => {
     const id = randomUUID();
     const res = await call(employee, 'POST', '/api/projects', { id, name: '  Yeni web sitesi  ' });
     expect(res.statusCode).toBe(201);
@@ -233,7 +277,15 @@ describe.skipIf(noDatabase)('projects', () => {
       agentsMayWork: false,
       memberCount: 1,
       createdBy: { userId: ids.employee, name: 'Çalışan' },
-      members: [{ userId: ids.employee, name: 'Çalışan', role: 'employee', active: true }],
+      members: [
+        {
+          userId: ids.employee,
+          name: 'Çalışan',
+          role: 'employee',
+          active: true,
+          projectRole: 'owner',
+        },
+      ],
     });
     expect(
       await adminQuery(
@@ -241,6 +293,11 @@ describe.skipIf(noDatabase)('projects', () => {
         [id],
       ),
     ).toEqual([{ ai_allowed: false, created_by_user_id: ids.employee, company_id: ids.arma }]);
+    expect(
+      await adminQuery('select user_id, role from office.project_members where project_id = $1', [
+        id,
+      ]),
+    ).toEqual([{ user_id: ids.employee, role: 'owner' }]);
   });
 
   it('a repeated send with the same id answers the first project and writes nothing a second time', async () => {
@@ -321,6 +378,8 @@ describe.skipIf(noDatabase)('projects', () => {
       ['PATCH', `/api/projects/${project.id}`, { name: 'Dış kişi' }],
       ['PUT', `/api/projects/${project.id}/members/${ids.external}`],
       ['DELETE', `/api/projects/${project.id}/members/${ids.employee}`],
+      ['PUT', `/api/projects/${project.id}/members/${ids.employee}/role`, { role: 'member' }],
+      ['PUT', `/api/projects/${project.id}/members/${ids.external}/role`, { role: 'owner' }],
       ['PUT', `/api/projects/${project.id}/ai-permission`, { allowed: false }],
       ['GET', '/api/customers'],
       ['PATCH', `/api/customers/${ARMA_CUSTOMER}/permissions`, { aiAllowed: false }],
@@ -330,7 +389,11 @@ describe.skipIf(noDatabase)('projects', () => {
       expect(res.statusCode, `${method} ${url}`).toBe(403);
       expect(errorCode(res), `${method} ${url}`).toBe('insiders_only');
     }
-    expect(await read(employee, project.id)).toMatchObject({ name: 'Proje', memberCount: 1 });
+    expect(await read(employee, project.id)).toMatchObject({
+      name: 'Proje',
+      memberCount: 1,
+      members: [{ userId: ids.employee, projectRole: 'owner' }],
+    });
   });
 
   it('409 private_space in the founder space; its list is empty', async () => {
@@ -412,6 +475,9 @@ describe.skipIf(noDatabase)('projects', () => {
       // Adding themselves, and removing the member who opened it.
       ['PUT', `/api/projects/${id}/members/${ids.holder}`],
       ['DELETE', `/api/projects/${id}/members/${ids.employee}`],
+      // Taking the ownership, and dismissing the owner.
+      ['PUT', `/api/projects/${id}/members/${ids.holder}/role`, { role: 'owner' }],
+      ['PUT', `/api/projects/${id}/members/${ids.employee}/role`, { role: 'member' }],
     ];
     const expect404 = async (session: string, id: string, company: string = ids.arma) => {
       for (const [method, url, payload] of routes(id)) {
@@ -431,12 +497,16 @@ describe.skipIf(noDatabase)('projects', () => {
     expect(await read(founder, project.id)).toMatchObject({
       name: 'Görünmeyen proje',
       memberCount: 1,
+      members: [{ userId: ids.employee, projectRole: 'owner' }],
     });
     // A member id that is not an id.
     for (const method of ['PUT', 'DELETE'] as const) {
       const res = await call(employee, method, `/api/projects/${project.id}/members/not-an-id`);
       expect(res.statusCode).toBe(404);
     }
+    const role = await setRole(employee, project.id, 'not-an-id', 'manager');
+    expect(role.statusCode).toBe(404);
+    expect(errorCode(role)).toBe('not_found');
     // The permission route is the founder's: the other company's project, with either company
     // selected, an id nobody has and an id that is not one.
     for (const [id, company] of [
@@ -660,6 +730,13 @@ describe.skipIf(noDatabase)('projects', () => {
     expect(project.members.map((member) => member.userId).sort()).toEqual(
       [ids.founder, ids.employee, ids.holder].sort(),
     );
+    // The opener is the owner; the people named with the project are plain members, the founder
+    // too.
+    expect(rolesOf(project)).toEqual({
+      [ids.employee]: 'owner',
+      [ids.holder]: 'member',
+      [ids.founder]: 'member',
+    });
     expect(await read(colleague, project.id)).toMatchObject({ id: project.id, memberCount: 3 });
 
     for (const [who, userId] of [
@@ -788,14 +865,31 @@ describe.skipIf(noDatabase)('projects', () => {
       createdBy: { userId: ids.employee, name: 'Çalışan' },
       actions: {
         edit: true,
-        manageMembers: true,
+        addMembers: true,
         setAiPermission: false,
         setCustomerPermissions: false,
       },
     });
     expect([...forEmployee.members].sort((a, b) => a.userId.localeCompare(b.userId))).toEqual([
-      { userId: ids.employee, name: 'Çalışan', role: 'employee', active: true },
-      { userId: ids.holder, name: 'Passkey Sahibi', role: 'employee', active: true },
+      {
+        userId: ids.employee,
+        name: 'Çalışan',
+        role: 'employee',
+        active: true,
+        // The reader opened the project: its owner, whom nobody removes.
+        projectRole: 'owner',
+        removable: false,
+        roleChanges: [],
+      },
+      {
+        userId: ids.holder,
+        name: 'Passkey Sahibi',
+        role: 'employee',
+        active: true,
+        projectRole: 'member',
+        removable: true,
+        roleChanges: ['manager', 'owner'],
+      },
     ]);
     expect(Date.parse(forEmployee.createdAt)).toBeGreaterThan(Date.now() - 60_000);
 
@@ -809,7 +903,7 @@ describe.skipIf(noDatabase)('projects', () => {
     });
     expect(forFounder.actions).toEqual({
       edit: true,
-      manageMembers: true,
+      addMembers: true,
       setAiPermission: true,
       setCustomerPermissions: true,
     });
@@ -1005,18 +1099,59 @@ describe.skipIf(noDatabase)('projects', () => {
     ).toBe(1);
   });
 
-  // Members ---------------------------------------------------------------------------------------
+  // Members (8 October decision 44) -----------------------------------------------------------------
 
-  it('a member adds and removes a colleague without a passkey; adding twice changes nothing; removing somebody who is not a member is 404', async () => {
+  const ADD_REFUSED =
+    'Projeye üye eklemeyi yalnızca projenin sahibi, yöneticileri ve kurucu yapabilir.';
+  const REMOVE_REFUSED =
+    'Projeden üye çıkarmayı yalnızca projenin sahibi, yöneticileri ve kurucu yapabilir.';
+  const MANAGER_PROTECTED =
+    'Bir yöneticiyi projeden yalnızca projenin sahibi ya da kurucu çıkarabilir.';
+  const OWNER_NOT_REMOVED =
+    'Projenin sahibi projeden çıkarılamaz. Önce sahiplik başka bir üyeye devredilir.';
+  const OWNER_ROLE_FIXED =
+    'Sahibin rolü doğrudan değiştirilemez. Sahipliği devretmek için başka bir üyeyi sahip yapın.';
+  const ROLES_REFUSED = 'Projede rolleri yalnızca projenin sahibi ya da kurucu değiştirebilir.';
+
+  /** The audit rows of a project's members, in the order they were written. */
+  async function memberEvents(projectId: string): Promise<string[]> {
+    const rows = await adminQuery<{ event: string }>(
+      `select event from office.audit_log
+       where project_id = $1 and event ~ '^project_member_' order by id`,
+      [projectId],
+    );
+    return rows.map((row) => row.event);
+  }
+
+  /** The rows of a project's members as the database holds them. */
+  async function storedRoles(projectId: string): Promise<Record<string, string>> {
+    const rows = await adminQuery<{ user_id: string; role: string }>(
+      'select user_id, role from office.project_members where project_id = $1',
+      [projectId],
+    );
+    return Object.fromEntries(rows.map((row) => [row.user_id, row.role]));
+  }
+
+  it('the owner adds and removes a colleague without a passkey; adding twice changes nothing; removing somebody who is not a member is 404', async () => {
     const project = await open(employee, { name: 'Üyeleri değişen proje' });
     const members = `/api/projects/${project.id}/members`;
     const added = await call(employee, 'PUT', `${members}/${ids.holder}`);
     expect(added.statusCode, added.body).toBe(200);
-    expect(projectDetailSchema.parse(added.json())).toMatchObject({ memberCount: 2 });
-    // The new member reads the project and adds the founder, also with the id in capitals.
+    const withColleague = projectDetailSchema.parse(added.json());
+    expect(withColleague.memberCount).toBe(2);
+    // Who is added is a plain member.
+    expect(rolesOf(withColleague)).toEqual({ [ids.employee]: 'owner', [ids.holder]: 'member' });
+    // The new member reads the project, and neither adds nor removes anybody.
     expect((await read(colleague, project.id)).memberCount).toBe(2);
-    const byColleague = await call(colleague, 'PUT', `${members}/${ids.founder.toUpperCase()}`);
-    expect(projectDetailSchema.parse(byColleague.json()).memberCount).toBe(3);
+    const byColleague = await call(colleague, 'PUT', `${members}/${ids.founder}`);
+    expect(byColleague.statusCode).toBe(403);
+    expect(errorCode(byColleague)).toBe('project_members_not_allowed');
+    const ownerOut = await call(colleague, 'DELETE', `${members}/${ids.employee}`);
+    expect(ownerOut.statusCode).toBe(403);
+    expect(errorCode(ownerOut)).toBe('project_members_not_allowed');
+    // The owner adds the founder, also with the id in capitals.
+    const withFounder = await call(employee, 'PUT', `${members}/${ids.founder.toUpperCase()}`);
+    expect(projectDetailSchema.parse(withFounder.json()).memberCount).toBe(3);
 
     const twice = await call(employee, 'PUT', `${members}/${ids.holder}`);
     expect(twice.statusCode).toBe(200);
@@ -1025,47 +1160,177 @@ describe.skipIf(noDatabase)('projects', () => {
       await count('audit_log', `event = 'project_member_added' and project_id = $1`, [project.id]),
     ).toBe(3);
 
-    // A member removes another member, the opener too.
-    const removed = await call(colleague, 'DELETE', `${members}/${ids.employee}`);
+    // The owner removes a member.
+    const removed = await call(employee, 'DELETE', `${members}/${ids.holder.toUpperCase()}`);
     expect(removed.statusCode, removed.body).toBe(200);
     expect(
       projectDetailSchema
         .parse(removed.json())
         .members.map((member) => member.userId)
         .sort(),
-    ).toEqual([ids.founder, ids.holder].sort());
+    ).toEqual([ids.founder, ids.employee].sort());
     // The removed person no longer reads it.
-    expect((await call(employee, 'GET', `/api/projects/${project.id}`)).statusCode).toBe(404);
+    expect((await call(colleague, 'GET', `/api/projects/${project.id}`)).statusCode).toBe(404);
 
-    for (const userId of [ids.employee, ids.newcomer, randomUUID()]) {
-      const res = await call(colleague, 'DELETE', `${members}/${userId}`);
+    for (const userId of [ids.holder, ids.newcomer, randomUUID()]) {
+      const res = await call(employee, 'DELETE', `${members}/${userId}`);
       expect(res.statusCode).toBe(404);
       expect(errorCode(res)).toBe('not_found');
     }
-    expect((await read(colleague, project.id)).memberCount).toBe(2);
+    expect((await read(employee, project.id)).memberCount).toBe(2);
   });
 
-  it('409 own_project_membership when an employee removes themselves; the founder removes themselves and still reads the project', async () => {
-    const project = await open(employee, { name: 'Kendini çıkaran', memberIds: [ids.founder] });
+  it('403 project_members_not_allowed when a plain member adds or removes; nothing is written', async () => {
+    const project = await open(employee, {
+      name: 'Üyenin yönetemediği proje',
+      memberIds: [ids.holder, ids.newcomer],
+    });
     const members = `/api/projects/${project.id}/members`;
-    for (const userId of [ids.employee, ids.employee.toUpperCase()]) {
-      const own = await call(employee, 'DELETE', `${members}/${userId}`);
-      expect(own.statusCode).toBe(409);
-      expect(errorCode(own)).toBe('own_project_membership');
+    const before = await memberEvents(project.id);
+    // Whoever is named: a colleague, somebody who is a member already, an external person, a
+    // deactivated account. The answer never says why that person could not be added.
+    for (const userId of [ids.founder, ids.newcomer, ids.external, DEACTIVATED, randomUUID()]) {
+      const res = await call(colleague, 'PUT', `${members}/${userId}`);
+      expect(res.statusCode, userId).toBe(403);
+      expect(errorCode(res), userId).toBe('project_members_not_allowed');
+      expect(messageOf(res), userId).toBe(ADD_REFUSED);
     }
-    expect((await read(employee, project.id)).memberCount).toBe(2);
+    // Another plain member, and the owner.
+    for (const userId of [ids.newcomer, ids.employee]) {
+      const res = await call(colleague, 'DELETE', `${members}/${userId}`);
+      expect(res.statusCode, userId).toBe(403);
+      expect(errorCode(res), userId).toBe('project_members_not_allowed');
+      expect(messageOf(res), userId).toBe(REMOVE_REFUSED);
+    }
+    expect(await storedRoles(project.id)).toEqual({
+      [ids.employee]: 'owner',
+      [ids.holder]: 'member',
+      [ids.newcomer]: 'member',
+    });
+    expect(await memberEvents(project.id)).toEqual(before);
+  });
+
+  it('403 project_manager_protected when a manager removes a manager; 409 project_owner_fixed when anybody removes the owner, the founder too', async () => {
+    const project = await open(employee, {
+      name: 'Yöneticili proje',
+      memberIds: [ids.holder, ids.newcomer],
+    });
+    const members = `/api/projects/${project.id}/members`;
+    await giveRole(employee, project.id, ids.holder, 'manager');
+    await giveRole(employee, project.id, ids.newcomer, 'manager');
+
+    const manager = await call(colleague, 'DELETE', `${members}/${ids.newcomer}`);
+    expect(manager.statusCode).toBe(403);
+    expect(errorCode(manager)).toBe('project_manager_protected');
+    expect(messageOf(manager)).toBe(MANAGER_PROTECTED);
+
+    for (const session of [colleague, founder]) {
+      const owner = await call(session, 'DELETE', `${members}/${ids.employee}`);
+      expect(owner.statusCode).toBe(409);
+      expect(errorCode(owner)).toBe('project_owner_fixed');
+      expect(messageOf(owner)).toBe(OWNER_NOT_REMOVED);
+    }
+    expect(await storedRoles(project.id)).toEqual({
+      [ids.employee]: 'owner',
+      [ids.holder]: 'manager',
+      [ids.newcomer]: 'manager',
+    });
+
+    // A manager adds a member and removes a plain member.
+    const added = await call(colleague, 'PUT', `${members}/${ids.founder}`);
+    expect(added.statusCode, added.body).toBe(200);
+    const out = await call(colleague, 'DELETE', `${members}/${ids.founder}`);
+    expect(out.statusCode, out.body).toBe(200);
+    // Once dismissed, the other manager is a plain member like any other.
+    await giveRole(employee, project.id, ids.newcomer, 'member');
+    const dismissed = await call(colleague, 'DELETE', `${members}/${ids.newcomer}`);
+    expect(dismissed.statusCode, dismissed.body).toBe(200);
+    // The founder removes a manager.
+    const byFounder = await call(founder, 'DELETE', `${members}/${ids.holder}`);
+    expect(byFounder.statusCode, byFounder.body).toBe(200);
+    expect(await storedRoles(project.id)).toEqual({ [ids.employee]: 'owner' });
+  });
+
+  it('409 own_project_membership for an employee whatever their role, with the sentence of their role; the founder removes themselves and still reads the project; the founder who is the owner gets project_owner_fixed', async () => {
+    const project = await open(employee, {
+      name: 'Kendini çıkaran',
+      memberIds: [ids.holder, ids.newcomer, ids.founder],
+    });
+    const members = `/api/projects/${project.id}/members`;
+    await giveRole(employee, project.id, ids.holder, 'manager');
+    const sentences: [string, string, string][] = [
+      [
+        employee,
+        ids.employee,
+        'Kendinizi projeden çıkaramazsınız. Projenin sahibisiniz; önce sahipliği başka bir üyeye devredin.',
+      ],
+      [
+        colleague,
+        ids.holder,
+        'Kendinizi projeden çıkaramazsınız. Sizi projenin sahibi ya da kurucu çıkarabilir.',
+      ],
+      [
+        third,
+        ids.newcomer,
+        'Kendinizi projeden çıkaramazsınız. Sizi projenin sahibi, bir yöneticisi ya da kurucu çıkarabilir.',
+      ],
+    ];
+    for (const [session, own, sentence] of sentences) {
+      for (const userId of [own, own.toUpperCase()]) {
+        const res = await call(session, 'DELETE', `${members}/${userId}`);
+        expect(res.statusCode, own).toBe(409);
+        expect(errorCode(res), own).toBe('own_project_membership');
+        expect(messageOf(res), own).toBe(sentence);
+      }
+    }
+    expect((await read(employee, project.id)).memberCount).toBe(4);
 
     const byFounder = await call(founder, 'DELETE', `${members}/${ids.founder}`);
     expect(byFounder.statusCode, byFounder.body).toBe(200);
-    expect(projectDetailSchema.parse(byFounder.json())).toMatchObject({
-      memberCount: 1,
-      members: [{ userId: ids.employee }],
+    expect(projectDetailSchema.parse(byFounder.json()).memberCount).toBe(3);
+    expect((await read(founder, project.id)).name).toBe('Kendini çıkaran');
+
+    // The founder who owns the project is its owner like anybody else.
+    await call(founder, 'PUT', `${members}/${ids.founder}`);
+    await giveRole(founder, project.id, ids.founder, 'owner');
+    const asOwner = await call(founder, 'DELETE', `${members}/${ids.founder}`);
+    expect(asOwner.statusCode).toBe(409);
+    expect(errorCode(asOwner)).toBe('project_owner_fixed');
+    expect(messageOf(asOwner)).toBe(OWNER_NOT_REMOVED);
+    expect(await storedRoles(project.id)).toEqual({
+      [ids.founder]: 'owner',
+      [ids.employee]: 'member',
+      [ids.holder]: 'manager',
+      [ids.newcomer]: 'member',
     });
-    // The founder removes the last member too; the project stays, read by the founder alone.
+  });
+
+  it('the founder removes the last member of a project without an owner; the project stays, read by the founder alone', async () => {
+    const project = await open(employee, { name: 'Sahipsiz proje', memberIds: [ids.founder] });
+    const members = `/api/projects/${project.id}/members`;
+    // A project loses its owner only by an act on the company's members (docs/SONRA.md P1b-h);
+    // here the row is written as that act would leave it.
+    await adminQuery(`update office.project_members set role = 'member' where project_id = $1`, [
+      project.id,
+    ]);
+    // Nobody of the project can take the ownership or remove anybody.
+    const taken = await setRole(employee, project.id, ids.employee, 'owner');
+    expect(taken.statusCode).toBe(403);
+    expect(errorCode(taken)).toBe('project_roles_not_allowed');
+    const refused = await call(employee, 'DELETE', `${members}/${ids.founder}`);
+    expect(refused.statusCode).toBe(403);
+
+    const own = await call(founder, 'DELETE', `${members}/${ids.founder}`);
+    expect(own.statusCode, own.body).toBe(200);
     const last = await call(founder, 'DELETE', `${members}/${ids.employee}`);
     expect(projectDetailSchema.parse(last.json())).toMatchObject({ memberCount: 0, members: [] });
     expect((await call(employee, 'GET', `/api/projects/${project.id}`)).statusCode).toBe(404);
-    expect((await read(founder, project.id)).name).toBe('Kendini çıkaran');
+    expect((await read(founder, project.id)).name).toBe('Sahipsiz proje');
+    // The founder names an owner again: adds a member and gives the role.
+    await call(founder, 'PUT', `${members}/${ids.employee}`);
+    expect(rolesOf(await giveRole(founder, project.id, ids.employee, 'owner'))).toEqual({
+      [ids.employee]: 'owner',
+    });
   });
 
   it('409 member_not_allowed for an external person, a person outside the company and a deactivated account', async () => {
@@ -1090,22 +1355,289 @@ describe.skipIf(noDatabase)('projects', () => {
     expect(await count('project_members', 'project_id = $1', [project.id])).toBe(1);
   });
 
-  it('404 when the person is removed from the project while their add is on its way; nobody is added', async () => {
-    const project = await open(employee, { name: 'Eklerken çıkarılan', memberIds: [ids.holder] });
-    const members = `/api/projects/${project.id}/members`;
-    // Another person's removal that has not committed yet: the route still reads the project for
-    // the employee, its insert then waits for the table and meets the committed removal.
+  it('PUT .../role: the owner appoints and dismisses a manager; the founder too; 403 project_roles_not_allowed for a manager and a plain member; 404 for a non-member, for an unknown member and for a malformed id; 400 for an unknown role', async () => {
+    const project = await open(employee, {
+      name: 'Rol verilen proje',
+      memberIds: [ids.holder, ids.newcomer],
+    });
+    const plain = { [ids.employee]: 'owner', [ids.holder]: 'member', [ids.newcomer]: 'member' };
+    const managed = { ...plain, [ids.holder]: 'manager' };
+    for (const session of [employee, founder]) {
+      // No passkey is asked for (5 October decision 4).
+      expect(rolesOf(await giveRole(session, project.id, ids.holder, 'manager'))).toEqual(managed);
+      // The role the member has: 200, and nothing is written.
+      expect(
+        rolesOf(await giveRole(session, project.id, ids.holder.toUpperCase(), 'manager')),
+      ).toEqual(managed);
+      expect(await storedRoles(project.id)).toEqual(managed);
+      expect(rolesOf(await giveRole(session, project.id, ids.holder, 'member'))).toEqual(plain);
+      expect(rolesOf(await giveRole(session, project.id, ids.holder, 'member'))).toEqual(plain);
+    }
+    expect(await memberEvents(project.id)).toEqual([
+      'project_member_added',
+      'project_member_role_owner',
+      'project_member_added',
+      'project_member_added',
+      'project_member_role_manager',
+      'project_member_role_member',
+      'project_member_role_manager',
+      'project_member_role_member',
+    ]);
+    const [last] = await adminQuery<{ user_id: string; record_id: string }>(
+      `select user_id, record_id from office.audit_log
+       where project_id = $1 and event = 'project_member_role_member' order by id desc limit 1`,
+      [project.id],
+    );
+    expect(last).toEqual({ user_id: ids.founder, record_id: ids.holder });
+
+    // A manager and a plain member give no role, to anybody.
+    await giveRole(employee, project.id, ids.holder, 'manager');
+    const before = await memberEvents(project.id);
+    const refused: [string, string, string][] = [
+      [colleague, ids.newcomer, 'manager'],
+      [colleague, ids.holder, 'owner'],
+      [colleague, ids.holder, 'member'],
+      [colleague, ids.employee, 'member'],
+      [third, ids.newcomer, 'manager'],
+      [third, ids.newcomer, 'owner'],
+      [third, ids.holder, 'member'],
+      // Also for somebody who is no member of the project: the answer does not say so.
+      [third, ids.founder, 'manager'],
+    ];
+    for (const [session, userId, role] of refused) {
+      const res = await setRole(session, project.id, userId, role);
+      expect(res.statusCode, `${userId} ${role}`).toBe(403);
+      expect(errorCode(res), `${userId} ${role}`).toBe('project_roles_not_allowed');
+      expect(messageOf(res)).toBe(ROLES_REFUSED);
+    }
+
+    // A person the owner or the founder names who is no member of the project; an id nobody has;
+    // an id that is not one.
+    for (const session of [employee, founder]) {
+      for (const userId of [ids.founder, ids.external, randomUUID(), 'not-an-id']) {
+        const res = await setRole(session, project.id, userId, 'manager');
+        expect(res.statusCode, userId).toBe(404);
+        expect(errorCode(res), userId).toBe('not_found');
+      }
+    }
+    // A reader who cannot read the project: a colleague who is no member, the founder with the
+    // other company selected.
+    const alone = await open(employee, { name: 'Tek üyeli proje' });
+    for (const [session, company] of [
+      [colleague, ids.arma],
+      [founder, ids.pillika],
+    ] as const) {
+      const res = await setRole(session, alone.id, ids.employee, 'member', company);
+      expect(res.statusCode).toBe(404);
+      expect(errorCode(res)).toBe('not_found');
+    }
+
+    // The body: one of the three roles and nothing else.
+    const url = `/api/projects/${project.id}/members/${ids.newcomer}/role`;
+    for (const payload of [
+      { role: 'admin' },
+      { role: 'Yönetici' },
+      { role: null },
+      {},
+      { role: 'manager', userId: ids.holder },
+      { role: 'manager', stepUp: {} },
+    ]) {
+      const res = await call(employee, 'PUT', url, payload);
+      expect(res.statusCode, JSON.stringify(payload)).toBe(400);
+      expect(errorCode(res)).toBe('invalid_request');
+    }
+    expect((await call(employee, 'PUT', url)).statusCode).toBe(400);
+    expect(await storedRoles(project.id)).toEqual(managed);
+    expect(await memberEvents(project.id)).toEqual(before);
+  });
+
+  it("PUT .../role: handing the ownership over makes the former owner a plain member, in one answer; 409 project_owner_fixed for the owner's own role", async () => {
+    const project = await open(employee, {
+      name: 'Sahipliği devredilen proje',
+      memberIds: [ids.holder, ids.newcomer],
+    });
+    await giveRole(employee, project.id, ids.holder, 'manager');
+    // The owner's own role is not changed directly, by the owner or by the founder.
+    for (const session of [employee, founder]) {
+      for (const role of ['member', 'manager']) {
+        const res = await setRole(session, project.id, ids.employee, role);
+        expect(res.statusCode, role).toBe(409);
+        expect(errorCode(res), role).toBe('project_owner_fixed');
+        expect(messageOf(res)).toBe(OWNER_ROLE_FIXED);
+      }
+      // The role the owner has: nothing to do.
+      expect(rolesOf(await giveRole(session, project.id, ids.employee, 'owner'))).toMatchObject({
+        [ids.employee]: 'owner',
+      });
+    }
+
+    const before = await memberEvents(project.id);
+    const handed = await giveRole(employee, project.id, ids.holder, 'owner');
+    expect(rolesOf(handed)).toEqual({
+      [ids.employee]: 'member',
+      [ids.holder]: 'owner',
+      [ids.newcomer]: 'member',
+    });
+    // The answer is the page of a plain member: the former owner manages nothing any more.
+    expect(handed.actions.addMembers).toBe(false);
+    expect(handed.members.every((member) => !member.removable)).toBe(true);
+    expect(handed.members.every((member) => member.roleChanges.length === 0)).toBe(true);
+    expect((await memberEvents(project.id)).slice(before.length)).toEqual([
+      'project_member_role_member',
+      'project_member_role_owner',
+    ]);
+    const back = await setRole(employee, project.id, ids.employee, 'owner');
+    expect(back.statusCode).toBe(403);
+    expect(errorCode(back)).toBe('project_roles_not_allowed');
+    const add = await call(employee, 'PUT', `/api/projects/${project.id}/members/${ids.founder}`);
+    expect(add.statusCode).toBe(403);
+
+    // The new owner acts as the owner; the founder, no member, hands over to a plain member.
+    expect(rolesOf(await giveRole(colleague, project.id, ids.employee, 'manager'))).toMatchObject({
+      [ids.employee]: 'manager',
+    });
+    expect(rolesOf(await giveRole(founder, project.id, ids.newcomer, 'owner'))).toEqual({
+      [ids.employee]: 'manager',
+      [ids.holder]: 'member',
+      [ids.newcomer]: 'owner',
+    });
+    expect(await storedRoles(project.id)).toEqual({
+      [ids.employee]: 'manager',
+      [ids.holder]: 'member',
+      [ids.newcomer]: 'owner',
+    });
+  });
+
+  it('PUT .../role: 409 member_not_allowed with its own sentence for a deactivated account', async () => {
+    const person = randomUUID();
+    await adminQuery(`insert into office.users (id, name) values ($1, 'Kapanacak Hesap')`, [
+      person,
+    ]);
+    await adminQuery(
+      `insert into office.memberships (company_id, user_id, role, can_approve)
+       values ($1, $2, 'employee', false)`,
+      [ids.arma, person],
+    );
+    const project = await open(employee, {
+      name: 'Hesabı kapanan yönetici',
+      memberIds: [person, ids.holder],
+    });
+    await giveRole(employee, project.id, person, 'manager');
+    // The account is deactivated afterwards. The panel has no act for it yet and the database
+    // asks for the founder and a passkey, so the row is written with the triggers off, for this
+    // one transaction.
     const admin = await adminPool.connect();
-    let adding: Promise<LightMyRequestResponse>;
+    try {
+      await admin.query('begin');
+      await admin.query(`set local session_replication_role = 'replica'`);
+      await admin.query('update office.users set active = false where id = $1', [person]);
+      await admin.query('commit');
+    } catch (error) {
+      await admin.query('rollback');
+      throw error;
+    } finally {
+      admin.release();
+    }
+
+    const flags = async () => flagsOf(await read(employee, project.id))[person];
+    // A deactivated manager can only be dismissed.
+    expect(await flags()).toEqual({ role: 'manager', removable: true, gives: ['member'] });
+    for (const session of [employee, founder]) {
+      const res = await setRole(session, project.id, person, 'owner');
+      expect(res.statusCode).toBe(409);
+      expect(errorCode(res)).toBe('member_not_allowed');
+      expect(messageOf(res)).toBe('Devre dışı bir hesaba projede rol verilemez.');
+    }
+    // The owner until now keeps the role: the refused hand-over changed nothing.
+    expect(await storedRoles(project.id)).toEqual({
+      [ids.employee]: 'owner',
+      [person]: 'manager',
+      [ids.holder]: 'member',
+    });
+    expect(rolesOf(await giveRole(employee, project.id, person, 'member'))).toMatchObject({
+      [person]: 'member',
+    });
+    // A deactivated plain member is given no role.
+    expect(await flags()).toEqual({ role: 'member', removable: true, gives: [] });
+    for (const role of ['manager', 'owner']) {
+      const res = await setRole(employee, project.id, person, role);
+      expect(res.statusCode, role).toBe(409);
+      expect(errorCode(res), role).toBe('member_not_allowed');
+      expect(messageOf(res), role).toBe('Devre dışı bir hesaba projede rol verilemez.');
+    }
+    expect((await storedRoles(project.id))[person]).toBe('member');
+  });
+
+  it("the detail carries every member's project role, removable and roleChanges as the reader may act, and addMembers", async () => {
+    const project = await open(employee, {
+      name: 'Dört okurun gördüğü proje',
+      memberIds: [ids.holder, ids.newcomer],
+    });
+    await giveRole(employee, project.id, ids.holder, 'manager');
+    const none = { removable: false, gives: [] };
+
+    // The owner: everybody but themselves.
+    const forOwner = await read(employee, project.id);
+    expect(forOwner.actions.addMembers).toBe(true);
+    expect(flagsOf(forOwner)).toEqual({
+      [ids.employee]: { role: 'owner', ...none },
+      [ids.holder]: { role: 'manager', removable: true, gives: ['member', 'owner'] },
+      [ids.newcomer]: { role: 'member', removable: true, gives: ['manager', 'owner'] },
+    });
+    // A manager: adds, removes plain members, gives no role.
+    const forManager = await read(colleague, project.id);
+    expect(forManager.actions.addMembers).toBe(true);
+    expect(flagsOf(forManager)).toEqual({
+      [ids.employee]: { role: 'owner', ...none },
+      [ids.holder]: { role: 'manager', ...none },
+      [ids.newcomer]: { role: 'member', removable: true, gives: [] },
+    });
+    // A plain member: nothing.
+    const forMember = await read(third, project.id);
+    expect(forMember.actions.addMembers).toBe(false);
+    expect(flagsOf(forMember)).toEqual({
+      [ids.employee]: { role: 'owner', ...none },
+      [ids.holder]: { role: 'manager', ...none },
+      [ids.newcomer]: { role: 'member', ...none },
+    });
+    // The founder, who is no member: what the owner may do, for every row but the owner's.
+    const forFounder = await read(founder, project.id);
+    expect(forFounder.actions.addMembers).toBe(true);
+    expect(flagsOf(forFounder)).toEqual(flagsOf(forOwner));
+    // The founder as a plain member of the project still manages it, and may leave.
+    await call(founder, 'PUT', `/api/projects/${project.id}/members/${ids.founder}`);
+    expect(flagsOf(await read(founder, project.id))[ids.founder]).toEqual({
+      role: 'member',
+      removable: true,
+      gives: ['manager', 'owner'],
+    });
+    // The flags are what the routes then do: the manager's one removable row leaves.
+    const out = await call(
+      colleague,
+      'DELETE',
+      `/api/projects/${project.id}/members/${ids.newcomer}`,
+    );
+    expect(out.statusCode, out.body).toBe(200);
+  });
+
+  /**
+   * Runs `change` as somebody else who has not committed yet, with the members table locked, lets
+   * the request start and wait for the table, then commits: the request met the project as it was
+   * and writes into the project as it is.
+   */
+  async function whileOnItsWay(
+    change: (admin: {
+      query(sql: string, values?: unknown[]): Promise<{ rowCount: number | null }>;
+    }) => Promise<void>,
+    request: () => Promise<LightMyRequestResponse>,
+  ): Promise<LightMyRequestResponse> {
+    const admin = await adminPool.connect();
+    let pending: Promise<LightMyRequestResponse>;
     try {
       await admin.query('begin');
       await admin.query('lock table office.project_members in exclusive mode');
-      const removed = await admin.query(
-        'delete from office.project_members where project_id = $1 and user_id = $2',
-        [project.id, ids.employee],
-      );
-      expect(removed.rowCount).toBe(1);
-      adding = call(employee, 'PUT', `${members}/${ids.founder}`);
+      await change(admin);
+      pending = request();
       await untilServerWaits();
       await admin.query('commit');
     } catch (error) {
@@ -1114,7 +1646,44 @@ describe.skipIf(noDatabase)('projects', () => {
     } finally {
       admin.release();
     }
-    const res = await adding;
+    return pending;
+  }
+
+  it('404 when the person is removed from the project while their add is on its way; 403 when only their role was taken; nobody is added', async () => {
+    const project = await open(employee, { name: 'Eklerken çıkarılan', memberIds: [ids.holder] });
+    const members = `/api/projects/${project.id}/members`;
+    await giveRole(employee, project.id, ids.holder, 'manager');
+
+    // Only the role was taken: the manager still reads the project and is told who adds.
+    const demoted = await whileOnItsWay(
+      async (admin) => {
+        const changed = await admin.query(
+          `update office.project_members set role = 'member'
+           where project_id = $1 and user_id = $2`,
+          [project.id, ids.holder],
+        );
+        expect(changed.rowCount).toBe(1);
+      },
+      () => call(colleague, 'PUT', `${members}/${ids.founder}`),
+    );
+    expect(demoted.statusCode, demoted.body).toBe(403);
+    expect(errorCode(demoted)).toBe('project_members_not_allowed');
+    expect(messageOf(demoted)).toBe(ADD_REFUSED);
+    expect(await count('project_members', 'project_id = $1', [project.id])).toBe(2);
+
+    // Another person's removal that has not committed yet: the route still reads the project for
+    // the person, its insert then waits for the table and meets the committed removal. (The
+    // owner's row goes as it does when the owner leaves the company.)
+    const res = await whileOnItsWay(
+      async (admin) => {
+        const removed = await admin.query(
+          'delete from office.project_members where project_id = $1 and user_id = $2',
+          [project.id, ids.employee],
+        );
+        expect(removed.rowCount).toBe(1);
+      },
+      () => call(employee, 'PUT', `${members}/${ids.founder}`),
+    );
     expect(res.statusCode, res.body).toBe(404);
     expect(errorCode(res)).toBe('not_found');
     // Exactly what a project the person cannot read answers.
@@ -1129,6 +1698,72 @@ describe.skipIf(noDatabase)('projects', () => {
       ids.holder,
     ]);
     expect(await count('project_members', 'project_id = $1', [project.id])).toBe(1);
+  });
+
+  it('a removal and a role that meet a change on their way answer with the rule as it is afterwards; nothing is removed and no role is given', async () => {
+    const project = await open(employee, {
+      name: 'Çıkarırken değişen',
+      memberIds: [ids.holder, ids.newcomer],
+    });
+    const members = `/api/projects/${project.id}/members`;
+    await giveRole(employee, project.id, ids.holder, 'manager');
+    const makeManager =
+      (userId: string) =>
+      async (admin: {
+        query(sql: string, values?: unknown[]): Promise<{ rowCount: number | null }>;
+      }) => {
+        const changed = await admin.query(
+          `update office.project_members set role = 'manager' where project_id = $1 and user_id = $2`,
+          [project.id, userId],
+        );
+        expect(changed.rowCount).toBe(1);
+      };
+
+    // The plain member a manager removes is made a manager meanwhile: the database removes no
+    // row, and the answer says why.
+    const protectedNow = await whileOnItsWay(makeManager(ids.newcomer), () =>
+      call(colleague, 'DELETE', `${members}/${ids.newcomer}`),
+    );
+    expect(protectedNow.statusCode, protectedNow.body).toBe(403);
+    expect(errorCode(protectedNow)).toBe('project_manager_protected');
+    expect(await storedRoles(project.id)).toEqual({
+      [ids.employee]: 'owner',
+      [ids.holder]: 'manager',
+      [ids.newcomer]: 'manager',
+    });
+
+    // The ownership goes to somebody else while the owner gives a role: the database refuses,
+    // and the former owner is told who gives roles.
+    const admin = await adminPool.connect();
+    let pending: Promise<LightMyRequestResponse>;
+    try {
+      await admin.query('begin');
+      // The role function locks the member rows of the project; the request waits for them.
+      await admin.query(
+        `update office.project_members set role = 'member' where project_id = $1 and user_id = $2`,
+        [project.id, ids.employee],
+      );
+      await admin.query(
+        `update office.project_members set role = 'owner' where project_id = $1 and user_id = $2`,
+        [project.id, ids.holder],
+      );
+      pending = setRole(employee, project.id, ids.newcomer, 'member');
+      await untilServerWaits();
+      await admin.query('commit');
+    } catch (error) {
+      await admin.query('rollback');
+      throw error;
+    } finally {
+      admin.release();
+    }
+    const lost = await pending;
+    expect(lost.statusCode, lost.body).toBe(403);
+    expect(errorCode(lost)).toBe('project_roles_not_allowed');
+    expect(await storedRoles(project.id)).toEqual({
+      [ids.employee]: 'member',
+      [ids.holder]: 'owner',
+      [ids.newcomer]: 'manager',
+    });
   });
 
   it('409 project_customer_locked when the customer of a project with an open AI permission is changed, removed or replaced by a new one, for a member and for the founder; nothing is written, no customer is added; the other fields of the same body are not changed either', async () => {

@@ -644,8 +644,17 @@ describe('projects: members', () => {
     const before = projectDetail({
       members: [
         FOUNDER_MEMBER,
-        { ...AYSE, active: false },
-        { userId: '55555555-5555-4555-8555-555555555555', name: null, role: null, active: false },
+        // A deactivated account is given no role.
+        { ...AYSE, active: false, roleChanges: [] },
+        {
+          userId: '55555555-5555-4555-8555-555555555555',
+          name: null,
+          role: null,
+          active: false,
+          projectRole: 'member',
+          removable: true,
+          roleChanges: [],
+        },
       ],
     });
     const api = mockApi(
@@ -746,12 +755,53 @@ describe('projects: members', () => {
     });
   });
 
-  it('members: an employee has no button on their own row; the founder has one', async () => {
+  it("members: the remove button follows the API's answer: an employee has none on their own row and nobody has one on the owner's; the founder who is a plain member has one", async () => {
+    const none = { removable: false, roleChanges: [] };
+    // The reader is a manager of the project: a plain member's row has the button, their own and
+    // the owner's have none (8 October decision 44).
     mockApi(
-      projectHandlers(projectForEmployee({ members: [ME, AYSE] }), {
-        'GET /session': sessionAs(EMPLOYEE_AT_ARMADX),
-      }),
+      projectHandlers(
+        projectForEmployee({
+          members: [
+            { ...ME, projectRole: 'manager', ...none },
+            { ...AYSE, projectRole: 'owner', ...none },
+            { ...CAGAN, roleChanges: [] },
+          ],
+        }),
+        { 'GET /session': sessionAs(EMPLOYEE_AT_ARMADX) },
+      ),
     );
+    renderApp(PAGE);
+    let section = await screen.findByRole('region', { name: 'Üyeler 3' });
+    expect(within(row('Ömer Kadıoğlu (siz)')).queryByRole('button')).toBeNull();
+    expect(within(row('Ayşe Yılmaz')).queryByRole('button')).toBeNull();
+    expect(within(row('Çağan Ünal')).getByRole('button', { name: 'Projeden çıkar' })).toBeVisible();
+    expect(within(section).getAllByRole('button', { name: 'Projeden çıkar' })).toHaveLength(1);
+    cleanup();
+
+    // A plain member manages nobody: no button on any row and no form to add a person.
+    const forMember = projectForEmployee({
+      members: [
+        { ...ME, projectRole: 'member', ...none },
+        { ...AYSE, projectRole: 'owner', ...none },
+        { ...CAGAN, ...none },
+      ],
+    });
+    mockApi(
+      projectHandlers(
+        { ...forMember, actions: { ...forMember.actions, addMembers: false } },
+        { 'GET /session': sessionAs(EMPLOYEE_AT_ARMADX) },
+      ),
+    );
+    renderApp(PAGE);
+    section = await screen.findByRole('region', { name: 'Üyeler 3' });
+    expect(within(section).queryByRole('button')).toBeNull();
+    expect(within(section).queryByRole('combobox', { name: 'Eklenecek kişi' })).toBeNull();
+    cleanup();
+
+    // The founder who owns the project has no button on their own row either: the owner is not
+    // removed.
+    mockApi(projectHandlers());
     renderApp(PAGE);
     await screen.findByRole('region', { name: 'Üyeler 2' });
     expect(within(row('Ömer Kadıoğlu (siz)')).queryByRole('button')).toBeNull();
@@ -760,10 +810,26 @@ describe('projects: members', () => {
     ).toBeVisible();
     cleanup();
 
-    // The founder may take themselves off: they see every project anyway, and the dialog says so.
-    mockApi(projectHandlers());
+    // The founder who is a plain member may take themselves off: they see every project anyway,
+    // and the dialog says so.
+    mockApi(
+      projectHandlers(
+        projectDetail({
+          members: [
+            {
+              ...FOUNDER_MEMBER,
+              projectRole: 'member',
+              removable: true,
+              roleChanges: ['manager', 'owner'],
+            },
+            { ...AYSE, projectRole: 'owner', ...none },
+          ],
+        }),
+      ),
+    );
     renderApp(PAGE);
     await screen.findByRole('region', { name: 'Üyeler 2' });
+    expect(within(row('Ayşe Yılmaz')).queryByRole('button')).toBeNull();
     await userEvent.click(
       within(row('Ömer Kadıoğlu (siz)')).getByRole('button', { name: 'Projeden çıkar' }),
     );
