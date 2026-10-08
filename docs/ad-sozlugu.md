@@ -351,6 +351,12 @@ Skill klasörü: `skills/<ad>/SKILL.md` ve yanında `templates/`, `examples/`, `
 - Talep nedeni kodu: `not_started` (çalışma başlamadı; talep insana düşer, ajan yeniden açılsa da iş kendiliğinden başlamaz)
 - API hata kodu: `request_changed` (aynı talepte başka bir işlem bunu geçersiz kıldı; sayfa yenilenir)
 - API yanıt alanları: `acceptance.returnsToAgent` ("istediğim bu değil" işi ajana geri döndürür mü), ofis yanıtında ajan başına `ready` (kartın çalışacak sürümü var mı)
+- Çalıştırıcının iz kaydı olayı: `run_skipped` (iş geldi, yapılacak bir şey yoktu: çalışma zaten sürüyor ya da sonuç bekliyor, ya da talep kapanmış; `run_refused` değildir, talep sayfası bunu "çalışma başlamadı" diye okumaz)
+- Çalıştırıcının günlük olayları: `run_skipped`, `run_superseded` (yeni yönlendirmenin işi, eski adımın açık kalan çalışmasını kapattı)
+- Çalışma hata kodları: `routing_changed` (çalışmanın adımı yeni bir yönlendirmeyle değişti; koordinatörde: çalışma sürerken talebi bir kişi yönlendirdi), `request_changed` (sonuç kaydedilemedi: talep kapandı, yeniden yönlendirildi ya da başka bir çalışmanın sonucu bekliyor)
+- `runs.output` alanı: `model_sends` (sağlayıcıya gönderilen istek sayısı; yanıt alınamayan çağrılar ve istemcinin yeniden denemeleri dahil, `model_calls` yalnızca yanıtları sayar)
+- Kart sürümü içeriği (`card_versions.content`): `tools` (kartın kendi araçlarının katalog satırları: tür ve onay kuralı), `model` (kartın modelinin `agents/models.yaml` satırı). Araç kataloğu ya da model tablosu değişince ilgili kartlara yeni sürüm yazılır.
+- Ortam: worker `ANTHROPIC_CUSTOM_HEADERS` doluysa açılmaz (SDK bu başlıkları her model isteğine ekler ve kapatılamaz)
 
 ## Notlar
 
