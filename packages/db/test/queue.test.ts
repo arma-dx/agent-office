@@ -1,9 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
 import { describe, expect, inject, it, vi } from 'vitest';
+import { cardSchema } from '@agent-office/shared';
 import {
   AGENT_RUN_DEAD_QUEUE,
+  AGENT_RUN_EXPIRE_MARGIN_SECONDS,
   AGENT_RUN_QUEUE,
+  agentRunExpireSeconds,
   agentRunJobSchema,
   agentRunSender,
   createQueue,
@@ -11,6 +14,23 @@ import {
   jobDataSchema,
   sendJob,
 } from '../src/queue.ts';
+
+describe('the expiry of an agent run job', () => {
+  it('follows the time limit of the card, with a margin, for every limit a card may have', () => {
+    // The limits the repository's cards name today, and the largest the card schema allows.
+    for (const minutes of [2, 5, 15, 30, 60]) {
+      const expiry = agentRunExpireSeconds(minutes);
+      expect(expiry).toBe(minutes * 60 + AGENT_RUN_EXPIRE_MARGIN_SECONDS);
+      // A run inside its limit is never met by the expiry of its own job, and a run the dead
+      // letter handler finds is past its limit by more than the runner's closing time.
+      expect(expiry).toBeGreaterThan(minutes * 60 + 60);
+    }
+    expect(cardSchema.shape.limits.shape.duration_minutes.safeParse(60).success).toBe(true);
+    expect(cardSchema.shape.limits.shape.duration_minutes.safeParse(61).success).toBe(false);
+    // No card version: the default run time of ten minutes.
+    expect(agentRunExpireSeconds(null)).toBe(15 * 60);
+  });
+});
 
 describe('job data (rule 10)', () => {
   it('accepts only id fields', () => {
@@ -108,6 +128,8 @@ describe.skipIf(database === null)('queue in the database', () => {
       }
       const jobs = await queue.fetch(AGENT_RUN_QUEUE);
       expect(jobs.map((fetched) => fetched.data)).toEqual([job]);
+      // An agent without a card version here: the job gets the default run time plus the margin.
+      expect(jobs.map((fetched) => fetched.expireInSeconds)).toEqual([15 * 60]);
       await expect(sender.send(pool, { ...job, agentCode: 'not a code' })).rejects.toThrow();
     } finally {
       await queue.stop({ graceful: false });

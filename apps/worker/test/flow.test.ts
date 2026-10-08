@@ -156,11 +156,25 @@ describe.skipIf(noDatabase)('a request from the first line to "done"', () => {
       waitingForMe: false,
     });
 
+    // The job's expiry follows the card of its agent: the run's time limit plus five minutes.
+    const expiryOf = async (agentCode: string): Promise<number | undefined> => {
+      const [row] = await admin<{ expire_seconds: number }>(
+        `select expire_seconds from pgboss.job
+         where name = $1 and data ->> 'taskId' = $2 and data ->> 'agentCode' = $3`,
+        [AGENT_RUN_QUEUE, id, agentCode],
+      );
+      return row?.expire_seconds;
+    };
+    // KOR-1's card: two minutes.
+    expect(await expiryOf('KOR-1')).toBe(2 * 60 + 5 * 60);
+
     // The coordinator routes; the unit agent's job is put on the queue by that very transaction.
     expect(await work(new ScriptedModel([toolUse('route_task', ROUTE_TO_SOS)]))).toEqual({
       outcome: 'routed',
       agent: 'KOR-1',
     });
+    // SOS-2's card: five minutes. Sent by the runner, through the same sender.
+    expect(await expiryOf('SOS-2')).toBe(5 * 60 + 5 * 60);
     expect(await detail(employee, id)).toMatchObject({
       status: 'in_progress',
       stage: 'working',

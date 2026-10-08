@@ -58,9 +58,20 @@ export async function sendJob(
 export const AGENT_RUN_QUEUE = 'agent_run';
 /** Jobs that failed or expired; the worker's second handler cleans up after a lost run. */
 export const AGENT_RUN_DEAD_QUEUE = 'agent_run_dead';
-// Longer than the longest time limit of a card (CLAUDE.md default: 10 minutes) plus the margin the
-// runner needs to close the run.
-const AGENT_RUN_EXPIRE_SECONDS = 15 * 60;
+// A job's expiry follows the card of its agent: the run's time limit (limits.duration_minutes of
+// the card version the run will open with) plus this margin, which covers the wait for the run's
+// opening transaction and the time the runner needs to close the run. It is set when the job is
+// sent (agentRunSender). A card may allow up to 60 minutes, so no fixed number is "longer than
+// the longest limit of a card".
+export const AGENT_RUN_EXPIRE_MARGIN_SECONDS = 5 * 60;
+// CLAUDE.md: without a limit on the card a run may take 10 minutes. Used for a job whose agent has
+// no card version (the runner refuses such a job at once) and as the queue's own default.
+const DEFAULT_RUN_MINUTES = 10;
+
+/** The expiry of the job of a run that may take this many minutes (null: no card version). */
+export function agentRunExpireSeconds(durationMinutes: number | null): number {
+  return (durationMinutes ?? DEFAULT_RUN_MINUTES) * 60 + AGENT_RUN_EXPIRE_MARGIN_SECONDS;
+}
 
 /**
  * One agent run to start: who asked (the run's identity), on which request, and which agent. Ids
@@ -92,7 +103,8 @@ export async function ensureAgentRunQueues(
     await queue.createQueue(AGENT_RUN_QUEUE, {
       policy: 'standard',
       retryLimit: 0,
-      expireInSeconds: AGENT_RUN_EXPIRE_SECONDS,
+      // The default; every job carries its own expiry, from its agent's card.
+      expireInSeconds: agentRunExpireSeconds(null),
       deadLetter: AGENT_RUN_DEAD_QUEUE,
     });
   }
@@ -111,7 +123,20 @@ export function agentRunSender(queue: Pick<PgBoss, 'send'>): AgentRunSender {
   return {
     async send(client, job) {
       const data = agentRunJobSchema.parse(job);
+      // The time limit of the card version the run will open with (a global table, no company
+      // data): the job must not expire while a run inside its limit is still working.
+      const limit = await client.query<{ minutes: number | null }>(
+        `select case
+                  when jsonb_typeof(v.content -> 'card' -> 'limits' -> 'duration_minutes') = 'number'
+                  then (v.content -> 'card' -> 'limits' ->> 'duration_minutes')::float8
+                end as minutes
+         from office.agent_definitions d
+         join office.card_versions v on v.id = d.current_version_id
+         where d.code = $1`,
+        [data.agentCode],
+      );
       const id = await queue.send(AGENT_RUN_QUEUE, data, {
+        expireInSeconds: Math.ceil(agentRunExpireSeconds(limit.rows[0]?.minutes ?? null)),
         db: { executeSql: (text: string, values?: unknown[]) => client.query(text, values) },
       });
       if (id === null) {
