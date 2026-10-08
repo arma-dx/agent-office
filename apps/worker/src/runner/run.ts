@@ -766,7 +766,7 @@ export async function runAgentJob(
     } = {},
   ): Promise<RunResult> => {
     await agentStep(deps.pool, context, async (client) => {
-      // Once: a run that is already closed is not written again.
+      // Once: the status, the code and the summary of a run that is already closed stay.
       const closed = await client.query(
         `update office.runs set status = $2, finished_at = now(), error_code = $3, summary = $4,
            output = $5
@@ -788,6 +788,22 @@ export async function runAgentJob(
       );
       if ((closed.rowCount ?? 0) > 0) {
         await audit(client, `run_${status}`, { runId, recordType: 'task', recordId: job.taskId });
+      } else {
+        // Closed from elsewhere while this runner was working (the job of a new routing, a lost
+        // run's handler): its status and its code stand. What this runner sent is recorded with
+        // the run all the same, like its cost: every send reached the provider.
+        await client.query(
+          `update office.runs set output = coalesce(output, '{}'::jsonb) || $2::jsonb
+           where id = $1`,
+          [
+            runId,
+            JSON.stringify({
+              model_calls: modelCalls,
+              model_sends: modelSends,
+              request_ids: requestIds,
+            }),
+          ],
+        );
       }
     });
     deps.log('run_finished', { run: runId, status, outcome, code: fields.errorCode ?? null });

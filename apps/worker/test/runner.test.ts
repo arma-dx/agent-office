@@ -1673,14 +1673,16 @@ describe.skipIf(noDatabase)('a run belongs to the step it was opened for', () =>
       event: 'run_superseded',
       fields: { run: old.runId, task: taskId, agent: 'SOS-2' },
     });
-    // The older run was closed when the new one opened; what its last call cost is still written,
-    // and its late answer stores nothing.
+    // The older run was closed when the new one opened; what its last call cost and that the
+    // call was sent are still written, and its late answer stores nothing.
     expect(old).toMatchObject({ outcome: 'stopped', modelCalls: 1 });
     expect(await runRow(old.runId)).toMatchObject({
       status: 'stopped',
       error_code: 'routing_changed',
+      summary: null,
       tool_call_count: 0,
       input_tokens: 700,
+      output: { model_calls: 1, model_sends: 1, request_ids: [] },
     });
     expect(
       await admin(`select event from office.audit_log where run_id = $1 order by id`, [old.runId]),
