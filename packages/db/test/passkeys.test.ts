@@ -2,6 +2,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { afterAll, describe, expect, it } from 'vitest';
 import type { ContextInput } from '../src/context.ts';
+import { listNotifications } from '../src/notifications.ts';
 import { FOUNDER_PASSKEY, ids, TOOL } from './fixtures.ts';
 import {
   adminQuery,
@@ -2286,6 +2287,24 @@ describe.skipIf(noDatabase)('resetting passkeys', () => {
           now: true,
         },
       ]);
+      // The Bugün screen lists it for the person alone, unread and about no request; the founder
+      // who reset reads the company's log and still does not get it as their own.
+      await tx.setContext(employeeA);
+      expect(await listNotifications(tx.client, { keepDays: 30, limit: 10 })).toEqual([
+        {
+          id: expect.any(String) as unknown,
+          template: 'passkeys_reset',
+          created_at: expect.any(Date) as unknown,
+          read: false,
+          request_id: null,
+          request_title: null,
+          unit_code: null,
+          unit_name: null,
+        },
+      ]);
+      await tx.setContext(founderA);
+      expect(await tx.count('notifications', `template = 'passkeys_reset'`)).toBe(1);
+      expect(await listNotifications(tx.client, { keepDays: 30, limit: 10 })).toEqual([]);
 
       // The old sessions register nothing; after a new Google sign-in the person registers a
       // first passkey again and re-verifies with it. The revoked ones never come back.

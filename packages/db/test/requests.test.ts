@@ -1,6 +1,11 @@
 import { REQUEST_NOTIFICATION_TEMPLATES } from '@agent-office/shared';
 import { afterAll, describe, expect, it } from 'vitest';
 import type { ContextInput } from '../src/context.ts';
+import {
+  listNotifications,
+  markNotificationsRead,
+  type NotificationRow,
+} from '../src/notifications.ts';
 import { listRequests, readRequest } from '../src/requests.ts';
 import { ids } from './fixtures.ts';
 import {
@@ -2312,6 +2317,256 @@ describe.skipIf(noDatabase)('the requester is told when a request closes behind 
           [ids.employeeA],
         ),
       ).toEqual([{ read: true }]);
+    });
+  });
+
+  // The statements of the Bugün screen ---------------------------------------------------------
+
+  const LISTED = { keepDays: 30, limit: 50 };
+
+  /** The listed notifications of the context person that are about this request. */
+  async function listedFor(
+    tx: Tx,
+    context: ContextInput,
+    task: string,
+  ): Promise<NotificationRow[]> {
+    await tx.setContext(context);
+    return (await listNotifications(tx.client, LISTED)).filter((row) => row.request_id === task);
+  }
+
+  /** Employee A's request, stopped by the founder: one notification for employee A. */
+  async function stoppedRequest(tx: Tx, project: string | null = null): Promise<string> {
+    await tx.setContext(employeeA);
+    const task = await openRequest(tx, project);
+    await tx.setContext(founderA);
+    await tx.rows(CLOSE_WITH, [task, 'Sent twice by mistake']);
+    return task;
+  }
+
+  async function noteId(tx: Tx, task: string): Promise<string> {
+    await tx.setContext(founderA);
+    return (
+      await one<{ id: string }>(tx, 'select id from office.notifications where record_id = $1', [
+        task,
+      ])
+    ).id;
+  }
+
+  it('a notification is listed for its recipient alone: not for the founder, another company, no context or an agent run', async () => {
+    await inTransaction(async (tx) => {
+      const task = await stoppedRequest(tx);
+      expect(await listedFor(tx, employeeA, task)).toMatchObject([
+        { template: 'request_stopped', read: false, request_id: task },
+      ]);
+      // The founder reads the company's log (the row policy shows the row), and the statement
+      // still gives the founder only their own.
+      await tx.setContext(founderA);
+      expect(await tx.count('notifications', 'record_id = $1', [task])).toBe(1);
+      expect(await listNotifications(tx.client, LISTED)).toEqual([]);
+      for (const context of [
+        approverA,
+        colleagueA,
+        externalA,
+        founderP,
+        employeeP,
+        // Not a member there: the same person in another company's context.
+        { companyId: ids.pillika, userId: ids.employeeA },
+        // A person without a company, a company without a person, and nothing at all.
+        { userId: ids.employeeA },
+        { companyId: ids.arma },
+        {},
+        // A run in the recipient's name is not the recipient reading.
+        agentRun(ids.employeeA, 'KOR-1'),
+        agentRun(ids.founder, 'KOR-1'),
+      ]) {
+        await tx.setContext(context);
+        expect(await listNotifications(tx.client, LISTED), JSON.stringify(context)).toEqual([]);
+      }
+    });
+    // With the worker's role too: nothing of the person's notifications reaches an agent run.
+    await inWorkerTransaction(async (tx) => {
+      await tx.setContext(agentRun(ids.employeeA, 'KOR-1'));
+      expect(await tx.count('notifications', 'recipient_user_id = $1', [ids.employeeA])).toBe(1);
+      expect(await listNotifications(tx.client, LISTED)).toEqual([]);
+    });
+  });
+
+  it('lists the request’s title and the unit of a return, the newest first, and no template without a sentence', async () => {
+    await inTransaction(async (tx) => {
+      // A stop of a request that had reached its unit, and a return.
+      const { task: stopped } = await submittedRequest(tx);
+      await tx.setContext(founderA);
+      await tx.rows(CLOSE_WITH, [stopped, 'Sent twice by mistake']);
+      await tx.setContext(employeeA);
+      const returned = await openRequest(tx);
+      await tx.setContext(agentRun(ids.employeeA, 'KOR-1'));
+      const run = await openRun(tx, returned, 'KOR-1');
+      await tx.rows(ROUTE, [
+        returned,
+        JSON.stringify([{ unit: 'HAF', agent: null, reason: 'Nobody there can write it' }]),
+        run,
+      ]);
+      await tx.setContext(employeeA);
+      const rows = await listNotifications(tx.client, LISTED);
+      // The fixtures' notification of employee A (task_assigned) has no sentence in the panel.
+      expect(await tx.count('notifications', `template = 'task_assigned'`)).toBe(1);
+      expect(rows.map((row) => row.template).sort()).toEqual([
+        'request_returned',
+        'request_stopped',
+      ]);
+      expect(rows.find((row) => row.request_id === returned)).toEqual({
+        id: expect.any(String) as unknown,
+        template: 'request_returned',
+        created_at: expect.any(Date) as unknown,
+        read: false,
+        request_id: returned,
+        request_title: 'A request',
+        unit_code: 'HAF',
+        unit_name: 'Kurumsal Hafıza',
+      });
+      // A stop names no unit, also though the request stood at one.
+      expect(await one(tx, 'select unit_code from office.tasks where id = $1', [stopped])).toEqual({
+        unit_code: 'HAF',
+      });
+      expect(rows.find((row) => row.request_id === stopped)).toMatchObject({
+        template: 'request_stopped',
+        request_title: 'A request',
+        unit_code: null,
+        unit_name: null,
+      });
+      // Nothing of the coordinator's or the founder's words.
+      expect(JSON.stringify(rows)).not.toMatch(/Nobody there|Sent twice/);
+
+      // Rows of one transaction carry one instant: the list never goes back in time.
+      const times = rows.map((row) => row.created_at.getTime());
+      expect(times).toEqual([...times].sort((x, y) => y - x));
+    });
+    // The newest first, cut at the limit: shown with rows of different ages, which only the
+    // privileged role can make (the statement names its reader itself, so it reads the same).
+    await inAdminTransaction(async (tx) => {
+      const older = await stoppedRequest(tx);
+      const newer = await stoppedRequest(tx);
+      const middle = await stoppedRequest(tx);
+      await tx.exec(
+        `update office.notifications set created_at = now() - interval '2 hours'
+         where record_id = $1`,
+        [older],
+      );
+      await tx.exec(
+        `update office.notifications set created_at = now() - interval '1 hour'
+         where record_id = $1`,
+        [middle],
+      );
+      await tx.setContext(employeeA);
+      expect((await listNotifications(tx.client, LISTED)).map((row) => row.request_id)).toEqual([
+        newer,
+        middle,
+        older,
+      ]);
+      expect(
+        (await listNotifications(tx.client, { keepDays: 30, limit: 2 })).map(
+          (row) => row.request_id,
+        ),
+      ).toEqual([newer, middle]);
+    });
+  });
+
+  it('an unread notification is listed whatever its age; a read one only inside the keeping time', async () => {
+    await inTransaction(async (tx) => {
+      const task = await stoppedRequest(tx);
+      const id = await noteId(tx, task);
+      const listed = async (keepDays: number): Promise<NotificationRow[]> => {
+        await tx.setContext(employeeA);
+        return (await listNotifications(tx.client, { keepDays, limit: 50 })).filter(
+          (row) => row.request_id === task,
+        );
+      };
+      // Not read yet: listed also when nothing read is kept.
+      expect(await listed(0)).toMatchObject([{ id, read: false }]);
+      expect(await markNotificationsRead(tx.client, [id])).toBe(1);
+      expect(await listed(0)).toEqual([]);
+      expect(await listed(30)).toMatchObject([{ id, read: true }]);
+    });
+  });
+
+  it('marks only the reader’s own unread notifications and says how many', async () => {
+    await inTransaction(async (tx) => {
+      const task = await stoppedRequest(tx);
+      const id = await noteId(tx, task);
+      const other = await noteId(tx, await stoppedRequest(tx));
+      await tx.setContext(founderP);
+      const pillika = (
+        await one<{ id: string }>(
+          tx,
+          'select id from office.notifications where recipient_user_id = $1',
+          [ids.employeeP],
+        )
+      ).id;
+      // Somebody else's, also for the founder who reads the log; and nothing in an agent run.
+      for (const context of [approverA, founderA, agentRun(ids.employeeA, 'KOR-1')]) {
+        await tx.setContext(context);
+        expect(await markNotificationsRead(tx.client, [id]), JSON.stringify(context)).toBe(0);
+      }
+      // Another company's notification is nobody's here, and its own recipient marks it only in
+      // its own company's context.
+      for (const context of [founderA, employeeA, { companyId: ids.arma, userId: ids.employeeP }]) {
+        await tx.setContext(context);
+        expect(await markNotificationsRead(tx.client, [pillika]), JSON.stringify(context)).toBe(0);
+      }
+      const readAt = async (note: string): Promise<boolean> => {
+        await tx.setContext(founderA);
+        return (
+          await one<{ read: boolean }>(
+            tx,
+            'select read_at is not null as read from office.notifications where id = $1',
+            [note],
+          )
+        ).read;
+      };
+      expect(await readAt(id)).toBe(false);
+      await tx.setContext(employeeA);
+      // Ids that are not the reader's change nothing and stop nothing.
+      expect(await markNotificationsRead(tx.client, [id, pillika])).toBe(1);
+      expect(await markNotificationsRead(tx.client, [id])).toBe(0);
+      expect(await readAt(id)).toBe(true);
+      // Only what was named.
+      expect(await readAt(other)).toBe(false);
+      await tx.setContext(employeeP);
+      expect(await markNotificationsRead(tx.client, [pillika])).toBe(1);
+    });
+    // The worker's role cannot write the mark at all.
+    await inWorkerTransaction(async (tx) => {
+      await tx.setContext(employeeA);
+      const [mine] = await tx.rows<{ id: string }>(
+        'select id from office.notifications where recipient_user_id = $1',
+        [ids.employeeA],
+      );
+      await expect(markNotificationsRead(tx.client, [mine?.id ?? ''])).rejects.toMatchObject({
+        code: '42501',
+      });
+    });
+  });
+
+  it('a project request’s notification carries the project and is not listed for a requester who left the project', async () => {
+    await inTransaction(async (tx) => {
+      const task = await stoppedRequest(tx, ids.projectA);
+      expect(await notes(tx, task)).toMatchObject([
+        { template: 'request_stopped', recipient_user_id: ids.employeeA, project_id: ids.projectA },
+      ]);
+      expect(await listedFor(tx, employeeA, task)).toMatchObject([
+        { template: 'request_stopped', request_title: 'A request' },
+      ]);
+      await tx.setContext(founderA);
+      expect(
+        await tx.exec('delete from office.project_members where project_id = $1 and user_id = $2', [
+          ids.projectA,
+          ids.employeeA,
+        ]),
+      ).toBe(1);
+      // The request is no longer the person's to read, so neither is its title.
+      await tx.setContext(employeeA);
+      expect(await tx.count('tasks', 'id = $1', [task])).toBe(0);
+      expect(await listNotifications(tx.client, LISTED)).toEqual([]);
     });
   });
 });
