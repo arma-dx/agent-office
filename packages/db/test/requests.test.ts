@@ -9,11 +9,14 @@ import {
 import {
   countPendingDecisions,
   listExpectedRequests,
+  listOpenRequests,
   listPendingAcceptances,
   listPendingApprovals,
   listRequests,
+  readAgentSwitch,
   readRequest,
   readResultApprovals,
+  stopAgentIfOpen,
   type PendingDecisionCounts,
 } from '../src/requests.ts';
 import { ids } from './fixtures.ts';
@@ -2971,6 +2974,236 @@ describe.skipIf(noDatabase)('the requester is told when a request closes behind 
       ]) {
         expect(await asked(tx, context)).toEqual(NOTHING);
       }
+    });
+  });
+});
+
+describe.skipIf(noDatabase)('the open requests the office view counts', () => {
+  afterAll(closePools);
+
+  const ALL = { coordinator: 'KOR-1', limit: 50 };
+
+  async function openFor(tx: Tx, context: ContextInput): Promise<string[]> {
+    await tx.setContext(context);
+    return (await listOpenRequests(tx.client, ALL)).map((row) => row.id);
+  }
+
+  it('gives every open request the reader may read, the longest wait first, with the facts of its stage', async () => {
+    await inTransaction(async (tx) => {
+      // The fixture's request waits for its requester. Added here: one that was only opened, one
+      // whose result waits for the founder, one that is done and one that was stopped.
+      await tx.setContext(colleagueA);
+      const opened = await openRequest(tx);
+      const waiting = await submittedRequest(tx);
+      const finished = await submittedRequest(tx);
+      await tx.setContext(founderA);
+      await tx.exec(`update office.approvals set status = 'approved' where id = $1`, [
+        finished.approval,
+      ]);
+      await tx.setContext(employeeA);
+      await tx.exec(
+        `update office.requester_approvals set status = 'approved' where task_id = $1`,
+        [finished.task],
+      );
+      expect(await statusOf(tx, finished.task)).toBe('done');
+      await tx.setContext(employeeA);
+      const closed = await openRequest(tx);
+      await tx.setContext(founderA);
+      await tx.rows('select office.close_request($1, $2)', [closed, 'Sent twice by mistake']);
+
+      await tx.setContext(founderA);
+      const rows = await listOpenRequests(tx.client, ALL);
+      expect(rows.map((row) => row.id).sort()).toEqual([ids.requestA, opened, waiting.task].sort());
+      // The one that has not moved for longest first; rows of one instant by id.
+      expect(rows[0]?.id).toBe(ids.requestA);
+      expect(rows.slice(1).map((row) => row.id)).toEqual([opened, waiting.task].sort());
+      // The same row as the request page reads: the facts the stage is derived from.
+      expect(rows.find((row) => row.id === waiting.task)).toMatchObject({
+        status: 'awaiting_approval',
+        step_agent_code: 'HAF-1',
+        pending_result: true,
+        pending_acceptance: false,
+      });
+      expect(rows.find((row) => row.id === opened)).toMatchObject({
+        status: 'open',
+        routed: false,
+        step_agent_code: null,
+        run_agent_code: null,
+      });
+      expect(await readRequest(tx.client, 'KOR-1', waiting.task)).toEqual(
+        rows.find((row) => row.id === waiting.task),
+      );
+      // The limit cuts after the order.
+      expect(
+        (await listOpenRequests(tx.client, { coordinator: 'KOR-1', limit: 2 })).map(
+          (row) => row.id,
+        ),
+      ).toEqual([ids.requestA, [opened, waiting.task].sort()[0]]);
+
+      // An employee who is not the requester of any of them reads the same requests (they are
+      // not inside a project), unlike the pick of the Bugün list.
+      expect((await openFor(tx, colleagueA)).sort()).toEqual(
+        [ids.requestA, opened, waiting.task].sort(),
+      );
+      expect(await listExpectedRequests(tx.client, ALL)).toHaveLength(1);
+    });
+  });
+
+  it('gives nothing of another company, without a context, to an agent run or to an external person', async () => {
+    await inTransaction(async (tx) => {
+      const { task } = await submittedRequest(tx);
+      expect(await openFor(tx, founderA)).toContain(task);
+      // Pillika's founder and employee get Pillika's request alone.
+      expect(await openFor(tx, founderP)).toEqual([ids.requestP]);
+      expect(await openFor(tx, employeeP)).toEqual([ids.requestP]);
+      // A person in a company they are not a member of, and a context that lacks a part.
+      expect(await openFor(tx, { companyId: ids.pillika, userId: ids.employeeA })).toEqual([]);
+      expect(await openFor(tx, { companyId: ids.arma, userId: ids.employeeP })).toEqual([]);
+      expect(await openFor(tx, { userId: ids.founder })).toEqual([]);
+      expect(await openFor(tx, { companyId: ids.arma })).toEqual([]);
+      expect(await openFor(tx, {})).toEqual([]);
+      // The founder space has no request.
+      expect(await openFor(tx, { companyId: ids.founderSpace, userId: ids.founder })).toEqual([]);
+      // An agent run is answered with nothing, whoever its identity is.
+      expect(await openFor(tx, agentRun(ids.founder, 'KOR-1'))).toEqual([]);
+      expect(await openFor(tx, agentRun(ids.employeeA, 'HAF-1'))).toEqual([]);
+      expect(await openFor(tx, externalA)).toEqual([]);
+    });
+    // The worker's role cannot ask at all: the facts of a request's flow are the API's alone.
+    await inWorkerTransaction(async (tx) => {
+      for (const context of [agentRun(ids.founder, 'KOR-1'), founderA]) {
+        await tx.setContext(context);
+        await tx.client.query('savepoint office_pick');
+        await expect(listOpenRequests(tx.client, ALL)).rejects.toMatchObject({ code: '42501' });
+        await tx.client.query('rollback to savepoint office_pick');
+      }
+    });
+  });
+
+  it('leaves a request inside a project out for a reader who is not its member', async () => {
+    await inTransaction(async (tx) => {
+      // Employee A is a member of project A; the colleague and the approver are not.
+      await tx.setContext(employeeA);
+      const inProject = await openRequest(tx, ids.projectA);
+      expect(await openFor(tx, employeeA)).toContain(inProject);
+      expect(await openFor(tx, founderA)).toContain(inProject);
+      expect(await openFor(tx, colleagueA)).not.toContain(inProject);
+      expect(await openFor(tx, approverA)).not.toContain(inProject);
+      // Made a member, the same person reads it; taken out again, no longer.
+      await tx.setContext(founderA);
+      await tx.exec(
+        `insert into office.project_members (company_id, project_id, user_id) values ($1, $2, $3)`,
+        [ids.arma, ids.projectA, ids.sharedEmployee],
+      );
+      expect(await openFor(tx, colleagueA)).toContain(inProject);
+      await tx.setContext(founderA);
+      await tx.exec('delete from office.project_members where project_id = $1 and user_id = $2', [
+        ids.projectA,
+        ids.sharedEmployee,
+      ]);
+      expect(await openFor(tx, colleagueA)).not.toContain(inProject);
+    });
+  });
+});
+
+describe.skipIf(noDatabase)('stopping an agent only where it is open', () => {
+  afterAll(closePools);
+
+  const switchOf = async (tx: Tx, company: string, agent: string): Promise<string | null> => {
+    const rows = await tx.rows<{ status: string }>(
+      'select status from office.company_agents where company_id = $1 and agent_code = $2',
+      [company, agent],
+    );
+    return rows[0]?.status ?? null;
+  };
+
+  it('stops an open agent and touches nothing else: not a stopped one, not one without a row', async () => {
+    await inTransaction(async (tx) => {
+      await tx.setContext(founderA);
+      // The fixtures: in Arma DX KOR-1 is open and HAF-1 is stopped; Pillika has no row for HAF-1.
+      expect(await readAgentSwitch(tx.client, 'KOR-1')).toEqual({
+        name: 'Ofis Koordinatörü',
+        ready: true,
+        status: 'enabled',
+      });
+      const stopped = await stopAgentIfOpen(tx.client, 'KOR-1');
+      expect(stopped).not.toBeNull();
+      expect(await switchOf(tx, ids.arma, 'KOR-1')).toBe('stopped');
+      expect((await readAgentSwitch(tx.client, 'KOR-1'))?.status).toBe('stopped');
+      // A second time there is nothing to stop.
+      expect(await stopAgentIfOpen(tx.client, 'KOR-1')).toBeNull();
+      expect(await stopAgentIfOpen(tx.client, 'HAF-1')).toBeNull();
+      expect(await switchOf(tx, ids.arma, 'HAF-1')).toBe('stopped');
+      // An agent the company never opened gets no row.
+      await tx.setContext(founderP);
+      expect(await stopAgentIfOpen(tx.client, 'HAF-1')).toBeNull();
+      expect(await switchOf(tx, ids.pillika, 'HAF-1')).toBeNull();
+      expect(await readAgentSwitch(tx.client, 'HAF-1')).toMatchObject({ status: null });
+      await tx.setContext(founderA);
+      // A closed one stays closed.
+      await tx.exec(
+        `update office.company_agents set status = 'disabled'
+         where company_id = $1 and agent_code = 'HAF-1'`,
+        [ids.arma],
+      );
+      expect(await stopAgentIfOpen(tx.client, 'HAF-1')).toBeNull();
+      expect(await switchOf(tx, ids.arma, 'HAF-1')).toBe('disabled');
+      // An agent that does not exist.
+      expect(await stopAgentIfOpen(tx.client, 'XYZ-9')).toBeNull();
+      expect(await readAgentSwitch(tx.client, 'XYZ-9')).toBeNull();
+    });
+  });
+
+  it('stops in the context company alone, and only for its founder', async () => {
+    await inTransaction(async (tx) => {
+      // The fixtures open KOR-1 in both companies.
+      await tx.setContext(founderP);
+      expect(await switchOf(tx, ids.pillika, 'KOR-1')).toBe('enabled');
+      // Nobody but the founder: an employee, an external person, a founder of another company,
+      // an agent run in the founder's name, no context.
+      for (const context of [
+        employeeA,
+        externalA,
+        { companyId: ids.arma, userId: ids.otherFounder },
+        agentRun(ids.founder, 'KOR-1'),
+        { companyId: ids.arma },
+        {},
+      ]) {
+        await tx.setContext(context);
+        expect(await stopAgentIfOpen(tx.client, 'KOR-1')).toBeNull();
+      }
+      await tx.setContext(founderA);
+      expect(await switchOf(tx, ids.arma, 'KOR-1')).toBe('enabled');
+
+      // The founder stops it in Arma DX: Pillika's switch is another row and stays open.
+      expect(await stopAgentIfOpen(tx.client, 'KOR-1')).not.toBeNull();
+      expect(await switchOf(tx, ids.arma, 'KOR-1')).toBe('stopped');
+      await tx.setContext(founderP);
+      expect(await switchOf(tx, ids.pillika, 'KOR-1')).toBe('enabled');
+      expect((await readAgentSwitch(tx.client, 'KOR-1'))?.status).toBe('enabled');
+      // Each company is stopped from its own context.
+      expect(await stopAgentIfOpen(tx.client, 'KOR-1')).not.toBeNull();
+      expect(await switchOf(tx, ids.pillika, 'KOR-1')).toBe('stopped');
+      // The switch of one company is never read from the other's context.
+      await tx.setContext(employeeP);
+      expect((await readAgentSwitch(tx.client, 'KOR-1'))?.status).toBe('stopped');
+      await tx.setContext({ companyId: ids.pillika, userId: ids.employeeA });
+      expect((await readAgentSwitch(tx.client, 'KOR-1'))?.status).toBeNull();
+    });
+  });
+
+  it("is an act of a person: the worker's role cannot stop an agent, whatever context it sets", async () => {
+    await inWorkerTransaction(async (tx) => {
+      // The founder's context without an agent code is the one the row policy would let through.
+      for (const context of [founderA, agentRun(ids.founder, 'KOR-1')]) {
+        await tx.setContext(context);
+        await tx.client.query('savepoint office_stop');
+        await expect(stopAgentIfOpen(tx.client, 'KOR-1')).rejects.toMatchObject({ code: '42501' });
+        await tx.client.query('rollback to savepoint office_stop');
+      }
+      // The runner still reads the switch, as it must before every step.
+      await tx.setContext(agentRun(ids.founder, 'KOR-1'));
+      expect((await readAgentSwitch(tx.client, 'KOR-1'))?.status).toBe('enabled');
     });
   });
 });

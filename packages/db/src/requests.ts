@@ -231,6 +231,29 @@ export async function listExpectedRequests(
   return rows;
 }
 
+/**
+ * Every open request of the context company the calling person may read, the one that has not
+ * moved for longest first: what the live states of the office view are counted from (8 October
+ * decision 10). The same row as the request page and the Bugün list read, so the stage derived
+ * from it is the same. Which requests a person reads is decided by the row policy (a request
+ * inside a project is read by its members and the founder), never by a condition here. An agent
+ * run is answered with nothing. Served by the index tasks_requests_open.
+ */
+export async function listOpenRequests(
+  client: Queryable,
+  options: { coordinator: string; limit: number },
+): Promise<RequestRow[]> {
+  const { rows } = await client.query<RequestRow>(
+    `${requestSql(`and x.status not in ('done', 'cancelled')
+      and office.ctx_agent_code() is null
+      order by x.updated_at, x.id
+      limit $2`)}
+     order by t.updated_at, t.id`,
+    [options.coordinator, options.limit],
+  );
+  return rows;
+}
+
 /** Did this person already open a request with this id (a repeated send). */
 export async function ownRequestExists(client: Queryable, requestId: string): Promise<boolean> {
   const { rows } = await client.query(
@@ -802,6 +825,51 @@ export async function setAgentSwitch(
   );
   const row = rows[0];
   return row ? { id: row.id } : 'unknown';
+}
+
+/**
+ * Stops an agent for the context company only if it is open there ("Her yerde durdur", 8 October
+ * decision 9): the switch of an agent that is closed, stopped or was never opened is not touched
+ * and no row is made. Returns the row that was changed, or null when nothing was. Only the
+ * founder's context passes the row policy; for anybody else no row is changed.
+ */
+export async function stopAgentIfOpen(
+  client: Queryable,
+  agentCode: string,
+): Promise<{ id: string } | null> {
+  const { rows } = await client.query<{ id: string }>(
+    `update office.company_agents set status = 'stopped'
+     where company_id = office.ctx_company_id() and agent_code = $1 and status = 'enabled'
+     returning id`,
+    [agentCode],
+  );
+  return rows[0] ?? null;
+}
+
+export interface AgentSwitchRow {
+  name: string;
+  // The agent's card has a version to run with.
+  ready: boolean;
+  // company_agents.status in the context company; null when the company has no row for the agent.
+  status: string | null;
+}
+
+/** An agent's name, whether its card can run, and the context company's switch for it. */
+export async function readAgentSwitch(
+  client: Queryable,
+  agentCode: string,
+): Promise<AgentSwitchRow | null> {
+  const { rows } = await client.query<AgentSwitchRow>(
+    `select d.name,
+            d.current_version_id is not null as ready,
+            (
+              select ca.status from office.company_agents ca
+              where ca.company_id = office.ctx_company_id() and ca.agent_code = d.code
+            ) as status
+     from office.agent_definitions d where d.code = $1`,
+    [agentCode],
+  );
+  return rows[0] ?? null;
 }
 
 export async function writeAudit(
