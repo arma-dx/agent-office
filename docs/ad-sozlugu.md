@@ -362,6 +362,18 @@ Skill klasörü: `skills/<ad>/SKILL.md` ve yanında `templates/`, `examples/`, `
 - Worker'ın açılış günlüğü: `card_version_invalid` (ajanın geçerli kart sürümü bu sürümün beklediği alanları taşımıyor, örneğin 8 Ekim'den önce yazılmış ve `tools` ile `model` yok; çalıştırıcı o ajanın her işini `card_invalid` diye geri çevirir, talep "çalışma başlamadı" diye insana düşer. Çözüm: kart senkronizasyonunu yeniden çalıştırmak, yerelde `pnpm db:sync-definitions`)
 - Ortam: worker `ANTHROPIC_CUSTOM_HEADERS` doluysa açılmaz (SDK bu başlıkları her model isteğine ekler ve kapatılamaz)
 
+## 0.4a adım 1 ile eklenen adlar: Bugün listesi ve bildirimler (karşılığı olan eski Türkçe ad yok)
+
+- "Bugün" → `today`; "Sizden beklenenler" → `expected`; "Bildirimler" → `notifications`; "okundu" → `read`
+- Bildirim şablonları (`notifications.template`): `request_returned` (talep geri çevrildi), `request_rejected` (sonuç reddedildi, talep kapandı), `request_stopped` (iş durduruldu). Üçünü yalnızca talep akışı yazar; `passkeys_reset` gibi ayrılmıştır. Satırda `record_type` `task`, `record_id` talebin kimliğidir; metin yoktur.
+- İşlev: `flow_notify_requester` (talep sahibine kapanış bildirimini yazar; akışın iç işlevi, uygulama çağıramaz)
+- Politikalar: `flow_notifies` (akışın bildirim yazması), `reserved_templates` (dört şablon ayrılmış), `recipient_marks_read` (okundu işaretini yalnızca API rolü yazar)
+- Dizin: `tasks_requests_open` (açık talepler, son hareket sırasıyla)
+- Uç noktalar: `GET /api/today`, `GET /api/today/counts`, `POST /api/notifications/read`
+- API yanıt alanları: `expected`, `expectedTruncated`, `notifications`, `notificationsTruncated`; bildirimde `template`, `read`, `request`, `unit`; sayılarda `today` (Bugün satırı), `approvals` (Onaylar satırı)
+- Sabitler: `TODAY_REQUEST_LIMIT` (200), `NOTIFICATION_LIST_LIMIT` (100), `NOTIFICATION_KEEP_DAYS` (30)
+- Kodda beklenen iş türleri: `approval` (karar verilecek sonuç), `acceptance` (talep sahibinin onaylayacağı sonuç), `fallen` (insana düşen talep)
+
 ## Notlar
 
 - Hata metinleri (veritabanı tetikleyicilerinin `raise exception` metinleri, geliştiriciye dönük iletiler) İngilizcedir. Kullanıcıya gösterilecek Türkçe metni API üretir; API hata metnine göre değil SQLSTATE koduna göre dallanır.
