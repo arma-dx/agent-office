@@ -67,7 +67,7 @@ Pilotta panel internete açık; ileride yalnızca ofis ağından, dışarıdan V
 | station_candidates | Pillika için toplanan istasyon verisi: kaynak, konum, operatör, soket tipleri, güç, erişim, tarih, doğrulama durumu, eşleşen kayıt |
 | customers, opportunities | Basit müşteri listesi: kurum, kişi, fırsat, aşama, değer, sonraki adım; müşteri düzeyinde AI izni (izni olmayan müşteriye bağlı bütün kayıtlar ajan çalışmalarına kapalı) ve sözleşmenin kodla otomatik işlemeye izin verip vermediği; müşteri adı şirket içinde tekildir; sözleşme izinlerini yalnızca kurucu işaretler, AI iznini passkey ile açar (bu üçü kurucu onayı bekliyor, `docs/SONRA.md` P1-f, P-b, P1-c) |
 | projects | Proje: ad, açıklama, müşteri (isteğe bağlı), beş durum, renk ve simge, hedef tarih, açan kişi, bütçe, kilometre taşları, AI izni (müşteri sözleşmesi AI kullanımına izin vermiyorsa o projede ajan çalışmaz); izni yalnızca kurucu, passkey ile açar (8 Ekim, karar 15 ve 22). İzin kapalı başlar; izin açıkken projenin müşterisi değişmez; proje silinmez, kapatılır (bu üçü kurucu onayı bekliyor, `docs/SONRA.md` W-i, P1-t, P-h) |
-| project_members | Projenin üyeleri (o şirketin kurucusu ve çalışanları); projeyi açan kişi üyesidir (ikisi de kurucu onayı bekliyor, `docs/SONRA.md` P-j, P-a); proje kapsamlı satırları yalnızca üyeler ve kurucu görür |
+| project_members | Projenin üyeleri (o şirketin kurucusu ve çalışanları); projeyi açan kişi üyesidir (ikisi de kurucu onayı bekliyor, `docs/SONRA.md` P-j, P-a); proje kapsamlı satırları yalnızca üyeler ve kurucu görür. Her üyeliğin bir rolü vardır: sahip, yönetici ya da üye. Üyeyi sahip ve yöneticiler çıkarır, bir üye başka bir üyeyi çıkaramaz (8 Ekim, karar 44). Sahibin projeyi açan kişi olması, üye eklemeyi de yalnızca sahip, yöneticiler ve kurucunun yapması, yöneticinin yalnızca üyeleri çıkarması, sahibin çıkarılamaması ve sahipliğin devredilmesi kurucu onayı bekliyor (`docs/SONRA.md` P1b-a ila P1b-m) |
 | integrations | Bağlantı ayarları ve yetkileri, şirket bazında; Google bağlantı token'ları şifreli, yalnızca worker kullanır |
 
 ## Durumlar ve roller
@@ -81,7 +81,7 @@ Onaylandı. Arayüzde Türkçe adlar, veritabanında parantez içindeki değerle
 | Rol | Yetki |
 | --- | --- |
 | Kurucu (`founder`) | Bütün şirketleri görür, bütün onayları verir, kullanıcı ve ajan ayarlarını yönetir; iki şirketi birlikte yalnızca holding görünümünde (salt okunur) görür; Kurucu özel alanının tek üyesidir |
-| Çalışan (`employee`) | Üyesi olduğu şirketin görev ve notlarıyla çalışır; proje kapsamlı kayıtları yalnızca üyesi olduğu projelerde görür; proje açar ve üye ekler (8 Ekim, karar 15); yalnızca üyesi olduğu projede ekler ve çıkarır (kurucu onayı bekliyor, `docs/SONRA.md` P-a); onay yetkisi kurucu verirse açılır |
+| Çalışan (`employee`) | Üyesi olduğu şirketin görev ve notlarıyla çalışır; proje kapsamlı kayıtları yalnızca üyesi olduğu projelerde görür; proje açar ve üye ekler (8 Ekim, karar 15); başka bir üyeyi yalnızca sahibi ya da yöneticisi olduğu projede çıkarır (8 Ekim, karar 44); üye eklemesi de sahibi ya da yöneticisi olduğu projeyle sınırlıdır, yönetici olarak yalnızca üyeleri çıkarır (kurucu onayı bekliyor, `docs/SONRA.md` P-a, P1b-d, P1b-f); onay yetkisi kurucu verirse açılır |
 | Dış kişi (`external`) | Mali müşavir ve avukat gibi; kendi Google hesabıyla davetle girer; yalnızca kendisine açılan görev ve notları görür |
 
 ## Yetki seviyeleri
@@ -124,7 +124,7 @@ Bir satır, ekranı yapıldığında menüye eklenir. Panel telefona uyumlu yap�
 | Ajanlar | Birimlere göre ajanlar, durumları, yetki seviyeleri, şirket başına durdurma düğmesi ve "her yerde durdur" | 1 |
 | Görev kartı | Kart ve skill'ler salt okunur (değişiklik depoda PR ile), sürüm geçmişi, test sonuçları | 1 |
 | Notlar | Klasör ağacı, editör, geri bağlantılar, etiketler, arama; HAF-2'ye soru (proje sayfasından o projede; genel ekranda proje seçilerek) | 1 |
-| Projeler | Proje listesi; yeni proje (ad, açıklama, müşteri, üyeler); proje sayfası: beş durum, renk ve simge, hedef tarih, üyeler, yapay zekâ izni, talepler, dosyalar, GitHub, bütçe ve kilometre taşları, notlar, ajan çalışmaları ve maliyeti, onaylar, yapay zekâ harcama sınırı (8 Ekim, karar 11 ve 14-22). Adımları KALAN-ISLER 0.4c içinde | 0 ve sonrası |
+| Projeler | Proje listesi; yeni proje (ad, açıklama, müşteri, üyeler); proje sayfası: beş durum, renk ve simge, hedef tarih, üyeler (üyelerde sahip, yönetici, üye; 8 Ekim, karar 44), yapay zekâ izni, talepler, dosyalar, GitHub, bütçe ve kilometre taşları, notlar, ajan çalışmaları ve maliyeti, onaylar, yapay zekâ harcama sınırı (8 Ekim, karar 11 ve 14-22). Adımları KALAN-ISLER 0.4c içinde | 0 ve sonrası |
 | Müşteriler | Müşteri ve fırsat listesi | 2 |
 | İz kaydı | Kim, ne yaptı, ne zaman; filtreler | 2 |
 | Ayarlar | Kullanıcılar ve roller, şirketler, entegrasyonlar (Drive bağlantısı ve klasör izin listesi Sprint 1, Gmail ve Takvim Sprint 3) | 0, 1 ve 3 |

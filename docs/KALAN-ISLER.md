@@ -400,7 +400,7 @@ Bu işten çıkarılanlar:
 
 ### 0.4c Projeler
 
-8 Ekim, karar 11 ve 14-22. Projeler "İş" grubunda ayrı bir bölümdür (karar 14). Çalışanlar da proje açar ve üye ekler; yapay zekâ iznini yalnızca kurucu, passkey ile açar (karar 15 ve 22). Türetilen yorumlar ve varsayımlar `docs/SONRA.md` içinde P-a ila P-u. Adım 1 tasarlanırken ve yapılırken türetilenler aynı dosyada P1-a ila P1-z.
+8 Ekim, karar 11 ve 14-22. Projeler "İş" grubunda ayrı bir bölümdür (karar 14). Çalışanlar da proje açar ve üye ekler; yapay zekâ iznini yalnızca kurucu, passkey ile açar (karar 15 ve 22). Türetilen yorumlar ve varsayımlar `docs/SONRA.md` içinde P-a ila P-u. Adım 1 tasarlanırken ve yapılırken türetilenler aynı dosyada P1-a ila P1-z. Projede sahip, yönetici ve üye ayrımı 8 Ekim karar 44 ile geldi; ondan türetilenler P1b-a ila P1b-m.
 
 Adım 1: en küçük Projeler
 
@@ -412,6 +412,8 @@ Adım 1: en küçük Projeler
 - [x] Projeyi kapatma ve geri açma (durum alanıyla: Tamamlandı ve İptal kapatır; proje silinmez; kapalı projede yeni talep açılmaması adım 2'de, SONRA P1-j)
 - [x] Şirket ayrımı ve görünürlük testleri (kısıtlı rollerle) (veritabanı, API ve panel testleri; iz kaydı olayları dahil, SONRA P1-n)
 - [x] Dört yeni göçün (`20261008101600` ila `20261008101900`) yerel veritabanına ve test ortamına uygulanması (8 Ekim akşamı: yerelde uygulandı; test projesine 30 göç gönderildi, 48 göçün hepsi orada)
+- [x] Projede sahip, yönetici ve üye ayrımı (8 Ekim karar 44): üyeyi yalnızca sahip, yöneticiler ve kurucu ekler ve çıkarır; yönetici yalnızca üyeleri çıkarır; sahip çıkarılamaz, sahiplik devredilir (türetilen okumalar SONRA P1b-a ila P1b-m, kurucu onayı bekliyor)
+- [ ] Yeni göçün (`20261008102100_project_owner_and_managers.sql`) yerel veritabanına ve test ortamına uygulanması (uygulanana kadar proje listesi ve proje sayfası sunucu hatası verir)
 
 Adım 2: talep formunda proje alanı
 
