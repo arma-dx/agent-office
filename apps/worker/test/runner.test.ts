@@ -419,7 +419,7 @@ describe.skipIf(noDatabase)('the coordinator’s run', () => {
     const returned = 'nedeni yazılarak talep sahibine geri çevrilir ve kapanır';
     const [tool] = model.requests[0]?.tools ?? [];
     const definition = JSON.stringify(tool);
-    // The catalog's description and the field's own.
+    // The tool's description and the field's own.
     expect(definition).toContain(`talep o zaman ${returned}`);
     expect(definition).toContain(
       'birimde işi alabilecek açık ajan olmadığı yazılarak talep sahibine geri çevrilir ve kapanır',
@@ -796,6 +796,31 @@ describe.skipIf(noDatabase)('the unit agent’s run', () => {
     for (const told of ['en çok 1000 karakter', 'en çok 5000 karakter', 'En az iki, en çok üç']) {
       expect(tool).toContain(told);
     }
+  });
+
+  it('the sentence that describes a tool to the model names nothing its input lacks', async () => {
+    const taskId = await openRequest(ids.founder, REQUEST);
+    const routing = new ScriptedModel([toolUse('route_task', ROUTE_TO_SOS)]);
+    await runAgentJob((await runner(routing)).deps, job(taskId, 'KOR-1', ids.founder));
+    const writing = new ScriptedModel([toolUse('submit_for_approval', RESULT)]);
+    await runAgentJob((await runner(writing)).deps, job(taskId, 'SOS-2', ids.founder));
+    const descriptionOf = (model: ScriptedModel): string => {
+      const [tool] = model.requests[0]?.tools ?? [];
+      return tool && 'description' in tool ? (tool.description ?? '') : '';
+    };
+    // The catalog's sentence for people speaks of sources and a change diff, which the input has
+    // no field for, and of the decisions the tool comes from: none of it is the model's to read.
+    const [catalog] = await admin<{ description: string }>(
+      `select description from office.tools where name = 'submit_for_approval'`,
+    );
+    expect(catalog?.description).toMatch(/kaynaklar ve değişiklik farkıyla/);
+    for (const description of [descriptionOf(routing), descriptionOf(writing)]) {
+      expect(description).toMatch(/Çalışmayı bitiren araçtır; bir kez çağrılır\.$/);
+      expect(description).not.toMatch(/kaynaklar|değişiklik fark|karar \d|\d+ (Ekim|Eylül)/);
+    }
+    expect(descriptionOf(writing)).toContain("Onay Masası'na koyar");
+    expect(descriptionOf(writing)).toContain('belirtmek zorunludur');
+    expect(descriptionOf(routing)).toContain('birimin onaylayıcısını sen değil sistem belirler');
   });
 
   it('text the database cannot hold is refused as input and never reaches it', async () => {

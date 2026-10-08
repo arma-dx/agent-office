@@ -11,6 +11,11 @@ import type { ModelTool } from '../model/client.ts';
  * (strict: the provider keeps the model to it) and the zod schema the runner parses the input
  * with before the gate (the input is still what a model wrote). No input has a field for a
  * status, an approver or a requester: those are never the model's to write.
+ *
+ * The sentence that describes a tool to the model is written here, next to the input it speaks
+ * of. The catalog's sentence (agents/tools.yaml) is the text for people: it names what the tool
+ * will do one day (sources, a change diff) and the decisions it comes from, and the model is not
+ * given it.
  */
 
 export const ROUTE_TASK = 'route_task';
@@ -107,10 +112,11 @@ const field = (description: string): { type: 'string'; description: string } => 
   description,
 });
 
-const DEFINITIONS: Record<string, (description: string) => ModelTool> = {
-  [ROUTE_TASK]: (description) => ({
+const DEFINITIONS: Record<string, ModelTool> = {
+  [ROUTE_TASK]: {
     name: ROUTE_TASK,
-    description: `${description}. Çalışmayı bitiren araçtır; bir kez çağrılır.`,
+    description:
+      'Talebi bir birime ve o birimin açık bir ajanına yönlendirir; birimin onaylayıcısını sen değil sistem belirler. Yalnızca bu çalışmanın kendi talebinde çalışır. Birimde işi alabilecek açık ajan yoksa ajan boş bırakılır; talep o zaman nedeni yazılarak talep sahibine geri çevrilir ve kapanır. Çalışmayı bitiren araçtır; bir kez çağrılır.',
     strict: true,
     input_schema: {
       type: 'object',
@@ -128,10 +134,11 @@ const DEFINITIONS: Record<string, (description: string) => ModelTool> = {
       required: ['unit_code', 'agent_code', 'reason'],
       additionalProperties: false,
     },
-  }),
-  [SUBMIT_FOR_APPROVAL]: (description) => ({
+  },
+  [SUBMIT_FOR_APPROVAL]: {
     name: SUBMIT_FOR_APPROVAL,
-    description: `${description}. Çalışmayı bitiren araçtır; bir kez çağrılır.`,
+    description:
+      "Hazırladığın sonucu seçenekleri ve gerekçesiyle Onay Masası'na koyar. Metinde para geçip geçmediğini ve onaydan sonra bir kişi eliyle şirket dışına gönderilip gönderilmeyeceğini belirtmek zorunludur. Çalışmayı bitiren araçtır; bir kez çağrılır.",
     strict: true,
     input_schema: {
       type: 'object',
@@ -191,13 +198,13 @@ const DEFINITIONS: Record<string, (description: string) => ModelTool> = {
       ],
       additionalProperties: false,
     },
-  }),
+  },
 };
 
 /** The names of the tools the runner has a handler for. */
 export const HANDLED_TOOLS: readonly string[] = Object.keys(DEFINITIONS);
 
-/** The tool as the model is given it; `description` is the catalog's own sentence. */
-export function modelTool(name: string, description: string): ModelTool | null {
-  return DEFINITIONS[name]?.(description) ?? null;
+/** The tool as the model is given it. */
+export function modelTool(name: string): ModelTool | null {
+  return DEFINITIONS[name] ?? null;
 }

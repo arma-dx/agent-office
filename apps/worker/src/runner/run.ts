@@ -248,23 +248,20 @@ async function loadCard(
   return stored.success ? { id: row.id, model: row.model, stored: stored.data } : 'invalid';
 }
 
-async function loadCatalog(
-  pool: pg.Pool,
-): Promise<Map<string, CatalogTool & { description: string }>> {
+async function loadCatalog(pool: pg.Pool): Promise<Map<string, CatalogTool>> {
   // The whole catalog: a call of a tool that is not on the card is still recorded by its name.
+  // What the gate needs of a tool; its sentence there is for people, not for the model.
   const { rows } = await pool.query<{
     name: string;
     kind: string;
-    description: string;
     approval_rule: string | null;
-  }>('select name, kind, description, approval_rule from office.tools');
+  }>('select name, kind, approval_rule from office.tools');
   return new Map(
     rows.map((row) => [
       row.name,
       {
         name: row.name,
         kind: toolKindSchema.parse(row.kind),
-        description: row.description,
         approvalRule: row.approval_rule,
       },
     ]),
@@ -374,7 +371,7 @@ export async function runAgentJob(
   const offered: ModelTool[] = card.tools
     .filter((name) => HANDLED_TOOLS.includes(name))
     .flatMap((name) => {
-      const tool = modelTool(name, catalog.get(name)?.description ?? name);
+      const tool = modelTool(name);
       return tool ? [tool] : [];
     });
   const profile = deps.models.get(version.model);
