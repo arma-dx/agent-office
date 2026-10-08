@@ -393,6 +393,9 @@ Talep akışının kalanı (0.4a) için sormadan yapılan varsayımlar (ön plan
 - W-k: Soruyu ve yanıtı talep sahibi, birimin onaylayıcısı ve kurucu okur.
 - W-l: Yanıt metni de talep metni gibi modele gider; kişisel veri yazılabilir, uyarı çıkmaz (8 Ekim karar 5'in yanıta genişletilmesi).
 - W-m: Yarım kalan talep, yorum ve yanıt metni yalnızca o sekmede durur.
+
+Adım 1 (Bugün listesi ve bildirimler) tasarlanırken ve yapılırken türetilenler (kurucuya henüz tek tek bildirilmedi; hepsi **kurucu onayı bekliyor**):
+
 - W-n: Bugün ekranında karar verilmez: "Sizden beklenenler" satırı talebin sayfasını açar, onay ve yanıt orada verilir; kart tek yerde durur. 5 Ekim karar 10 onayın Bugün'den de verilebileceğini söyler; şimdilik Bugün talep sayfasına tek tıkla götürür.
 - W-o: Bildirim, kişi talebini o bildirimden açana ya da "Okundu"ya basana kadar okunmamış sayılır; "Tümünü okundu say" ekrandaki okunmamışların hepsini işaretler. Okunan bildirim 30 gün boyunca soluk biçimde listede kalır, daha eskisi gösterilmez; okunmamış bildirim kaç günlük olursa olsun görünür. İşaret geri alınmaz.
 - W-p: Bir birim onayı, karar verebilen herkesin "Sizden beklenenler" listesinde görünür: atanmış onaylayıcının ve kurucunun (Onaylar ekranındaki kural). Kurucunun satırı da "Onayınız bekleniyor" der. Öbür okuma: başkası atanmışsa onay yalnızca o kişinin listesine girer.
