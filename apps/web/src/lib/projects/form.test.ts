@@ -58,6 +58,10 @@ describe('project form', () => {
     expect(problems({ ...values, name: 'Depo', targetDate: '2026-13-40' })).toEqual({
       targetDate: 'Geçerli bir tarih seçin.',
     });
+    // Year 0000 is no day the database holds; the contract refuses it and so does the form.
+    expect(problems({ ...values, name: 'Depo', targetDate: '0000-01-01' })).toEqual({
+      targetDate: 'Geçerli bir tarih seçin.',
+    });
     // The limits themselves are accepted, and the name is trimmed.
     const accepted = projectFormSchema.parse({
       ...values,

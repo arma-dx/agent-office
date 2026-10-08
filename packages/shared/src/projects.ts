@@ -95,8 +95,13 @@ export const projectDescriptionSchema = z
   .max(PROJECT_DESCRIPTION_MAX)
   .refine((text) => !text.includes('\u0000'), { message: 'Must not contain the NUL character' });
 
-/** A day without a time: YYYY-MM-DD. */
-export const projectDaySchema = z.iso.date();
+/**
+ * A day without a time: YYYY-MM-DD. ISO 8601 has a year 0000, PostgreSQL's date does not (its
+ * first year is 0001), so that year is refused here and never reaches a statement.
+ */
+export const projectDaySchema = z.iso
+  .date()
+  .refine((day) => !day.startsWith('0000-'), { message: 'Must not be in the year 0000' });
 
 /**
  * The customer of a new project (decision 16): none, one that exists, or a new one by name. The

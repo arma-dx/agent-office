@@ -130,6 +130,9 @@ describe('the contracts of the Projects section', () => {
       { targetDate: '2026-12-31T10:00:00Z' },
       { targetDate: '31.12.2026' },
       { targetDate: '2026-02-30' },
+      // A day PostgreSQL's date cannot hold: its first year is 0001.
+      { targetDate: '0000-01-01' },
+      { targetDate: '0000-12-31' },
       { status: 'open' },
       { color: 'grey' },
       { icon: 'rocket' },
@@ -163,6 +166,13 @@ describe('the contracts of the Projects section', () => {
   it('updateProjectSchema: needs one field; null clears the target date; a new customer carries no permission', () => {
     expect(updateProjectSchema.safeParse({}).success).toBe(false);
     expect(updateProjectSchema.parse({ targetDate: null })).toEqual({ targetDate: null });
+    // The first and the last day the contract takes; year 0000 is no day of the database.
+    for (const targetDate of ['0001-01-01', '9999-12-31']) {
+      expect(updateProjectSchema.parse({ targetDate })).toEqual({ targetDate });
+    }
+    for (const targetDate of ['0000-01-01', '0000-12-31', '2026-02-30']) {
+      expect(updateProjectSchema.safeParse({ targetDate }).success, targetDate).toBe(false);
+    }
     expect(updateProjectSchema.parse({ description: '' })).toEqual({ description: '' });
     expect(updateProjectSchema.parse({ name: ' Ad ' })).toEqual({ name: 'Ad' });
     expect(

@@ -286,6 +286,9 @@ describe.skipIf(noDatabase)('projects', () => {
       { icon: 'rocket' },
       { targetDate: '31.12.2026' },
       { targetDate: '2026-12-31T00:00:00Z' },
+      { targetDate: '2026-02-30' },
+      // Year 0000 is no day of the database: refused by the contract, not by a failed statement.
+      { targetDate: '0000-01-01' },
       { budget: 100 },
       { aiAllowed: true },
       { aiAllowed: false },
@@ -869,6 +872,30 @@ describe.skipIf(noDatabase)('projects', () => {
       expect(errorCode(res)).toBe('customer_not_found');
     }
     expect((await read(employee, project.id)).name).toBe('Yeni ad');
+  });
+
+  it('400 invalid_request for a target date that is no day of the database; nothing is changed', async () => {
+    const project = await open(employee, { name: 'Tarihi bozulmayan', targetDate: '2026-12-31' });
+    for (const session of [employee, founder]) {
+      for (const targetDate of ['0000-01-01', '0000-12-31', '2026-02-30', '31.12.2026']) {
+        const res = await call(session, 'PATCH', `/api/projects/${project.id}`, {
+          name: 'Değişmemeli',
+          targetDate,
+        });
+        expect(res.statusCode, targetDate).toBe(400);
+        expect(errorCode(res)).toBe('invalid_request');
+      }
+    }
+    expect(await read(employee, project.id)).toMatchObject({
+      name: 'Tarihi bozulmayan',
+      targetDate: '2026-12-31',
+    });
+    // The first year the database knows is taken.
+    const first = await call(employee, 'PATCH', `/api/projects/${project.id}`, {
+      targetDate: '0001-01-01',
+    });
+    expect(first.statusCode, first.body).toBe(200);
+    expect(projectDetailSchema.parse(first.json()).targetDate).toBe('0001-01-01');
   });
 
   it('completed and cancelled close a project and planned opens it again; nothing is deleted', async () => {
