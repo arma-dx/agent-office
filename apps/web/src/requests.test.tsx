@@ -2560,6 +2560,14 @@ describe('the page of a request', () => {
     });
     const draftOf = (requestId: string, userId: string = USER_ID) =>
       draftKey(userId, ARMADX.companyId, `comment.${requestId}`);
+    /** What the tab keeps for the box of a request; null when nothing. */
+    const draftIn = (requestId: string): unknown =>
+      JSON.parse(sessionStorage.getItem(draftOf(requestId)) ?? 'null');
+    /** A kept draft: the text with the id it will be stored under. */
+    const held = (text: string) => ({
+      id: expect.stringMatching(/^[0-9a-f-]{36}$/) as string,
+      text,
+    });
 
     function region(): HTMLElement {
       return screen.getByRole('region', { name: /^Yorumlar/ });
@@ -2837,12 +2845,11 @@ describe('the page of a request', () => {
       // It is a draft of this person, this company and this request, in the tab's storage only.
       await waitFor(
         () => {
-          expect(sessionStorage.getItem(draftOf(REQUEST_ID))).toBe(
-            JSON.stringify('Yarım kalan yorum'),
-          );
+          expect(draftIn(REQUEST_ID)).toEqual(held('Yarım kalan yorum'));
         },
         { timeout: 2000 },
       );
+      const keptId = (draftIn(REQUEST_ID) as { id: string }).id;
       expect(draftOf(REQUEST_ID)).toBe(
         `agent-office.draft.${USER_ID}.${ARMADX.companyId}.comment.${REQUEST_ID}`,
       );
@@ -2869,6 +2876,8 @@ describe('the page of a request', () => {
       expect(box()).toHaveValue('');
       expect(sessionStorage.getItem(draftOf(REQUEST_ID))).toBeNull();
       expect(api.callsTo(POST)).toHaveLength(1);
+      // Sent under the id the draft carried.
+      expect(api.callsTo(POST)[0]?.body).toEqual({ id: keptId, body: 'Yarım kalan yorum' });
       // An emptied box leaves no draft behind either.
       await userEvent.type(box(), 'x{Backspace}');
       await new Promise((resolve) => setTimeout(resolve, 900));
@@ -2918,18 +2927,202 @@ describe('the page of a request', () => {
       await userEvent.type(box(), 'Yeni talebin yorumu');
       await waitFor(
         () => {
-          expect(sessionStorage.getItem(draftOf(NEW_ID))).toBe(
-            JSON.stringify('Yeni talebin yorumu'),
-          );
+          expect(draftIn(NEW_ID)).toEqual(held('Yeni talebin yorumu'));
         },
         { timeout: 2000 },
       );
       // Each draft under its own request; A's is still A's.
-      expect(sessionStorage.getItem(draftOf(REQUEST_ID))).toBe(
-        JSON.stringify('A talebi için yarım yorum'),
-      );
+      expect(draftIn(REQUEST_ID)).toEqual(held('A talebi için yarım yorum'));
       expect(api.callsTo(`POST /requests/${NEW_ID}/comments`)).toEqual([]);
       expect(api.callsTo(POST)).toEqual([]);
+    });
+
+    // A comment can never be removed (docs/SONRA.md D-d), so none may be stored twice. The id a
+    // text is sent under is kept with the text in the draft: a box that is mounted anew while the
+    // send is still on its way holds the same text under the same id.
+    describe('a send that is still on its way when the person leaves the page', () => {
+      /**
+       * The page of the request with a slow API: every POST waits until the test answers it. The
+       * page answers what was stored so far.
+       */
+      async function openSlow() {
+        let page = requestDetail({ comments: withComments([]) });
+        const waiting: ((status: number) => void)[] = [];
+        const api = mockApi({
+          'GET /session': sessionHandler(),
+          'GET /requests': () => json({ requests: [summaryOf(page)], truncated: false }),
+          [GET]: () => json(page),
+          [POST]: (call) =>
+            new Promise<Response>((resolve) => {
+              waiting.push((status) => {
+                const sent = call.body as { id: string; body: string };
+                // Stored once per id, as the API does.
+                if (!page.comments.items.some((item) => item.id === sent.id)) {
+                  const stored = comment({ id: sent.id, author: FOUNDER, body: sent.body });
+                  page = requestDetail({
+                    comments: withComments([...page.comments.items, stored]),
+                  });
+                }
+                resolve(json(page, status));
+              });
+            }),
+        });
+        renderApp(`/c/armadx/requests/${REQUEST_ID}`);
+        await screen.findByRole('region', { name: /^Yorumlar/ });
+        return { api, answer: (index: number, status: number) => waiting[index]?.(status) };
+      }
+
+      async function leaveAndComeBack(): Promise<void> {
+        await userEvent.click(
+          within(screen.getByRole('navigation', { name: 'Ana menü' })).getByRole('link', {
+            name: 'Talepler',
+          }),
+        );
+        await userEvent.click(
+          await screen.findByRole('link', { name: /^LinkedIn için gönderi yaz/ }),
+        );
+        await screen.findByRole('region', { name: /^Yorumlar/ });
+      }
+
+      const pressSend = () =>
+        userEvent.click(within(region()).getByRole('button', { name: 'Yorumu gönder' }));
+      const sentIds = (api: { callsTo: (key: string) => ApiCall[] }) =>
+        api.callsTo(POST).map((call) => (call.body as { id: string }).id);
+
+      it('sends the text under the same id when it is pressed again after coming back: one comment', async () => {
+        const { api, answer } = await openSlow();
+        await userEvent.type(box(), 'Tek yorum');
+        await pressSend();
+        await waitFor(() => {
+          expect(api.callsTo(POST)).toHaveLength(1);
+        });
+        await leaveAndComeBack();
+        // The new box holds the text, and does not know of the send that is on its way.
+        expect(box()).toHaveValue('Tek yorum');
+        expect(listed()).toEqual([]);
+        await pressSend();
+        await waitFor(() => {
+          expect(api.callsTo(POST)).toHaveLength(2);
+        });
+        // The same comment, not another one.
+        expect(sentIds(api)[1]).toBe(sentIds(api)[0]);
+
+        // The first answer arrives: the comment is listed, and the box that holds it is empty
+        // although its own send is still on its way.
+        answer(0, 201);
+        await waitFor(() => {
+          expect(listed()).toHaveLength(1);
+        });
+        expect(box()).toHaveValue('');
+        answer(1, 200);
+        expect(
+          await within(region()).findByRole('button', { name: 'Yorumu gönder' }),
+        ).toBeVisible();
+        expect(box()).toHaveValue('');
+        expect(box()).not.toHaveAttribute('readonly');
+        expect(listed()).toHaveLength(1);
+        expect(within(region()).queryByRole('alert')).toBeNull();
+        expect(draftIn(REQUEST_ID)).toBeNull();
+        // Nothing of it comes back after another round trip.
+        await leaveAndComeBack();
+        expect(box()).toHaveValue('');
+        expect(listed()).toHaveLength(1);
+      });
+
+      it('empties the box when the answer arrives after the person came back and only waited', async () => {
+        const { api, answer } = await openSlow();
+        await userEvent.type(box(), 'Tek yorum');
+        await pressSend();
+        await waitFor(() => {
+          expect(api.callsTo(POST)).toHaveLength(1);
+        });
+        await leaveAndComeBack();
+        expect(box()).toHaveValue('Tek yorum');
+        answer(0, 201);
+        await waitFor(() => {
+          expect(listed()).toHaveLength(1);
+        });
+        // The text is not left in the box to be sent a second time.
+        expect(box()).toHaveValue('');
+        expect(draftIn(REQUEST_ID)).toBeNull();
+        expect(api.callsTo(POST)).toHaveLength(1);
+      });
+
+      it('does not take a text that was changed after coming back when the first answer arrives', async () => {
+        const { api, answer } = await openSlow();
+        await userEvent.type(box(), 'Tek yorum');
+        await pressSend();
+        await waitFor(() => {
+          expect(api.callsTo(POST)).toHaveLength(1);
+        });
+        await leaveAndComeBack();
+        await userEvent.type(box(), ' ve bir soru');
+        answer(0, 201);
+        await waitFor(() => {
+          expect(listed()).toHaveLength(1);
+        });
+        // What is in the box now is another text: it stays, with its draft, under its own id.
+        expect(box()).toHaveValue('Tek yorum ve bir soru');
+        await waitFor(
+          () => {
+            expect(draftIn(REQUEST_ID)).toEqual(held('Tek yorum ve bir soru'));
+          },
+          { timeout: 2000 },
+        );
+        expect((draftIn(REQUEST_ID) as { id: string }).id).not.toBe(sentIds(api)[0]);
+      });
+
+      it('stops saying that the send failed when a refresh brings the comment', async () => {
+        vi.useFakeTimers({ shouldAdvanceTime: true });
+        try {
+          const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+          const { api } = await openPage(withComments([]));
+          // Stored, but the answer is lost on the way.
+          api.handle(POST, () => {
+            throw new TypeError('Failed to fetch');
+          });
+          await user.type(box(), 'Tek yorum');
+          await user.click(within(region()).getByRole('button', { name: 'Yorumu gönder' }));
+          expect(await within(region()).findByRole('alert')).toHaveTextContent(
+            'Yorum gönderilemedi. Sunucuya ulaşılamadı. Bağlantınızı kontrol edip yeniden deneyin.',
+          );
+          expect(box()).toHaveValue('Tek yorum');
+          const typed = box();
+
+          const [call] = api.callsTo(POST);
+          const sent = comment({
+            id: (call?.body as { id: string }).id,
+            author: FOUNDER,
+            body: 'Tek yorum',
+          });
+          api.handle(GET, () => json(requestDetail({ comments: withComments([sent]) })));
+          await vi.advanceTimersByTimeAsync(30_100);
+          await waitFor(() => {
+            expect(listed()).toHaveLength(1);
+          });
+          // The comment is there: nothing is left to send, and nothing failed.
+          expect(box()).toBe(typed);
+          expect(box()).toHaveValue('');
+          expect(within(region()).queryByRole('alert')).toBeNull();
+          expect(draftIn(REQUEST_ID)).toBeNull();
+          expect(api.callsTo(POST)).toHaveLength(1);
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+
+      it('opens with an empty box when the page is loaded again and the comment is in the list', async () => {
+        // The answer of the send was lost and the tab was loaded again: the draft is still there.
+        const sent = comment({ author: FOUNDER, body: 'Tek yorum' });
+        sessionStorage.setItem(
+          draftOf(REQUEST_ID),
+          JSON.stringify({ id: sent.id, text: 'Tek yorum' }),
+        );
+        await openPage(withComments([sent]));
+        expect(listed()).toHaveLength(1);
+        expect(box()).toHaveValue('');
+        expect(draftIn(REQUEST_ID)).toBeNull();
+      });
     });
 
     it('a background refresh adds other people’s comments and never touches what is being typed', async () => {

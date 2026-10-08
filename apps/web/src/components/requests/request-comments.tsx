@@ -29,7 +29,15 @@ import { busyProps } from '@/lib/utils';
  * id as its key: a text typed for one request never opens in the box of another.
  */
 
-const draftSchema = z.string();
+// What the box holds: the text, and the id the text will be stored under. The id is kept with
+// the text, in the draft too: a box that is mounted anew while a send is still on its way (the
+// person left the page and came back, or loaded it again) holds the same text under the same id,
+// so another press stores nothing twice (the API stores a comment once per id), and the box knows
+// that its text was stored when a comment with that id is in the list. A comment can never be
+// removed (docs/SONRA.md D-d): one stored twice would stay for everybody who reads the request.
+const draftSchema = z.object({ id: z.uuid(), text: z.string() });
+type Held = z.infer<typeof draftSchema>;
+const nothingHeld = (): Held => ({ id: crypto.randomUUID(), text: '' });
 // What sends: the Command key on a Mac, the Control key elsewhere. The hint names the right one.
 const SEND_KEY = /Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌘' : 'Ctrl';
 
@@ -98,22 +106,42 @@ export function RequestComments({ request }: { request: RequestDetail }) {
       <p role="status" className="sr-only">
         {news}
       </p>
-      <CommentBox requestId={request.id} mayWrite={mayWrite} />
+      <CommentBox requestId={request.id} mayWrite={mayWrite} items={items} />
     </section>
   );
 }
 
-function CommentBox({ requestId, mayWrite }: { requestId: string; mayWrite: boolean }) {
+function CommentBox({
+  requestId,
+  mayWrite,
+  items,
+}: {
+  requestId: string;
+  mayWrite: boolean;
+  items: RequestDetail['comments']['items'];
+}) {
   const company = useCompany();
   const session = useSession();
   const queryClient = useQueryClient();
   const id = useId();
   const key = draftKey(session.user.id, company.companyId, `comment.${requestId}`);
-  const [text, setText] = useState(() => readDraft(key, draftSchema) ?? '');
+  // Another try of the same text carries the same id, so the API stores the comment once even
+  // when the first answer was lost. A changed text is a new comment, under a new id.
+  const [held, setHeld] = useState(() => readDraft(key, draftSchema) ?? nothingHeld());
   const [touched, setTouched] = useState(false);
-  // The id of the comment being sent: another try of the same text carries it again, so the API
-  // stores the comment once even when the first answer was lost. A changed text is a new comment.
-  const sendId = useRef<string | null>(null);
+  // The comment the box holds is in the list: it was stored. This box may not have been told
+  // (the send was made by an earlier mount of it, or its answer was lost and a refresh or a
+  // reload brought the comment), so the list is what says it. The box starts anew and the draft
+  // goes.
+  if (items.some((item) => item.id === held.id)) {
+    setHeld(nothingHeld());
+    setTouched(false);
+  }
+  useEffect(() => {
+    const kept = readDraft(key, draftSchema);
+    if (kept && items.some((item) => item.id === kept.id)) saveDraft(key, null);
+  }, [items, key]);
+  const text = held.text;
   // "Taslağı at" removes the box and its own button: the focus goes to the sentence that takes
   // their place, not to the top of the page.
   const [discards, setDiscards] = useState(0);
@@ -125,14 +153,13 @@ function CommentBox({ requestId, mayWrite }: { requestId: string; mayWrite: bool
   }, [discards]);
 
   const send = useMutation({
-    mutationFn: (body: string) => {
-      sendId.current ??= crypto.randomUUID();
-      return addRequestComment(company.companyId, requestId, { id: sendId.current, body });
-    },
-    onSuccess: (detail) => {
-      sendId.current = null;
-      saveDraft(key, null);
-      setText('');
+    mutationFn: (comment: { id: string; body: string }) =>
+      addRequestComment(company.companyId, requestId, comment),
+    // Also runs when the person has left the page meanwhile: the draft must go then too.
+    onSuccess: (detail, sent) => {
+      // Only what was sent: a text typed since, in a box mounted after this one, is not this one.
+      if (readDraft(key, draftSchema)?.id === sent.id) saveDraft(key, null);
+      setHeld((now) => (now.id === sent.id ? nothingHeld() : now));
       setTouched(false);
       // Only the page of this request: a comment changes no list, no desk and no count.
       queryClient.setQueryData(requestKey(company.companyId, requestId), detail);
@@ -165,7 +192,10 @@ function CommentBox({ requestId, mayWrite }: { requestId: string; mayWrite: bool
       : null;
   // A closed session is not said here: the panel opens the login screen, which says it, and the
   // draft brings the text back afterwards.
-  const failure = send.isError && !isUnauthorized(send.error) ? userMessage(send.error) : null;
+  // Nor a failure whose comment is in the list after all (the answer was lost, not the comment).
+  const arrived = send.isError && items.some((item) => item.id === send.variables.id);
+  const failure =
+    send.isError && !arrived && !isUnauthorized(send.error) ? userMessage(send.error) : null;
   // The right went away while a text was in the box (the routing was corrected to another unit):
   // the text is not taken from the person. It can be copied or discarded, not sent or changed.
   const gone = !mayWrite && !empty;
@@ -175,7 +205,7 @@ function CommentBox({ requestId, mayWrite }: { requestId: string; mayWrite: bool
     if (gone) return;
     setTouched(true);
     if (busy || empty || tooLong || !mayWrite) return;
-    send.mutate(text);
+    send.mutate({ id: held.id, body: text });
   }
 
   if (!mayWrite && empty) {
@@ -219,12 +249,11 @@ function CommentBox({ requestId, mayWrite }: { requestId: string; mayWrite: bool
         }
         onChange={(event) => {
           if (gone) return;
-          const next = event.target.value;
-          setText(next);
           // A new text is a new comment, and the reason the last one failed no longer applies.
-          sendId.current = null;
+          const next = { id: crypto.randomUUID(), text: event.target.value };
+          setHeld(next);
           if (send.isError) send.reset();
-          saveDraftSoon(key, next.trim() === '' ? null : next);
+          saveDraftSoon(key, next.text.trim() === '' ? null : next);
         }}
         onKeyDown={(event) => {
           if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) submit(event);
@@ -237,7 +266,7 @@ function CommentBox({ requestId, mayWrite }: { requestId: string; mayWrite: bool
           className="self-start"
           onClick={() => {
             saveDraft(key, null);
-            setText('');
+            setHeld(nothingHeld());
             setDiscards((count) => count + 1);
           }}
         >
