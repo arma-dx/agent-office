@@ -43,6 +43,8 @@ Henüz olmayanlar: veritabanı (göç dosyası yok), giriş, işlevli ekran (yal
 
 8 Ekim 2026 (gece): 0.4a adım 2 yapıldı: ofiste masalar Boşta, Çalışıyor, Onay bekliyor ve Hata durumlarını gösteriyor, seçili ajanın panelinde açık taleplerinin sayıları var, kurucu bir ajanı "Her yerde durdur" ile açık olduğu her şirkette durdurabiliyor. Adım tasarlanırken türetilen seçimler `docs/SONRA.md` içinde Z-a ila Z-s olarak duruyor; hepsi kurucu onayı bekliyor. Çizim tarayıcıda görülmeden yazıldı; kurucunun ofise bir kez bakması gerekir (Z-l). Sıradaki adım: son tarih ve yorum (adım 3).
 
+9 Ekim 2026: 0.4a adım 3'ün son tarih ve yorum kısmı yapıldı: talep formunda isteğe bağlı son tarih var, talep sayfası ve Talepler listesi günü geçince "Son tarihi geçti" yazıyor; talep sayfasında "Yorumlar" bölümü var, yorumu talep sahibi, birimin onaylayıcısı ve kurucu yazıyor, ajanlar yorumu görmüyor. Adım tasarlanırken türetilen seçimler `docs/SONRA.md` içinde D-a ila D-k olarak duruyor; hepsi kurucu onayı bekliyor. Ekranlar tarayıcıda görülmeden yazıldı; kurucunun talep formuna ve talep sayfasına bir kez bakması gerekir (D-k). Yeni göç (`20261008102000_request_comments_for_people.sql`) yerel veritabanına uygulanana kadar yerelde talep sayfası sunucu hatası verir. Adımın proje alanı Projeler'i (0.4c adım 2) bekliyor.
+
 ## Sprint 0
 
 ### 0.1 Arayüz temeli
@@ -354,7 +356,7 @@ Testler:
 
 ### 0.4a Talep akışının kalanı
 
-Dilimde bilerek olmayanlar. Dilimden hemen sonra yapılır (8 Ekim, karar 6). Sıra ve içerik kurucunun 8 Ekim yanıtlarıyla belirlendi (karar 7-13); sormadan yapılan varsayımlar `docs/SONRA.md` içinde W-a ila W-m.
+Dilimde bilerek olmayanlar. Dilimden hemen sonra yapılır (8 Ekim, karar 6). Sıra ve içerik kurucunun 8 Ekim yanıtlarıyla belirlendi (karar 7-13); sormadan yapılan varsayımlar `docs/SONRA.md` içinde W-a ila W-m; adım 3'te türetilenler D-a ila D-k.
 
 Adım 1: Bugün listesi ve bildirimler (karar 7 ve 8)
 
@@ -372,8 +374,8 @@ Adım 2: Ofiste canlı durumlar ve "Her yerde durdur" (karar 9 ve 10)
 
 Adım 3: Son tarih ve yorum (karar 13); proje alanı Projeler'i (0.4c) bekler
 
-- [ ] Talep formunda son tarih (yalnızca bilgi)
-- [ ] Talebe yorum yazma: talep sahibi, birimin onaylayıcısı ve kurucu; ajan görmez
+- [x] Talep formunda son tarih (yalnızca bilgi)
+- [x] Talebe yorum yazma: talep sahibi, birimin onaylayıcısı ve kurucu; ajan görmez
 - [ ] Talep formunda proje alanı; çalışmanın proje bağlamı; kural 12 denetiminin kodla yapılması (Projeler'den sonra)
 
 Adım 4: Ajanın soru sorması (ilk gerçek çalışmalardan sonra; sorusu kurucuya o zaman sorulur)

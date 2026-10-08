@@ -427,6 +427,7 @@ Skill klasörü: `skills/<ad>/SKILL.md` ve yanında `templates/`, `examples/`, `
 - Paylaşılan işlev: `officeDay` (bir anın ofis saat dilimindeki günü); veritabanı ifadeleri `dueDaySql`, `dueAtSql`
 - Veritabanı ifadeleri (yorum): `listRequestComments`, `insertRequestComment`, `ownRequestCommentExists`, `mayCommentOnRequest`; API'de `toComments`
 - Çalıştırıcı: `run_facts` bloğunda `dueDate` (talebin son tarihi, veri olarak)
+- Panel: `components/requests/request-comments.tsx` (`RequestComments`: talep sayfasında "Yorumlar" bölümü); taslak anahtarı `comment.<talep kimliği>`; talep taslağında `dueDate`; `dueText` (son tarihin cümlesi); `addRequestComment` (yorum gönderme isteği); test yardımcıları `comment`, `withComments`
 
 ## Notlar
 
