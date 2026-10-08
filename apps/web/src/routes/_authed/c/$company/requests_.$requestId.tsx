@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { CLOSE_REASON_MAX } from '@agent-office/shared';
 import { useId, useState } from 'react';
@@ -31,6 +31,7 @@ import { REFRESH_MS, useBackgroundRefresh } from '@/lib/refresh';
 import { decisionDialogOpen } from '@/lib/requests/hold';
 import { machineHasTurn, personName, stageText, turnText } from '@/lib/requests/labels';
 import { closeRequest, fetchRequest, requestKey, requestQueryOptions } from '@/lib/requests/query';
+import { useSettle } from '@/lib/requests/settle';
 import { useCompany } from '@/lib/session';
 import { busyProps } from '@/lib/utils';
 
@@ -71,7 +72,7 @@ function RequestScreen() {
   const company = useCompany();
   const { requestId } = Route.useParams();
   const valid = z.uuid().safeParse(requestId).success;
-  const queryClient = useQueryClient();
+  const settle = useSettle();
   const query = useQuery({ ...requestQueryOptions(company.companyId, requestId), enabled: valid });
   const request = query.data;
   useBackgroundRefresh({
@@ -94,8 +95,8 @@ function RequestScreen() {
     onSuccess: (detail) => {
       setConfirming(false);
       setReason('');
-      queryClient.setQueryData(requestKey(company.companyId, requestId), detail);
-      void queryClient.invalidateQueries({ queryKey: ['company', company.companyId, 'requests'] });
+      // Also the desk: a pending approval or acceptance of the request closed with it.
+      settle(detail);
     },
   });
 

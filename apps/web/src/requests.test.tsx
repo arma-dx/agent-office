@@ -965,12 +965,20 @@ describe('the page of a request', () => {
       closure: { by: FOUNDER, reason: null, note: 'Bu iş bu hafta yapılmayacak.' },
       actions: { cancel: false, stop: false, reroute: false },
     });
+    // The result of the request waits on the desk until the request is closed.
+    let waiting = true;
     const api = mockApi({
       'GET /session': sessionHandler(),
+      'GET /approvals': () => json({ approvals: waiting ? [APPROVAL_CARD] : [], acceptances: [] }),
       [`GET /requests/${REQUEST_ID}`]: () => json(requestDetail()),
-      [`POST /requests/${REQUEST_ID}/close`]: () => json(stopped),
+      [`POST /requests/${REQUEST_ID}/close`]: () => {
+        waiting = false;
+        return json(stopped);
+      },
     });
     renderApp(`/c/armadx/requests/${REQUEST_ID}`);
+    const menu = await screen.findByRole('navigation', { name: 'Ana menü' });
+    expect(await within(menu).findByRole('link', { name: 'Onaylar, 1 bekleyen' })).toBeVisible();
     const stop = await screen.findByRole('button', { name: 'İşi durdur' });
     await userEvent.click(stop);
     const confirm = await screen.findByRole('alertdialog', { name: 'İş durdurulsun mu?' });
@@ -999,6 +1007,10 @@ describe('the page of a request', () => {
     // Who closed it and why, in that person's words.
     expect(screen.getByText('Ömer Kadıoğlu işi durdurdu.')).toBeVisible();
     expect(screen.getByText('Bu iş bu hafta yapılmayacak.')).toBeVisible();
+    // The pending approval closed with the request: the count on the menu row follows at once,
+    // not at the next background refresh.
+    expect(await within(menu).findByRole('link', { name: 'Onaylar' })).toBeVisible();
+    expect(within(menu).queryByRole('link', { name: /bekleyen/ })).toBeNull();
   });
 
   it('tells the requester who rejected the result and why, never the output', async () => {

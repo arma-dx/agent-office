@@ -44,6 +44,7 @@ import {
   requestKey,
   routingOptionsQueryOptions,
 } from '@/lib/requests/query';
+import { useSettle } from '@/lib/requests/settle';
 import { useCompany } from '@/lib/session';
 import { busyProps } from '@/lib/utils';
 
@@ -58,17 +59,6 @@ import { busyProps } from '@/lib/utils';
  * control that opened it; while a decision dialog is open the page does not read the request
  * again by itself, so the dialog and what was typed in it stay until the person sends or closes.
  */
-
-/** Stores the answer of a decision and lets every list that showed the request read again. */
-function useSettle(): (detail: RequestDetail) => void {
-  const company = useCompany();
-  const queryClient = useQueryClient();
-  return (detail) => {
-    queryClient.setQueryData(requestKey(company.companyId, detail.id), detail);
-    void queryClient.invalidateQueries({ queryKey: approvalDeskKey(company.companyId) });
-    void queryClient.invalidateQueries({ queryKey: ['company', company.companyId, 'requests'] });
-  };
-}
 
 /**
  * For a decision dialog that was closed without a decision: the request and the desk are read
