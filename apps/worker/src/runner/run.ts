@@ -152,6 +152,25 @@ interface TaskRow {
   step_note: string | null;
 }
 
+type MoneySource = 'card' | 'agent' | 'default';
+
+/**
+ * The marks of the latest earlier result of the step this run works on. A later result of the
+ * same step cannot take them back (5 October decision 2; the database refuses it), however the
+ * work came back: after the approver's change request or after the requester's.
+ */
+interface CarriedMarks {
+  money: boolean;
+  moneyBy: MoneySource | null;
+  external: boolean;
+}
+
+const NOTHING_CARRIED: CarriedMarks = { money: false, moneyBy: null, external: false };
+
+function moneySource(value: string | null): MoneySource | null {
+  return value === 'card' || value === 'agent' || value === 'default' ? value : null;
+}
+
 /** A tool call the handler refused; the model is told why and may correct itself. */
 class ToolRefusal extends Error {
   readonly code: string;
@@ -334,6 +353,7 @@ export async function runAgentJob(
         stepId: string | null;
         data: PromptData;
         previousApprovalId: string | null;
+        carried: CarriedMarks;
       };
   // Runs of this agent that were still open for a step that has since been replaced.
   const superseded: string[] = [];
@@ -424,6 +444,7 @@ export async function runAgentJob(
     // results of the step that is active now count: a step a person routed again starts fresh.
     let revision: Revision | undefined;
     let previousApprovalId: string | null = null;
+    let carried = NOTHING_CARRIED;
     if (!coordinator) {
       const last = await client.query<{
         id: string;
@@ -433,9 +454,13 @@ export async function runAgentJob(
         rejection_reason: string | null;
         decision_reason: string | null;
         invalidated_at: Date | null;
+        involves_money: boolean;
+        goes_external: boolean;
+        money_stated_by: string | null;
       }>(
         `select a.id, a.status, a.attempt, a.payload, a.rejection_reason, a.decision_reason,
-                a.invalidated_at
+                a.invalidated_at, a.involves_money, a.goes_external,
+                a.payload ->> 'money_stated_by' as money_stated_by
          from office.approvals a
          where a.task_id = $1 and a.agent_code = $2 and a.routing_id = $3
          order by a.created_at desc, a.id desc
@@ -443,6 +468,14 @@ export async function runAgentJob(
         [job.taskId, job.agentCode, task.step_id],
       );
       const result = last.rows[0];
+      if (result) {
+        // Whatever became of that result: the next one of this step is compared with it.
+        carried = {
+          money: result.involves_money,
+          moneyBy: moneySource(result.money_stated_by),
+          external: result.goes_external,
+        };
+      }
       if (result?.status === 'pending' && result.invalidated_at === null) {
         // Already submitted and waiting.
         return { kind: 'refused', outcome: 'duplicate_job' };
@@ -571,6 +604,7 @@ export async function runAgentJob(
       runId,
       stepId,
       previousApprovalId,
+      carried,
       data: {
         facts: {
           company: task.company_name,
@@ -786,7 +820,7 @@ export async function runAgentJob(
           // either for one output and can never lower it (the rule of the step-up migration). A
           // card that states nothing about money gets the safe side until the per output levels
           // are decided (M19): the result is opened as involving money.
-          const moneyBy =
+          const stated: MoneySource | null =
             card.output_involves_money === true
               ? 'card'
               : input.data.involves_money
@@ -794,6 +828,13 @@ export async function runAgentJob(
                 : card.output_involves_money === undefined
                   ? 'default'
                   : null;
+          // Nor can a later result of the step lower what an earlier one carried: a text that was
+          // reworked after "fiyatı çıkar" truthfully states no money, and is still stored with
+          // the mark, so that approving it asks for the passkey as before. The mark keeps the
+          // source it had.
+          const { carried } = opened;
+          const involvesMoney = stated !== null || carried.money;
+          const moneyBy = stated ?? (carried.money ? carried.moneyBy : null);
           const basis = await client.query<{ version: number }>(
             'select version from office.tasks where id = $1',
             [job.taskId],
@@ -821,9 +862,9 @@ export async function runAgentJob(
               }),
               JSON.stringify(input.data.options.map((option) => ({ code: option.code }))),
               basis.rows[0]?.version ?? null,
-              moneyBy !== null,
+              involvesMoney,
               // The card's word wins over the model's: outgoing work cannot be understated.
-              input.data.goes_external || card.output_goes_external === true,
+              input.data.goes_external || card.output_goes_external === true || carried.external,
               opened.previousApprovalId,
             ],
           );

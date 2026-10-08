@@ -809,6 +809,63 @@ describe.skipIf(noDatabase)('the unit agent’s run', () => {
     }
   });
 
+  it('a second attempt cannot take back a mark of the first: the mark is carried and the run is not lost', async () => {
+    // SOS-2's card says its output goes outside. For this case the card states nothing about
+    // that, so that both marks are the model's to raise, and to try to lower.
+    const [version] = await admin<{ id: string; content: Record<string, unknown> }>(
+      `select v.id, v.content from office.agent_definitions d
+       join office.card_versions v on v.id = d.current_version_id where d.code = 'SOS-2'`,
+    );
+    await admin(
+      `update office.card_versions set content = content #- '{card,output_goes_external}'
+       where id = $1`,
+      [version?.id],
+    );
+    try {
+      const taskId = await routedRequest();
+      const priced = new ScriptedModel([
+        toolUse('submit_for_approval', { ...RESULT, involves_money: true, goes_external: true }),
+      ]);
+      await runAgentJob((await runner(priced)).deps, job(taskId, 'SOS-2', ids.founder));
+      await asPerson(
+        ids.founder,
+        `update office.approvals set status = 'changes_requested', rejection_reason = 'pricing',
+           decision_reason = 'Fiyatı çıkar.'
+         where task_id = $1`,
+        [taskId],
+      );
+      // The reworked text has no price and the model says so, truthfully.
+      const reworked = new ScriptedModel([
+        toolUse('submit_for_approval', { ...RESULT, involves_money: false, goes_external: false }),
+      ]);
+      const result = await runAgentJob(
+        (await runner(reworked)).deps,
+        job(taskId, 'SOS-2', ids.founder),
+      );
+      // The second attempt is stored, with the marks of the first: approving it still asks for
+      // the passkey, and the mark keeps the source it had.
+      expect(result).toMatchObject({ outcome: 'submitted', modelCalls: 1 });
+      expect(await runRow(result.runId)).toMatchObject({ status: 'completed', error_code: null });
+      expect(
+        await admin(
+          `select attempt, status, involves_money as money, payload ->> 'money_stated_by' as by,
+                  goes_external as outside
+           from office.approvals where task_id = $1 order by attempt`,
+          [taskId],
+        ),
+      ).toEqual([
+        { attempt: 1, status: 'changes_requested', money: true, by: 'agent', outside: true },
+        { attempt: 2, status: 'pending', money: true, by: 'agent', outside: true },
+      ]);
+      expect(await statusOf(taskId)).toBe('awaiting_approval');
+    } finally {
+      await admin('update office.card_versions set content = $2 where id = $1', [
+        version?.id,
+        JSON.stringify(version?.content),
+      ]);
+    }
+  });
+
   it('a person’s correction of the routing starts the agent fresh, with the note as data', async () => {
     const taskId = await routedRequest();
     // Two change requests of the approver: the work falls to a person.

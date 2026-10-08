@@ -168,9 +168,11 @@ describe.skipIf(noDatabase)('a request from the first line to "done"', () => {
       unit: { code: 'SOS', name: 'Sosyal Medya' },
     });
 
-    // The unit agent writes and submits. The result waits for the founder (nobody is appointed
-    // for the unit), and only the founder reads it.
-    const first = new ScriptedModel([toolUse('submit_for_approval', RESULT)]);
+    // The unit agent writes and submits, and states that its text mentions money. The result
+    // waits for the founder (nobody is appointed for the unit), and only the founder reads it.
+    const first = new ScriptedModel([
+      toolUse('submit_for_approval', { ...RESULT, involves_money: true }),
+    ]);
     expect(await work(first)).toEqual({ outcome: 'submitted', agent: 'SOS-2' });
     const waiting = await detail(founder, id);
     expect(waiting).toMatchObject({
@@ -184,6 +186,8 @@ describe.skipIf(noDatabase)('a request from the first line to "done"', () => {
         agent: { code: 'SOS-2' },
         options: [{ code: 'A' }, { code: 'B' }],
         goesExternal: true,
+        involvesMoney: true,
+        moneyStatedBy: 'agent',
         needsStepUp: true,
       },
       result: null,
@@ -286,9 +290,12 @@ describe.skipIf(noDatabase)('a request from the first line to "done"', () => {
       stage: 'revising',
       turn: { kind: 'agent', code: 'SOS-2' },
     });
+    // The reworked result states no money. The step's earlier result did: the mark cannot be
+    // taken back on this path either, so the runner carries it and the result is stored.
     const second = new ScriptedModel([
       toolUse('submit_for_approval', {
         ...RESULT,
+        involves_money: false,
         options: [
           { code: 'A', text: 'İzmir ofisimiz 1 Ekim’de açıldı.', hashtags: ['#izmir'] },
           { code: 'B', text: '1 Ekim’den beri İzmir’deyiz.', hashtags: [] },
@@ -301,7 +308,11 @@ describe.skipIf(noDatabase)('a request from the first line to "done"', () => {
     expect(revisionData).toContain('Açılış tarihi de yazsın.');
 
     const again = await detail(founder, id);
-    expect(again).toMatchObject({ stage: 'unit_approval', waitingForMe: true });
+    expect(again).toMatchObject({
+      stage: 'unit_approval',
+      waitingForMe: true,
+      approval: { involvesMoney: true, moneyStatedBy: 'agent', needsStepUp: true },
+    });
     // A reworked result after the requester's answer is a new chain, not a second attempt.
     expect(again.approval?.attempt).toBe(1);
     // The new result is hidden again until it is approved: the requester still reads the first.
