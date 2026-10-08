@@ -1,18 +1,22 @@
 import { describe, expect, it } from 'vitest';
 import {
   QUEUE_GRACE_MS,
+  REQUEST_COMMENT_MAX,
   REQUEST_TITLE_MAX,
   acceptanceDecisionSchema,
   approvalDecisionSchema,
   closeRequestSchema,
   correctRoutingSchema,
+  createRequestCommentSchema,
   createRequestSchema,
   deriveRequestTitle,
   deriveStage,
   requestCauseSchema,
+  requestCommentSchema,
   runGraceMs,
   type RequestFacts,
 } from '../src/requests.ts';
+import { officeDay } from '../src/tasks.ts';
 
 describe('the title of a request', () => {
   it('is the first line that is not empty', () => {
@@ -68,6 +72,33 @@ describe('the bodies a person sends', () => {
     }
   });
 
+  it('a comment is an id and a text: trimmed, not blank, at most 10 000 characters, without NUL, and nothing that moves the request', () => {
+    const parse = (body: unknown): boolean => createRequestCommentSchema.safeParse(body).success;
+    expect(createRequestCommentSchema.parse({ id, body: ' Tamam. \n' })).toEqual({
+      id,
+      body: 'Tamam.',
+    });
+    expect(REQUEST_COMMENT_MAX).toBe(10_000);
+    expect(parse({ id, body: 'x'.repeat(REQUEST_COMMENT_MAX) })).toBe(true);
+    // The limit counts what is stored: the blanks around the text are not part of it.
+    expect(parse({ id, body: `  ${'x'.repeat(REQUEST_COMMENT_MAX)}  ` })).toBe(true);
+    expect(parse({ id, body: 'x'.repeat(REQUEST_COMMENT_MAX + 1) })).toBe(false);
+    for (const body of ['', '   ', ' \n\t ', 'a\u0000b', null, 12, undefined]) {
+      expect(parse({ id, body }), JSON.stringify(body)).toBe(false);
+    }
+    expect(parse({ body: 'Tamam.' })).toBe(false);
+    expect(parse({ id: 'not-an-id', body: 'Tamam.' })).toBe(false);
+    for (const extra of [
+      { status: 'done' },
+      { agentCode: 'SOS-2' },
+      { to: id },
+      { authorUserId: id },
+      { createdAt: '2026-10-08T10:00:00+03:00' },
+    ]) {
+      expect(parse({ id, body: 'Tamam.', ...extra }), JSON.stringify(extra)).toBe(false);
+    }
+  });
+
   it('a change request or a rejection names a reason; "other" needs a note', () => {
     const parse = (body: unknown): boolean => approvalDecisionSchema.safeParse(body).success;
     expect(parse({ decision: 'approved', selectedOption: 'A' })).toBe(true);
@@ -111,6 +142,39 @@ describe('the bodies a person sends', () => {
     for (const extra of [{ approver: id }, { status: 'done' }, { requester: id }]) {
       expect(parse({ unitCode: 'SOS', agentCode: 'SOS-2', ...extra })).toBe(false);
     }
+  });
+});
+
+describe('the due day and the comments in an answer', () => {
+  const id = '00000000-0000-4000-8000-000000000001';
+
+  it('the office’s day is the day in Istanbul, whatever the UTC day is', () => {
+    // 01:30 on 8 October in Istanbul is still 7 October in UTC.
+    expect(officeDay(new Date('2026-10-07T22:30:00Z'))).toBe('2026-10-08');
+    expect(officeDay(Date.parse('2026-10-07T20:59:00Z'))).toBe('2026-10-07');
+    expect(officeDay(Date.parse('2026-10-07T21:00:00Z'))).toBe('2026-10-08');
+    expect(officeDay(new Date('2026-12-31T21:00:00Z'))).toBe('2027-01-01');
+  });
+
+  it('a comment in an answer is always a person’s', () => {
+    const comment = {
+      id,
+      author: { userId: id, name: 'Çalışan A' },
+      body: 'Neden B seçildi?',
+      createdAt: '2026-10-08T10:00:00+03:00',
+    };
+    expect(requestCommentSchema.safeParse(comment).success).toBe(true);
+    // A former member has no name any more.
+    expect(
+      requestCommentSchema.safeParse({ ...comment, author: { userId: id, name: null } }).success,
+    ).toBe(true);
+    // An agent could not be written as an author: the answer has no place for one.
+    for (const author of [{ code: 'SOS-2', name: 'Sosyal İçerik' }, { name: 'Ajan' }, null]) {
+      expect(requestCommentSchema.safeParse({ ...comment, author }).success).toBe(false);
+    }
+    expect(requestCommentSchema.safeParse({ ...comment, createdAt: '2026-10-08' }).success).toBe(
+      false,
+    );
   });
 });
 

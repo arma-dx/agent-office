@@ -11,7 +11,8 @@ import { taskPersonSchema, taskStatusSchema, type TaskStatus } from './tasks.ts'
  * The API validates every body with these schemas and builds every answer with them; the panel
  * validates every answer. There is no field here that sets a status or an approver: the only
  * things a person sends are the request text, a decision, a close and, for the founder and the
- * approver of the request, a correction of the routing (7 October decision 7).
+ * approver of the request, a correction of the routing (7 October decision 7). A comment (8 October
+ * decision 13) is the one more thing a person sends; it changes nothing of the request.
  */
 
 /** The agent every new request goes to first (its card: "Panelden gelen her talebi karşılar"). */
@@ -60,6 +61,9 @@ export function deriveRequestTitle(text: string): string {
   // Nothing but punctuation was cut: it stays as it is, a title is never empty.
   return title.length > 0 ? title : kept;
 }
+
+/** A due day: a real calendar day without a time, YYYY-MM-DD, read in the office's time zone. */
+export const requestDueDateSchema = z.iso.date();
 
 /**
  * POST /api/requests. The id is chosen by the panel, so a send that is repeated (a double click, a
@@ -453,6 +457,44 @@ export const approvalDeskSchema = z.object({
   acceptances: z.array(acceptanceCardSchema),
 });
 export type ApprovalDesk = z.output<typeof approvalDeskSchema>;
+
+// Comments -----------------------------------------------------------------------------------------
+
+export const REQUEST_COMMENT_MAX = 10_000;
+/** The most comments the page of a request carries (the newest ones). */
+export const REQUEST_COMMENT_LIMIT = 200;
+
+export const requestCommentBodySchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(REQUEST_COMMENT_MAX)
+  .refine(withoutNul, NO_NUL);
+
+/**
+ * A comment on a request (8 October decision 13). Written by a person, read by people: the
+ * author is always a person, and no agent run is ever given a comment. Plain text.
+ */
+export const requestCommentSchema = z.object({
+  id: z.uuid(),
+  author: taskPersonSchema,
+  body: z.string(),
+  createdAt: instantSchema,
+});
+export type RequestComment = z.output<typeof requestCommentSchema>;
+
+/**
+ * POST /api/requests/:requestId/comments. The requester, the approver of the request or the
+ * founder (the database decides; 403 comment_not_allowed for anybody else), on an open and on a
+ * closed request alike. A comment is never changed or deleted, so the id (chosen by the panel)
+ * makes a retry safe: the same id again adds nothing and answers the page as it is. There is no
+ * field that sets a status, names an agent or addresses anybody: a comment moves nothing.
+ */
+export const createRequestCommentSchema = z.strictObject({
+  id: z.uuid(),
+  body: requestCommentBodySchema,
+});
+export type CreateRequestComment = z.input<typeof createRequestCommentSchema>;
 
 const stepSchema = z.object({
   // The catalog name of the tool; the panel has a fixed verb for each.

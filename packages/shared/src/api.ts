@@ -72,6 +72,10 @@ export const apiErrorCodeSchema = z.enum([
   'requests_not_open',
   'reason_required',
   'routing_not_possible',
+  // The due day of a new request has already ended in the office's time zone.
+  'due_date_past',
+  // A comment on a request by somebody who is not its requester, its approver or the founder.
+  'comment_not_allowed',
   // Projects and customers (8 October decisions 14 to 22).
   'customer_exists',
   'customer_not_found',
