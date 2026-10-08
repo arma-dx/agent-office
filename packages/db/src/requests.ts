@@ -1,3 +1,4 @@
+import { OFFICE_TIME_ZONE } from '@agent-office/shared';
 import type { Queryable } from './queryable.ts';
 
 /**
@@ -11,6 +12,16 @@ import type { Queryable } from './queryable.ts';
  * written by the coordinator's routing or by a person's correction of it, both through the
  * database's own functions.
  */
+
+/**
+ * A due day is a day of the office. The column holds an instant: the last second of that day in
+ * the office's time zone; it is read back as that day. The zone is a constant of the code, never
+ * input.
+ */
+export const dueDaySql = (column: string): string =>
+  `(${column} at time zone '${OFFICE_TIME_ZONE}')::date::text`;
+const dueAtSql = (parameter: string): string =>
+  `((${parameter}::date + time '23:59:59') at time zone '${OFFICE_TIME_ZONE}')`;
 
 // May the calling person decide the work of this request: the founder, or the appointed approver
 // of the step that is active now (the rule of office.check_approval and office.correct_routing,
@@ -37,6 +48,8 @@ export interface RequestRow {
   status: string;
   created_at: Date;
   updated_at: Date;
+  // The due day (YYYY-MM-DD, office time); null when the requester gave none.
+  due_date: string | null;
   requester_user_id: string;
   closed_by_user_id: string | null;
   close_reason: string | null;
@@ -84,6 +97,7 @@ export interface RequestRow {
 const requestSql = (chosen: string): string => `
   select t.id, t.title, t.description, t.status, t.created_at, t.updated_at,
          t.requester_user_id, t.closed_by_user_id, t.close_reason,
+         ${dueDaySql('t.due_at')} as due_date,
          t.unit_code, u.name as unit_name,
          (select d.name from office.agent_definitions d where d.code = $1) as coordinator_name,
          office.can_approve() as reader_can_approve,
@@ -143,7 +157,7 @@ const requestSql = (chosen: string): string => `
          lr.limit_minutes as run_limit_minutes
   from (
     select x.id, x.company_id, x.title, x.description, x.status, x.created_at, x.updated_at,
-           x.requester_user_id, x.closed_by_user_id, x.close_reason, x.unit_code
+           x.requester_user_id, x.closed_by_user_id, x.close_reason, x.unit_code, x.due_at
     from office.tasks x
     where x.kind = 'request' and x.company_id = office.ctx_company_id()
       ${chosen}
@@ -268,15 +282,17 @@ export async function ownRequestExists(client: Queryable, requestId: string): Pr
 /**
  * Opens a request. The database takes the requester from the context and writes the status, the
  * unit and the agent itself (check_task); the title is derived by the caller from the text.
+ * The due day is stored when the request is opened and never afterwards: the database refuses
+ * every later change of a request.
  */
 export async function insertRequest(
   client: Queryable,
-  request: { id: string; title: string; text: string },
+  request: { id: string; title: string; text: string; dueDate: string | null },
 ): Promise<void> {
   await client.query(
-    `insert into office.tasks (id, company_id, kind, title, description)
-     values ($1, office.ctx_company_id(), 'request', $2, $3)`,
-    [request.id, request.title, request.text],
+    `insert into office.tasks (id, company_id, kind, title, description, due_at)
+     values ($1, office.ctx_company_id(), 'request', $2, $3, ${dueAtSql('$4')})`,
+    [request.id, request.title, request.text, request.dueDate],
   );
 }
 

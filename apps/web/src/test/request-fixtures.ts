@@ -103,6 +103,8 @@ export function requestDetail(overrides: Partial<RequestDetail> = {}): RequestDe
     requester: EMPLOYEE,
     createdAt: AT,
     updatedAt: AT,
+    dueDate: null,
+    overdue: false,
     text: 'LinkedIn için gönderi yaz\nKaynak: İzmir ofisimiz 1 Ekim’de açıldı.',
     agent: SOS_2,
     approver: null,
@@ -143,6 +145,8 @@ export function summaryOf(detail: RequestDetail): RequestSummary {
     requester,
     createdAt,
     updatedAt,
+    dueDate,
+    overdue,
   } = detail;
   return {
     id,
@@ -157,6 +161,8 @@ export function summaryOf(detail: RequestDetail): RequestSummary {
     requester,
     createdAt,
     updatedAt,
+    dueDate,
+    overdue,
   };
 }
 

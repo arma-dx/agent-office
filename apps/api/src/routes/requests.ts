@@ -38,6 +38,7 @@ import {
   createRequestSchema,
   deriveRequestTitle,
   isClosedTaskStatus,
+  officeDay,
   requestDetailSchema,
   requestIntakeSchema,
   requestListSchema,
@@ -72,8 +73,9 @@ import type { RouteDeps } from '../services.ts';
  * Flow (A), "talep": a request that agents carry out (7 October decisions 1 to 8).
  *
  *   GET  /api/requests/intake                can this person send a request here now
- *   POST /api/requests                       a person writes what they want; the coordinator's run
- *                                            is put on the queue in the same transaction
+ *   POST /api/requests                       a person writes what they want and, if they wish, a
+ *                                            due day (information only); the coordinator's run is
+ *                                            put on the queue in the same transaction
  *   GET  /api/requests                       the requests the person may read, with stage and turn
  *   GET  /api/requests/:requestId            one answer for the whole page
  *   POST /api/requests/:requestId/close      the requester cancels; the approver or founder stops
@@ -147,6 +149,13 @@ const reasonRequired = (): ApiError =>
     409,
     'reason_required',
     'İşi durdurmak için bir neden yazın; talep sahibi bu nedeni okur.',
+  );
+
+const dueDatePast = (): ApiError =>
+  new ApiError(
+    409,
+    'due_date_past',
+    'Son tarih bugünden önce olamaz. Tarihi düzeltip yeniden gönderin.',
   );
 
 const routingNotPossible = (): ApiError =>
@@ -331,6 +340,11 @@ export function registerRequestRoutes(
           // Nothing is stored: the person keeps the text in the form and is told why.
           throw new ApiError(409, 'requests_not_open', INTAKE_MESSAGE[intake.reason]);
         }
+        // Information only, but a day that has already ended is a slip of the hand: refused
+        // before anything is stored. Today is accepted. A repeated send is not asked again.
+        if (body.data.dueDate !== undefined && body.data.dueDate < officeDay(new Date())) {
+          throw dueDatePast();
+        }
         let opened = true;
         await client.query('savepoint open_request');
         try {
@@ -338,6 +352,7 @@ export function registerRequestRoutes(
             id: body.data.id,
             title: deriveRequestTitle(body.data.text),
             text: body.data.text,
+            dueDate: body.data.dueDate ?? null,
           });
         } catch (error) {
           await client.query('rollback to savepoint open_request');

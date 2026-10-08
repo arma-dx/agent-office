@@ -19,6 +19,7 @@ function row(n: number, overrides: Partial<RequestRow> = {}): RequestRow {
     status: 'open',
     created_at: ago(10_000),
     updated_at: ago(10_000),
+    due_date: null,
     requester_user_id: id(900),
     closed_by_user_id: null,
     close_reason: null,

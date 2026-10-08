@@ -1,4 +1,5 @@
 import { REQUEST_NOTIFICATION_TEMPLATES } from '@agent-office/shared';
+import { randomUUID } from 'node:crypto';
 import { afterAll, describe, expect, it } from 'vitest';
 import type { ContextInput } from '../src/context.ts';
 import {
@@ -8,6 +9,8 @@ import {
 } from '../src/notifications.ts';
 import {
   countPendingDecisions,
+  dueDaySql,
+  insertRequest,
   listExpectedRequests,
   listOpenRequests,
   listPendingAcceptances,
@@ -3856,29 +3859,23 @@ describe.skipIf(noDatabase)(
 
 // The due day of a request (docs/SONRA.md W-h): information only. tasks.due_at takes it when the
 // request is opened; afterwards nobody changes it, as nobody changes anything of a request by hand.
-const DUE_AT = `(($1::date + time '23:59:59') at time zone 'Europe/Istanbul')`;
-
 describe.skipIf(noDatabase)('the due day of a request', () => {
   afterAll(closePools);
+
+  /** Opens a request of the context person with the statement the API uses. */
+  async function openWithDay(tx: Tx, dueDate: string | null): Promise<string> {
+    const id = randomUUID();
+    await insertRequest(tx.client, { id, title: 'A request', text: 'What is wanted', dueDate });
+    return id;
+  }
 
   it('a request takes its due day when it is opened and nobody changes it afterwards', async () => {
     const refusal = { code: '42501', message: 'A request changes only through its flow' };
     await inTransaction(async (tx) => {
       await tx.setContext(employeeA);
-      const { id: task } = await one<{ id: string }>(
-        tx,
-        `insert into office.tasks (company_id, kind, title, description, due_at)
-         values (office.ctx_company_id(), 'request', 'A request', 'What is wanted', ${DUE_AT})
-         returning id`,
-        ['2026-10-20'],
-      );
+      const task = await openWithDay(tx, '2026-10-20');
       const dueOf = (): Promise<{ day: string | null }> =>
-        one(
-          tx,
-          `select (due_at at time zone 'Europe/Istanbul')::date::text as day
-           from office.tasks where id = $1`,
-          [task],
-        );
+        one(tx, `select ${dueDaySql('due_at')} as day from office.tasks where id = $1`, [task]);
       expect(await dueOf()).toEqual({ day: '2026-10-20' });
       for (const person of [employeeA, founderA]) {
         await tx.setContext(person);
@@ -3915,6 +3912,77 @@ describe.skipIf(noDatabase)('the due day of a request', () => {
                   has_column_privilege('office_trigger', 'office.tasks', 'status', 'update') as status`,
         ),
       ).toEqual({ flow: false, status: true });
+    });
+  });
+
+  it('the due day is the office’s day: stored as its last second in Istanbul and read back as the same day', async () => {
+    await inTransaction(async (tx) => {
+      await tx.setContext(employeeA);
+      const withDay = await openWithDay(tx, '2026-10-20');
+      const without = await openWithDay(tx, null);
+      // The statements name the zone themselves: what the session's zone is changes neither what
+      // is stored nor what is read. (The instant prints differently per session, +03 on a server
+      // in Istanbul and +00 in CI, so instants are compared, never their text.)
+      await tx.exec(`set local time zone 'America/New_York'`);
+      const fromAfar = await openWithDay(tx, '2026-10-20');
+      for (const zone of ['Europe/Istanbul', 'UTC', 'America/New_York']) {
+        await tx.exec(`set local time zone '${zone}'`);
+        for (const task of [withDay, fromAfar]) {
+          expect(
+            await one(
+              tx,
+              `select due_at = '2026-10-20 23:59:59+03'::timestamptz as last_second
+               from office.tasks where id = $1`,
+              [task],
+            ),
+            zone,
+          ).toEqual({ last_second: true });
+          expect((await readRequest(tx.client, 'KOR-1', task))?.due_date, zone).toBe('2026-10-20');
+        }
+        const none = await readRequest(tx.client, 'KOR-1', without);
+        expect(none).toMatchObject({ id: without, due_date: null });
+        expect(await tx.rows('select due_at from office.tasks where id = $1', [without])).toEqual([
+          { due_at: null },
+        ]);
+        const listed = await listRequests(tx.client, {
+          coordinator: 'KOR-1',
+          mine: true,
+          limit: 50,
+        });
+        expect(
+          Object.fromEntries(
+            listed
+              .filter((row) => [withDay, without, fromAfar].includes(row.id))
+              .map((row) => [row.id, row.due_date]),
+          ),
+          zone,
+        ).toEqual({ [withDay]: '2026-10-20', [without]: null, [fromAfar]: '2026-10-20' });
+      }
+      // The last and the first day of a year stay the days they are.
+      for (const day of ['2026-12-31', '2027-01-01', '2028-02-29']) {
+        const task = await openWithDay(tx, day);
+        expect((await readRequest(tx.client, 'KOR-1', task))?.due_date).toBe(day);
+      }
+    });
+  });
+
+  it('an agent run reads the due day of the request it works on', async () => {
+    // The worker cannot open a request, and a row the API's role did not commit is not there for
+    // it: one privileged transaction opens the request in the requester's name and reads it as
+    // the runner does, with the worker's role and an agent context.
+    await inAdminTransaction(async (tx) => {
+      await tx.setContext(employeeA);
+      const task = await openWithDay(tx, '2026-10-20');
+      const plain = await openWithDay(tx, null);
+      await asRole(tx, 'worker');
+      await tx.setContext(agentRun(ids.employeeA, 'KOR-1'));
+      const read = `select ${dueDaySql('t.due_at')} as due_date from office.tasks t where t.id = $1`;
+      expect(await tx.rows(read, [task])).toEqual([{ due_date: '2026-10-20' }]);
+      expect(await tx.rows(read, [plain])).toEqual([{ due_date: null }]);
+      // And cannot move it.
+      expect(
+        (await tx.expectError('update office.tasks set due_at = now() where id = $1', [task])).code,
+      ).toBe('42501');
     });
   });
 });

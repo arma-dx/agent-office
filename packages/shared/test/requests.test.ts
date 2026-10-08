@@ -13,6 +13,7 @@ import {
   deriveStage,
   requestCauseSchema,
   requestCommentSchema,
+  requestSummarySchema,
   runGraceMs,
   type RequestFacts,
 } from '../src/requests.ts';
@@ -69,6 +70,34 @@ describe('the bodies a person sends', () => {
     expect(createRequestSchema.safeParse({ id, text: 'a\u0000b' }).success).toBe(false);
     for (const extra of [{ unit: 'SOS' }, { agent: 'SOS-2' }, { status: 'done' }, { title: 'x' }]) {
       expect(createRequestSchema.safeParse({ id, text: 'x', ...extra }).success).toBe(false);
+    }
+  });
+
+  it('a request may carry a due day: a real calendar day and nothing else', () => {
+    const parse = (body: unknown): boolean => createRequestSchema.safeParse(body).success;
+    expect(parse({ id, text: 'Bir gönderi yaz' })).toBe(true);
+    expect(
+      createRequestSchema.parse({ id, text: 'Bir gönderi yaz', dueDate: '2026-10-20' }),
+    ).toEqual({ id, text: 'Bir gönderi yaz', dueDate: '2026-10-20' });
+    expect(parse({ id, text: 'x', dueDate: '2028-02-29' })).toBe(true);
+    for (const dueDate of [
+      '2026-10-20T10:00:00Z',
+      '2026-10-20 10:00',
+      '20.10.2026',
+      '20/10/2026',
+      '2026-02-30',
+      '2027-02-29',
+      '2026-13-01',
+      '2026-1-5',
+      '',
+      null,
+      20261020,
+    ]) {
+      expect(parse({ id, text: 'x', dueDate }), JSON.stringify(dueDate)).toBe(false);
+    }
+    // The day is the one more thing; a body still cannot route, and has no time or zone to send.
+    for (const extra of [{ unitCode: 'SOS' }, { dueAt: '2026-10-20' }, { overdue: false }]) {
+      expect(parse({ id, text: 'x', dueDate: '2026-10-20', ...extra })).toBe(false);
     }
   });
 
@@ -154,6 +183,37 @@ describe('the due day and the comments in an answer', () => {
     expect(officeDay(Date.parse('2026-10-07T20:59:00Z'))).toBe('2026-10-07');
     expect(officeDay(Date.parse('2026-10-07T21:00:00Z'))).toBe('2026-10-08');
     expect(officeDay(new Date('2026-12-31T21:00:00Z'))).toBe('2027-01-01');
+  });
+
+  it('a summary says the due day and whether it has passed', () => {
+    const summary = {
+      id,
+      title: 'LinkedIn için gönderi yaz',
+      status: 'in_progress',
+      stage: 'working',
+      cause: null,
+      delayed: false,
+      turn: { kind: 'agent', code: 'SOS-2', name: 'Sosyal İçerik Yazım Ajanı' },
+      waitingForMe: false,
+      unit: { code: 'SOS', name: 'Sosyal Medya' },
+      requester: { userId: id, name: 'Çalışan A' },
+      createdAt: '2026-10-08T10:00:00+03:00',
+      updatedAt: '2026-10-08T10:00:00+03:00',
+      dueDate: '2026-10-20',
+      overdue: false,
+    };
+    const parse = (value: unknown): boolean => requestSummarySchema.safeParse(value).success;
+    expect(requestSummarySchema.parse(summary)).toEqual(summary);
+    expect(parse({ ...summary, dueDate: null })).toBe(true);
+    expect(parse({ ...summary, overdue: true })).toBe(true);
+    // Both are always said: a panel never guesses that a day has passed.
+    for (const field of ['dueDate', 'overdue']) {
+      const rest = Object.fromEntries(Object.entries(summary).filter(([key]) => key !== field));
+      expect(parse(rest), field).toBe(false);
+    }
+    // A day, never an instant.
+    expect(parse({ ...summary, dueDate: '2026-10-20T20:59:59.000Z' })).toBe(false);
+    expect(parse({ ...summary, overdue: null })).toBe(false);
   });
 
   it('a comment in an answer is always a person’s', () => {

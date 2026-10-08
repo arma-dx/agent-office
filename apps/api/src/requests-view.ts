@@ -9,6 +9,8 @@ import type {
 import {
   COORDINATOR_AGENT_CODE,
   deriveStage,
+  isClosedTaskStatus,
+  officeDay,
   rejectionReasonSchema,
   resultPayloadSchema,
   runStatusSchema,
@@ -194,10 +196,11 @@ export function toSummary(
   now: Date,
 ): RequestSummary {
   const derived = deriveStage(factsOf(row), now);
+  const status = taskStatusSchema.parse(row.status);
   return {
     id: row.id,
     title: row.title,
-    status: taskStatusSchema.parse(row.status),
+    status,
     stage: derived.stage,
     cause: derived.cause,
     delayed: derived.delayed,
@@ -209,6 +212,10 @@ export function toSummary(
     requester: person(names, row.requester_user_id),
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
+    dueDate: row.due_date,
+    // Read on the same clock as the stage. A closed request is never overdue: nothing is expected
+    // of anybody any more.
+    overdue: row.due_date !== null && !isClosedTaskStatus(status) && row.due_date < officeDay(now),
   };
 }
 

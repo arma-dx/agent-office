@@ -25,6 +25,8 @@ const SUMMARY = {
   requester: { userId: uuid(2), name: 'Ada Yılmaz' },
   createdAt: AT,
   updatedAt: AT,
+  dueDate: null,
+  overdue: false,
 };
 const REQUEST = { id: uuid(1), title: 'LinkedIn için gönderi yaz' };
 const base = (n: number) => ({ id: uuid(n), createdAt: AT, read: false });

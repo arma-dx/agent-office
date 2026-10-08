@@ -19,6 +19,7 @@ import {
   routingOptionsSchema,
   sidebarCountsSchema,
   todaySchema,
+  officeDay,
   type OfficeAgentWork,
   type RequestDetail,
   type SidebarCounts,
@@ -2812,6 +2813,145 @@ describe.skipIf(noDatabase)('requests', () => {
       expect(await idle()).toBe(true);
       expect((await get(session, '/api/office')).statusCode).toBe(200);
       expect(await idle()).toBe(false);
+    });
+  });
+
+  describe('the due date and comments', () => {
+    const DAY_MS = 86_400_000;
+    const dayFromNow = (days: number): string => officeDay(Date.now() + days * DAY_MS);
+    // A day counted from another day (noon in Istanbul, so that no hour of the clock matters).
+    const dayFrom = (day: string, days: number): string =>
+      officeDay(Date.parse(`${day}T12:00:00+03:00`) + days * DAY_MS);
+    const listed = async (session: string, id: string) =>
+      requestListSchema
+        .parse((await get(session, '/api/requests')).json())
+        .requests.find((request) => request.id === id);
+
+    it('opens a request with a due day and shows it on the page and in the list; without one both say null', async () => {
+      const dueDate = dayFromNow(3);
+      const id = randomUUID();
+      const res = await post(employee, '/api/requests', { id, text: 'Fuar davetiyesi', dueDate });
+      expect(res.statusCode).toBe(201);
+      expect(requestDetailSchema.parse(res.json())).toMatchObject({ id, dueDate, overdue: false });
+      // Everybody who reads the request reads the day, on the page and in the list.
+      for (const session of [employee, colleague, founder]) {
+        expect(await read(session, id)).toMatchObject({ dueDate, overdue: false });
+      }
+      expect(await listed(colleague, id)).toMatchObject({ dueDate, overdue: false });
+      // Stored as the last second of that day in Istanbul.
+      expect(
+        await adminQuery(
+          `select due_at = (($2::date + time '23:59:59') at time zone 'Europe/Istanbul') as last_second
+           from office.tasks where id = $1`,
+          [id, dueDate],
+        ),
+      ).toEqual([{ last_second: true }]);
+
+      const plain = await open(employee);
+      expect(plain).toMatchObject({ dueDate: null, overdue: false });
+      expect(await listed(employee, plain.id)).toMatchObject({ dueDate: null, overdue: false });
+      expect(await adminQuery('select due_at from office.tasks where id = $1', [plain.id])).toEqual(
+        [{ due_at: null }],
+      );
+
+      // Today is a day that has not ended.
+      const today = dayFromNow(0);
+      const sameDay = await post(employee, '/api/requests', {
+        id: randomUUID(),
+        text: 'Bugün bitmeli',
+        dueDate: today,
+      });
+      expect(sameDay.statusCode).toBe(201);
+      expect(requestDetailSchema.parse(sameDay.json())).toMatchObject({
+        dueDate: today,
+        overdue: false,
+      });
+
+      // A repeated send answers the first record: the day it was opened with stays.
+      const again = await post(employee, '/api/requests', {
+        id,
+        text: 'Fuar davetiyesi',
+        dueDate: dayFrom(dueDate, 6),
+      });
+      expect(again.statusCode).toBe(201);
+      expect(requestDetailSchema.parse(again.json()).dueDate).toBe(dueDate);
+    });
+
+    it('refuses a due day that has already ended and stores nothing', async () => {
+      const jobs = server.jobs.sent.length;
+      for (const dueDate of [dayFromNow(-1), '2020-01-01', '0001-01-01']) {
+        const id = randomUUID();
+        const res = await post(employee, '/api/requests', { id, text: 'Geç kalmış', dueDate });
+        expect([res.statusCode, errorCode(res)], dueDate).toEqual([409, 'due_date_past']);
+        expect(apiErrorSchema.parse(res.json()).error.message).toBe(
+          'Son tarih bugünden önce olamaz. Tarihi düzeltip yeniden gönderin.',
+        );
+        expect((await get(employee, `/api/requests/${id}`)).statusCode).toBe(404);
+        expect(await adminQuery('select 1 from office.tasks where id = $1', [id])).toEqual([]);
+      }
+      expect(server.jobs.sent).toHaveLength(jobs);
+    });
+
+    it('refuses a due date that is not a day', async () => {
+      const jobs = server.jobs.sent.length;
+      for (const dueDate of [
+        '2026-10-20T10:00:00Z',
+        '20.10.2026',
+        '2026-02-30',
+        '',
+        null,
+        20261020,
+      ]) {
+        const id = randomUUID();
+        const res = await post(employee, '/api/requests', { id, text: 'x', dueDate });
+        expect([res.statusCode, errorCode(res)], JSON.stringify(dueDate)).toEqual([
+          400,
+          'invalid_request',
+        ]);
+        expect(await adminQuery('select 1 from office.tasks where id = $1', [id])).toEqual([]);
+      }
+      expect(server.jobs.sent).toHaveLength(jobs);
+    });
+
+    it('says that the due day has passed only while the request is open', async () => {
+      const id = randomUUID();
+      const today = dayFromNow(0);
+      expect(
+        (await post(employee, '/api/requests', { id, text: 'Günü geçecek', dueDate: today }))
+          .statusCode,
+      ).toBe(201);
+      expect(await read(employee, id)).toMatchObject({ dueDate: today, overdue: false });
+      // Nobody moves the day of a request, the privileged role included: only with the triggers
+      // off can a test make two days pass.
+      await adminExec(`
+        begin;
+        set local session_replication_role = 'replica';
+        update office.tasks set due_at = due_at - interval '2 days' where id = '${id}';
+        commit;
+      `);
+      const passed = dayFrom(today, -2);
+      for (const session of [employee, colleague, founder]) {
+        expect(await read(session, id)).toMatchObject({ dueDate: passed, overdue: true });
+      }
+      expect(await listed(colleague, id)).toMatchObject({ dueDate: passed, overdue: true });
+      // The day moves nothing: the request is where it was, and nobody was told.
+      expect(await read(employee, id)).toMatchObject({ status: 'open', stage: 'routing' });
+      expect(
+        await adminQuery(
+          `select 1 from office.notifications where record_type = 'task' and record_id = $1`,
+          [id],
+        ),
+      ).toEqual([]);
+      // A closed request is not late any more; the day stays on it.
+      expect((await post(employee, `/api/requests/${id}/close`)).statusCode).toBe(200);
+      for (const session of [employee, founder]) {
+        expect(await read(session, id)).toMatchObject({
+          status: 'cancelled',
+          dueDate: passed,
+          overdue: false,
+        });
+      }
+      expect(await listed(founder, id)).toMatchObject({ dueDate: passed, overdue: false });
     });
   });
 });

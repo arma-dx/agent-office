@@ -68,8 +68,15 @@ export const requestDueDateSchema = z.iso.date();
 /**
  * POST /api/requests. The id is chosen by the panel, so a send that is repeated (a double click, a
  * retry after a lost answer) answers the first record and opens no second request.
+ * `dueDate` is optional and is information only (docs/SONRA.md W-h): it moves no status, starts
+ * no reminder and cannot be changed after the request is sent. A day that has already ended is
+ * refused by the API (409 due_date_past); today is accepted.
  */
-export const createRequestSchema = z.strictObject({ id: z.uuid(), text: requestTextSchema });
+export const createRequestSchema = z.strictObject({
+  id: z.uuid(),
+  text: requestTextSchema,
+  dueDate: requestDueDateSchema.optional(),
+});
 export type CreateRequest = z.input<typeof createRequestSchema>;
 
 // Stage and turn -----------------------------------------------------------------------------------
@@ -360,6 +367,12 @@ export const requestSummarySchema = z.object({
   requester: taskPersonSchema,
   createdAt: instantSchema,
   updatedAt: instantSchema,
+  // The day the requester gave when the request was opened; null when none. Never changes.
+  dueDate: requestDueDateSchema.nullable(),
+  // The due day has ended (office time) and the request is still open. Never true for a closed
+  // request. Not `delayed`: that is a run that takes too long ("gecikti"); this is "son tarihi
+  // geçti".
+  overdue: z.boolean(),
 });
 export type RequestSummary = z.output<typeof requestSummarySchema>;
 
