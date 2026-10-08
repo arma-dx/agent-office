@@ -37,6 +37,8 @@ Henüz olmayanlar: veritabanı (göç dosyası yok), giriş, işlevli ekran (yal
 
 8 Ekim 2026 (devam): kurucu ilk gerçek talebi gönderdi; akış uçtan uca çalıştı. Koordinasyon merkezi koşullu bir cümleyi eksik bilgi sayıp yönlendirmedi; yönlendirme talimatı düzeltildi ve gerçek modelle sınandı. Kurucu Projeler ön planının dokuz sorusunu yanıtladı (karar 14-22); 0.4c yedi adıma bölündü.
 
+8 Ekim 2026 (akşam): Bugün listesi ve bildirimler (0.4a adım 1) ile en küçük Projeler (0.4c adım 1) kuruldu. Kurucu, ajanların kod yazması (karar 23-30) ve haber toplama ajanı (karar 35-43) için ön planları yanıtladı. Kurucunun ikinci gerçek talebinde koordinasyon merkezi yine düz metinle durdu; artık her durumda aracıyla yanıt veriyor. Test projesine bütün göçler gönderildi. Sırada: ofiste canlı durumlar, son tarih ve yorum, talep formunda proje alanı.
+
 8 Ekim 2026 (akşam): Projeler'in ilk adımı kuruldu (0.4c adım 1): menüde "Projeler", proje listesi, "Yeni proje" penceresi, proje sayfası, üyeler, yapay zekâ izni ve müşterinin sözleşme izinleri. Adım tasarlanırken türetilen seçimler `docs/SONRA.md` içinde P1-a ila P1-z olarak duruyor; hepsi kurucu onayı bekliyor. Dört yeni göç yerel veritabanına henüz uygulanmadı (son uygulanan `20261008101500`); uygulanana kadar yerelde Projeler ekranı sunucu hatası verir. Sıradaki adım talep formunda proje alanı (adım 2).
 
 ## Sprint 0
@@ -379,7 +381,13 @@ Adım 4: Ajanın soru sorması (ilk gerçek çalışmalardan sonra; sorusu kuruc
 Adım 5: Birden çok ajanın sırayla çalışması (ilk gerçek çalışmalardan sonra; soruları kurucuya o zaman sorulur)
 
 - [ ] Birden çok ajanın sırayla çalışması (7 Ekim, karar 1)
-- [ ] Haber ve bilgi toplama ajanı (8 Ekim, karar 35): ön plan (birim, kart taslağı, araçlar, akıştaki yeri, sorular); ajan, onaydan sonra uygun aşamada kurulur
+- [x] Haber ve bilgi toplama ajanı için ön plan ve kart taslağı (8 Ekim, karar 35; `docs/taslaklar/haber-ajani-on-plan.md`, `docs/taslaklar/STR-6-kart-taslagi.yaml`)
+- [ ] Haber ve Bilgi Toplama Ajanı STR-6 (8 Ekim, karar 36-42; bu adımla birlikte kurulur):
+  - [ ] (Senden) İzinli kaynak listesi: haber ajansları ve resmî kurum siteleri (karar 38)
+  - [ ] Strateji ve Yönetim biriminin pilotta açılması; `agents/STR-6.yaml` kartı ve `sourced-research` skill'i
+  - [ ] Arama: model sağlayıcısının hazır arama aracı, yalnızca izinli kaynaklarla; arama sözcüğü, adres, başlık ve alıntının çalışma kaydına yazılması; arama ücretinin maliyete eklenmesi (karar 39)
+  - [ ] Kaynakları gösteren onay kartı: her bilginin kaynağı, sayfanın tarihi, bakılan saat, bulunamayanlar; özetin önce birimin onaylayıcısına gelmesi (karar 40)
+  - [ ] Kişi adının aratılmaması ve özete yazılmaması (karar 41); sayfadaki talimat gibi yazılmış metnin ajanı yönlendirememesi (kural 7), testleriyle
 
 Bu işten çıkarılanlar:
 
