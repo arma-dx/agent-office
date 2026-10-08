@@ -465,7 +465,8 @@ const stepSchema = z.object({
  * A run's summary is a fixed sentence made by code. Text an agent wrote appears in three places
  * only, and only for a person who may decide the work (the founder, the approver of the step):
  * the coordinator's reason for its routing, the closing words of a run that ended without its
- * tool (`agentText`) and, inside the approval card, the agent's summary, reasoning and risk note.
+ * tool or the coordinator's reason for routing nothing (`agentText`) and, inside the approval
+ * card, the agent's summary, reasoning and risk note.
  * Nobody else reads a model's text before the approver has approved it (7 October decision 4).
  */
 export const journeyItemSchema = z.discriminatedUnion('kind', [
@@ -494,7 +495,8 @@ export const journeyItemSchema = z.discriminatedUnion('kind', [
     durationMs: z.number().int().nonnegative().nullable(),
     errorCode: z.string().nullable(),
     summary: z.string().nullable(),
-    // What the agent wrote when it ended without its tool; null for a reader who may not decide.
+    // What the agent wrote when it ended without its tool, or the coordinator's reason when it
+    // said through its tool that no unit fits; null for a reader who may not decide.
     agentText: z.string().nullable(),
     steps: z.array(stepSchema),
   }),

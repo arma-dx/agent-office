@@ -45,13 +45,22 @@ export const LIMITS = {
   hashtags: 15,
 } as const;
 
-export const routeTaskInput = z.strictObject({
-  unit_code: unitCodeSchema,
-  // An empty text: no enabled agent of the unit can take the work; the request is then returned
-  // to its requester and closed.
-  agent_code: z.union([agentCodeSchema, z.literal('')]),
-  reason: text(LIMITS.reason),
-});
+export const routeTaskInput = z
+  .strictObject({
+    // An empty text: the request fits no unit, or it cannot be told whose work it is. Nothing is
+    // routed then and the request falls to the founder, who reads the reason. The coordinator is
+    // made to answer through this tool (run.ts), so the tool itself must be able to say "none".
+    unit_code: z.union([unitCodeSchema, z.literal('')]),
+    // An empty text: no enabled agent of the unit can take the work; the request is then returned
+    // to its requester and closed.
+    agent_code: z.union([agentCodeSchema, z.literal('')]),
+    reason: text(LIMITS.reason),
+  })
+  // No unit and still an agent says nothing the runner could act on.
+  .refine((input) => input.unit_code !== '' || input.agent_code === '', {
+    path: ['agent_code'],
+    message: 'agent_without_unit',
+  });
 export type RouteTaskInput = z.output<typeof routeTaskInput>;
 
 const optionSchema = z.strictObject({
@@ -100,7 +109,9 @@ export function inputProblems(error: z.ZodError): string[] {
           ? `${field}: her seçeneğin kodu farklı olmalı`
           : issue.message === 'not_storable'
             ? `${field}: saklanamayan karakter içeriyor`
-            : `${field}: geçersiz değer`;
+            : issue.message === 'agent_without_unit'
+              ? `${field}: unit_code boşken bu alan da boş metin ("") olmalı; bir ajana vereceksen o ajanın biriminin kodunu da yaz`
+              : `${field}: geçersiz değer`;
       default:
         return `${field}: geçersiz değer`;
     }
@@ -116,19 +127,19 @@ const DEFINITIONS: Record<string, ModelTool> = {
   [ROUTE_TASK]: {
     name: ROUTE_TASK,
     description:
-      'Talebi bir birime ve o birimin açık bir ajanına yönlendirir; birimin onaylayıcısını sen değil sistem belirler. Yalnızca bu çalışmanın kendi talebinde çalışır. Birimde işi alabilecek açık ajan yoksa ajan boş bırakılır; talep o zaman nedeni yazılarak talep sahibine geri çevrilir ve kapanır. Çalışmayı bitiren araçtır; bir kez çağrılır.',
+      'Talebi bir birime ve o birimin açık bir ajanına yönlendirir; birimin onaylayıcısını sen değil sistem belirler. Yalnızca bu çalışmanın kendi talebinde çalışır. Birimde işi alabilecek açık ajan yoksa ajan boş bırakılır; talep o zaman nedeni yazılarak talep sahibine geri çevrilir ve kapanır. Talep hiçbir birime oturmuyorsa ya da kimin işi olduğu anlaşılmıyorsa birim de ajan da boş bırakılır; talep o zaman yönlendirilmez ve kurucuya düşer. Çalışmayı bitiren araçtır; bir kez çağrılır.',
     strict: true,
     input_schema: {
       type: 'object',
       properties: {
         unit_code: field(
-          'Talebin gideceği birimin kodu; units_and_agents bloğundaki kodlardan biri.',
+          'Talebin gideceği birimin kodu; units_and_agents bloğundaki kodlardan biri. Talep hiçbir birime oturmuyorsa ya da kimin işi olduğu anlaşılmıyorsa boş metin (""): talep o zaman yönlendirilmez ve kurucuya düşer.',
         ),
         agent_code: field(
-          'O birimin işi yapabilecek açık ajanının kodu. Birimde uygun açık ajan yoksa boş metin (""): talep o zaman, birimde işi alabilecek açık ajan olmadığı yazılarak talep sahibine geri çevrilir ve kapanır.',
+          'O birimin işi yapabilecek açık ajanının kodu. Birimde uygun açık ajan yoksa boş metin (""): talep o zaman, birimde işi alabilecek açık ajan olmadığı yazılarak talep sahibine geri çevrilir ve kapanır. unit_code boşsa bu alan da boş metin olmalı.',
         ),
         reason: field(
-          `Bu birimin neden seçildiğini anlatan bir iki cümle (en çok ${String(LIMITS.reason)} karakter). Kurucu okur; talep bir ajana verildiyse birimin onaylayıcısı da okur.`,
+          `Bu birimin neden seçildiğini anlatan bir iki cümle (en çok ${String(LIMITS.reason)} karakter). unit_code boşsa talebin hangi birimler arasında kaldığını ya da neden hiçbirine oturmadığını yaz. Kurucu okur; talep bir ajana verildiyse birimin onaylayıcısı da okur.`,
         ),
       },
       required: ['unit_code', 'agent_code', 'reason'],

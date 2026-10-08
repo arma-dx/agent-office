@@ -400,8 +400,9 @@ export interface RunRow {
 
 /**
  * The runs on a request. The summary is a sentence made by code. What the agent wrote when it
- * ended without its tool (runs.output, raw content under the retention period) is given only to
- * those who may decide the work: it is a model's text nobody approved.
+ * ended without its tool, and the coordinator's reason when it routed nothing (runs.output, raw
+ * content under the retention period), is given only to those who may decide the work: it is a
+ * model's text nobody approved.
  */
 export async function listRuns(client: Queryable, requestId: string): Promise<RunRow[]> {
   const { rows } = await client.query<RunRow>(

@@ -114,16 +114,18 @@ const FINAL_TEXT_MAX = 20_000;
 /**
  * The run's summary is a sentence made by code, never a model's text: every reader of the request
  * reads it, and nothing an agent wrote reaches anybody but the approver before it is approved
- * (7 October decision 4).
+ * (7 October decision 4). The same sentence for a run that ended without its tool and for a
+ * coordinator that said through its tool that the request fits no unit: for the person the two are
+ * one thing, a request nobody routed.
  */
-const ENDED_WITHOUT_TOOL = {
+const ENDED_WITHOUT_RESULT = {
   coordinator: 'Koordinasyon merkezi talebi yönlendirmeden çalışmasını bitirdi.',
   agent: 'Ajan sonucu onaya sunmadan çalışmasını bitirdi.',
 } as const;
 
 /**
- * Sent once when a turn ends in text although no result was stored: a tool cannot be forced on
- * every model, and the provider's own guidance is to check that the call was made and ask again.
+ * Sent once when a turn ends in text although no result was stored: a tool cannot be forced on a
+ * run that thinks, and the provider's own guidance is to check that the call was made and ask again.
  * The runner's own words, in a block of their own that no data block can imitate (dataBlock
  * escapes every "<").
  */
@@ -395,6 +397,15 @@ export async function runAgentJob(
     });
   // How the model is called and what it costs: the profile the card version holds.
   const profile: ModelProfile = version.stored.model;
+  // The coordinator answers through its closing tool and nothing else: left to choose, the small
+  // model it runs on ended about every second run in prose, and such a request falls to the
+  // founder while its requester learns nothing. Only where the profile sends no thinking.
+  const forcedTool =
+    coordinator &&
+    profile.thinking !== 'adaptive' &&
+    offered.some((tool) => tool.name === ROUTE_TASK)
+      ? ROUTE_TASK
+      : null;
 
   // Gate and open the run: one transaction, agent context.
   type Opened =
@@ -880,42 +891,56 @@ export async function runAgentJob(
         let summary: string;
         let outcome: RunOutcome;
         let stored: Record<string, unknown>;
+        // The coordinator's reason when it routed nothing: raw content of the run, stored where the
+        // closing words of a run that ended without its tool are stored (output.final_text).
+        let said: string | null = null;
         if (block.name === ROUTE_TASK) {
           const input = routeTaskInput.safeParse(block.input);
           if (!input.success) throw new ToolRefusal('invalid_input', inputProblems(input.error));
+          const unitCode = input.data.unit_code === '' ? null : input.data.unit_code;
           const agent = input.data.agent_code === '' ? null : input.data.agent_code;
           // The coordinator never routes to its own unit or to itself.
-          if (input.data.unit_code === card.unit || agent === job.agentCode) {
+          if (unitCode === card.unit || agent === job.agentCode) {
             throw new ToolRefusal('unit_not_routable');
           }
-          // Without an agent the database returns the request to its requester and closes it in
-          // this same statement; the rest of this transaction is the trace of this run.
-          await client.query('select office.route_request($1, $2::jsonb, $3)', [
-            job.taskId,
-            JSON.stringify([{ unit: input.data.unit_code, agent, reason: input.data.reason }]),
-            runId,
-          ]);
-          if (agent !== null) {
-            // The unit agent's run, in the name of the same requester; stored with the routing.
-            await deps.jobs.send(client, {
-              companyId: job.companyId,
-              userId: job.userId,
-              taskId: job.taskId,
-              agentCode: agent,
-            });
-          }
-          const unit = await client.query<{ name: string }>(
-            'select name from office.units where code = $1',
-            [input.data.unit_code],
-          );
-          const unitName = unit.rows[0]?.name ?? input.data.unit_code;
           record = { type: 'task', id: job.taskId };
-          outcome = agent === null ? 'returned' : 'routed';
-          summary =
-            agent === null
-              ? `Talep ${unitName} birimine yönlendirildi; birimde işi alabilecek açık ajan olmadığı için talep sahibine geri çevrildi.`
-              : `Talep ${unitName} birimine yönlendirildi; işi ${agent} yürütecek.`;
-          stored = { unit: input.data.unit_code, agent };
+          stored = { unit: unitCode, agent };
+          if (unitCode === null) {
+            // The request fits no unit, or it cannot be told whose work it is: nothing is routed
+            // and no job is sent. The run ends as one that did not route, with the sentence every
+            // reader of the request reads; the coordinator's reason is kept where the closing words
+            // of a run that ended without its tool are kept, for the person who may decide.
+            outcome = 'no_routing';
+            summary = ENDED_WITHOUT_RESULT.coordinator;
+            said = input.data.reason;
+          } else {
+            // Without an agent the database returns the request to its requester and closes it in
+            // this same statement; the rest of this transaction is the trace of this run.
+            await client.query('select office.route_request($1, $2::jsonb, $3)', [
+              job.taskId,
+              JSON.stringify([{ unit: unitCode, agent, reason: input.data.reason }]),
+              runId,
+            ]);
+            if (agent !== null) {
+              // The unit agent's run, in the name of the same requester; stored with the routing.
+              await deps.jobs.send(client, {
+                companyId: job.companyId,
+                userId: job.userId,
+                taskId: job.taskId,
+                agentCode: agent,
+              });
+            }
+            const unit = await client.query<{ name: string }>(
+              'select name from office.units where code = $1',
+              [unitCode],
+            );
+            const unitName = unit.rows[0]?.name ?? unitCode;
+            outcome = agent === null ? 'returned' : 'routed';
+            summary =
+              agent === null
+                ? `Talep ${unitName} birimine yönlendirildi; birimde işi alabilecek açık ajan olmadığı için talep sahibine geri çevrildi.`
+                : `Talep ${unitName} birimine yönlendirildi; işi ${agent} yürütecek.`;
+          }
         } else {
           const input = submitForApprovalInput.safeParse(block.input);
           if (!input.success) throw new ToolRefusal('invalid_input', inputProblems(input.error));
@@ -996,6 +1021,7 @@ export async function runAgentJob(
               model_calls: modelCalls,
               model_sends: modelSends,
               request_ids: requestIds,
+              ...(said === null ? {} : { final_text: said }),
             }),
           ],
         );
@@ -1065,9 +1091,13 @@ export async function runAgentJob(
         max_tokens: profile.max_tokens,
         system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
         tools: offered,
-        // At most one tool call per turn; forcing a tool is not possible on every model, so "end
-        // with your tool" is an instruction, never a tool choice.
-        tool_choice: { type: 'auto', disable_parallel_tool_use: true },
+        // At most one tool call per turn. The coordinator's closing tool is the tool choice itself
+        // where its profile sends no thinking; a forced tool cannot be combined with thinking, so
+        // for every other run "end with your tool" is an instruction and the choice stays "auto".
+        tool_choice:
+          forcedTool === null
+            ? { type: 'auto', disable_parallel_tool_use: true }
+            : { type: 'tool', name: forcedTool, disable_parallel_tool_use: true },
         messages,
         ...(profile.thinking === 'adaptive' ? { thinking: { type: 'adaptive' as const } } : {}),
         ...(profile.effort === null ? {} : { output_config: { effort: profile.effort } }),
@@ -1189,7 +1219,7 @@ export async function runAgentJob(
           // raw content of the run, read only by the person who may decide the work; the summary
           // everybody reads is the runner's own sentence.
           return await finish('completed', coordinator ? 'no_routing' : 'no_submission', {
-            summary: coordinator ? ENDED_WITHOUT_TOOL.coordinator : ENDED_WITHOUT_TOOL.agent,
+            summary: coordinator ? ENDED_WITHOUT_RESULT.coordinator : ENDED_WITHOUT_RESULT.agent,
             stopReason: 'end_turn',
             finalText: finalText(message),
           });

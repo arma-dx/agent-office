@@ -247,7 +247,13 @@ describe.skipIf(noDatabase)('the coordinator’s run', () => {
     expect(request).toMatchObject({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 2048,
-      tool_choice: { type: 'auto', disable_parallel_tool_use: true },
+    });
+    // The coordinator is made to answer through its closing tool: the choice is the tool itself,
+    // not "auto" (left to choose, this model ended about every second run in prose).
+    expect(request?.tool_choice).toEqual({
+      type: 'tool',
+      name: 'route_task',
+      disable_parallel_tool_use: true,
     });
     // This model takes neither a thinking nor an effort parameter.
     expect(request).not.toHaveProperty('thinking');
@@ -446,14 +452,14 @@ describe.skipIf(noDatabase)('the coordinator’s run', () => {
       'birimde işi alabilecek açık ajan olmadığı yazılarak talep sahibine geri çevrilir ve kapanır',
     );
     const system = systemOf(model);
-    // The card's line under "Takıldığında" and step 3 of the routing skill.
+    // The card's line under "Takıldığında" and step 4 of the routing skill.
     expect(system).toContain(
       `- Yönlendirdiği birimde işi alabilecek açık ajan yoksa ajanı boş bırakır; talep, ${returned}`,
     );
     expect(system).toContain(`ajanı boş bırak: talep, ${returned}.`);
     // Who reads the coordinator's reason: the founder always, the unit's approver only when the
     // request went to an agent (a returned round has no active step), never the requester. The
-    // skill's step 4 and the tool's reason field say the same.
+    // skill's step 6 and the tool's reason field say the same.
     const readers = 'talep bir ajana verildiyse birimin onaylayıcısı da okur.';
     expect(system).toContain(`Gerekçeyi kurucu okur; ${readers} Talep sahibine gösterilmez.`);
     expect(definition).toContain(`Kurucu okur; ${readers}`);
@@ -464,7 +470,161 @@ describe.skipIf(noDatabase)('the coordinator’s run', () => {
     }
   });
 
+  it('says through its tool that no unit fits: nothing is routed, and the reason is kept for the founder', async () => {
+    // A forced tool leaves no way to decline in prose, so the tool takes an empty unit.
+    const taskId = await openRequest(ids.employee, 'Bir şey lazım');
+    const reason = 'Talep tek cümle; Sosyal Medya ile Pazarlama arasında kaldı.';
+    const model = new ScriptedModel([
+      toolUse('route_task', { unit_code: '', agent_code: '', reason }),
+    ]);
+    const { deps, jobs, log } = await runner(model);
+    const result = await runAgentJob(deps, job(taskId, 'KOR-1', ids.employee));
+    // One call, no reminder: the answer came through the tool.
+    expect(result).toMatchObject({ outcome: 'no_routing', modelCalls: 1 });
+    const row = await runRow(result.runId);
+    expect(row).toMatchObject({
+      status: 'completed',
+      error_code: null,
+      tool_call_count: 1,
+      // The same sentence as for a run that ended without its tool; the reason is not in it.
+      summary: 'Koordinasyon merkezi talebi yönlendirmeden çalışmasını bitirdi.',
+      user_id: ids.employee,
+    });
+    // The reason is raw content of the run, where the closing words of a run without its tool are.
+    expect(row.output).toMatchObject({ outcome: 'no_routing', model_calls: 1, final_text: reason });
+    expect(log.filter((entry) => entry.event === 'run_finished')).toEqual([
+      {
+        event: 'run_finished',
+        fields: { run: result.runId, status: 'completed', outcome: 'no_routing', code: null },
+      },
+    ]);
+    // Nothing was routed and nothing was put on the queue; the request stays open, unassigned.
+    expect(await admin('select 1 from office.task_routings where task_id = $1', [taskId])).toEqual(
+      [],
+    );
+    expect(jobs.sent).toEqual([]);
+    expect(
+      await admin('select status, unit_code, assignee_agent_code from office.tasks where id = $1', [
+        taskId,
+      ]),
+    ).toEqual([{ status: 'in_progress', unit_code: null, assignee_agent_code: null }]);
+    // The call is a record like every other: codes only, never the reason's text.
+    expect(
+      await admin(
+        `select seq, tool_name, status, error_code, input, result from office.tool_calls
+         where run_id = $1`,
+        [result.runId],
+      ),
+    ).toEqual([
+      {
+        seq: 1,
+        tool_name: 'route_task',
+        status: 'succeeded',
+        error_code: null,
+        input: { unit: null, agent: null },
+        result: { ok: true },
+      },
+    ]);
+    const events = await admin<{ event: string }>(
+      `select event from office.audit_log
+       where record_type = 'task' and record_id = $1 and event not like 'task_%' order by id`,
+      [taskId],
+    );
+    expect(events.map((entry) => entry.event)).toEqual([
+      'request_created',
+      'run_started',
+      'tool_called',
+      'run_completed',
+    ]);
+  });
+
+  it('an empty unit with a named agent is refused as input; the model is told and may call again', async () => {
+    const taskId = await openRequest(ids.founder, REQUEST);
+    const model = new ScriptedModel([
+      toolUse('route_task', { unit_code: '', agent_code: 'SOS-2', reason: 'Gönderi isteniyor.' }),
+      toolUse('route_task', ROUTE_TO_SOS),
+    ]);
+    const { deps, jobs } = await runner(model);
+    const result = await runAgentJob(deps, job(taskId, 'KOR-1', ids.founder));
+    expect(result).toMatchObject({ outcome: 'routed', modelCalls: 2 });
+    expect(
+      await admin(
+        'select seq, status, error_code from office.tool_calls where run_id = $1 order by seq',
+        [result.runId],
+      ),
+    ).toEqual([
+      { seq: 1, status: 'failed', error_code: 'invalid_input' },
+      { seq: 2, status: 'succeeded', error_code: null },
+    ]);
+    // What the model was told with the refusal: the field and what to correct, nothing it wrote.
+    const turn = model.requests[1]?.messages.at(-1);
+    const block = Array.isArray(turn?.content) ? turn.content[0] : undefined;
+    expect(block).toMatchObject({ type: 'tool_result', is_error: true });
+    expect(
+      block?.type === 'tool_result' && typeof block.content === 'string'
+        ? (JSON.parse(block.content) as unknown)
+        : null,
+    ).toEqual({
+      ok: false,
+      error_code: 'invalid_input',
+      problems: [
+        'agent_code: unit_code boşken bu alan da boş metin ("") olmalı; bir ajana vereceksen o ajanın biriminin kodunu da yaz',
+      ],
+    });
+    // The second call is asked for like the first: still through the tool.
+    expect(model.requests[1]?.tool_choice).toEqual(model.requests[0]?.tool_choice);
+    // Only the routing of the second call exists.
+    expect(
+      await admin('select unit_code, agent_code from office.task_routings where task_id = $1', [
+        taskId,
+      ]),
+    ).toEqual([{ unit_code: 'SOS', agent_code: 'SOS-2' }]);
+    expect(jobs.sent).toHaveLength(1);
+  });
+
+  it('tells the model what an empty unit does: in the tool and the skill, which never say "do not call"', async () => {
+    const taskId = await openRequest(ids.founder, REQUEST);
+    const model = new ScriptedModel([toolUse('route_task', ROUTE_TO_SOS)]);
+    await runAgentJob((await runner(model)).deps, job(taskId, 'KOR-1', ids.founder));
+    const [tool] = model.requests[0]?.tools ?? [];
+    const definition = JSON.stringify(tool);
+    // The tool's description, the unit field, the agent field and the reason field.
+    expect(definition).toContain(
+      'Talep hiçbir birime oturmuyorsa ya da kimin işi olduğu anlaşılmıyorsa birim de ajan da boş bırakılır; talep o zaman yönlendirilmez ve kurucuya düşer.',
+    );
+    expect(definition).toContain(
+      'boş metin (\\"\\"): talep o zaman yönlendirilmez ve kurucuya düşer.',
+    );
+    expect(definition).toContain('unit_code boşsa bu alan da boş metin olmalı.');
+    expect(definition).toContain(
+      'unit_code boşsa talebin hangi birimler arasında kaldığını ya da neden hiçbirine oturmadığını yaz.',
+    );
+    // The skill: the coordinator always ends with its tool, in one of three ways.
+    const skill = systemOf(model).split('# Talep yönlendirme')[1] ?? '';
+    expect(skill).toContain(
+      'Çalışmanı her zaman `route_task` aracıyla bitir; aracı bir kez çağır.',
+    );
+    expect(skill).toContain('- Birim kodu ve ajan kodu: talep o ajana gider.');
+    expect(skill).toContain(
+      '- Boş birim kodu ve boş ajan kodu: talep hiçbir birime oturmuyor ya da hangi birimin işi olduğu metinden anlaşılmıyor. Talep yönlendirilmez ve kurucuya düşer.',
+    );
+    expect(skill).toContain('Çalışmanı düz metinle bitirme;');
+    // The general sentence of the common rules stays for the other agents; the skill says that it
+    // is not the coordinator's, and nowhere tells the coordinator to end without its tool.
+    expect(systemOf(model)).toContain('İşi yapamıyorsan (bilgi yetersiz');
+    expect(skill).toContain('"işi yapamıyorsan aracı çağırma" cümlesi senin için geçerli değildir');
+    expect(skill).not.toMatch(/araç çağırma;|yaz ve bitir/);
+    // A request with several parts goes to the unit that owns the final output.
+    expect(skill).toContain(
+      'sonunda talep sahibinin eline geçecek çıktıya bak ve o çıktının sahibi olan birimi seç',
+    );
+    // A unit without an open agent is still named: only so the requester learns why.
+    expect(skill).toContain('birimi boş bırakma: birimi seç, ajanı boş bırak');
+  });
+
   it('a model that only answers is reminded once; its words are never the summary', async () => {
+    // The tool was asked for as the tool choice; the runner does not rely on the provider keeping
+    // to it, and a coordinator whose profile thinks is not forced at all.
     const taskId = await openRequest(ids.founder, 'Bir şey lazım');
     const model = new ScriptedModel([
       text('Ne istendiği anlaşılmıyor.'),
@@ -655,6 +815,11 @@ describe.skipIf(noDatabase)('the unit agent’s run', () => {
       max_tokens: 16000,
       thinking: { type: 'adaptive' },
       output_config: { effort: 'medium' },
+    });
+    // A unit agent chooses: its tool is never the tool choice.
+    expect(model.requests[0]?.tool_choice).toEqual({
+      type: 'auto',
+      disable_parallel_tool_use: true,
     });
     expect(toolNames(model)).toEqual(['submit_for_approval']);
     // The card speaks of asking for missing information and of a brief left as a task
@@ -1036,6 +1201,91 @@ describe.skipIf(noDatabase)('the unit agent’s run', () => {
         version?.id,
         JSON.stringify(version?.content),
       ]);
+    }
+  });
+
+  it('only a coordinator that does not think is forced to its tool; every other run chooses and is reminded when it ends in prose', async () => {
+    const AUTO = { type: 'auto', disable_parallel_tool_use: true };
+    const versionOf = async (
+      code: string,
+    ): Promise<{ id: string; content: Record<string, unknown> }> => {
+      const [version] = await admin<{ id: string; content: Record<string, unknown> }>(
+        `select v.id, v.content from office.agent_definitions d
+         join office.card_versions v on v.id = d.current_version_id where d.code = $1`,
+        [code],
+      );
+      if (!version) throw new Error('No card version');
+      return version;
+    };
+    const setThinking = (id: string, value: 'none' | 'adaptive') =>
+      admin(
+        `update office.card_versions
+         set content = jsonb_set(content, '{model,thinking}', to_jsonb($2::text)) where id = $1`,
+        [id, value],
+      );
+    const noticeOf = (request: ScriptedModel['requests'][number] | undefined) => {
+      const content = request?.messages.at(-1)?.content;
+      return Array.isArray(content) && content[0]?.type === 'text' ? content[0].text : '';
+    };
+    const coordinator = await versionOf('KOR-1');
+    const writer = await versionOf('SOS-2');
+    try {
+      // A forced tool cannot be combined with thinking: a coordinator whose profile thinks keeps
+      // "auto". It may then end in prose, is reminded once, and says "no unit" through its tool.
+      await setThinking(coordinator.id, 'adaptive');
+      const unclear = await openRequest(ids.founder, 'Bir şey lazım');
+      const reason = 'Talep hiçbir birime oturmuyor.';
+      const thinking = new ScriptedModel([
+        text('Hangi birimin işi olduğu anlaşılmıyor.'),
+        toolUse('route_task', { unit_code: '', agent_code: '', reason }),
+      ]);
+      const undecided = await runAgentJob(
+        (await runner(thinking)).deps,
+        job(unclear, 'KOR-1', ids.founder),
+      );
+      expect(undecided).toMatchObject({ outcome: 'no_routing', modelCalls: 2 });
+      for (const request of thinking.requests) {
+        expect(request.tool_choice).toEqual(AUTO);
+        expect(request.thinking).toEqual({ type: 'adaptive' });
+      }
+      expect(noticeOf(thinking.requests[1])).toMatch(/^<runner_notice>[\s\S]*<\/runner_notice>$/);
+      // What is kept is the reason given through the tool, not the prose before the reminder.
+      expect((await runRow(undecided.runId)).output).toMatchObject({ final_text: reason });
+      await setThinking(coordinator.id, 'none');
+
+      // A unit agent is never forced, also when its profile sends no thinking: it may still end
+      // in prose, and the reminder path is the one it always had.
+      await setThinking(writer.id, 'none');
+      const taskId = await routedRequest();
+      const silent = new ScriptedModel([
+        text('Kaynak bilgi yok.'),
+        text('Kaynak bilgi olmadan gönderi yazamam.'),
+      ]);
+      const unsubmitted = await runAgentJob(
+        (await runner(silent)).deps,
+        job(taskId, 'SOS-2', ids.founder),
+      );
+      expect(unsubmitted).toMatchObject({ outcome: 'no_submission', modelCalls: 2 });
+      for (const request of silent.requests) {
+        expect(request.tool_choice).toEqual(AUTO);
+        expect(request).not.toHaveProperty('thinking');
+      }
+      expect(noticeOf(silent.requests[1])).toMatch(
+        /^<runner_notice>[\s\S]*bitiş aracını çağır[\s\S]*<\/runner_notice>$/,
+      );
+      expect(await runRow(unsubmitted.runId)).toMatchObject({
+        status: 'completed',
+        summary: 'Ajan sonucu onaya sunmadan çalışmasını bitirdi.',
+        tool_call_count: 0,
+        output: { outcome: 'no_submission', final_text: 'Kaynak bilgi olmadan gönderi yazamam.' },
+      });
+    } finally {
+      for (const version of [coordinator, writer]) {
+        await admin('update office.card_versions set content = $2 where id = $1', [
+          version.id,
+          JSON.stringify(version.content),
+        ]);
+      }
     }
   });
 

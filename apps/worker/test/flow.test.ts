@@ -640,6 +640,78 @@ describe.skipIf(noDatabase)('a request from the first line to "done"', () => {
     expect(errors).toEqual([]);
   });
 
+  it('a request that fits no unit falls to the founder, who alone reads why the coordinator routed nothing', async () => {
+    // The coordinator answers through its tool also when no unit fits: an empty unit. Nothing
+    // changes for the people: the request falls to the founder as "yönlendirilemedi".
+    const id = randomUUID();
+    await post(employee, '/api/requests', { id, text: 'Bir şey lazım' });
+    const noUnit = {
+      unit_code: '',
+      agent_code: '',
+      reason: 'Ne istendiği anlaşılmıyor; Sosyal Medya ile Pazarlama arasında kaldı.',
+    };
+    expect(await work(new ScriptedModel([toolUse('route_task', noUnit)]))).toEqual({
+      outcome: 'no_routing',
+      agent: 'KOR-1',
+    });
+    // Nothing was routed: no job waits for a unit agent.
+    expect(await workerQueue.fetch(AGENT_RUN_QUEUE)).toEqual([]);
+
+    const fell = {
+      status: 'in_progress',
+      stage: 'fell_to_person',
+      cause: 'no_routing',
+      delayed: false,
+      turn: { kind: 'founder' },
+      unit: null,
+      agent: null,
+      requester: { userId: ids.employee },
+    };
+    const summary = 'Koordinasyon merkezi talebi yönlendirmeden çalışmasını bitirdi.';
+    // The founder decides: the reason the coordinator gave through its tool is theirs to read,
+    // where the closing words of a run that ended without its tool are read.
+    const forFounder = await detail(founder, id);
+    expect(forFounder).toMatchObject({
+      ...fell,
+      waitingForMe: true,
+      actions: { cancel: false, stop: true, reroute: true },
+    });
+    expect(journeyOf(forFounder)).toEqual(['run:completed']);
+    expect(forFounder.journey[0]).toMatchObject({
+      agent: { code: 'KOR-1' },
+      summary,
+      agentText: noUnit.reason,
+      steps: [{ tool: 'route_task', status: 'succeeded' }],
+    });
+    // The requester reads that it waits for a person and the sentence made by code; the
+    // coordinator's reason is nobody's to read who may not decide.
+    const mine = await detail(employee, id);
+    expect(mine).toMatchObject({
+      ...fell,
+      waitingForMe: false,
+      actions: { cancel: true, stop: false, reroute: false },
+    });
+    expect(mine.journey[0]).toMatchObject({ summary, agentText: null });
+    expect(JSON.stringify(mine)).not.toContain(noUnit.reason);
+
+    // Not a dead end: the founder gives it to a unit and an agent, and the work starts.
+    const corrected = await post(founder, `/api/requests/${id}/routing`, {
+      unitCode: 'SOS',
+      agentCode: 'SOS-2',
+    });
+    expect(requestDetailSchema.parse(corrected.json())).toMatchObject({
+      status: 'in_progress',
+      stage: 'working',
+      turn: { kind: 'agent', code: 'SOS-2' },
+    });
+    expect(await work(new ScriptedModel([toolUse('submit_for_approval', RESULT)]))).toEqual({
+      outcome: 'submitted',
+      agent: 'SOS-2',
+    });
+    expect(await workerQueue.fetch(AGENT_RUN_QUEUE)).toEqual([]);
+    expect(errors).toEqual([]);
+  });
+
   it('a request that falls to a person is not a dead end: the routing is corrected and the work goes on', async () => {
     // The unit agent's first run ends without submitting: it answers in text, is reminded once
     // and answers in text again. The request falls to the founder (nobody is appointed).
