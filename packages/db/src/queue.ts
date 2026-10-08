@@ -56,7 +56,10 @@ export async function sendJob(
 // Agent runs ---------------------------------------------------------------------------------------
 
 export const AGENT_RUN_QUEUE = 'agent_run';
-/** Jobs that failed or expired; the worker's second handler cleans up after a lost run. */
+/**
+ * Jobs that failed or expired; the worker's second handler cleans up after a lost run. It also
+ * holds that handler's own reminders to look at such a run again (sendAgentRunLookAgain).
+ */
 export const AGENT_RUN_DEAD_QUEUE = 'agent_run_dead';
 // A job's expiry follows the card of its agent: the run's time limit (limits.duration_minutes of
 // the card version the run will open with) plus this margin, which covers the wait for the run's
@@ -107,6 +110,25 @@ export async function ensureAgentRunQueues(
       expireInSeconds: agentRunExpireSeconds(null),
       deadLetter: AGENT_RUN_DEAD_QUEUE,
     });
+  }
+}
+
+/**
+ * Asks the dead letter handler to look at the runs of a lost job once more, after this many
+ * seconds. The handler closes only runs whose own time limit has passed; a job can reach the dead
+ * letter queue long before that (a worker that was stopped fails its job at once), and the run it
+ * left open must not be forgotten then. The same ids, and nothing else (rule 10).
+ */
+export async function sendAgentRunLookAgain(
+  queue: Pick<PgBoss, 'send'>,
+  job: unknown,
+  afterSeconds: number,
+): Promise<void> {
+  const id = await queue.send(AGENT_RUN_DEAD_QUEUE, agentRunJobSchema.parse(job), {
+    startAfter: Math.max(1, Math.ceil(afterSeconds)),
+  });
+  if (id === null) {
+    throw new Error('The dead letter job was not accepted by the queue');
   }
 }
 

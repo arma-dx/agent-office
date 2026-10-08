@@ -25,8 +25,8 @@ import {
   type TestServer,
 } from '../../api/test/helpers.ts';
 import { errorCode, freshPasskey, send, signStepUp } from '../../api/test/passkey-helpers.ts';
-import { runAgentJob, type RunOutcome } from '../src/runner/run.ts';
-import { handleAgentRunJob } from '../src/worker.ts';
+import { runAgentJob, type RunOutcome, type RunnerDeps } from '../src/runner/run.ts';
+import { consumeAgentRuns, handleAgentRunJob } from '../src/worker.ts';
 import {
   RESULT,
   ROUTE_TO_SOS,
@@ -36,7 +36,7 @@ import {
   noDatabase,
   testPools,
 } from './helpers.ts';
-import { ScriptedModel, text, toolUse } from './scripted-model.ts';
+import { ScriptedModel, apiError, text, toolUse } from './scripted-model.ts';
 
 // Flow (A) end to end, as 7 October decision 8 asks for it: a person sends a request through the
 // API, the job travels through the real queue, the runner runs the repository's own cards with a
@@ -763,4 +763,126 @@ describe.skipIf(noDatabase)('a request from the first line to "done"', () => {
     }
     await post(founder, `/api/requests/${id}/close`);
   });
+
+  it('a worker that is stopped in the middle of a run does not leave the request busy for ever', async () => {
+    const id = randomUUID();
+    await post(founder, '/api/requests', { id, text: 'LinkedIn için gönderi yaz' });
+    const jobsOf = (queue: string) =>
+      admin<{ state: string; later: boolean }>(
+        `select state, start_after > now() + interval '4 minutes' as later from pgboss.job
+         where name = $2 and data ->> 'taskId' = $1 order by created_on, start_after`,
+        [id, queue],
+      );
+    const unitRun = () =>
+      admin<{ id: string; status: string; error_code: string | null }>(
+        `select id, status, error_code from office.runs
+         where task_id = $1 and agent_code = 'SOS-2'`,
+        [id],
+      );
+    // A worker process as startWorker wires it: the real queue and the worker's two handlers. The
+    // coordinator routes; the unit agent's model call is open when the process is stopped.
+    let release = (): void => undefined;
+    const model = new ScriptedModel([
+      toolUse('route_task', ROUTE_TO_SOS),
+      () =>
+        new Promise((_, reject) => {
+          release = () => {
+            reject(apiError('aborted'));
+          };
+        }),
+    ]);
+    const log: string[] = [];
+    const depsOf = (
+      queue: ReturnType<typeof createQueue>,
+      callModel: RunnerDeps['callModel'],
+    ): RunnerDeps => ({
+      pool: testPools().worker,
+      callModel,
+      jobs: agentRunSender(queue),
+      log: (event) => log.push(event),
+    });
+    const first = createQueue(database?.worker ?? '', () => undefined);
+    await first.start();
+    await consumeAgentRuns(first, depsOf(first, model.call), 1);
+    await expect.poll(() => model.requests.length, { timeout: 10_000, interval: 100 }).toBe(2);
+    expect(await detail(founder, id)).toMatchObject({
+      stage: 'working',
+      turn: { kind: 'agent', code: 'SOS-2' },
+    });
+    // SIGTERM: the queue waits (here one second instead of thirty), fails the job that is still
+    // running and copies it to the dead letter queue. The run stays open; the process is gone.
+    await first.stop({ graceful: true, timeout: 1000 });
+    expect(await jobsOf(AGENT_RUN_QUEUE)).toEqual([
+      { state: 'completed', later: false },
+      { state: 'failed', later: false },
+    ]);
+    expect(await unitRun()).toMatchObject([{ status: 'running' }]);
+
+    // The next worker. Its dead letter handler finds the run inside its own time limit (five
+    // minutes on the card): a job that is alive could own it, so it is not closed. The question is
+    // not dropped: a reminder waits on the dead letter queue until the limit will have passed.
+    const errors2: unknown[] = [];
+    const second = createQueue(database?.worker ?? '', (error) => errors2.push(error));
+    await second.start();
+    try {
+      await consumeAgentRuns(second, depsOf(second, null), 1);
+      await expect
+        .poll(() => jobsOf(AGENT_RUN_DEAD_QUEUE), { timeout: 10_000, interval: 200 })
+        .toEqual([
+          { state: 'completed', later: false },
+          { state: 'created', later: true },
+        ]);
+      expect(log).toContain('run_watched');
+      expect(await unitRun()).toMatchObject([{ status: 'running' }]);
+      // The limit passes: the request's runs and its routing are moved seven minutes into the
+      // past, in step, and the reminder is due now; nothing else is touched.
+      const client = await testPools().admin.connect();
+      try {
+        await client.query('begin');
+        await client.query(`set local session_replication_role = 'replica'`);
+        await client.query(
+          `update office.task_routings set created_at = created_at - interval '7 minutes'
+           where task_id = $1`,
+          [id],
+        );
+        await client.query(
+          `update office.runs set started_at = started_at - interval '7 minutes'
+           where task_id = $1`,
+          [id],
+        );
+        await client.query(
+          `update pgboss.job set start_after = now()
+           where name = $2 and data ->> 'taskId' = $1 and state = 'created'`,
+          [id, AGENT_RUN_DEAD_QUEUE],
+        );
+        await client.query('commit');
+      } finally {
+        client.release();
+      }
+      await expect
+        .poll(unitRun, { timeout: 10_000, interval: 200 })
+        .toMatchObject([{ status: 'failed', error_code: 'worker_lost' }]);
+      // The request says so and names the way on, instead of "ajan çalışıyor".
+      expect(await detail(founder, id)).toMatchObject({
+        stage: 'fell_to_person',
+        cause: 'run_failed',
+        waitingForMe: true,
+        actions: { reroute: true },
+      });
+      // Nothing is left to look at: the reminder is done and leaves no other behind.
+      await expect
+        .poll(() => jobsOf(AGENT_RUN_DEAD_QUEUE), { timeout: 10_000, interval: 200 })
+        .toEqual([
+          { state: 'completed', later: false },
+          { state: 'completed', later: false },
+        ]);
+    } finally {
+      // The model call of the stopped process is let go, so that its runner ends.
+      release();
+      await expect.poll(() => log.includes('run_finished'), { timeout: 5000 }).toBe(true);
+      await second.stop({ graceful: false });
+    }
+    expect(errors2).toEqual([]);
+    await post(founder, `/api/requests/${id}/close`);
+  }, 60_000);
 });

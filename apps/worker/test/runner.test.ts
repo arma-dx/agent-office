@@ -1746,15 +1746,24 @@ describe.skipIf(noDatabase)('a run belongs to the step it was opened for', () =>
     const healthy = await leftOpen(taskId, 'SOS-2', 5);
     // The older job reaches the dead letter queue; the runner of another job failed after opening
     // another run, or before it opened one. None of them touches this run.
-    await closeLostRun(deps, lostJob, 'overdue');
-    await closeLostRun(deps, lostJob, { runId: randomUUID() });
-    await closeLostRun(deps, lostJob, { runId: null });
+    // The dead letter path does not close it, and says when to look again: when the run's limit
+    // of five minutes and the runner's closing minute will have passed.
+    const lookAgainIn = await closeLostRun(deps, lostJob, 'overdue');
+    expect(lookAgainIn).toBeGreaterThan(5 * 60);
+    expect(lookAgainIn).toBeLessThanOrEqual(6 * 60);
+    expect(await closeLostRun(deps, lostJob, { runId: randomUUID() })).toBeNull();
+    expect(await closeLostRun(deps, lostJob, { runId: null })).toBeNull();
     expect(await runRow(healthy)).toMatchObject({ status: 'running', error_code: null });
     expect(log).toEqual([]);
+    // Two minutes later it is still inside its limit: the wait is what is left of it.
+    await startedEarlier(healthy, 2);
+    const later = await closeLostRun(deps, lostJob, 'overdue');
+    expect(later).toBeGreaterThan(3 * 60);
+    expect(later).toBeLessThanOrEqual(4 * 60);
     // Past its own limit and still open: nobody is working on it. Closed, so that the request
-    // does not look busy for ever.
-    await startedEarlier(healthy, 7);
-    await closeLostRun(deps, lostJob, 'overdue');
+    // does not look busy for ever; nothing is left to look at.
+    await startedEarlier(healthy, 5);
+    expect(await closeLostRun(deps, lostJob, 'overdue')).toBeNull();
     expect(await runRow(healthy)).toMatchObject({ status: 'failed', error_code: 'worker_lost' });
     expect(log).toEqual([{ event: 'run_lost', fields: { run: healthy } }]);
     expect(

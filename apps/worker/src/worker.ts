@@ -2,10 +2,12 @@ import {
   AGENT_RUN_DEAD_QUEUE,
   AGENT_RUN_QUEUE,
   QUEUE_SCHEMA,
+  agentRunJobSchema,
   agentRunSender,
   createPool,
   createQueue,
   ensureAgentRunQueues,
+  sendAgentRunLookAgain,
 } from '@agent-office/db';
 import type { WorkerEnv } from './env.ts';
 import type { CallModel } from './model/client.ts';
@@ -80,6 +82,59 @@ export async function handleAgentRunJob(deps: RunnerDeps, data: unknown): Promis
   }
 }
 
+/**
+ * Runs one job of the dead letter queue: a job that failed or expired, or this handler's own
+ * reminder. The runs it left open are closed once their own time limit has passed. A job can get
+ * here long before that: a worker that is stopped fails the jobs it was running at once (and so
+ * does a runner that crashed and could not close its run). The run is then still inside its limit
+ * and is not touched, because a job that is alive may own it; but the question is not dropped
+ * either: the handler puts a reminder on this same queue for the moment the limit will have
+ * passed. Without it nothing would look again and the request would say "ajan çalışıyor" for ever.
+ */
+export async function handleDeadLetterJob(
+  deps: Pick<RunnerDeps, 'pool' | 'log'>,
+  lookAgain: (job: unknown, afterSeconds: number) => Promise<void>,
+  data: unknown,
+): Promise<void> {
+  const seconds = await closeLostRun(deps, data, 'overdue');
+  if (seconds === null) return;
+  await lookAgain(data, seconds);
+  const job = agentRunJobSchema.safeParse(data);
+  deps.log('run_watched', {
+    task: job.success ? job.data.taskId : null,
+    agent: job.success ? job.data.agentCode : null,
+    seconds,
+  });
+}
+
+type Queue = ReturnType<typeof createQueue>;
+
+/** Registers the worker's two handlers on a started queue. */
+export async function consumeAgentRuns(
+  queue: Queue,
+  deps: RunnerDeps,
+  concurrency: number,
+): Promise<void> {
+  await queue.work(
+    AGENT_RUN_QUEUE,
+    { batchSize: 1, localConcurrency: concurrency, pollingIntervalSeconds: 1 },
+    async (jobs) => {
+      for (const job of jobs) {
+        await handleAgentRunJob(deps, job.data);
+      }
+    },
+  );
+  await queue.work(AGENT_RUN_DEAD_QUEUE, { batchSize: 1 }, async (jobs) => {
+    for (const job of jobs) {
+      await handleDeadLetterJob(
+        deps,
+        (again, afterSeconds) => sendAgentRunLookAgain(queue, again, afterSeconds),
+        job.data,
+      );
+    }
+  });
+}
+
 export interface RunningWorker {
   stop(): Promise<void>;
 }
@@ -119,23 +174,13 @@ export async function startWorker(env: WorkerEnv): Promise<RunningWorker> {
   await ensureAgentRunQueues(queue);
   const deps: RunnerDeps = { pool, callModel, jobs: agentRunSender(queue), log: logLine };
 
-  await queue.work(
-    AGENT_RUN_QUEUE,
-    { batchSize: 1, localConcurrency: env.WORKER_CONCURRENCY, pollingIntervalSeconds: 1 },
-    async (jobs) => {
-      for (const job of jobs) {
-        await handleAgentRunJob(deps, job.data);
-      }
-    },
-  );
-  await queue.work(AGENT_RUN_DEAD_QUEUE, { batchSize: 1 }, async (jobs) => {
-    for (const job of jobs) {
-      await closeLostRun(deps, job.data, 'overdue');
-    }
-  });
+  await consumeAgentRuns(queue, deps, env.WORKER_CONCURRENCY);
   logLine('worker_started', { mode: describeWorker(env) });
   return {
     async stop() {
+      // The queue waits for the jobs in hand and then fails the ones that are still running; the
+      // runs they leave open are closed by the dead letter handler of the next worker, once their
+      // time limit has passed.
       await queue.stop({ graceful: true });
       await pool.end();
     },

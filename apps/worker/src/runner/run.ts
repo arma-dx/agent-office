@@ -1181,6 +1181,14 @@ export async function runAgentJob(
 // needs to write its last records.
 const LOST_AFTER_LIMIT_SECONDS = 60;
 
+// The moment from which an open run counts as lost: its start, its own time limit (stored with the
+// run when it was opened) and the margin above ($3).
+const LOST_AT = `started_at + make_interval(secs => ($3::int + 60 * case
+                   when jsonb_typeof(input -> 'limits' -> 'duration_minutes') = 'number'
+                   then (input -> 'limits' ->> 'duration_minutes')::numeric
+                   else 0
+                 end)::double precision)`;
+
 /**
  * A job that failed or expired without closing its run: the run it left open is closed as failed,
  * so that the request falls to a person instead of looking busy for ever.
@@ -1188,21 +1196,26 @@ const LOST_AFTER_LIMIT_SECONDS = 60;
  * Only the run of that job is closed, never another one of the same request and agent: after a
  * new routing to the same agent a newer job has a healthy run of its own.
  *   { runId }   the runner itself failed (the worker's catch): the run that job opened, if any;
- *   'overdue'   the job reached the dead letter queue (the worker died, nothing remembers the
- *               run's id): every open run of the request and agent whose own time limit, stored
- *               with the run when it was opened, has passed. A run that is still inside its limit
- *               belongs to a job that is alive.
+ *   'overdue'   the job reached the dead letter queue (the worker died or was stopped, nothing
+ *               remembers the run's id): every open run of the request and agent whose own time
+ *               limit, stored with the run when it was opened, has passed. A run that is still
+ *               inside its limit may belong to a job that is alive, so it is left alone for now.
+ *
+ * Returns, for 'overdue', the seconds until the last run that is still open will have passed its
+ * limit, or null when none is open. A job can reach the dead letter queue long before its run's
+ * limit (a worker that is stopped fails its jobs at once), so the caller must look again then:
+ * nothing else would ever close that run.
  */
 export async function closeLostRun(
   deps: Pick<RunnerDeps, 'pool' | 'log'>,
   rawJob: unknown,
   which: { runId: string | null } | 'overdue',
-): Promise<void> {
+): Promise<number | null> {
   const parsed = agentRunJobSchema.safeParse(rawJob);
-  if (!parsed.success) return;
+  if (!parsed.success) return null;
   const job = parsed.data;
-  if (which !== 'overdue' && which.runId === null) return;
-  await agentStep(
+  if (which !== 'overdue' && which.runId === null) return null;
+  return agentStep(
     deps.pool,
     { companyId: job.companyId, userId: job.userId, agentCode: job.agentCode },
     async (client) => {
@@ -1212,11 +1225,7 @@ export async function closeLostRun(
               `update office.runs set status = 'failed', finished_at = now(),
                  error_code = 'worker_lost'
                where task_id = $1 and agent_code = $2 and status = 'running'
-                 and started_at + make_interval(secs => ($3::int + 60 * case
-                       when jsonb_typeof(input -> 'limits' -> 'duration_minutes') = 'number'
-                       then (input -> 'limits' ->> 'duration_minutes')::numeric
-                       else 0
-                     end)::double precision) <= now()
+                 and ${LOST_AT} <= now()
                returning id`,
               [job.taskId, job.agentCode, LOST_AFTER_LIMIT_SECONDS],
             )
@@ -1235,6 +1244,16 @@ export async function closeLostRun(
         });
         deps.log('run_lost', { run: row.id });
       }
+      if (which !== 'overdue') return null;
+      // What is still open is inside its limit (now() is the same moment for both statements).
+      const open = await client.query<{ seconds: number | null }>(
+        `select ceil(extract(epoch from max(${LOST_AT}) - now()))::int as seconds
+         from office.runs
+         where task_id = $1 and agent_code = $2 and status = 'running'`,
+        [job.taskId, job.agentCode, LOST_AFTER_LIMIT_SECONDS],
+      );
+      const seconds = open.rows[0]?.seconds ?? null;
+      return seconds === null ? null : Math.max(seconds, 1);
     },
   );
 }

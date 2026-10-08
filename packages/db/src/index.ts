@@ -22,6 +22,7 @@ export {
   createQueue,
   ensureAgentRunQueues,
   jobDataSchema,
+  sendAgentRunLookAgain,
   sendJob,
   type AgentRunJob,
   type AgentRunSender,
