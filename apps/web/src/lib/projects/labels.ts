@@ -2,6 +2,7 @@ import type {
   ProjectColor,
   ProjectIcon,
   ProjectMember,
+  ProjectMemberRole,
   ProjectSummary,
 } from '@agent-office/shared';
 import {
@@ -148,11 +149,83 @@ export const CONTRACT_WORD = { allowed: 'İzin var', forbidden: 'İzin yok' } as
 
 const MEMBER_ROLE = { founder: 'Kurucu', employee: 'Çalışan' } as const;
 
-/** The line under a member's name: the role, and that the account is deactivated. */
-export function memberLine(member: Pick<ProjectMember, 'role' | 'active'>): string {
-  return [member.role ? MEMBER_ROLE[member.role] : null, member.active ? null : 'devre dışı']
+/**
+ * The three roles of a project membership (8 October 2026, decision 44), in the one set of words
+ * every screen uses. A role is a word, never a colour.
+ */
+export const PROJECT_ROLE: Record<ProjectMemberRole, string> = {
+  owner: 'Sahip',
+  manager: 'Yönetici',
+  member: 'Üye',
+};
+
+/**
+ * The line under a member's name: the role in the project, the role in the company, and that the
+ * account is deactivated.
+ */
+export function memberLine(member: Pick<ProjectMember, 'projectRole' | 'role' | 'active'>): string {
+  return [
+    PROJECT_ROLE[member.projectRole],
+    member.role ? MEMBER_ROLE[member.role] : null,
+    member.active ? null : 'devre dışı',
+  ]
     .filter((part) => part !== null)
     .join(', ');
+}
+
+/**
+ * Giving a role, as the act the menu of a member's row names. The item says what it does, not
+ * which role results: "Sahipliği devret" also makes the owner until now a plain member.
+ */
+export const ROLE_ACT: Record<ProjectMemberRole, string> = {
+  manager: 'Yönetici yap',
+  member: 'Yöneticilikten al',
+  owner: 'Sahipliği devret',
+};
+
+/** The order of the acts in the menu; the hand-over, the one that asks first, comes last. */
+export const ROLE_ACT_ORDER: readonly ProjectMemberRole[] = ['manager', 'member', 'owner'];
+
+/** What is said once the API has stored the role. */
+export function roleGivenSentence(role: ProjectMemberRole, name: string): string {
+  if (role === 'manager') return `${name} yönetici yapıldı.`;
+  if (role === 'member') return `${name} artık yönetici değil.`;
+  return `Projenin yeni sahibi: ${name}.`;
+}
+
+/**
+ * The fixed sentences of the members part of the project page: who manages the members, and what
+ * a row without a button means.
+ */
+export const MEMBERS_TEXT = {
+  noOwnerForFounder: 'Bu projenin sahibi yok. Bir üyeyi sahip yapabilirsiniz.',
+  noOwner: 'Bu projenin sahibi yok. Sahibi kurucu atar.',
+  // For a reader who gives roles: the owner's row has no button, the way is the hand-over.
+  handOverHint:
+    'Sahip projeden çıkarılamaz. Sahipliği devretmek için bir üyenin "Rolü değiştir" menüsünü kullanın.',
+  // For a manager: why a manager's row has no button.
+  managerHint:
+    'Bir yöneticiyi projeden yalnızca sahip ya da kurucu çıkarır; rolleri de onlar verir.',
+  whoManages: 'Üye eklemeyi ve çıkarmayı projenin sahibi, yöneticileri ve kurucu yapar.',
+} as const;
+
+/**
+ * What handing the ownership over does, for the reader who confirms it. An owner who is not the
+ * founder loses the owner's rights with it; the founder does in every project what its owner does,
+ * so the founder who owns the project is told only that they stay a member.
+ */
+export function handOverDescription(reader: {
+  founder: boolean;
+  /** The reader is the owner of the project now. */
+  owner: boolean;
+  /** The project has an owner now. */
+  projectHasOwner: boolean;
+}): string {
+  const becomes = 'Projenin sahibi bu kişi olur.';
+  if (!reader.projectHasOwner) return becomes;
+  if (!reader.owner) return `${becomes} Şimdiki sahip üye olarak kalır.`;
+  if (reader.founder) return `${becomes} Siz üye olarak kalırsınız.`;
+  return `${becomes} Siz üye olarak kalırsınız; üye ekleyip çıkaramaz, rol veremezsiniz. Sahipliği size yeni sahip ya da kurucu geri verebilir.`;
 }
 
 const byName = new Intl.Collator('tr');

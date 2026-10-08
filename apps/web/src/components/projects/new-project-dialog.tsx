@@ -121,6 +121,7 @@ function MemberFields({
       ) : null}
       <p id={`${id}-help`} className={HELP}>
         Projeyi ve ona bağlı kayıtları yalnızca üyeler ve kurucu görür. Projeyi açan kişi üyedir.
+        Projeyi açan kişi projenin sahibi olur.
       </p>
     </fieldset>
   );

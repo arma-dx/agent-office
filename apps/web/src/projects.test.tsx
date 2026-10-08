@@ -12,7 +12,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { ProjectTile } from './components/projects/project-tile.tsx';
 import { formatDay, formatFull } from './lib/dates.ts';
-import { COLOR_NAME, ICON_NAME, PROJECT_FILL, PROJECT_ICON } from './lib/projects/labels.ts';
+import {
+  COLOR_NAME,
+  ICON_NAME,
+  MEMBERS_TEXT,
+  PROJECT_FILL,
+  PROJECT_ICON,
+} from './lib/projects/labels.ts';
 import { WIDE_WINDOW_QUERY } from './lib/office/use-wide-window.ts';
 import { stubMatchMedia } from './test/match-media.ts';
 import {
@@ -40,7 +46,11 @@ import {
   projectDetail,
   projectForEmployee,
   projectHandlers,
+  projectWithRoles,
+  roleHandlers,
+  roleRoute,
   sessionAs,
+  type MemberOfProject,
 } from './test/project-fixtures.ts';
 import {
   ASSERTION,
@@ -544,6 +554,49 @@ describe('projects: the page', () => {
     });
   });
 
+  it('page: the properties name the owner, or Yok', async () => {
+    stubMatchMedia([WIDE_WINDOW_QUERY]);
+    // The opener and the owner are two rows: the ownership was handed over to Ayşe.
+    const api = mockApi(
+      projectHandlers(
+        projectDetail({
+          members: [
+            { ...FOUNDER_MEMBER, projectRole: 'member', removable: true },
+            { ...AYSE, projectRole: 'owner', removable: false, roleChanges: [] },
+          ],
+        }),
+      ),
+    );
+    const { queryClient } = renderApp(PAGE);
+    await screen.findByRole('heading', { level: 2, name: 'Depo otomasyonu' });
+    expect(valueOf(panel(), 'Oluşturan')).toHaveTextContent('Ömer Kadıoğlu');
+    expect(valueOf(panel(), 'Sahip')).toHaveTextContent('Ayşe Yılmaz');
+    // The owner's row comes right after the opener's.
+    expect(valueOf(panel(), 'Oluşturan').nextElementSibling).toHaveTextContent('Sahip');
+
+    // An owner whose name could not be read.
+    api.handle(`GET /projects/${PROJECT_ID}`, () =>
+      json(
+        projectDetail({
+          members: [
+            { ...AYSE, name: null, projectRole: 'owner', removable: false, roleChanges: [] },
+          ],
+        }),
+      ),
+    );
+    await queryClient.invalidateQueries();
+    await waitFor(() => {
+      expect(valueOf(panel(), 'Sahip')).toHaveTextContent('Eski üye');
+    });
+
+    // A project without an owner says so in a word.
+    api.handle(`GET /projects/${PROJECT_ID}`, () => json(projectDetail({ members: [AYSE] })));
+    await queryClient.invalidateQueries();
+    await waitFor(() => {
+      expect(valueOf(panel(), 'Sahip')).toHaveTextContent('Yok');
+    });
+  });
+
   it('page: Proje bulunamadı for a 404 and for an id that is not a UUID, with the way back', async () => {
     const api = mockApi(
       projectHandlers(projectDetail(), {
@@ -673,9 +726,9 @@ describe('projects: members', () => {
         .getAllByRole('group')
         .map((group) => group.firstElementChild?.textContent),
     ).toEqual([
-      'Ayşe YılmazÇalışan, devre dışı',
-      'Ömer Kadıoğlu (siz)Kurucu',
-      'Eski üyedevre dışı',
+      'Ayşe YılmazÜye, Çalışan, devre dışı',
+      'Ömer Kadıoğlu (siz)Sahip, Kurucu',
+      'Eski üyeÜye, devre dışı',
     ]);
 
     const select = await within(section).findByRole('combobox', { name: 'Eklenecek kişi' });
@@ -693,7 +746,8 @@ describe('projects: members', () => {
     await userEvent.click(add);
     expect(await screen.findByText('Çağan Ünal projeye eklendi.')).toBeVisible();
     expect(await screen.findByRole('region', { name: 'Üyeler 4' })).toBeVisible();
-    expect(within(row('Çağan Ünal')).getByText('Çalışan')).toBeVisible();
+    // A new member is always a plain member.
+    expect(within(row('Çağan Ünal')).getByText('Üye, Çalışan')).toBeVisible();
     // The request names the project and the person, and carries nothing else: no passkey.
     const [call] = api.callsTo(`PUT /projects/${PROJECT_ID}/members/${CAGAN.userId}`);
     expect(call?.body).toBeUndefined();
@@ -947,6 +1001,590 @@ describe('projects: members', () => {
     expect(
       await screen.findByText('Şirketteki bütün kurucu ve çalışanlar bu projenin üyesi.'),
     ).toBeVisible();
+  });
+
+  // Roles (8 October decision 44). The people of these tests, before a reader is chosen; the
+  // flags of every member are computed with the shared rule the API uses (membersFor).
+  const person = (
+    who: { userId: string; name: string | null },
+    projectRole: MemberOfProject['projectRole'],
+    more: Partial<Pick<MemberOfProject, 'role' | 'active'>> = {},
+  ): MemberOfProject => ({
+    userId: who.userId,
+    name: who.name,
+    role: 'employee',
+    active: true,
+    projectRole,
+    ...more,
+  });
+  const EMRE = { userId: '77777777-7777-4777-8777-777777777777', name: 'Emre Su' };
+  const MINE = 'Ömer Kadıoğlu (siz)';
+  const OWNER_WORDS =
+    'Projenin sahibi bu kişi olur. Siz üye olarak kalırsınız; üye ekleyip çıkaramaz, rol veremezsiniz. Sahipliği size yeni sahip ya da kurucu geri verebilir.';
+
+  /** Opens the project page for a reader, with the role route answering as the API does. */
+  function openAs(
+    reader: 'founder' | 'employee',
+    people: readonly MemberOfProject[],
+    extra: Record<string, Handler> = {},
+  ) {
+    const founder = reader === 'founder';
+    const api = mockApi(
+      projectHandlers(projectWithRoles(founder, people), {
+        ...(founder ? {} : { 'GET /session': sessionAs(EMPLOYEE_AT_ARMADX) }),
+        ...roleHandlers(founder, people),
+        ...extra,
+      }),
+    );
+    renderApp(PAGE);
+    return api;
+  }
+  const section = (count: number) =>
+    screen.findByRole('region', { name: `Üyeler ${String(count)}` });
+  const roleButton = (name: string) =>
+    within(row(name)).getByRole('button', { name: 'Rolü değiştir' });
+  async function openRoleMenu(name: string) {
+    await userEvent.click(roleButton(name));
+    return screen.findByRole('menu');
+  }
+  const itemsOf = (menu: HTMLElement) =>
+    within(menu)
+      .getAllByRole('menuitem')
+      .map((item) => item.textContent);
+  const lineOf = (name: string) => row(name).firstElementChild?.lastElementChild?.textContent;
+  const roleCalls = (api: ReturnType<typeof mockApi>) =>
+    api.calls.filter((call) => call.method === 'PUT' && call.path.endsWith('/role'));
+
+  it('members: every row names the project role and the company role', async () => {
+    openAs('founder', [
+      person(FOUNDER_MEMBER, 'owner', { role: 'founder' }),
+      person(AYSE, 'manager'),
+      person(CAGAN, 'member', { active: false }),
+      person(DENIZ, 'manager', { role: 'founder' }),
+      person({ userId: '55555555-5555-4555-8555-555555555555', name: null }, 'member', {
+        role: null,
+        active: false,
+      }),
+    ]);
+    await section(5);
+    expect(lineOf('Ayşe Yılmaz')).toBe('Yönetici, Çalışan');
+    expect(lineOf('Çağan Ünal')).toBe('Üye, Çalışan, devre dışı');
+    expect(lineOf('Deniz Öz')).toBe('Yönetici, Kurucu');
+    expect(lineOf(MINE)).toBe('Sahip, Kurucu');
+    expect(lineOf('Eski üye')).toBe('Üye, devre dışı');
+  });
+
+  it('members: a plain member sees no button, no role control and no add form, and reads who manages members', async () => {
+    const api = openAs('employee', [
+      person(FOUNDER_MEMBER, 'member'),
+      person(AYSE, 'owner'),
+      person(CAGAN, 'manager'),
+      person(DENIZ, 'member'),
+    ]);
+    const members = await section(4);
+    expect(within(members).queryByRole('button')).toBeNull();
+    expect(within(members).queryByRole('combobox')).toBeNull();
+    expect(
+      within(members).getByText(
+        'Üye eklemeyi ve çıkarmayı projenin sahibi, yöneticileri ve kurucu yapar.',
+      ),
+    ).toBeVisible();
+    // The roles are still read, as words.
+    expect(lineOf('Ayşe Yılmaz')).toBe('Sahip, Çalışan');
+    expect(lineOf(MINE)).toBe('Üye, Çalışan');
+    // Nobody to choose from was asked for: there is no form to choose in.
+    expect(api.callsTo('GET /projects/member-candidates')).toEqual([]);
+    expect(api.unexpected).toEqual([]);
+  });
+
+  it("members: a manager adds and removes plain members and has no role control; a manager's and the owner's rows have no button", async () => {
+    const people = [
+      person(FOUNDER_MEMBER, 'manager'),
+      person(AYSE, 'owner'),
+      person(CAGAN, 'member'),
+      person(DENIZ, 'manager'),
+    ];
+    const remove = `DELETE /projects/${PROJECT_ID}/members/${CAGAN.userId}`;
+    const add = `PUT /projects/${PROJECT_ID}/members/${EMRE.userId}`;
+    const api = openAs('employee', people, {
+      'GET /projects/member-candidates': () =>
+        json({ people: [...CANDIDATES, { ...EMRE, role: 'employee' }] }),
+      [add]: () => json(projectWithRoles(false, [...people, person(EMRE, 'member')])),
+      [remove]: () =>
+        json(
+          projectWithRoles(
+            false,
+            people.filter((member) => member.userId !== CAGAN.userId),
+          ),
+        ),
+    });
+    const members = await section(4);
+    expect(within(members).queryByRole('button', { name: 'Rolü değiştir' })).toBeNull();
+    expect(within(row(MINE)).queryByRole('button')).toBeNull();
+    expect(within(row('Ayşe Yılmaz')).queryByRole('button')).toBeNull();
+    expect(within(row('Deniz Öz')).queryByRole('button')).toBeNull();
+    expect(
+      within(row('Çağan Ünal'))
+        .getAllByRole('button')
+        .map((button) => button.textContent),
+    ).toEqual(['Projeden çıkar']);
+
+    // Adds: the new member is a plain member, whom a manager can take off again.
+    const select = await within(members).findByRole('combobox', { name: 'Eklenecek kişi' });
+    await waitFor(() => {
+      expect(within(select).getAllByRole('option')).toHaveLength(2);
+    });
+    await userEvent.selectOptions(select, EMRE.userId);
+    await userEvent.click(within(members).getByRole('button', { name: 'Üye ekle' }));
+    expect(await screen.findByText('Emre Su projeye eklendi.')).toBeVisible();
+    expect(lineOf('Emre Su')).toBe('Üye, Çalışan');
+    expect(within(row('Emre Su')).getByRole('button', { name: 'Projeden çıkar' })).toBeVisible();
+
+    // Removes a plain member.
+    await userEvent.click(
+      within(row('Çağan Ünal')).getByRole('button', { name: 'Projeden çıkar' }),
+    );
+    const dialog = await screen.findByRole('alertdialog', {
+      name: 'Çağan Ünal projeden çıkarılsın mı?',
+    });
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Projeden çıkar' }));
+    expect(await screen.findByText('Çağan Ünal projeden çıkarıldı.')).toBeVisible();
+    expect(api.callsTo(remove)).toHaveLength(1);
+    expect(roleCalls(api)).toEqual([]);
+    expect(api.unexpected).toEqual([]);
+  });
+
+  it("members: the owner makes a member a manager and takes it back through the row's menu; the line under the name changes only when the API has stored it; the toast says what happened", async () => {
+    const people = [
+      person(FOUNDER_MEMBER, 'owner'),
+      person(AYSE, 'member'),
+      person(CAGAN, 'manager'),
+      person(DENIZ, 'manager', { active: false }),
+      person(EMRE, 'member', { active: false }),
+    ];
+    const answer = roleHandlers(false, people)[roleRoute(AYSE.userId)];
+    if (!answer) throw new Error('No role route for the member');
+    let release: () => void = () => undefined;
+    let held = true;
+    const api = openAs('employee', people, {
+      // The first answer waits until the test lets it go.
+      [roleRoute(AYSE.userId)]: async (call) => {
+        if (held) {
+          held = false;
+          await new Promise<void>((resolve) => {
+            release = resolve;
+          });
+        }
+        return answer(call);
+      },
+    });
+    await section(5);
+
+    // What each row offers: the acts the API allows, never the role the member already has.
+    expect(itemsOf(await openRoleMenu('Çağan Ünal'))).toEqual([
+      'Yöneticilikten al',
+      'Sahipliği devret',
+    ]);
+    await userEvent.keyboard('{Escape}');
+    // A deactivated manager can only be dismissed; a deactivated plain member is given no role.
+    expect(itemsOf(await openRoleMenu('Deniz Öz'))).toEqual(['Yöneticilikten al']);
+    await userEvent.keyboard('{Escape}');
+    expect(within(row('Emre Su')).queryByRole('button', { name: 'Rolü değiştir' })).toBeNull();
+    // The owner's own row has no control at all.
+    expect(within(row(MINE)).queryByRole('button')).toBeNull();
+
+    const menu = await openRoleMenu('Ayşe Yılmaz');
+    expect(itemsOf(menu)).toEqual(['Yönetici yap', 'Sahipliği devret']);
+    await userEvent.click(within(menu).getByRole('menuitem', { name: 'Yönetici yap' }));
+    await waitFor(() => {
+      expect(api.callsTo(roleRoute(AYSE.userId))).toHaveLength(1);
+    });
+    // On its way: nothing is shown as changed, and the menu opens nothing.
+    expect(lineOf('Ayşe Yılmaz')).toBe('Üye, Çalışan');
+    const trigger = roleButton('Ayşe Yılmaz');
+    expect(trigger).toHaveAttribute('aria-disabled', 'true');
+    await userEvent.click(trigger);
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(screen.queryByText('Ayşe Yılmaz yönetici yapıldı.')).toBeNull();
+
+    release();
+    expect(await screen.findByText('Ayşe Yılmaz yönetici yapıldı.')).toBeVisible();
+    expect(lineOf('Ayşe Yılmaz')).toBe('Yönetici, Çalışan');
+    expect(api.callsTo(roleRoute(AYSE.userId))[0]?.body).toEqual({ role: 'manager' });
+    // The row stays, and so does the keyboard: the focus is on its menu button.
+    expect(roleButton('Ayşe Yılmaz')).toBe(trigger);
+    expect(trigger).toHaveFocus();
+    expect(trigger).not.toHaveAttribute('aria-disabled');
+
+    // One more choice takes it back.
+    const again = await openRoleMenu('Ayşe Yılmaz');
+    expect(itemsOf(again)).toEqual(['Yöneticilikten al', 'Sahipliği devret']);
+    await userEvent.click(within(again).getByRole('menuitem', { name: 'Yöneticilikten al' }));
+    expect(await screen.findByText('Ayşe Yılmaz artık yönetici değil.')).toBeVisible();
+    expect(lineOf('Ayşe Yılmaz')).toBe('Üye, Çalışan');
+    expect(api.callsTo(roleRoute(AYSE.userId))[1]?.body).toEqual({ role: 'member' });
+    // No confirmation and no passkey for either (5 October decision 4).
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(api.callsTo('POST /step-up/options')).toEqual([]);
+    expect(api.unexpected).toEqual([]);
+  });
+
+  it("members: Sahipliği devret asks first; Vazgeç changes nothing and returns the focus to the row's Rolü değiştir; the confirm button sends the role, and the owner then sees the page of a plain member", async () => {
+    const api = openAs('employee', [
+      person(FOUNDER_MEMBER, 'owner'),
+      person(AYSE, 'member'),
+      person(CAGAN, 'manager'),
+    ]);
+    const members = await section(3);
+    const menuButton = roleButton('Ayşe Yılmaz');
+    const menu = await openRoleMenu('Ayşe Yılmaz');
+    // From here on the menu button must not get the focus until the confirmation is given up.
+    const pulledBack = vi.fn();
+    menuButton.addEventListener('focus', pulledBack);
+    await userEvent.click(within(menu).getByRole('menuitem', { name: 'Sahipliği devret' }));
+    let dialog = await screen.findByRole('alertdialog', {
+      name: 'Sahiplik Ayşe Yılmaz adlı üyeye devredilsin mi?',
+    });
+    expect(dialog).toHaveAccessibleDescription(OWNER_WORDS);
+    // Nothing was sent by choosing the item, and the safe button has the focus.
+    expect(roleCalls(api)).toEqual([]);
+    const cancel = within(dialog).getByRole('button', { name: 'Vazgeç' });
+    await waitFor(() => {
+      expect(cancel).toHaveFocus();
+    });
+    // The closing menu did not take the focus to its button on the way: a screen reader hears the
+    // confirmation, not the button and then the confirmation.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(pulledBack).not.toHaveBeenCalled();
+    expect(cancel).toHaveFocus();
+    menuButton.removeEventListener('focus', pulledBack);
+    await userEvent.click(cancel);
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(roleCalls(api)).toEqual([]);
+    expect(lineOf('Ayşe Yılmaz')).toBe('Üye, Çalışan');
+    await waitFor(() => {
+      expect(roleButton('Ayşe Yılmaz')).toHaveFocus();
+    });
+
+    // Escape gives up too.
+    await userEvent.click(
+      within(await openRoleMenu('Ayşe Yılmaz')).getByRole('menuitem', { name: 'Sahipliği devret' }),
+    );
+    await screen.findByRole('alertdialog');
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => {
+      expect(screen.queryByRole('alertdialog')).toBeNull();
+    });
+    expect(roleCalls(api)).toEqual([]);
+    await waitFor(() => {
+      expect(roleButton('Ayşe Yılmaz')).toHaveFocus();
+    });
+
+    await userEvent.click(
+      within(await openRoleMenu('Ayşe Yılmaz')).getByRole('menuitem', { name: 'Sahipliği devret' }),
+    );
+    dialog = await screen.findByRole('alertdialog');
+    const confirm = within(dialog).getByRole('button', { name: 'Sahipliği devret' });
+    // Not the red button of a removal: nothing is lost that cannot be given back.
+    expect(confirm).toHaveAttribute('data-variant', 'default');
+    await userEvent.click(confirm);
+    expect(await screen.findByText('Projenin yeni sahibi: Ayşe Yılmaz.')).toBeVisible();
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(api.callsTo(roleRoute(AYSE.userId))).toHaveLength(1);
+    expect(api.callsTo(roleRoute(AYSE.userId))[0]?.body).toEqual({ role: 'owner' });
+    expect(api.callsTo('POST /step-up/options')).toEqual([]);
+
+    // The page of a plain member: the roles as stored, no control, and who manages members.
+    expect(lineOf('Ayşe Yılmaz')).toBe('Sahip, Çalışan');
+    expect(lineOf(MINE)).toBe('Üye, Çalışan');
+    expect(lineOf('Çağan Ünal')).toBe('Yönetici, Çalışan');
+    expect(within(members).queryByRole('button')).toBeNull();
+    expect(within(members).queryByRole('combobox')).toBeNull();
+    expect(within(members).getByText(MEMBERS_TEXT.whoManages)).toBeVisible();
+    expect(within(members).queryByText(MEMBERS_TEXT.handOverHint)).toBeNull();
+    // The reader's controls went away: the keyboard stays in the section.
+    await waitFor(() => {
+      expect(within(members).getByRole('heading', { level: 3 })).toHaveFocus();
+    });
+    expect(api.unexpected).toEqual([]);
+  });
+
+  it('members: the menu by keyboard: Enter opens it, the arrows move without choosing anything, Escape closes it and no request was sent', async () => {
+    const api = openAs('employee', [person(FOUNDER_MEMBER, 'owner'), person(AYSE, 'member')]);
+    await section(2);
+    const trigger = roleButton('Ayşe Yılmaz');
+    // A menu button, named after its row's person by the group around it.
+    expect(trigger).toHaveAttribute('aria-haspopup', 'menu');
+    expect(trigger).toHaveAttribute('aria-expanded', 'false');
+    expect(row('Ayşe Yılmaz')).toContainElement(trigger);
+    trigger.focus();
+    await userEvent.keyboard('{Enter}');
+    const menu = await screen.findByRole('menu');
+    const manager = within(menu).getByRole('menuitem', { name: 'Yönetici yap' });
+    const handOver = within(menu).getByRole('menuitem', { name: 'Sahipliği devret' });
+    await waitFor(() => {
+      expect(manager).toHaveFocus();
+    });
+    // Moving gives nothing: a select would have made the person a manager on the way.
+    await userEvent.keyboard('{ArrowDown}');
+    expect(handOver).toHaveFocus();
+    await userEvent.keyboard('{ArrowUp}');
+    expect(manager).toHaveFocus();
+    await userEvent.keyboard('{ArrowDown}');
+    expect(handOver).toHaveFocus();
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => {
+      expect(screen.queryByRole('menu')).toBeNull();
+    });
+    await waitFor(() => {
+      expect(trigger).toHaveFocus();
+    });
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(roleCalls(api)).toEqual([]);
+    expect(lineOf('Ayşe Yılmaz')).toBe('Üye, Çalışan');
+
+    // Only Enter on an item gives the role.
+    await userEvent.keyboard('{Enter}');
+    await waitFor(() => {
+      expect(
+        within(screen.getByRole('menu')).getByRole('menuitem', { name: 'Yönetici yap' }),
+      ).toHaveFocus();
+    });
+    await userEvent.keyboard('{Enter}');
+    expect(await screen.findByText('Ayşe Yılmaz yönetici yapıldı.')).toBeVisible();
+    expect(roleCalls(api).map((call) => call.body)).toEqual([{ role: 'manager' }]);
+  });
+
+  it('members: the hint under the list: the hand-over for the owner and the founder, who removes managers for a manager, none for a plain member', async () => {
+    const HAND_OVER =
+      'Sahip projeden çıkarılamaz. Sahipliği devretmek için bir üyenin "Rolü değiştir" menüsünü kullanın.';
+    const MANAGER =
+      'Bir yöneticiyi projeden yalnızca sahip ya da kurucu çıkarır; rolleri de onlar verir.';
+    const hints = (members: HTMLElement) => [
+      within(members).queryByText(HAND_OVER) !== null,
+      within(members).queryByText(MANAGER) !== null,
+    ];
+
+    // The owner.
+    openAs('employee', [person(FOUNDER_MEMBER, 'owner'), person(AYSE, 'manager')]);
+    let members = await section(2);
+    expect(hints(members)).toEqual([true, false]);
+    // Under the list, before the form to add a person.
+    const hint = within(members).getByText(HAND_OVER);
+    expect(within(members).getByRole('list').nextElementSibling).toBe(hint);
+    cleanup();
+
+    // The founder, member of the project or not.
+    openAs('founder', [person(AYSE, 'owner'), person(CAGAN, 'member')]);
+    members = await section(2);
+    expect(hints(members)).toEqual([true, false]);
+    cleanup();
+    openAs('founder', [
+      person(FOUNDER_MEMBER, 'manager', { role: 'founder' }),
+      person(AYSE, 'owner'),
+    ]);
+    members = await section(2);
+    expect(hints(members)).toEqual([true, false]);
+    cleanup();
+
+    // A manager.
+    openAs('employee', [person(FOUNDER_MEMBER, 'manager'), person(AYSE, 'owner')]);
+    members = await section(2);
+    expect(hints(members)).toEqual([false, true]);
+    cleanup();
+
+    // Not the founder who is a manager of a project without an owner: the founder removes
+    // managers and gives roles, so the manager's sentence would be false for them.
+    openAs('founder', [
+      person(FOUNDER_MEMBER, 'manager', { role: 'founder' }),
+      person(AYSE, 'manager'),
+    ]);
+    members = await section(2);
+    expect(hints(members)).toEqual([false, false]);
+    cleanup();
+
+    // A plain member.
+    openAs('employee', [person(FOUNDER_MEMBER, 'member'), person(AYSE, 'owner')]);
+    members = await section(2);
+    expect(hints(members)).toEqual([false, false]);
+  });
+
+  it("members: the founder who is no member manages every row except the owner's button, and reads the founder's words in the hand-over", async () => {
+    const api = openAs('founder', [
+      person(AYSE, 'owner'),
+      person(CAGAN, 'manager'),
+      person(DENIZ, 'member'),
+    ]);
+    const members = await section(3);
+    // The founder is no row of the list.
+    expect(within(members).queryByText(/\(siz\)/)).toBeNull();
+    expect(within(row('Ayşe Yılmaz')).queryByRole('button')).toBeNull();
+    for (const name of ['Çağan Ünal', 'Deniz Öz']) {
+      expect(
+        within(row(name))
+          .getAllByRole('button')
+          .map((button) => button.textContent),
+      ).toEqual(['Rolü değiştir', 'Projeden çıkar']);
+    }
+    expect(await within(members).findByRole('combobox', { name: 'Eklenecek kişi' })).toBeVisible();
+
+    await userEvent.click(
+      within(await openRoleMenu('Deniz Öz')).getByRole('menuitem', { name: 'Sahipliği devret' }),
+    );
+    const dialog = await screen.findByRole('alertdialog', {
+      name: 'Sahiplik Deniz Öz adlı üyeye devredilsin mi?',
+    });
+    expect(dialog).toHaveAccessibleDescription(
+      'Projenin sahibi bu kişi olur. Şimdiki sahip üye olarak kalır.',
+    );
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Sahipliği devret' }));
+    expect(await screen.findByText('Projenin yeni sahibi: Deniz Öz.')).toBeVisible();
+    expect(api.callsTo(roleRoute(DENIZ.userId))[0]?.body).toEqual({ role: 'owner' });
+    // The former owner is a plain member the founder manages like any other.
+    expect(lineOf('Ayşe Yılmaz')).toBe('Üye, Çalışan');
+    expect(lineOf('Deniz Öz')).toBe('Sahip, Çalışan');
+    expect(within(row('Deniz Öz')).queryByRole('button')).toBeNull();
+    expect(
+      within(row('Ayşe Yılmaz'))
+        .getAllByRole('button')
+        .map((button) => button.textContent),
+    ).toEqual(['Rolü değiştir', 'Projeden çıkar']);
+    expect(api.unexpected).toEqual([]);
+  });
+
+  it('members: the founder who owns the project is told only that they stay a member', async () => {
+    // The founder does in every project what its owner does, so the owner's sentence about the
+    // rights that go away would be false for them.
+    openAs('founder', [
+      person(FOUNDER_MEMBER, 'owner', { role: 'founder' }),
+      person(AYSE, 'member'),
+    ]);
+    await section(2);
+    await userEvent.click(
+      within(await openRoleMenu('Ayşe Yılmaz')).getByRole('menuitem', { name: 'Sahipliği devret' }),
+    );
+    const dialog = await screen.findByRole('alertdialog');
+    expect(dialog).toHaveAccessibleDescription(
+      'Projenin sahibi bu kişi olur. Siz üye olarak kalırsınız.',
+    );
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Sahipliği devret' }));
+    expect(await screen.findByText('Projenin yeni sahibi: Ayşe Yılmaz.')).toBeVisible();
+    // The founder still manages the members: their own row can now be taken off or given a role.
+    expect(
+      within(row(MINE))
+        .getAllByRole('button')
+        .map((button) => button.textContent),
+    ).toEqual(['Rolü değiştir', 'Projeden çıkar']);
+  });
+
+  it("members: a project without an owner says so, in the founder's words and in an employee's", async () => {
+    const FOR_FOUNDER = 'Bu projenin sahibi yok. Bir üyeyi sahip yapabilirsiniz.';
+    const FOR_OTHERS = 'Bu projenin sahibi yok. Sahibi kurucu atar.';
+    openAs('founder', [person(AYSE, 'manager'), person(CAGAN, 'member')]);
+    let members = await section(2);
+    const sentence = within(members).getByText(FOR_FOUNDER);
+    // Between the heading and the list.
+    expect(within(members).getByRole('heading', { level: 3 }).nextElementSibling).toBe(sentence);
+    expect(sentence.nextElementSibling).toBe(within(members).getByRole('list'));
+    // Nothing about a hand-over: there is no owner to hand over from.
+    expect(within(members).queryByText(MEMBERS_TEXT.handOverHint)).toBeNull();
+    // The founder names the owner with the same act, and is told nothing about a former owner.
+    await userEvent.click(
+      within(await openRoleMenu('Çağan Ünal')).getByRole('menuitem', { name: 'Sahipliği devret' }),
+    );
+    const dialog = await screen.findByRole('alertdialog', {
+      name: 'Sahiplik Çağan Ünal adlı üyeye devredilsin mi?',
+    });
+    expect(dialog).toHaveAccessibleDescription('Projenin sahibi bu kişi olur.');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Sahipliği devret' }));
+    expect(await screen.findByText('Projenin yeni sahibi: Çağan Ünal.')).toBeVisible();
+    expect(within(members).queryByText(FOR_FOUNDER)).toBeNull();
+    expect(within(members).getByText(MEMBERS_TEXT.handOverHint)).toBeVisible();
+    cleanup();
+
+    openAs('employee', [person(FOUNDER_MEMBER, 'manager'), person(AYSE, 'member')]);
+    members = await section(2);
+    expect(within(members).getByText(FOR_OTHERS)).toBeVisible();
+    expect(within(members).queryByText(FOR_FOUNDER)).toBeNull();
+    cleanup();
+
+    // A project with an owner says neither; one without any member keeps its own sentence.
+    openAs('employee', [person(FOUNDER_MEMBER, 'member'), person(AYSE, 'owner')]);
+    members = await section(2);
+    expect(within(members).queryByText(/Bu projenin sahibi yok/)).toBeNull();
+    cleanup();
+    openAs('founder', []);
+    members = await section(0);
+    expect(
+      within(members).getByText('Bu projenin üyesi yok. Projeyi yalnızca kurucu görür.'),
+    ).toBeVisible();
+    expect(within(members).queryByText(/Bu projenin sahibi yok/)).toBeNull();
+  });
+
+  it('members: a refusal of the API (project_owner_fixed, project_manager_protected, project_members_changed) is shown and the row stays', async () => {
+    const OWNER_FIXED =
+      'Sahibin rolü doğrudan değiştirilemez. Sahipliği devretmek için başka bir üyeyi sahip yapın.';
+    const MANAGER_PROTECTED =
+      'Bir yöneticiyi projeden yalnızca projenin sahibi ya da kurucu çıkarabilir.';
+    const CHANGED = 'Projenin üyeleri az önce değişti. Sayfayı yenileyip yeniden deneyin.';
+    const remove = `DELETE /projects/${PROJECT_ID}/members/${AYSE.userId}`;
+    const api = openAs(
+      'founder',
+      [person(FOUNDER_MEMBER, 'owner', { role: 'founder' }), person(AYSE, 'member')],
+      {
+        // Somebody else changed the roles meanwhile: the page is stale and the API refuses.
+        [roleRoute(AYSE.userId)]: () => apiError(409, 'project_owner_fixed', OWNER_FIXED),
+        [remove]: () => apiError(403, 'project_manager_protected', MANAGER_PROTECTED),
+      },
+    );
+    await section(2);
+
+    // A role given at once: the refusal is a message, the row and its line stay.
+    await userEvent.click(
+      within(await openRoleMenu('Ayşe Yılmaz')).getByRole('menuitem', { name: 'Yönetici yap' }),
+    );
+    expect(await screen.findByText(OWNER_FIXED)).toBeVisible();
+    expect(lineOf('Ayşe Yılmaz')).toBe('Üye, Çalışan');
+    expect(screen.queryByText('Ayşe Yılmaz yönetici yapıldı.')).toBeNull();
+    await waitFor(() => {
+      expect(roleButton('Ayşe Yılmaz')).not.toHaveAttribute('aria-disabled');
+    });
+
+    // The hand-over: the refusal is read in the confirmation, which stays open.
+    await userEvent.click(
+      within(await openRoleMenu('Ayşe Yılmaz')).getByRole('menuitem', { name: 'Sahipliği devret' }),
+    );
+    let dialog = await screen.findByRole('alertdialog');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Sahipliği devret' }));
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(OWNER_FIXED);
+    expect(screen.getByRole('alertdialog')).toBeVisible();
+    expect(screen.queryByText('Projenin yeni sahibi: Ayşe Yılmaz.')).toBeNull();
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Vazgeç' }));
+    await waitFor(() => {
+      expect(screen.queryByRole('alertdialog')).toBeNull();
+    });
+    expect(lineOf('Ayşe Yılmaz')).toBe('Üye, Çalışan');
+    expect(lineOf(MINE)).toBe('Sahip, Kurucu');
+
+    // A removal: both refusals are read in its confirmation.
+    await userEvent.click(
+      within(row('Ayşe Yılmaz')).getByRole('button', { name: 'Projeden çıkar' }),
+    );
+    dialog = await screen.findByRole('alertdialog');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Projeden çıkar' }));
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(MANAGER_PROTECTED);
+    api.handle(remove, () => apiError(409, 'project_members_changed', CHANGED));
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Projeden çıkar' }));
+    await waitFor(() => {
+      expect(within(dialog).getByRole('alert')).toHaveTextContent(CHANGED);
+    });
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Vazgeç' }));
+    await waitFor(() => {
+      expect(screen.queryByRole('alertdialog')).toBeNull();
+    });
+    expect(row('Ayşe Yılmaz')).toBeVisible();
+    expect(screen.getByRole('region', { name: 'Üyeler 2' })).toBeVisible();
+    expect(api.unexpected).toEqual([]);
   });
 });
 
@@ -2074,9 +2712,18 @@ describe('projects: a new project', () => {
     await userEvent.click(own);
     expect(own).toBeChecked();
     expect(members).toHaveAccessibleDescription(
-      'Projeyi ve ona bağlı kayıtları yalnızca üyeler ve kurucu görür. Projeyi açan kişi üyedir.',
+      'Projeyi ve ona bağlı kayıtları yalnızca üyeler ve kurucu görür. Projeyi açan kişi üyedir. Projeyi açan kişi projenin sahibi olur.',
     );
     expect(within(members).getByRole('checkbox', { name: 'Ayşe Yılmaz' })).not.toBeChecked();
+  });
+
+  it('new project: the help says that the opener becomes the owner', async () => {
+    // 8 October decision 44: who opens a project is its owner, for an employee as for the founder.
+    creatingApi({ 'GET /session': sessionAs(EMPLOYEE_AT_ARMADX) });
+    renderApp(LIST);
+    const dialog = await openNew();
+    const members = within(dialog).getByRole('group', { name: 'Üyeler' });
+    expect(within(members).getByText(/Projeyi açan kişi projenin sahibi olur\.$/)).toBeVisible();
   });
 
   it('new project: a customer by name; an employee sees no permission switch and the request carries closed permissions', async () => {

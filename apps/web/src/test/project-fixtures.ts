@@ -1,14 +1,20 @@
 import {
+  mayAddProjectMembers,
+  memberRemoval,
+  memberRoleChanges,
   projectDetailSchema,
   projectSummarySchema,
+  setProjectMemberRoleSchema,
   type CustomerOption,
   type MembershipSummary,
+  type ProjectActor,
   type ProjectDetail,
   type ProjectMember,
   type ProjectMemberCandidate,
+  type ProjectMemberRole,
   type ProjectSummary,
 } from '@agent-office/shared';
-import { ARMADX, json, sessionHandler, USER_ID, type Handler } from './mock-api.ts';
+import { apiError, ARMADX, json, sessionHandler, USER_ID, type Handler } from './mock-api.ts';
 
 /** Fixtures of the Projects section, checked against the shared contract so they cannot drift. */
 
@@ -120,6 +126,88 @@ export function projectForEmployee(overrides: Partial<ProjectDetail> = {}): Proj
     customer: base.customer ? { ...base.customer, automatedProcessingAllowed: null } : null,
     actions: { ...base.actions, setAiPermission: false, setCustomerPermissions: false },
   });
+}
+
+/** A member before the reader is known: who they are and their role in the project. */
+export type MemberOfProject = Pick<
+  ProjectMember,
+  'userId' | 'name' | 'role' | 'active' | 'projectRole'
+>;
+
+/**
+ * The members and the add right as the API answers them to one reader (8 October decision 44):
+ * the flags are computed with the shared rule the API itself uses, so a fixture cannot offer a
+ * button the API would not. The reader is the signed-in person; `founder` says whether they are
+ * the company's founder.
+ */
+export function membersFor(
+  founder: boolean,
+  people: readonly MemberOfProject[],
+): Pick<ProjectDetail, 'members' | 'memberCount'> & { addMembers: boolean } {
+  const actor: ProjectActor = {
+    userId: USER_ID,
+    founder,
+    projectRole: people.find((person) => person.userId === USER_ID)?.projectRole ?? null,
+  };
+  return {
+    members: people.map((person) => ({
+      userId: person.userId,
+      name: person.name,
+      role: person.role,
+      active: person.active,
+      projectRole: person.projectRole,
+      removable: memberRemoval(actor, person) === 'ok',
+      roleChanges: memberRoleChanges(actor, person),
+    })),
+    memberCount: people.length,
+    addMembers: mayAddProjectMembers(actor),
+  };
+}
+
+/** The fixture's project as one reader gets it, with the given people in the given roles. */
+export function projectWithRoles(
+  founder: boolean,
+  people: readonly MemberOfProject[],
+): ProjectDetail {
+  const { addMembers, ...members } = membersFor(founder, people);
+  const base = founder ? projectDetail(members) : projectForEmployee(members);
+  return projectDetailSchema.parse({ ...base, actions: { ...base.actions, addMembers } });
+}
+
+/** The key of the role route of a member of the fixture's project. */
+export function roleRoute(userId: string): string {
+  return `PUT /projects/${PROJECT_ID}/members/${userId}/role`;
+}
+
+/**
+ * PUT /projects/:id/members/:userId/role for every member of a project, as the API does it: the
+ * member gets the role, a hand-over makes the owner until now a plain member, and the answer is
+ * the project as the reader may act on it afterwards.
+ */
+export function roleHandlers(
+  founder: boolean,
+  people: readonly MemberOfProject[],
+): Record<string, Handler> {
+  let roles = people.map((person) => ({ ...person }));
+  const give =
+    (userId: string): Handler =>
+    (call) => {
+      const body = setProjectMemberRoleSchema.safeParse(call.body);
+      if (!body.success) return apiError(400, 'invalid_request', 'İstek okunamadı.');
+      const role: ProjectMemberRole = body.data.role;
+      roles = roles.map((person) => {
+        if (person.userId === userId) return { ...person, projectRole: role };
+        // One owner at most: the owner until now becomes a plain member.
+        if (role === 'owner' && person.projectRole === 'owner') {
+          return { ...person, projectRole: 'member' as const };
+        }
+        return person;
+      });
+      return json(projectWithRoles(founder, roles));
+    };
+  return Object.fromEntries(
+    people.map((person) => [roleRoute(person.userId), give(person.userId)]),
+  );
 }
 
 /** A row of the list; the default is the project of projectDetail(). */

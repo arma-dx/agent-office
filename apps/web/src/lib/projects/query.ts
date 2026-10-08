@@ -7,6 +7,7 @@ import {
   projectDetailSchema,
   projectListSchema,
   projectMemberCandidatesSchema,
+  setProjectMemberRoleSchema,
   updateProjectSchema,
   type CreateProject,
   type Customer,
@@ -16,6 +17,7 @@ import {
   type ProjectDetail,
   type ProjectList,
   type ProjectMemberCandidate,
+  type ProjectMemberRole,
   type UpdateProject,
 } from '@agent-office/shared';
 import { queryOptions } from '@tanstack/react-query';
@@ -132,6 +134,27 @@ export function removeProjectMember(
   const ids = z.object({ projectId: z.uuid(), userId: z.uuid() }).parse({ projectId, userId });
   return apiRequest(`/projects/${ids.projectId}/members/${ids.userId}`, {
     method: 'DELETE',
+    schema: projectDetailSchema,
+    companyId,
+  });
+}
+
+/**
+ * Gives a member a role in the project (8 October 2026, decision 44): the owner of the project and
+ * the founder appoint and dismiss a manager, and hand the ownership over by making another member
+ * the owner. The API answers the whole project as the reader may now act on it.
+ */
+export function setProjectMemberRole(
+  companyId: string,
+  projectId: string,
+  userId: string,
+  role: ProjectMemberRole,
+): Promise<ProjectDetail> {
+  const ids = z.object({ projectId: z.uuid(), userId: z.uuid() }).parse({ projectId, userId });
+  const body = setProjectMemberRoleSchema.parse({ role });
+  return apiRequest(`/projects/${ids.projectId}/members/${ids.userId}/role`, {
+    method: 'PUT',
+    body,
     schema: projectDetailSchema,
     companyId,
   });

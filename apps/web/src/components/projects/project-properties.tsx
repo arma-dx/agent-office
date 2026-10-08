@@ -407,11 +407,13 @@ function Permissions({ project }: { project: ProjectDetail }) {
 
 /**
  * The properties of a project, for the shell's properties panel: what the project is (status,
- * customer, target date, colour and icon, members, who opened it and when), then its AI
- * permission, then the contract permissions of its customer. Rule 12 reads both permissions; the
- * sentence under the first says what they mean together for this project.
+ * customer, target date, colour and icon, members, who opened it, who owns it now and when it
+ * was opened), then its AI permission, then the contract permissions of its customer. Rule 12
+ * reads both permissions; the sentence under the first says what they mean together for this
+ * project.
  */
 export function ProjectProperties({ project }: { project: ProjectDetail }) {
+  const owner = project.members.find((member) => member.projectRole === 'owner');
   return (
     <div className="flex flex-col gap-5 text-sm">
       <dl className={FIELDS}>
@@ -440,6 +442,9 @@ export function ProjectProperties({ project }: { project: ProjectDetail }) {
         <dd className="break-words">
           {project.createdBy ? personName(project.createdBy) : 'Bilinmiyor'}
         </dd>
+        {/* Who owns the project now (8 October 2026, decision 44); who opened it never changes. */}
+        <dt className={FIELD_NAME}>Sahip</dt>
+        <dd className="break-words">{owner ? personName(owner) : 'Yok'}</dd>
         <dt className={FIELD_NAME}>Oluşturulma</dt>
         <dd>
           <time dateTime={project.createdAt}>{formatFull(project.createdAt)}</time>
