@@ -328,6 +328,27 @@ describe('office page: "Her yerde durdur"', () => {
     within(list)
       .getAllByRole('listitem')
       .map((item) => item.textContent);
+  /** The buttons of the dialog as text; one that is busy says so. */
+  const buttons = (dialog: HTMLElement) =>
+    within(dialog)
+      .getAllByRole('button')
+      .map(
+        (button) =>
+          `${button.textContent}${button.getAttribute('aria-disabled') === 'true' ? ' (busy)' : ''}`,
+      );
+  const badGateway = () => new Response('bad gateway', { status: 502 });
+  const FAILED = 'durdurulamadı. Sunucuda bir sorun oluştu. Biraz sonra yeniden deneyin.';
+  /** Opens the dialog for SOS-2 from the office of Arma DX and confirms the stop. */
+  async function confirmStop(user: Pick<typeof userEvent, 'click'> = userEvent) {
+    renderApp('/c/armadx/office');
+    await user.click(await label('SOS-2'));
+    await user.click(within(panel()).getByRole('button', { name: 'Her yerde durdur' }));
+    const dialog = await screen.findByRole('alertdialog');
+    await within(dialog).findByRole('list', { name: 'Durdurulacağı yerler' });
+    await user.click(within(dialog).getByRole('button', { name: 'Her yerde durdur' }));
+    const results = await within(dialog).findByRole('list', { name: 'Sonuç' });
+    return { dialog, results };
+  }
 
   it('names the companies where the agent is open, stops it in each with a request of its own, and says what happened', async () => {
     wide();
@@ -667,6 +688,64 @@ describe('office page: "Her yerde durdur"', () => {
       PILLIKA.companyId,
     ]);
     expect(api.unexpected).toEqual([]);
+  });
+
+  it('says that a place could not be stopped as soon as it answered, while the next one is still asked', async () => {
+    wide();
+    let release: ((response: Response) => void) | undefined;
+    twoCompanies({ arma: 'enabled', pillika: 'enabled' }, (call) => {
+      if (call.headers.get(COMPANY_HEADER) === ARMADX.companyId) return badGateway();
+      return new Promise<Response>((resolve) => {
+        release = resolve;
+      });
+    });
+    const { dialog, results } = await confirmStop();
+    await waitFor(() => {
+      expect(release).toBeDefined();
+    });
+    expect(items(results)).toEqual([`Arma DX: ${FAILED}`, 'Pillika: durduruluyor.']);
+    // Still sending: nothing can be pressed yet.
+    expect(buttons(dialog)).toEqual(['Kapat (busy)', 'Her yerde durdur (busy)']);
+    release?.(stopped());
+    await waitFor(() => {
+      expect(items(results)).toEqual([`Arma DX: ${FAILED}`, 'Pillika: durduruldu.']);
+    });
+    expect(buttons(dialog)).toEqual(['Kapat', 'Yeniden dene']);
+  });
+
+  it('shows in a retry of several places each one as it answers', async () => {
+    wide();
+    let hold = false;
+    let release: ((response: Response) => void) | undefined;
+    const { api } = twoCompanies({ arma: 'enabled', pillika: 'enabled' }, (call) => {
+      if (call.headers.get(COMPANY_HEADER) === ARMADX.companyId || !hold) return badGateway();
+      return new Promise<Response>((resolve) => {
+        release = resolve;
+      });
+    });
+    const { dialog, results } = await confirmStop();
+    await waitFor(() => {
+      expect(items(results)).toEqual([`Arma DX: ${FAILED}`, `Pillika: ${FAILED}`]);
+    });
+    hold = true;
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Yeniden dene' }));
+    await waitFor(() => {
+      expect(release).toBeDefined();
+    });
+    // Arma DX failed again and says so; Pillika, asked again, has not answered yet.
+    expect(items(results)).toEqual([`Arma DX: ${FAILED}`, 'Pillika: durduruluyor.']);
+    expect(buttons(dialog)).toEqual(['Kapat (busy)', 'Yeniden dene (busy)']);
+    release?.(stopped());
+    await waitFor(() => {
+      expect(items(results)).toEqual([`Arma DX: ${FAILED}`, 'Pillika: durduruldu.']);
+    });
+    expect(buttons(dialog)).toEqual(['Kapat', 'Yeniden dene']);
+    expect(sentTo(api.callsTo(switchKey))).toEqual([
+      ARMADX.companyId,
+      PILLIKA.companyId,
+      ARMADX.companyId,
+      PILLIKA.companyId,
+    ]);
   });
 
   it.each([

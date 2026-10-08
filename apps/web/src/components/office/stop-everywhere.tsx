@@ -133,6 +133,13 @@ function StopEverywhereDialog({
     setSent((previous) => (previous.length === 0 ? list : previous));
     setRetrying(retry);
     setPhase('sending');
+    // A place that is asked has no result until it answers: what a retry is asking again reads
+    // "durduruluyor." and not its earlier failure.
+    setOutcomes((previous) => {
+      const next = new Map(previous);
+      for (const company of list) next.delete(company.companyId);
+      return next;
+    });
     for (const company of list) {
       let outcome: Outcome;
       try {
@@ -211,7 +218,9 @@ function StopEverywhereDialog({
           >
             {sent.map((company) => {
               const outcome = outcomes.get(company.companyId);
-              const waiting = outcome === undefined || (sending && outcome.kind === 'failed');
+              // Each place says what happened as soon as it answered, a failure too: the others
+              // may take long.
+              const waiting = outcome === undefined;
               return (
                 <li key={company.companyId}>
                   <span className="font-medium">{companyLabel(company)}</span>
