@@ -1004,6 +1004,188 @@ describe.skipIf(noDatabase)('requests', () => {
     ).toBe(404);
   });
 
+  it('the appointed approver of the unit corrects the routing and stops the work, with a reason', async () => {
+    // 7 October decision 7. The right holder of this file is appointed for HAF: from then on the
+    // steps routed there name that person, who may do what the founder may.
+    const founderContext = { companyId: ids.arma, userId: ids.founder };
+    await withContext(besidePool, founderContext, (client) =>
+      client.query(
+        `insert into office.approvers (company_id, unit_code, user_id) values ($1, 'HAF', $2)`,
+        [ids.arma, RIGHT_HOLDER],
+      ),
+    );
+    try {
+      const { id } = await open(employee);
+      await route(id, ids.employee);
+      const approver = { userId: RIGHT_HOLDER, name: 'Onay Hakkı Olan' };
+      // While the agent works: not the approver's turn yet, but the acts are theirs.
+      expect(await read(rightHolder, id)).toMatchObject({
+        stage: 'working',
+        approver,
+        waitingForMe: false,
+        actions: { cancel: false, stop: true, reroute: true },
+      });
+      await submit(id, ids.employee);
+      const waiting = await read(rightHolder, id);
+      expect(waiting).toMatchObject({
+        stage: 'unit_approval',
+        turn: { kind: 'person', ...approver },
+        waitingForMe: true,
+      });
+      expect(waiting.approval).not.toBeNull();
+      // The founder may still decide and correct; the work waits for the appointed person.
+      expect(await read(founder, id)).toMatchObject({
+        waitingForMe: false,
+        actions: { stop: true, reroute: true },
+      });
+
+      // The approver corrects the routing: the result that waited is closed, the agent starts
+      // again in the requester's name, and everybody reads who corrected it and the note.
+      const before = server.jobs.sent.length;
+      const corrected = await post(rightHolder, `/api/requests/${id}/routing`, {
+        unitCode: 'HAF',
+        agentCode: 'HAF-2',
+        note: 'Kaynakları da yazsın.',
+      });
+      expect(corrected.statusCode).toBe(200);
+      expect(requestDetailSchema.parse(corrected.json())).toMatchObject({
+        status: 'in_progress',
+        stage: 'working',
+        approver,
+        approval: null,
+        actions: { cancel: false, stop: true, reroute: true },
+      });
+      expect(server.jobs.sent.slice(before)).toEqual([
+        { companyId: ids.arma, userId: ids.employee, taskId: id, agentCode: 'HAF-2' },
+      ]);
+      expect(
+        (await read(employee, id)).journey.filter((item) => item.kind === 'routing').at(-1),
+      ).toMatchObject({ round: 2, by: approver, reason: 'Kaynakları da yazsın.', approver });
+
+      // The approver stops the work: a reason is asked for, and the requester reads it.
+      const silent = await post(rightHolder, `/api/requests/${id}/close`);
+      expect([silent.statusCode, errorCode(silent)]).toEqual([409, 'reason_required']);
+      const stopped = await post(rightHolder, `/api/requests/${id}/close`, {
+        reason: 'Bu konu bu ay yayınlanmayacak.',
+      });
+      expect(stopped.statusCode).toBe(200);
+      expect(await read(employee, id)).toMatchObject({
+        status: 'cancelled',
+        cause: 'stopped',
+        closure: { by: approver, reason: null, note: 'Bu konu bu ay yayınlanmayacak.' },
+      });
+      const [trace] = await adminQuery(
+        `select event, user_id from office.audit_log
+         where record_type = 'task' and record_id = $1 and event like 'request_%'
+         order by id desc limit 1`,
+        [id],
+      );
+      expect(trace).toEqual({ event: 'request_stopped', user_id: RIGHT_HOLDER });
+
+      // A request of another unit's step is not theirs: the same person, appointed for HAF only,
+      // on a request nobody routed yet.
+      const unrouted = await open(employee);
+      expect((await read(rightHolder, unrouted.id)).actions).toEqual({
+        cancel: false,
+        stop: false,
+        reroute: false,
+      });
+      const notTheirs = await post(rightHolder, `/api/requests/${unrouted.id}/close`, {
+        reason: 'x',
+      });
+      expect([notTheirs.statusCode, errorCode(notTheirs)]).toEqual([403, 'action_not_allowed']);
+    } finally {
+      await withContext(besidePool, founderContext, (client) =>
+        client.query(
+          `delete from office.approvers where company_id = $1 and unit_code = 'HAF' and user_id = $2`,
+          [ids.arma, RIGHT_HOLDER],
+        ),
+      );
+    }
+  });
+
+  it('a request the coordinator could not route is routed by the founder: the first routing by a person', async () => {
+    // Every "fell to a person" sentence before the routing promises this way on.
+    const { id } = await open(employee, 'Bu talebi koordinasyon merkezi yönlendiremedi');
+    await agentStep(
+      workerPool,
+      { companyId: ids.arma, userId: ids.employee, agentCode: 'KOR-1' },
+      (client) =>
+        client.query(
+          `insert into office.runs (company_id, task_id, agent_code, card_version_id, trigger_type,
+             model, status, finished_at, summary, output)
+           values ($1, $2, 'KOR-1', $3, 'request', 'test-model', 'completed', now(),
+             'Koordinasyon merkezi talebi bir birime yönlendirmeden çalışmasını bitirdi.', $4)`,
+          [ids.arma, id, CARD_KOR, JSON.stringify({ outcome: 'no_routing' })],
+        ),
+    );
+    const fallen = {
+      status: 'in_progress',
+      stage: 'fell_to_person',
+      cause: 'no_routing',
+      turn: { kind: 'founder' },
+      unit: null,
+      agent: null,
+    };
+    expect(await read(employee, id)).toMatchObject({
+      ...fallen,
+      waitingForMe: false,
+      actions: { cancel: true, stop: false, reroute: false },
+    });
+    expect(await read(founder, id)).toMatchObject({
+      ...fallen,
+      waitingForMe: true,
+      actions: { cancel: false, stop: true, reroute: true },
+    });
+    const url = `/api/requests/${id}/routing`;
+    const before = server.jobs.sent.length;
+    // Not the requester's to do, nor an employee's who merely holds the approval right.
+    for (const session of [employee, rightHolder]) {
+      const res = await post(session, url, { unitCode: 'HAF', agentCode: 'HAF-2' });
+      expect([res.statusCode, errorCode(res)]).toEqual([403, 'action_not_allowed']);
+    }
+    expect(
+      routingOptionsSchema
+        .parse((await get(founder, `${url}-options`)).json())
+        .units.find((unit) => unit.code === 'HAF')?.agents,
+    ).toEqual([{ code: 'HAF-2', name: 'Kurumsal Arama Ajanı' }]);
+    const routed = await post(founder, url, {
+      unitCode: 'HAF',
+      agentCode: 'HAF-2',
+      note: 'Arşivde arasın.',
+    });
+    expect(routed.statusCode).toBe(200);
+    const detail = requestDetailSchema.parse(routed.json());
+    expect(detail).toMatchObject({
+      status: 'in_progress',
+      stage: 'working',
+      cause: null,
+      turn: { kind: 'agent', code: 'HAF-2' },
+      unit: { code: 'HAF' },
+      agent: { code: 'HAF-2' },
+    });
+    expect(detail.journey.filter((item) => item.kind === 'routing')).toMatchObject([
+      {
+        round: 1,
+        unit: { code: 'HAF' },
+        agent: { code: 'HAF-2' },
+        by: { userId: ids.founder, name: 'Kurucu' },
+        reason: 'Arşivde arasın.',
+      },
+    ]);
+    // The agent's run is called for in the requester's name.
+    expect(server.jobs.sent.slice(before)).toEqual([
+      { companyId: ids.arma, userId: ids.employee, taskId: id, agentCode: 'HAF-2' },
+    ]);
+    // A first routing is not a correction of one: the "first time right" count is untouched.
+    expect(
+      await adminQuery(
+        'select routing_corrected, initial_unit_code from office.tasks where id = $1',
+        [id],
+      ),
+    ).toEqual([{ routing_corrected: false, initial_unit_code: 'HAF' }]);
+  });
+
   it('what an agent wrote without submitting is read by the decider alone', async () => {
     const { id } = await open(employee);
     await route(id, ids.employee);
