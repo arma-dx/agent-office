@@ -396,6 +396,31 @@ Talep akışının kalanı (0.4a) için sormadan yapılan varsayımlar (ön plan
 
 8 Ekim karar 7-13 ile kapananlar: U26'nın "neye hata denir" kısmı (karar 10), U32 (karar 9: açık olduğu şirketlerde durdurulur), 5 Ekim karar 10'un Bugün yarısı ve karar 11'in belirli aralıklarla yenileme kısmı (karar 7). Açılan: Projeler bölümünün kapsamı (karar 11; ön plan hazırlanıyor).
 
+Projeler (8 Ekim, karar 11 ve 14-22) için türetilen yorumlar ve ön planda bildirilen varsayımlar (hepsi **kurucu onayı bekliyor**; ön planda itiraz gelmedi, açık onay da verilmedi):
+
+- P-a (karar 15): projeyi açan kişi projenin üyesi olur. "Çalışanlar üye ekler": bir projenin üyesi olan çalışan o projeye üye ekler ve çıkarır; üyesi olmadığı projeyi göremez. Kurucu her projede ekler ve çıkarır.
+- P-b (karar 15 ve 16): bir çalışan yeni proje açarken müşteri ekleyebilir; müşterinin sözleşme izinleri (yapay zekâ, kodla otomatik işleme) kapalı başlar ve onları yalnızca kurucu işaretler ("izni yalnızca sen açarsın" sözünün müşteri düzeyine uygulanması).
+- P-c (karar 17): beş durumdan "tamamlandı" ve "iptal" projeyi kapatır (yeni talep açılmaz); öteki üçü açık projedir. Durumu proje üyeleri ve kurucu değiştirir.
+- P-d (karar 17): proje sayfasının öteki bölümleri (bütçe ve kilometre taşları, çalışmalar ve maliyet, onaylar, notlar, harcama sınırı) en küçük Projeler'den sonra, ayrı küçük adımlar olarak eklenir; sırası KALAN-ISLER 0.4c adım 3.
+- P-e (karar 18): ajanların kod yazması ayrı bir ön planla ele alınır; o güne kadar GitHub bağlantısı yalnızca okur (depo seçme, proje sayfasında değişiklikler, açık PR'lar ve iş kayıtları).
+- P-f (karar 19): bağlantıyı kurucu kurar (Ayarlar; passkey ile, karar 22). "Herkes" proje açabilen kurucu ve çalışanlardır. Depo, proje açılırken ya da sonra proje üyelerince seçilir; bir üye bağlantının gördüğü her depoyu kendi projesine ekleyip öteki üyelere gösterebilir (bu sonuç soruda yazılmıştı).
+- P-g (karar 21): dosya ekleme penceresi tek cümleyle söyler: kişisel veri içeren dosya eklenmez. Kod bir dosyada kişisel veri olup olmadığını denetleyemez.
+- P-h: proje silinmez, kapatılır; kapalı projede yeni talep açılmaz, proje geri açılabilir.
+- P-i: Paperclip'teki "katıl" ve "ayrıl" düğmeleri alınmaz; bizde üyelik kimin göreceğini belirler.
+- P-j: projeye yalnızca o şirketin kurucusu ve çalışanları üye olur; dış kişi üye yapılmaz.
+- P-k: proje dosyalarını proje üyeleri ve kurucu görür ve ekler; dosyayı ekleyen ya da kurucu siler; dosya dış kişiye açılmaz. Dosyada sürüm tutulmaz.
+- P-l: proje açma, üye ekleme ve çıkarma, iznin açılıp kapanması, depo bağlama ve dosya silme iz kaydına yazılır.
+- P-m: bir talebin projesi açıldıktan sonra değişmez; eski talepler projesiz kalır.
+- P-n: GitHub'a yalnızca seçilen depoları gören bir uygulamayla bağlanılır; kişisel anahtar istenmez.
+- P-o: GitHub'dan anlık bildirim kurulmaz; liste belirli aralıklarla yenilenir.
+- P-p: bağlı deponun listesini bütün proje üyeleri görür; GitHub'da o depoya yetkisi olmayan üye de.
+- P-r: yalnızca şirketin kendi GitHub kuruluşundaki depolar bağlanır; müşterinin kendi GitHub'ı bağlanmaz.
+- P-s: yapay zekâ izni kapalı müşterinin projesine depo, ancak o müşteride "kodla otomatik işleme" izni açıksa bağlanır (kural 12).
+- P-t: Paperclip'teki hedefler ve ajanın çalışma ayarları kurulmaz. Bizde "bütçe" projenin parasıdır; yapay zekâ maliyeti ona yazılır. Ajan çalışmalarının maliyetini yalnızca kurucu görür.
+- P-u: Paperclip'ten liste düzeni ve sayfa iskeleti örnek alınır; GitHub logosu alınmaz.
+
+Bu kararlarla kapananlar: M48 (projelerin yeri: ayrı bölüm, karar 11 ve 14). Yanıtlara göre güncellenecekler, ilgili adım tasarlanırken: M47, R8, W-i, W-g, M38, M13, M10, U14, N26, X1-3.
+
 İlk dilimin incelemesinden kalan açık sorular ve bilerek ertelenenler:
 
 - T15 (açık soru): Talep sahibi şirketten ayrılır ya da dış kişi olursa açık talepleri ne olur? Bugün çalışmalar talep sahibinin adına koştuğu için böyle bir talep hiç çalışamaz; sayfa yine de "Yönlendirmeyi düzelt" önerir. Seçenekler: üyelik değişince talepler sabit bir nedenle kapanır; ya da kurucuya düşer ve yalnızca "İşi durdur" önerilir. Karar gelene kadar dokunulmadı.

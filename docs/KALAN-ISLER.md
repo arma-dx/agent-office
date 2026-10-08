@@ -35,6 +35,8 @@ Henüz olmayanlar: veritabanı (göç dosyası yok), giriş, işlevli ekran (yal
 
 8 Ekim 2026 (öğleden sonra): kurucu 0.4a ön planının sorularını yanıtladı (`docs/kararlar/2026-10-08.md`, karar 7-13). 0.4a beş adıma bölündü; ilk adım Bugün listesi ve bildirimler. Projeler ayrı ve ayrıntılı bir bölüm olarak eklendi (0.4c; karar 11); kapsamı için ön plan hazırlanıyor. Talep formuna ek 0.4a'dan çıkarıldı (karar 12).
 
+8 Ekim 2026 (devam): kurucu ilk gerçek talebi gönderdi; akış uçtan uca çalıştı. Koordinasyon merkezi koşullu bir cümleyi eksik bilgi sayıp yönlendirmedi; yönlendirme talimatı düzeltildi ve gerçek modelle sınandı. Kurucu Projeler ön planının dokuz sorusunu yanıtladı (karar 14-22); 0.4c yedi adıma bölündü.
+
 ## Sprint 0
 
 ### 0.1 Arayüz temeli
@@ -383,9 +385,49 @@ Bu işten çıkarılanlar:
 
 ### 0.4c Projeler
 
-8 Ekim, karar 11: Projeler sol menüde ayrı bir bölümdür; yeni proje oluşturulur, projeye GitHub bağlanır, projeye dosya eklenir. Paperclip'teki proje bölümünün mantığıyla kurulur, ondan daha gelişmiş ve daha ayrıntılı olur. Kapsamı ve sırası kurucuya sunulacak ön planla netleşir; onay gelmeden bir şey kurulmaz.
+8 Ekim, karar 11 ve 14-22. Projeler "İş" grubunda ayrı bir bölümdür (karar 14). Çalışanlar da proje açar ve üye ekler; yapay zekâ iznini yalnızca kurucu, passkey ile açar (karar 15 ve 22). Türetilen yorumlar ve varsayımlar `docs/SONRA.md` içinde P-a ila P-u.
 
-- [ ] Paperclip'in proje bölümünün incelenmesi ve ön plan (akış, sorular)
+Adım 1: en küçük Projeler
+
+- [ ] Kenar çubuğunda "Projeler" satırı ve proje listesi (kurucu hepsini, çalışan üyesi olduğu projeleri görür)
+- [ ] Yeni proje: ad, açıklama, müşteri (var olanı seçme ya da adıyla ekleme; karar 16), üyeler
+- [ ] Proje sayfası: ad, durum (beş durum), renk ve simge, hedef tarih, özellik paneli (karar 17)
+- [ ] Üye ekleme ve çıkarma
+- [ ] Yapay zekâ izni: yalnızca kurucu, passkey ile; müşterinin sözleşme izinleri
+- [ ] Projeyi kapatma ve geri açma
+- [ ] Şirket ayrımı ve görünürlük testleri (kısıtlı rollerle)
+
+Adım 2: talep formunda proje alanı
+
+- [ ] Talep formunda proje alanı; proje sayfasında o projenin talepleri
+- [ ] Çalışmanın proje bağlamı; kural 12 denetiminin kodla yapılması; izin kapanırsa talebin insana düşmesi
+
+Adım 3: proje sayfasının öteki bölümleri (karar 17; her biri ayrı küçük adım)
+
+- [ ] Bütçe ve kilometre taşları
+- [ ] Ajan çalışmaları ve maliyeti
+- [ ] Onaylar
+- [ ] Projenin notları (Notlar işiyle birlikte)
+- [ ] Projeye yapay zekâ harcama sınırı: aşılınca o projede ajanlar durur
+
+Adım 4: proje dosyaları (karar 20)
+
+- [ ] (Senden) Supabase'te dosya deposu (test ve canlı ortam için)
+- [ ] Dosya modülü: yükleme, liste, indirme, silme; tür ve 25 MB sınırı; görünürlük proje üyeliğiyle
+
+Adım 5: GitHub bağlantısı (karar 19 ve 22)
+
+- [ ] (Senden) GitHub kuruluşunun adı ve orada uygulama kurma hakkı olan hesap
+- [ ] Kurum ayarlarından GitHub'ı şirkete bir kez bağlama (passkey ile)
+- [ ] Projede o kurumun depolarından birini seçme; proje sayfasında GitHub sekmesi
+
+Adım 6: ajanların proje dosyalarını okuması (karar 21)
+
+- [ ] İzin açık projede ajanın dosyaları okuması; dosya içeriğinin veri olarak verilmesi (kural 7)
+
+Adım 7: ajanların kod yazıp değişiklik isteği açması (karar 18)
+
+- [ ] Ön plan: kodun çalıştırılacağı ortam, GitHub'a yazma yetkisi, onayın kapsamı, güvenlik (kurucu onayı gerekir)
 - [ ] (Ön plan onaylanınca maddeler buraya yazılır)
 
 ### 0.4b Görevler: ekip içi görevler (M2)

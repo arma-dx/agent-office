@@ -105,7 +105,7 @@ Günlük iş listeler, pano ve Onay Masası üzerinden yürür. Aşağıdaki ekr
 
 - Solda kenar çubuğu durur. Başında şirket menüsü var: Arma DX, Pillika; kurucu için ayrıca holding görünümü (iki şirketin API'de salt okunur birleştirmesi) ve Kurucu özel alanı.
 - Üst satırlar: Yeni talep, Bugün, Onaylar. Bugün ve Onaylar satırında bekleyenlerin sayısı görünür.
-- "İş" grubu: Görevler, Notlar, Projeler, Müşteriler. (Projeler: 8 Ekim, karar 11; gruptaki yeri kurucu onayı bekliyor.)
+- "İş" grubu: Görevler, Notlar, Projeler, Müşteriler. (Projeler: 8 Ekim, karar 11 ve 14.)
 - "Ofis" grubu: Ofis görünümü, Ajanlar, İz kaydı, Ölçümler (Ofis görünümünün yeri: 5 Ekim, karar 12).
 - Hesap menüsü: Ayarlar, tema, çıkış.
 - Üst çubuk bulunulan yeri gösterir.
@@ -123,7 +123,7 @@ Bir satır, ekranı yapıldığında menüye eklenir. Panel telefona uyumlu yap�
 | Ajanlar | Birimlere göre ajanlar, durumları, yetki seviyeleri, şirket başına durdurma düğmesi ve "her yerde durdur" | 1 |
 | Görev kartı | Kart ve skill'ler salt okunur (değişiklik depoda PR ile), sürüm geçmişi, test sonuçları | 1 |
 | Notlar | Klasör ağacı, editör, geri bağlantılar, etiketler, arama; HAF-2'ye soru (proje sayfasından o projede; genel ekranda proje seçilerek) | 1 |
-| Projeler | Ayrı ve ayrıntılı proje bölümü: proje oluşturma, projeye GitHub bağlama, proje dosyaları; Paperclip'teki proje bölümünün mantığıyla, ondan daha gelişmiş (8 Ekim, karar 11). Kapsamı ön planla netleşir | 0 (kapsamı kurucu onayı bekliyor) |
+| Projeler | Proje listesi; yeni proje (ad, açıklama, müşteri, üyeler); proje sayfası: beş durum, renk ve simge, hedef tarih, üyeler, yapay zekâ izni, talepler, dosyalar, GitHub, bütçe ve kilometre taşları, notlar, ajan çalışmaları ve maliyeti, onaylar, yapay zekâ harcama sınırı (8 Ekim, karar 11 ve 14-22). Adımları KALAN-ISLER 0.4c içinde | 0 ve sonrası |
 | Müşteriler | Müşteri ve fırsat listesi | 2 |
 | İz kaydı | Kim, ne yaptı, ne zaman; filtreler | 2 |
 | Ayarlar | Kullanıcılar ve roller, şirketler, entegrasyonlar (Drive bağlantısı ve klasör izin listesi Sprint 1, Gmail ve Takvim Sprint 3) | 0, 1 ve 3 |
