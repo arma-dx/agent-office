@@ -1077,6 +1077,71 @@ describe.skipIf(noDatabase)('the approval of a request and the status that follo
     });
   });
 
+  it('a run belongs to the step it was opened for: after a routing to the same agent the older run submits nothing', async () => {
+    const stepOf = async (tx: Tx, run: string): Promise<string | null> =>
+      (
+        await one<{ step: string | null }>(
+          tx,
+          'select routing_id as step from office.runs where id = $1',
+          [run],
+        )
+      ).step;
+    await inTransaction(async (tx) => {
+      await enableHaf(tx);
+      await tx.setContext(employeeA);
+      const task = await openRequest(tx);
+      // The coordinator's run on a request that is not routed belongs to no step, whatever the
+      // caller writes: the step is the database's to name.
+      await tx.setContext(agentRun(ids.employeeA, 'KOR-1'));
+      const korRun = (
+        await one<{ id: string }>(
+          tx,
+          `insert into office.runs (company_id, task_id, agent_code, card_version_id, trigger_type,
+             model, routing_id)
+           values (office.ctx_company_id(), $1, 'KOR-1', $2, 'request', 'test-model',
+             (select id from office.task_routings where task_id = $3 limit 1))
+           returning id`,
+          [task, ids.cardKor, ids.requestA],
+        )
+      ).id;
+      expect(await stepOf(tx, korRun)).toBeNull();
+      await tx.rows(ROUTE, [task, HAF_STEP, korRun]);
+
+      await tx.setContext(agentRun(ids.employeeA, 'HAF-1'));
+      const olderRun = await openRun(tx, task, 'HAF-1');
+      const active = `select id from office.task_routings where task_id = $1 and status = 'active'`;
+      const first = (await one<{ id: string }>(tx, active, [task])).id;
+      expect(await stepOf(tx, olderRun)).toBe(first);
+      expect(
+        (await tx.expectError('update office.runs set routing_id = null where id = $1', [olderRun]))
+          .message,
+      ).toBe('runs.routing_id cannot be changed');
+
+      // The founder gives the work to the same agent again, with a note the open run never read.
+      await tx.setContext(founderA);
+      await tx.rows(CORRECT, [
+        task,
+        JSON.stringify([{ unit: 'HAF', agent: 'HAF-1', reason: 'Formal language' }]),
+      ]);
+      const second = (await one<{ id: string }>(tx, active, [task])).id;
+      expect(second).not.toBe(first);
+      await tx.setContext(agentRun(ids.employeeA, 'HAF-1'));
+      expect(await tx.expectError(SUBMIT, [task, olderRun, null])).toEqual({
+        code: '23514',
+        message: 'The run was opened for a step that is no longer active',
+      });
+      expect(await tx.count('approvals', 'task_id = $1', [task])).toBe(0);
+      expect(await statusOf(tx, task)).toBe('in_progress');
+      // The run opened after the correction is the new step's, and its result is filed there.
+      const newRun = await openRun(tx, task, 'HAF-1');
+      expect(await stepOf(tx, newRun)).toBe(second);
+      const approval = (await one<{ id: string }>(tx, SUBMIT, [task, newRun, null])).id;
+      expect(
+        await one(tx, 'select routing_id, run_id from office.approvals where id = $1', [approval]),
+      ).toEqual({ routing_id: second, run_id: newRun });
+    });
+  });
+
   it('changes requested: back to the agent twice, then the work falls to a person', async () => {
     await inTransaction(async (tx) => {
       const { task, run, approval } = await submittedRequest(tx);
