@@ -130,6 +130,13 @@ function PlainConfirmation({
  * reads which customer a project has. If a member changed the customer meanwhile, the API refuses
  * (project_changed); the confirmation then closes, the page reads the project again and says what
  * happened, and the founder confirms anew for the customer they now see.
+ *
+ * A confirmation is for the customer the page showed when its switch was pressed. The page may
+ * read the project again under the open confirmation (the founder comes back to the tab), and the
+ * project may have another customer by then: the confirmation keeps its words, its passkey and
+ * its request for the customer that was asked, and never moves to one the founder did not look at.
+ * For the project's permission the API then refuses as above; a contract permission is set for
+ * the customer the confirmation names.
  */
 function Permissions({ project }: { project: ProjectDetail }) {
   const company = useCompany();
@@ -138,20 +145,27 @@ function Permissions({ project }: { project: ProjectDetail }) {
   const aiHeading = useId();
   const aiSentence = useId();
   const contractHeading = useId();
-  const [pending, setPending] = useState<PermissionChange | null>(null);
+  // The confirmation that is open, with the customer the page showed when it was asked.
+  const [asked, setAsked] = useState<{
+    change: PermissionChange;
+    customer: ProjectDetail['customer'];
+  } | null>(null);
   // The API's sentence when the project was not what the founder confirmed.
   const [changed, setChanged] = useState<string | null>(null);
   const asker = useRef<HTMLElement | null>(null);
+  // What the page shows; the confirmations below read `confirmed` instead.
   const customer = project.customer;
-  const customerId = customer?.id ?? null;
+  const pending = asked?.change ?? null;
+  const confirmed = asked?.customer ?? null;
+  const confirmedId = confirmed?.id ?? null;
 
   function ask(change: PermissionChange, control: HTMLElement) {
     asker.current = control;
     setChanged(null);
-    setPending(change);
+    setAsked({ change, customer: project.customer });
   }
   const close = () => {
-    setPending(null);
+    setAsked(null);
   };
   // The confirmations have no trigger of their own: the focus goes back to the switch by hand.
   const returnFocus = (event: Event) => {
@@ -182,12 +196,12 @@ function Permissions({ project }: { project: ProjectDetail }) {
           purpose: 'project_ai_permission',
           companyId: company.companyId,
           subjectId: project.id,
-          details: projectAiPermissionDetails(customerId),
+          details: projectAiPermissionDetails(confirmedId),
         }}
         action={(stepUp) =>
           setProjectAiPermission(company.companyId, project.id, {
             allowed: true,
-            customerId,
+            customerId: confirmedId,
             stepUp,
           }).catch((error: unknown) => {
             if (error instanceof ApiError && error.code === 'project_changed') {
@@ -211,7 +225,7 @@ function Permissions({ project }: { project: ProjectDetail }) {
         title={`${project.name} için yapay zekâ izni açılsın mı?`}
         description={
           'İzin açılınca ajanlar bu projede çalışabilir ve projenin kayıtları yapay zekâ modeline gönderilebilir. Projenin müşterisi varsa izni yalnızca müşterinin sözleşmesi yapay zekâ kullanımına izin veriyorsa açın. İzin açıkken projenin müşterisi değiştirilemez.' +
-          (customer && !customer.aiAllowed
+          (confirmed && !confirmed.aiAllowed
             ? ' Müşterinin sözleşme izni kapalı olduğu için ajanlar yine de çalışamaz.'
             : '')
         }
@@ -231,7 +245,7 @@ function Permissions({ project }: { project: ProjectDetail }) {
         onCloseAutoFocus={returnFocus}
       />
     );
-  } else if (pending === 'customer_ai_on' && customer) {
+  } else if (pending === 'customer_ai_on' && confirmed) {
     dialog = (
       <StepUpDialog<undefined>
         open
@@ -241,11 +255,11 @@ function Permissions({ project }: { project: ProjectDetail }) {
         request={{
           purpose: 'customer_ai_permission',
           companyId: company.companyId,
-          subjectId: customer.id,
+          subjectId: confirmed.id,
           details: customerPermissionDetails({}),
         }}
         action={async (stepUp) => {
-          await setCustomerPermissions(company.companyId, customer.id, {
+          await setCustomerPermissions(company.companyId, confirmed.id, {
             aiAllowed: true,
             stepUp,
           });
@@ -254,29 +268,29 @@ function Permissions({ project }: { project: ProjectDetail }) {
         }}
         onSuccess={close}
         onCloseAutoFocus={returnFocus}
-        title={`${customer.name} için yapay zekâ izni açılsın mı?`}
+        title={`${confirmed.name} için yapay zekâ izni açılsın mı?`}
         description="Sözleşmenin yapay zekâ kullanımına izin verdiğini işaretliyorsunuz. Bu izin müşterinin bütün projeleri için geçerlidir; ajanlar yalnızca yapay zekâ izni açık projelerde çalışır."
         confirmLabel="İzni aç"
       />
     );
-  } else if (pending !== null && customer) {
+  } else if (pending !== null && confirmed) {
     const text = {
       customer_ai_off: {
-        title: `${customer.name} için yapay zekâ izni kapatılsın mı?`,
+        title: `${confirmed.name} için yapay zekâ izni kapatılsın mı?`,
         description:
           'Bu müşterinin bütün projelerinde ajanlar artık çalışamaz. İzni yeniden açmak passkey ister.',
         confirmLabel: 'İzni kapat',
         permissions: { aiAllowed: false },
       },
       automated_on: {
-        title: `${customer.name} için kodla otomatik işleme izni açılsın mı?`,
+        title: `${confirmed.name} için kodla otomatik işleme izni açılsın mı?`,
         description:
           'Sözleşmenin kodla yapılan otomatik işlemeye izin verdiğini işaretliyorsunuz. Hatırlatma gibi model kullanmayan otomatik işler bu müşteri için çalışabilir.',
         confirmLabel: 'İzni aç',
         permissions: { automatedProcessingAllowed: true },
       },
       automated_off: {
-        title: `${customer.name} için kodla otomatik işleme izni kapatılsın mı?`,
+        title: `${confirmed.name} için kodla otomatik işleme izni kapatılsın mı?`,
         description: 'Hatırlatma gibi model kullanmayan otomatik işler de bu müşteri için durur.',
         confirmLabel: 'İzni kapat',
         permissions: { automatedProcessingAllowed: false },
@@ -288,7 +302,7 @@ function Permissions({ project }: { project: ProjectDetail }) {
         description={text.description}
         confirmLabel={text.confirmLabel}
         run={async () => {
-          await setCustomerPermissions(company.companyId, customer.id, text.permissions);
+          await setCustomerPermissions(company.companyId, confirmed.id, text.permissions);
           await afterCustomerChange();
         }}
         onClose={close}

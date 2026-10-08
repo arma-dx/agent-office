@@ -40,6 +40,12 @@ import { busyProps } from '@/lib/utils';
  * founder too. While the project's AI permission is open its customer cannot change (rule 12
  * reads which customer a project has): the customer is then text, with the sentence that says who
  * does what first.
+ *
+ * The form is filled once, from the project as it was when the dialog opened, and the fields that
+ * differ are counted against that same project. The page may read the project again under the
+ * open dialog (the person comes back to the tab, or a refusal asks for it): what another member
+ * changed meanwhile is then not sent back as if this person had chosen the old values. Only
+ * whether the customer is locked follows the project as it is now.
  */
 export function EditProjectDialog({
   project,
@@ -56,10 +62,12 @@ export function EditProjectDialog({
   const isFounder = company.role === 'founder';
   // Made once: a send that is repeated names the same new customer.
   const [newCustomerId] = useState(() => crypto.randomUUID());
+  // The project the form was filled from.
+  const [opened] = useState(project);
   const customers = useQuery(customersQueryOptions(company.companyId));
   const form = useForm<ProjectFormValues>({
     resolver: zodResolver(projectFormSchema),
-    defaultValues: projectValues(project),
+    defaultValues: projectValues(opened),
   });
 
   const save = useMutation({
@@ -77,8 +85,8 @@ export function EditProjectDialog({
         void queryClient.invalidateQueries({ queryKey: customersKey(company.companyId) });
       } else if (error.code === 'customer_not_found') {
         // The list the choice came from is stale: it is read again, and a customer that is gone
-        // gives way to the one the project has.
-        form.setValue('customerChoice', projectValues(project).customerChoice);
+        // gives way to the one the form was opened with.
+        form.setValue('customerChoice', projectValues(opened).customerChoice);
         void queryClient.invalidateQueries({ queryKey: customersKey(company.companyId) });
       } else if (error.code === 'project_customer_locked') {
         // The permission was opened while the dialog stood open: the project is read again and
@@ -93,7 +101,11 @@ export function EditProjectDialog({
 
   const submit = form.handleSubmit((values) => {
     if (save.isPending) return;
-    const changes = projectChanges(project, values, newCustomerId);
+    const changes = projectChanges(
+      { ...opened, aiAllowed: project.aiAllowed },
+      values,
+      newCustomerId,
+    );
     if (changes === null) {
       onClose();
       return;
@@ -128,7 +140,8 @@ export function EditProjectDialog({
           <ProjectFields
             form={form}
             customers={{ list: customers.data ?? [], failed: customers.isError }}
-            currentCustomer={project.customer}
+            // The select always offers the customer the form was filled with.
+            currentCustomer={opened.customer}
             closingNote
             {...(project.aiAllowed
               ? {

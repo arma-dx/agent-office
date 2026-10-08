@@ -5,9 +5,10 @@ import {
   stepUpOptionsRequestSchema,
 } from '@agent-office/shared';
 import { startAuthentication } from '@simplewebauthn/browser';
+import { focusManager } from '@tanstack/react-query';
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { ProjectTile } from './components/projects/project-tile.tsx';
 import { formatDay, formatFull } from './lib/dates.ts';
@@ -60,6 +61,10 @@ beforeEach(() => {
   vi.mocked(startAuthentication).mockReset().mockResolvedValue(ASSERTION);
 });
 
+afterEach(() => {
+  focusManager.setFocused(undefined);
+});
+
 const LIST = '/c/armadx/projects';
 const PAGE = `/c/armadx/projects/${PROJECT_ID}`;
 
@@ -72,6 +77,12 @@ function valueOf(container: HTMLElement, name: string): HTMLElement {
   const value = within(container).getByText(name, { selector: 'dt' }).nextElementSibling;
   if (!(value instanceof HTMLElement)) throw new Error(`No value beside ${name}`);
   return value;
+}
+
+/** The person comes back to the tab: what the page shows is read again. */
+function comeBackToTheTab() {
+  focusManager.setFocused(false);
+  focusManager.setFocused(true);
 }
 
 /** The properties panel of the shell; it shows by itself in a wide window. */
@@ -1160,6 +1171,132 @@ describe('projects: permissions', () => {
     });
   });
 
+  it('AI permission: an open confirmation stays for the customer the founder saw when the page reads the project again; the API then refuses and the page says so', async () => {
+    const stepUp = stepUpIssuer();
+    const sentence =
+      'Bu projenin müşterisi az önce değişti. Projeye yeniden bakın; izni açmak için yeniden onaylayın.';
+    const contractClosed = 'Müşterinin sözleşme izni kapalı olduğu için ajanlar yine de çalışamaz.';
+    const api = mockApi(
+      projectHandlers(projectDetail(), {
+        'POST /step-up/options': stepUp.handler,
+        [AI]: () => apiError(409, 'project_changed', sentence),
+      }),
+    );
+    renderApp(PAGE);
+    await screen.findByRole('heading', { level: 2, name: 'Depo otomasyonu' });
+    await userEvent.click(aiSwitch());
+    const dialog = await screen.findByRole('alertdialog');
+    expect(dialog).toHaveTextContent(contractClosed);
+    await ready(within(dialog).getByRole('button', { name: 'İzni aç' }));
+    // A member takes the customer off the project while the founder looks at the contract in
+    // another tab; coming back reads the project again under the open confirmation.
+    api.handle(`GET /projects/${PROJECT_ID}`, () => json(projectDetail({ customer: null })));
+    comeBackToTheTab();
+    await waitFor(() => {
+      expect(api.callsTo(`GET /projects/${PROJECT_ID}`)).toHaveLength(2);
+    });
+    // The page behind the dialog has the new answer ...
+    await screen.findByText('Müşteri yok');
+    // ... and the confirmation is still the one that was asked: its words and what it is bound to.
+    expect(dialog).toHaveTextContent(contractClosed);
+    await userEvent.click(await ready(within(dialog).getByRole('button', { name: 'İzni aç' })));
+    await closed();
+    expect(stepUp.issued.length).toBeGreaterThan(0);
+    for (const issued of stepUp.issued) {
+      expect(issued.body).toMatchObject({
+        subjectId: PROJECT_ID,
+        details: { action: 'open', customerId: CUSTOMER_ID },
+      });
+    }
+    expect(api.callsTo(AI).map((call) => call.body)).toEqual([
+      expect.objectContaining({ allowed: true, customerId: CUSTOMER_ID }),
+    ]);
+    // Nothing was opened for a customer the founder did not look at: the API refused, and the
+    // page says what happened.
+    expect(within(aiSection()).getByRole('alert')).toHaveTextContent(sentence);
+    expect(aiSwitch()).not.toBeChecked();
+    expect(valueOf(panel(), 'Müşteri')).toHaveTextContent('Müşteri yok');
+  });
+
+  it('customer permissions: an open confirmation stays for the customer it was opened for when the project gets another customer meanwhile, with a passkey and without', async () => {
+    const stepUp = stepUpIssuer();
+    const beta = { ...CUSTOMER_OPEN, aiAllowed: false };
+    const gama = { ...OTHER_CUSTOMER, aiAllowed: false };
+    const OTHER_CONTRACT = `PATCH /customers/${OTHER_CUSTOMER_ID}/permissions`;
+    const api = mockApi(
+      projectHandlers(projectDetail({ customer: beta }), {
+        'POST /step-up/options': stepUp.handler,
+        [CONTRACT]: () => json({ ...beta, aiAllowed: true }),
+        [OTHER_CONTRACT]: () => json({ ...gama, automatedProcessingAllowed: true }),
+      }),
+    );
+    renderApp(PAGE);
+    await screen.findByRole('heading', { level: 2, name: 'Depo otomasyonu' });
+    await userEvent.click(
+      within(contractSection()).getByRole('switch', {
+        name: 'Sözleşme yapay zekâ kullanımına izin veriyor',
+      }),
+    );
+    let dialog = await screen.findByRole('alertdialog', {
+      name: 'Beta Lojistik için yapay zekâ izni açılsın mı?',
+    });
+    await ready(within(dialog).getByRole('button', { name: 'İzni aç' }));
+    // A member gives the project another customer; the page reads the project again.
+    api.handle(`GET /projects/${PROJECT_ID}`, () => json(projectDetail({ customer: gama })));
+    comeBackToTheTab();
+    await screen.findByText('Gama Enerji');
+    // The confirmation does not move to the other customer: not its title, not its passkey, not
+    // its request.
+    expect(
+      screen.getByRole('alertdialog', { name: 'Beta Lojistik için yapay zekâ izni açılsın mı?' }),
+    ).toBe(dialog);
+    await userEvent.click(await ready(within(dialog).getByRole('button', { name: 'İzni aç' })));
+    await closed();
+    expect(stepUp.issued.length).toBeGreaterThan(0);
+    for (const issued of stepUp.issued) {
+      expect(issued.body).toMatchObject({
+        purpose: 'customer_ai_permission',
+        subjectId: CUSTOMER_ID,
+      });
+    }
+    expect(api.callsTo(CONTRACT).map((call) => call.body)).toEqual([
+      { aiAllowed: true, stepUp: signed(stepUp.issued.at(-1)?.challengeId ?? '') },
+    ]);
+    expect(api.callsTo(OTHER_CONTRACT)).toEqual([]);
+
+    // The same for a confirmation without a passkey: opened for Gama Enerji, the page then shows
+    // Beta Lojistik again.
+    await waitFor(() => {
+      expect(valueOf(panel(), 'Müşteri')).toHaveTextContent('Gama Enerji');
+    });
+    await userEvent.click(
+      within(contractSection()).getByRole('switch', {
+        name: 'Sözleşme kodla otomatik işlemeye izin veriyor',
+      }),
+    );
+    dialog = await screen.findByRole('alertdialog', {
+      name: 'Gama Enerji için kodla otomatik işleme izni açılsın mı?',
+    });
+    const reads = api.callsTo(`GET /projects/${PROJECT_ID}`).length;
+    api.handle(`GET /projects/${PROJECT_ID}`, () => json(projectDetail({ customer: beta })));
+    comeBackToTheTab();
+    await waitFor(() => {
+      expect(api.callsTo(`GET /projects/${PROJECT_ID}`)).toHaveLength(reads + 1);
+    });
+    await screen.findByText('Beta Lojistik');
+    expect(
+      screen.getByRole('alertdialog', {
+        name: 'Gama Enerji için kodla otomatik işleme izni açılsın mı?',
+      }),
+    ).toBe(dialog);
+    await userEvent.click(within(dialog).getByRole('button', { name: 'İzni aç' }));
+    await closed();
+    expect(api.callsTo(OTHER_CONTRACT).map((call) => call.body)).toEqual([
+      { automatedProcessingAllowed: true },
+    ]);
+    expect(api.callsTo(CONTRACT)).toHaveLength(1);
+  });
+
   it('customer permissions: the founder turns the AI permission on with a passkey for the customer and automated processing with a plain confirmation; an employee sees one row and no switch', async () => {
     const stepUp = stepUpIssuer();
     let customer = { ...CUSTOMER_OPEN, aiAllowed: false };
@@ -1399,6 +1536,116 @@ describe('projects: editing', () => {
       await screen.findByRole('heading', { level: 2, name: 'Depo otomasyonu 2' }),
     ).toBeVisible();
     expect(api.callsTo(`GET /projects/${PROJECT_ID}`)).toHaveLength(1);
+  });
+
+  it('edit: a project that is read again under the open dialog does not make the form send what the person did not touch', async () => {
+    // What another member did meanwhile: a new name, closed, another colour, no customer.
+    const byOther = {
+      name: 'Depo otomasyonu (yeni ad)',
+      status: 'completed',
+      closed: true,
+      color: 'red',
+      customer: null,
+    } as const;
+    const api = mockApi(
+      projectHandlers(projectDetail(), {
+        [PATCH]: () => json(projectDetail({ ...byOther, description: 'Yeni açıklama' })),
+        // Without the list the select has only the customer the form was filled with to offer.
+        'GET /customers': () => apiError(500, 'internal_error', 'Beklenmeyen bir hata oluştu.'),
+      }),
+    );
+    renderApp(PAGE);
+    const dialog = await openDialog();
+    api.handle(`GET /projects/${PROJECT_ID}`, () => json(projectDetail(byOther)));
+    comeBackToTheTab();
+    // The page behind the dialog shows the other member's change.
+    await screen.findByRole('heading', { level: 2, name: byOther.name, hidden: true });
+    // The form keeps what it was opened with ...
+    expect(within(dialog).getByRole('textbox', { name: 'Proje adı' })).toHaveValue(
+      'Depo otomasyonu',
+    );
+    expect(within(dialog).getByRole('combobox', { name: 'Müşteri' })).toHaveValue(CUSTOMER_ID);
+    expect(within(dialog).getByRole('combobox', { name: 'Durum' })).toHaveValue('in_progress');
+    expect(within(dialog).getByRole('radio', { name: 'Turkuaz' })).toBeChecked();
+    // ... and sends only the field the person changed: the project is not renamed back, opened
+    // again or given its customer back.
+    const description = within(dialog).getByRole('textbox', { name: 'Açıklama' });
+    await userEvent.clear(description);
+    await userEvent.type(description, 'Yeni açıklama');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Kaydet' }));
+    await gone();
+    expect(api.callsTo(PATCH).map((call) => call.body)).toEqual([{ description: 'Yeni açıklama' }]);
+    expect(await screen.findByRole('heading', { level: 2, name: byOther.name })).toBeVisible();
+  });
+
+  it('edit: an AI permission opened under the open dialog turns the customer into text, and a customer chosen before that is not sent', async () => {
+    const open = { aiAllowed: true, agentsMayWork: false };
+    const api = mockApi(
+      projectHandlers(projectDetail(), {
+        [PATCH]: () => json(projectDetail({ ...open, name: 'Yeni ad' })),
+      }),
+    );
+    renderApp(PAGE);
+    const dialog = await openDialog();
+    await waitFor(() => {
+      expect(within(dialog).getByRole('option', { name: 'Gama Enerji' })).toBeInTheDocument();
+    });
+    await userEvent.selectOptions(
+      within(dialog).getByRole('combobox', { name: 'Müşteri' }),
+      OTHER_CUSTOMER_ID,
+    );
+    const name = within(dialog).getByRole('textbox', { name: 'Proje adı' });
+    await userEvent.clear(name);
+    await userEvent.type(name, 'Yeni ad');
+    // The founder opens the permission meanwhile; the page reads the project again.
+    api.handle(`GET /projects/${PROJECT_ID}`, () => json(projectDetail(open)));
+    comeBackToTheTab();
+    await waitFor(() => {
+      expect(within(dialog).queryByRole('combobox', { name: 'Müşteri' })).toBeNull();
+    });
+    expect(within(dialog).getByText('Beta Lojistik')).toBeVisible();
+    expect(name).toHaveValue('Yeni ad');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Kaydet' }));
+    await gone();
+    expect(api.callsTo(PATCH).map((call) => call.body)).toEqual([{ name: 'Yeni ad' }]);
+  });
+
+  it('edit: after customer_not_found the choice goes back to the customer the form was opened with, and the list is read again', async () => {
+    const notFound = 'Seçilen müşteri bulunamadı. Listeden yeniden seçin.';
+    const api = mockApi(
+      projectHandlers(projectDetail(), {
+        [PATCH]: () => apiError(409, 'customer_not_found', notFound),
+      }),
+    );
+    renderApp(PAGE);
+    const dialog = await openDialog();
+    const customer = within(dialog).getByRole('combobox', { name: 'Müşteri' });
+    await waitFor(() => {
+      expect(within(dialog).getByRole('option', { name: 'Gama Enerji' })).toBeInTheDocument();
+    });
+    // Another member takes the customer off the project; the page reads the project again.
+    api.handle(`GET /projects/${PROJECT_ID}`, () => json(projectDetail({ customer: null })));
+    comeBackToTheTab();
+    await waitFor(() => {
+      expect(api.callsTo(`GET /projects/${PROJECT_ID}`)).toHaveLength(2);
+    });
+    await waitFor(() => {
+      expect(screen.getAllByText('Müşteri yok').some((element) => element.tagName === 'DD')).toBe(
+        true,
+      );
+    });
+    await userEvent.selectOptions(customer, OTHER_CUSTOMER_ID);
+    const lists = api.callsTo('GET /customers').length;
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Kaydet' }));
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(notFound);
+    // The form is back at what it was opened with, not at what the page shows by now.
+    expect(customer).toHaveValue(CUSTOMER_ID);
+    await waitFor(() => {
+      expect(api.callsTo('GET /customers')).toHaveLength(lists + 1);
+    });
+    expect(api.callsTo(PATCH).map((call) => call.body)).toEqual([
+      { customer: { kind: 'existing', customerId: OTHER_CUSTOMER_ID } },
+    ]);
   });
 
   it('edit: Tamamlandı says that it closes the project; the page then shows it closed; Planlandı opens it again', async () => {
