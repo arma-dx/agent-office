@@ -20,7 +20,7 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogFooter, DialogTitle } from '@/components/ui/dialog';
 import { NativeSelect } from '@/components/ui/native-select';
 import { Textarea } from '@/components/ui/textarea';
-import { userMessage } from '@/lib/api';
+import { ApiError, userMessage } from '@/lib/api';
 import { formatMessageTime } from '@/lib/dates';
 import { useReturnFocus } from '@/lib/focus';
 import { useDecisionDialog } from '@/lib/requests/hold';
@@ -717,6 +717,11 @@ export function ClosedNotice({ request }: { request: RequestDetail }) {
  * (a request is not left where nobody can do it; the person closes it instead). Giving the request
  * to the agent that already had it starts the work again. The approver of the new step is not
  * chosen here: the database appoints the unit's.
+ *
+ * The dialog names a way on wherever it cannot send: when no unit has an open agent it says what
+ * the reader can do instead; when the list could not be read it offers to read it again; and when
+ * the API refuses a choice because the agent was stopped meanwhile, the list is read again by
+ * itself, so that what cannot be chosen is no longer offered.
  */
 export function RerouteDialog({
   request,
@@ -753,6 +758,13 @@ export function RerouteDialog({
       settle(detail);
       onClose();
     },
+    onError: (error) => {
+      // The list on screen is older than the API's: the chosen unit or agent closed meanwhile.
+      // The choice clears itself when the agent has left the list that is read now.
+      if (error instanceof ApiError && error.code === 'routing_not_possible') {
+        void options.refetch();
+      }
+    },
   });
   const unitProblem = touched && !chosen ? 'Bir birim seçin.' : null;
   const agentProblem = touched && chosen && agentCode === '' ? 'Bir ajan seçin.' : null;
@@ -771,18 +783,36 @@ export function RerouteDialog({
           onSubmit={(event) => {
             event.preventDefault();
             setTouched(true);
-            if (send.isPending || nowhere || !chosen || agentCode === '') return;
+            if (send.isPending || options.isError || nowhere || !chosen || agentCode === '') {
+              return;
+            }
             send.mutate();
           }}
         >
           {options.isError ? (
-            <p role="alert" className="text-sm text-destructive">
-              {userMessage(options.error)}
-            </p>
-          ) : null}
-          {nowhere ? (
+            // Without the list nothing can be chosen: the error and a way to read it again.
+            <>
+              <p role="alert" className="text-sm text-destructive">
+                {userMessage(options.error)}
+              </p>
+              <Button
+                type="button"
+                variant="outline"
+                className="self-start"
+                {...busyProps(options.isFetching)}
+                onClick={() => {
+                  if (!options.isFetching) void options.refetch();
+                }}
+              >
+                Yeniden dene
+              </Button>
+            </>
+          ) : nowhere ? (
             <p className="text-sm">
-              Şu an hiçbir birimde açık ajan yok; talep bir ajana verilemez.
+              Şu an hiçbir birimde açık ajan yok; talep bir ajana verilemez.{' '}
+              {company.role === 'founder'
+                ? 'Ofis görünümünden bir ajan açabilir ya da talebi kapatabilirsiniz.'
+                : 'Ajanları kurucu açar; talebi kapatabilirsiniz.'}
             </p>
           ) : (
             <>
@@ -892,7 +922,7 @@ export function RerouteDialog({
               Vazgeç
             </Button>
             {/* Nothing to choose, so nothing to send. */}
-            {nowhere ? null : (
+            {nowhere || options.isError ? null : (
               <Button type="submit" {...busyProps(send.isPending)}>
                 {send.isPending ? 'Yönlendiriliyor' : 'Yönlendir'}
               </Button>

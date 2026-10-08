@@ -928,9 +928,10 @@ describe('the page of a request', () => {
     const open = await screen.findByRole('button', { name: 'Yönlendirmeyi düzelt' });
     await userEvent.click(open);
     const dialog = await screen.findByRole('dialog', { name: 'Yönlendirmeyi düzelt' });
+    // The dialog cannot send, so it names what the founder can do instead.
     expect(
       await within(dialog).findByText(
-        'Şu an hiçbir birimde açık ajan yok; talep bir ajana verilemez.',
+        'Şu an hiçbir birimde açık ajan yok; talep bir ajana verilemez. Ofis görünümünden bir ajan açabilir ya da talebi kapatabilirsiniz.',
       ),
     ).toBeVisible();
     expect(within(dialog).queryByRole('button', { name: 'Yönlendir' })).toBeNull();
@@ -943,6 +944,152 @@ describe('the page of a request', () => {
     });
     expect(api.callsTo(`POST /requests/${REQUEST_ID}/routing`)).toHaveLength(0);
     expect(api.unexpected).toEqual([]);
+  });
+
+  it('the correction dialog does not tell an approver who is not the founder to open an agent', async () => {
+    mockApi({
+      'GET /session': sessionHandler({
+        user: { id: EMPLOYEE.userId, name: EMPLOYEE.name },
+        memberships: [{ ...ARMADX, role: 'employee' as const, canApprove: true }],
+      }),
+      [`GET /requests/${REQUEST_ID}`]: () =>
+        json(
+          requestDetail({
+            status: 'in_progress',
+            stage: 'fell_to_person',
+            cause: 'agent_stopped',
+            turn: { kind: 'person', ...EMPLOYEE },
+            requester: FOUNDER,
+            approver: EMPLOYEE,
+            approval: null,
+            journey: [],
+          }),
+        ),
+      [`GET /requests/${REQUEST_ID}/routing-options`]: () =>
+        json({ units: [{ code: 'SOS', name: 'Sosyal Medya', agents: [] }] }),
+    });
+    renderApp(`/c/armadx/requests/${REQUEST_ID}`);
+    await userEvent.click(await screen.findByRole('button', { name: 'Yönlendirmeyi düzelt' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Yönlendirmeyi düzelt' });
+    expect(
+      await within(dialog).findByText(
+        'Şu an hiçbir birimde açık ajan yok; talep bir ajana verilemez. Ajanları kurucu açar; talebi kapatabilirsiniz.',
+      ),
+    ).toBeVisible();
+    expect(dialog).not.toHaveTextContent(/Ofis görünümünden/);
+  });
+
+  it('the correction dialog reads the list again when the API refuses a choice that closed meanwhile', async () => {
+    const fallen = requestDetail({
+      status: 'in_progress',
+      stage: 'fell_to_person',
+      cause: 'no_submission',
+      approval: null,
+      journey: [],
+    });
+    const optionsKey = `GET /requests/${REQUEST_ID}/routing-options`;
+    // SOS-2 is stopped after the dialog read the list.
+    let sosOpen = true;
+    const api = mockApi({
+      'GET /session': sessionHandler(),
+      [`GET /requests/${REQUEST_ID}`]: () => json(fallen),
+      [optionsKey]: () =>
+        json({
+          units: [
+            {
+              code: 'HAF',
+              name: 'Kurumsal Hafıza',
+              agents: [{ code: 'HAF-2', name: 'Kurumsal Arama Ajanı' }],
+            },
+            {
+              code: 'SOS',
+              name: 'Sosyal Medya',
+              agents: sosOpen ? [{ code: 'SOS-2', name: 'Sosyal İçerik Yazım Ajanı' }] : [],
+            },
+          ],
+        }),
+      [`POST /requests/${REQUEST_ID}/routing`]: () =>
+        apiError(
+          409,
+          'routing_not_possible',
+          'Bu birim ya da ajan şu an seçilemiyor. Listeyi yenileyip yeniden deneyin.',
+        ),
+    });
+    renderApp(`/c/armadx/requests/${REQUEST_ID}`);
+    await userEvent.click(await screen.findByRole('button', { name: 'Yönlendirmeyi düzelt' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Yönlendirmeyi düzelt' });
+    const unit = within(dialog).getByRole('combobox', { name: 'Birim' });
+    // The request's own unit and agent are chosen to begin with.
+    await waitFor(() => {
+      expect(unit).toHaveValue('SOS');
+    });
+    expect(within(dialog).getByRole('combobox', { name: 'Ajan' })).toHaveValue('SOS-2');
+    expect(api.callsTo(optionsKey)).toHaveLength(1);
+    sosOpen = false;
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Yönlendir' }));
+    expect(
+      await within(dialog).findByText(
+        'Bu birim ya da ajan şu an seçilemiyor. Listeyi yenileyip yeniden deneyin.',
+      ),
+    ).toBeVisible();
+    // The list is read again without the person closing the dialog, and what cannot be chosen
+    // is no longer offered: the unit says why, and the choice is cleared.
+    await waitFor(() => {
+      expect(api.callsTo(optionsKey)).toHaveLength(2);
+      expect(
+        within(unit).getByRole('option', { name: 'Sosyal Medya (açık ajan yok)' }),
+      ).toBeDisabled();
+    });
+    expect(unit).toHaveValue('');
+    expect(within(dialog).getByRole('combobox', { name: 'Ajan' })).toBeDisabled();
+    expect(within(unit).getByRole('option', { name: 'Kurumsal Hafıza' })).toBeEnabled();
+    // The form asks for a new choice beside the API's sentence.
+    expect(unit).toHaveAccessibleDescription('Bir birim seçin.');
+    expect(api.callsTo(`POST /requests/${REQUEST_ID}/routing`)).toHaveLength(1);
+  });
+
+  it('the correction dialog offers to read the list again when it could not be read', async () => {
+    const fallen = requestDetail({
+      status: 'in_progress',
+      stage: 'fell_to_person',
+      cause: 'no_submission',
+      approval: null,
+      journey: [],
+    });
+    const optionsKey = `GET /requests/${REQUEST_ID}/routing-options`;
+    const api = mockApi({
+      'GET /session': sessionHandler(),
+      [`GET /requests/${REQUEST_ID}`]: () => json(fallen),
+      [optionsKey]: () =>
+        apiError(429, 'rate_limited', 'Çok fazla istek gönderildi. Biraz sonra yeniden deneyin.'),
+    });
+    renderApp(`/c/armadx/requests/${REQUEST_ID}`);
+    await userEvent.click(await screen.findByRole('button', { name: 'Yönlendirmeyi düzelt' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Yönlendirmeyi düzelt' });
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(
+      'Çok fazla istek gönderildi. Biraz sonra yeniden deneyin.',
+    );
+    // Nothing to choose from and nothing to send: only the way to read the list again.
+    expect(within(dialog).queryAllByRole('combobox')).toEqual([]);
+    expect(within(dialog).queryByRole('button', { name: 'Yönlendir' })).toBeNull();
+    api.handle(optionsKey, () =>
+      json({
+        units: [
+          {
+            code: 'SOS',
+            name: 'Sosyal Medya',
+            agents: [{ code: 'SOS-2', name: 'Sosyal İçerik Yazım Ajanı' }],
+          },
+        ],
+      }),
+    );
+    const calls = api.callsTo(optionsKey).length;
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Yeniden dene' }));
+    expect(await within(dialog).findByRole('combobox', { name: 'Birim' })).toHaveValue('SOS');
+    expect(api.callsTo(optionsKey)).toHaveLength(calls + 1);
+    expect(within(dialog).queryByRole('alert')).toBeNull();
+    expect(within(dialog).getByRole('button', { name: 'Yönlendir' })).toBeVisible();
+    expect(api.callsTo(`POST /requests/${REQUEST_ID}/routing`)).toHaveLength(0);
   });
 
   it('shows what an agent wrote without submitting to the decider alone, under its own label', async () => {
