@@ -1,8 +1,9 @@
 import { PROJECT_COLORS, PROJECT_ICONS } from '@agent-office/shared';
 import { startAuthentication } from '@simplewebauthn/browser';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 import { ProjectTile } from './components/projects/project-tile.tsx';
 import { formatDay, formatFull } from './lib/dates.ts';
 import { COLOR_NAME, ICON_NAME, PROJECT_FILL, PROJECT_ICON } from './lib/projects/labels.ts';
@@ -22,6 +23,7 @@ import {
   CAGAN,
   CANDIDATES,
   CUSTOMER_ID,
+  CUSTOMER_NAMES,
   EMPLOYEE_AT_ARMADX,
   EXTERNAL_AT_ARMADX,
   FOUNDER_MEMBER,
@@ -230,15 +232,14 @@ describe('projects: the list', () => {
 
   it('list: says why and sends nothing for an external person and in Kurucu alanı', async () => {
     const external = mockApi({ 'GET /session': sessionAs(EXTERNAL_AT_ARMADX) });
-    const first = renderApp(LIST);
+    renderApp(LIST);
     expect(
       await screen.findByRole('heading', { level: 2, name: 'Projeler dış kişilere açık değil' }),
     ).toBeVisible();
     expect(screen.getByText('Projeleri şirketin kurucusu ve çalışanları görür.')).toBeVisible();
     expect(external.callsTo('GET /projects')).toEqual([]);
     expect(external.unexpected).toEqual([]);
-    first.queryClient.clear();
-    document.body.innerHTML = '';
+    cleanup();
 
     const space = mockApi({ 'GET /session': sessionHandler() });
     renderApp(`/c/${FOUNDER_SPACE.code}/projects`);
@@ -503,14 +504,13 @@ describe('projects: the page', () => {
 
   it('page: says why and sends nothing for an external person and in Kurucu alanı', async () => {
     const external = mockApi({ 'GET /session': sessionAs(EXTERNAL_AT_ARMADX) });
-    const first = renderApp(PAGE);
+    renderApp(PAGE);
     expect(
       await screen.findByRole('heading', { level: 2, name: 'Projeler dış kişilere açık değil' }),
     ).toBeVisible();
     expect(external.callsTo(`GET /projects/${PROJECT_ID}`)).toEqual([]);
     expect(external.unexpected).toEqual([]);
-    first.queryClient.clear();
-    document.body.innerHTML = '';
+    cleanup();
 
     const space = mockApi({ 'GET /session': sessionHandler() });
     renderApp(`/c/${FOUNDER_SPACE.code}/projects/${PROJECT_ID}`);
@@ -640,14 +640,13 @@ describe('projects: members', () => {
         'GET /session': sessionAs(EMPLOYEE_AT_ARMADX),
       }),
     );
-    const first = renderApp(PAGE);
+    renderApp(PAGE);
     await screen.findByRole('region', { name: 'Üyeler 2' });
     expect(within(row('Ömer Kadıoğlu (siz)')).queryByRole('button')).toBeNull();
     expect(
       within(row('Ayşe Yılmaz')).getByRole('button', { name: 'Projeden çıkar' }),
     ).toBeVisible();
-    first.queryClient.clear();
-    document.body.innerHTML = '';
+    cleanup();
 
     // The founder may take themselves off: they see every project anyway, and the dialog says so.
     mockApi(projectHandlers());
@@ -975,7 +974,7 @@ describe('projects: permissions', () => {
         [AI]: () => apiError(403, 'founder_only', 'Bu işlemi yalnızca kurucu yapabilir.'),
       }),
     );
-    const first = renderApp(PAGE);
+    renderApp(PAGE);
     await screen.findByRole('heading', { level: 2, name: 'Depo otomasyonu' });
     // Opening, with a passkey.
     await userEvent.click(aiSwitch());
@@ -989,8 +988,7 @@ describe('projects: permissions', () => {
     await userEvent.click(within(dialog).getByRole('button', { name: 'Vazgeç' }));
     await closed();
     expect(aiSwitch()).not.toBeChecked();
-    first.queryClient.clear();
-    document.body.innerHTML = '';
+    cleanup();
 
     // Closing, plainly.
     api.handle(`GET /projects/${PROJECT_ID}`, () => json(open));
@@ -1083,7 +1081,7 @@ describe('projects: permissions', () => {
         },
       }),
     );
-    const first = renderApp(PAGE);
+    renderApp(PAGE);
     await screen.findByRole('heading', { level: 2, name: 'Depo otomasyonu' });
     const ai = () =>
       within(contractSection()).getByRole('switch', {
@@ -1155,8 +1153,7 @@ describe('projects: permissions', () => {
     await closed();
     expect(automated()).not.toBeChecked();
     expect(api.callsTo(CONTRACT)[2]?.body).toEqual({ automatedProcessingAllowed: false });
-    first.queryClient.clear();
-    document.body.innerHTML = '';
+    cleanup();
 
     // An employee: one row, in words, and no switch.
     mockApi(
@@ -1181,7 +1178,7 @@ describe('projects: permissions', () => {
         },
       }),
     );
-    const first = renderApp(PAGE);
+    renderApp(PAGE);
     await screen.findByRole('heading', { level: 2, name: 'Depo otomasyonu' });
     const ai = () =>
       within(contractSection()).getByRole('switch', {
@@ -1208,8 +1205,7 @@ describe('projects: permissions', () => {
         'Bu projede ajanlar çalışamaz: müşterinin sözleşmesi yapay zekâ kullanımına izin vermiyor.',
       ),
     ).toBeVisible();
-    first.queryClient.clear();
-    document.body.innerHTML = '';
+    cleanup();
 
     mockApi(
       projectHandlers(projectForEmployee(), { 'GET /session': sessionAs(EMPLOYEE_AT_ARMADX) }),
@@ -1219,6 +1215,325 @@ describe('projects: permissions', () => {
     expect(
       within(contractSection()).getByText('İzinleri yalnızca kurucu değiştirir.'),
     ).toBeVisible();
+  });
+});
+
+describe('projects: editing', () => {
+  const PATCH = `PATCH /projects/${PROJECT_ID}`;
+  const openDialog = async () => {
+    await userEvent.click(await screen.findByRole('button', { name: 'Projeyi düzenle' }));
+    return screen.findByRole('dialog', { name: 'Projeyi düzenle' });
+  };
+  const gone = async () => {
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).toBeNull();
+    });
+  };
+
+  it('edit: sends only what changed; with nothing changed nothing is sent', async () => {
+    const api = mockApi(
+      projectHandlers(projectDetail(), {
+        [PATCH]: () =>
+          json(
+            projectDetail({
+              name: 'Depo otomasyonu 2',
+              color: 'purple',
+              targetDate: null,
+              customer: {
+                id: OTHER_CUSTOMER_ID,
+                name: 'Gama Enerji',
+                aiAllowed: true,
+                automatedProcessingAllowed: false,
+              },
+            }),
+          ),
+      }),
+    );
+    renderApp(PAGE);
+    let dialog = await openDialog();
+    expect(dialog).toHaveTextContent('Üyeler ve yapay zekâ izni proje sayfasından değiştirilir.');
+    // Filled from the project, the name first and focused.
+    const name = within(dialog).getByRole('textbox', { name: 'Proje adı' });
+    expect(name).toHaveValue('Depo otomasyonu');
+    expect(name).toHaveFocus();
+    expect(within(dialog).getByRole('textbox', { name: 'Açıklama' })).toHaveValue(
+      'Depo süreçlerinin çıkarılması.\nİkinci satır.',
+    );
+    expect(within(dialog).getByRole('combobox', { name: 'Müşteri' })).toHaveValue(CUSTOMER_ID);
+    expect(within(dialog).getByRole('combobox', { name: 'Durum' })).toHaveValue('in_progress');
+    expect(within(dialog).getByRole('radio', { name: 'Turkuaz' })).toBeChecked();
+    expect(within(dialog).getByRole('radio', { name: 'Kutu' })).toBeChecked();
+    expect(within(dialog).getByLabelText('Hedef tarih')).toHaveValue('2026-11-20');
+    // No members field and no permission switch in this dialog.
+    expect(within(dialog).queryByRole('checkbox')).toBeNull();
+    expect(within(dialog).queryByRole('switch')).toBeNull();
+
+    // Nothing changed: the dialog closes and nothing is sent.
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Kaydet' }));
+    await gone();
+    expect(api.callsTo(PATCH)).toEqual([]);
+
+    dialog = await openDialog();
+    await userEvent.type(within(dialog).getByRole('textbox', { name: 'Proje adı' }), ' 2');
+    await userEvent.click(within(dialog).getByRole('radio', { name: 'Mor' }));
+    await userEvent.clear(within(dialog).getByLabelText('Hedef tarih'));
+    await waitFor(() => {
+      expect(within(dialog).getByRole('option', { name: 'Gama Enerji' })).toBeInTheDocument();
+    });
+    await userEvent.selectOptions(
+      within(dialog).getByRole('combobox', { name: 'Müşteri' }),
+      OTHER_CUSTOMER_ID,
+    );
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Kaydet' }));
+    await gone();
+    // Only the four fields that differ; the description, the status and the icon are not sent.
+    expect(api.callsTo(PATCH).map((call) => call.body)).toEqual([
+      {
+        name: 'Depo otomasyonu 2',
+        customer: { kind: 'existing', customerId: OTHER_CUSTOMER_ID },
+        color: 'purple',
+        targetDate: null,
+      },
+    ]);
+    // The page shows the answer without asking again.
+    expect(
+      await screen.findByRole('heading', { level: 2, name: 'Depo otomasyonu 2' }),
+    ).toBeVisible();
+    expect(api.callsTo(`GET /projects/${PROJECT_ID}`)).toHaveLength(1);
+  });
+
+  it('edit: Tamamlandı says that it closes the project; the page then shows it closed; Planlandı opens it again', async () => {
+    const api = mockApi(
+      projectHandlers(projectDetail(), {
+        [PATCH]: (call) => {
+          const status = (call.body as { status: 'completed' | 'planned' }).status;
+          return json(projectDetail({ status, closed: status === 'completed' }));
+        },
+      }),
+    );
+    renderApp(PAGE);
+    let dialog = await openDialog();
+    const note = 'Tamamlandı ve İptal projeyi kapatır; proje silinmez ve yeniden açılabilir.';
+    expect(within(dialog).queryByText(note)).toBeNull();
+    const status = within(dialog).getByRole('combobox', { name: 'Durum' });
+    expect(
+      within(status)
+        .getAllByRole('option')
+        .map((option) => option.textContent),
+    ).toEqual(['Beklemede', 'Planlandı', 'Sürüyor', 'Tamamlandı', 'İptal']);
+    await userEvent.selectOptions(status, 'cancelled');
+    expect(within(dialog).getByText(note)).toBeVisible();
+    await userEvent.selectOptions(status, 'completed');
+    expect(status).toHaveAccessibleDescription(note);
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Kaydet' }));
+    await gone();
+    expect(api.callsTo(PATCH)[0]?.body).toEqual({ status: 'completed' });
+    const closedSentence =
+      'Bu proje kapalı. Yeniden açmak için Projeyi düzenle ile durumunu Beklemede, Planlandı ya da Sürüyor yapın.';
+    expect(await screen.findByText(closedSentence)).toBeVisible();
+    expect(screen.getByText('Tamamlandı', { selector: 'header span' })).toBeVisible();
+
+    // Opened again by the same field; nothing was deleted, nothing else is asked for.
+    dialog = await openDialog();
+    const again = within(dialog).getByRole('combobox', { name: 'Durum' });
+    expect(again).toHaveValue('completed');
+    expect(within(dialog).getByText(note)).toBeVisible();
+    await userEvent.selectOptions(again, 'planned');
+    expect(within(dialog).queryByText(note)).toBeNull();
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Kaydet' }));
+    await gone();
+    expect(api.callsTo(PATCH)[1]?.body).toEqual({ status: 'planned' });
+    await waitFor(() => {
+      expect(screen.queryByText(closedSentence)).toBeNull();
+    });
+    expect(screen.getByText('Planlandı', { selector: 'header span' })).toBeVisible();
+    expect(api.calls.filter((call) => call.method === 'DELETE')).toEqual([]);
+  });
+
+  it("edit: with the AI permission open the customer is text with its sentence, in the founder's words and in an employee's, and no customer is sent; project_customer_locked shows above the footer", async () => {
+    const open = { aiAllowed: true, agentsMayWork: false };
+    const api = mockApi(
+      projectHandlers(projectDetail(open), {
+        [PATCH]: () => json(projectDetail({ ...open, name: 'Yeni ad' })),
+      }),
+    );
+    renderApp(PAGE);
+    let dialog = await openDialog();
+    // The customer is no field: its name as text, and what the founder does first.
+    expect(within(dialog).queryByRole('combobox', { name: 'Müşteri' })).toBeNull();
+    expect(within(dialog).getByText('Beta Lojistik')).toBeVisible();
+    expect(
+      within(dialog).getByText(
+        'Yapay zekâ izni açıkken müşteri değiştirilemez. Önce proje sayfasından izni kapatın; müşteriyi değiştirdikten sonra izni yeniden açabilirsiniz.',
+      ),
+    ).toBeVisible();
+    const name = within(dialog).getByRole('textbox', { name: 'Proje adı' });
+    await userEvent.clear(name);
+    await userEvent.type(name, 'Yeni ad');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Kaydet' }));
+    await gone();
+    expect(api.callsTo(PATCH).map((call) => call.body)).toEqual([{ name: 'Yeni ad' }]);
+    cleanup();
+
+    // An employee, and a project without a customer.
+    mockApi(
+      projectHandlers(projectForEmployee({ ...open, customer: null, agentsMayWork: true }), {
+        'GET /session': sessionAs(EMPLOYEE_AT_ARMADX),
+        'GET /customers': () => json({ customers: CUSTOMER_NAMES }),
+      }),
+    );
+    renderApp(PAGE);
+    dialog = await openDialog();
+    expect(within(dialog).queryByRole('combobox', { name: 'Müşteri' })).toBeNull();
+    expect(within(dialog).getByText('Müşteri yok')).toBeVisible();
+    expect(
+      within(dialog).getByText(
+        'Yapay zekâ izni açıkken müşteri değiştirilemez. Kurucunun önce izni kapatması gerekir.',
+      ),
+    ).toBeVisible();
+    cleanup();
+
+    // The permission is opened while the dialog stands open: the API refuses the customer change.
+    const locked =
+      'Yapay zekâ izni açıkken projenin müşterisi değiştirilemez. Kurucu önce izni kapatır; müşteri değişince izni yeniden açar.';
+    const racing = mockApi(
+      projectHandlers(projectDetail(), {
+        [PATCH]: () => apiError(409, 'project_customer_locked', locked),
+      }),
+    );
+    renderApp(PAGE);
+    dialog = await openDialog();
+    racing.handle(`GET /projects/${PROJECT_ID}`, () => json(projectDetail(open)));
+    await userEvent.selectOptions(within(dialog).getByRole('combobox', { name: 'Müşteri' }), '');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Kaydet' }));
+    // Above the footer, like every refusal that belongs to no field; the form stays.
+    const alert = await within(dialog).findByRole('alert');
+    expect(alert).toHaveTextContent(locked);
+    expect(
+      alert.compareDocumentPosition(within(dialog).getByRole('button', { name: 'Kaydet' })) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    // The project was read again, and the dialog now shows the customer as text.
+    await waitFor(() => {
+      expect(within(dialog).queryByRole('combobox', { name: 'Müşteri' })).toBeNull();
+    });
+    expect(racing.callsTo(`GET /projects/${PROJECT_ID}`)).toHaveLength(2);
+    expect(within(dialog).getByText('Beta Lojistik')).toBeVisible();
+  });
+
+  it("edit: a new customer added while editing shows the sentence about closed permissions, in the founder's words and in an employee's; Kaydet gives the focus back to Projeyi düzenle", async () => {
+    const exists = 'Bu adla bir müşteri zaten var. Müşteriyi listeden seçin.';
+    const api = mockApi(
+      projectHandlers(projectDetail(), {
+        [PATCH]: () => apiError(409, 'customer_exists', exists),
+      }),
+    );
+    renderApp(PAGE);
+    let dialog = await openDialog();
+    const select = within(dialog).getByRole('combobox', { name: 'Müşteri' });
+    expect(within(dialog).queryByRole('textbox', { name: 'Müşteri adı' })).toBeNull();
+    await userEvent.selectOptions(select, 'new');
+    expect(
+      within(dialog).getByText(
+        'Yeni müşterinin sözleşme izinleri kapalı başlar. İzinleri proje sayfasından işaretleyebilirsiniz.',
+      ),
+    ).toBeVisible();
+    // No permission can be marked in this dialog, by the founder either.
+    expect(within(dialog).queryByRole('switch')).toBeNull();
+    const customerName = within(dialog).getByRole('textbox', { name: 'Müşteri adı' });
+
+    // Without a name nothing is sent.
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Kaydet' }));
+    expect(await within(dialog).findByText('Müşteri adını yazın.')).toBeVisible();
+    expect(customerName).toHaveFocus();
+    expect(api.callsTo(PATCH)).toEqual([]);
+
+    // A name that exists: the API's sentence stands under the name, which takes the focus.
+    await userEvent.type(customerName, '  beta lojistik ');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Kaydet' }));
+    const problem = await within(dialog).findByRole('alert');
+    expect(problem).toHaveTextContent(exists);
+    expect(customerName).toHaveAccessibleDescription(exists);
+    await waitFor(() => {
+      expect(customerName).toHaveFocus();
+    });
+    const [refused] = api.callsTo(PATCH);
+    // A new customer of an edit carries a name and an id, never a permission.
+    const sent = z
+      .strictObject({
+        customer: z.strictObject({ kind: z.literal('new'), id: z.uuid(), name: z.string() }),
+      })
+      .parse(refused?.body);
+    expect(sent.customer.name).toBe('beta lojistik');
+
+    api.handle(PATCH, () =>
+      json(
+        projectDetail({
+          customer: {
+            id: sent.customer.id,
+            name: 'Delta',
+            aiAllowed: false,
+            automatedProcessingAllowed: false,
+          },
+        }),
+      ),
+    );
+    await userEvent.clear(customerName);
+    await userEvent.type(customerName, 'Delta');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Kaydet' }));
+    await gone();
+    // A send that is repeated names the same new customer.
+    expect(api.callsTo(PATCH)[1]?.body).toEqual({
+      customer: {
+        kind: 'new',
+        id: sent.customer.id,
+        name: 'Delta',
+      },
+    });
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Projeyi düzenle' })).toHaveFocus();
+    });
+    cleanup();
+
+    mockApi(
+      projectHandlers(projectForEmployee(), {
+        'GET /session': sessionAs(EMPLOYEE_AT_ARMADX),
+        'GET /customers': () => json({ customers: CUSTOMER_NAMES }),
+      }),
+    );
+    renderApp(PAGE);
+    dialog = await openDialog();
+    await userEvent.selectOptions(within(dialog).getByRole('combobox', { name: 'Müşteri' }), 'new');
+    expect(
+      within(dialog).getByText(
+        'Yeni müşterinin sözleşme izinleri kapalı başlar. İzinleri kurucu işaretler.',
+      ),
+    ).toBeVisible();
+  });
+
+  it('edit: Vazgeç and Escape close without a request and return the focus; a press outside does not close', async () => {
+    const api = mockApi(projectHandlers());
+    renderApp(PAGE);
+    let dialog = await openDialog();
+    await userEvent.type(within(dialog).getByRole('textbox', { name: 'Proje adı' }), ' x');
+    // A slip of the pointer beside the dialog does not lose what was typed.
+    const overlay = document.querySelector('[data-slot="dialog-overlay"]');
+    if (!overlay) throw new Error('The dialog has no overlay');
+    await userEvent.click(overlay);
+    expect(screen.getByRole('dialog', { name: 'Projeyi düzenle' })).toBeVisible();
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Vazgeç' }));
+    await gone();
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Projeyi düzenle' })).toHaveFocus();
+    });
+    // Every opening starts from the project as it is: what was typed and given up is gone.
+    dialog = await openDialog();
+    expect(within(dialog).getByRole('textbox', { name: 'Proje adı' })).toHaveValue(
+      'Depo otomasyonu',
+    );
+    await userEvent.keyboard('{Escape}');
+    await gone();
+    expect(api.callsTo(PATCH)).toEqual([]);
   });
 });
 

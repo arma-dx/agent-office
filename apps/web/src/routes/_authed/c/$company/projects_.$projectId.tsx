@@ -6,7 +6,9 @@
 import type { MembershipSummary, ProjectDetail } from '@agent-office/shared';
 import { useQuery } from '@tanstack/react-query';
 import { createFileRoute, Link } from '@tanstack/react-router';
+import { useState } from 'react';
 import { z } from 'zod';
+import { EditProjectDialog } from '@/components/projects/edit-project-dialog';
 import { ProjectMembers } from '@/components/projects/project-members';
 import { ProjectProperties } from '@/components/projects/project-properties';
 import { ProjectTile } from '@/components/projects/project-tile';
@@ -16,6 +18,7 @@ import { EmptyState, ErrorMessage, LoadingRows } from '@/components/states';
 import { StatusBadge } from '@/components/status';
 import { Button } from '@/components/ui/button';
 import { ApiError, userMessage } from '@/lib/api';
+import { useReturnFocus } from '@/lib/focus';
 import { useWideWindow } from '@/lib/office/use-wide-window';
 import { agentsSentence, UNAVAILABLE } from '@/lib/projects/labels';
 import { projectQueryOptions } from '@/lib/projects/query';
@@ -87,6 +90,8 @@ function ProjectPage({ project }: { project: ProjectDetail }) {
   // nobody pressed yet. In a narrower window it follows the person's own choice (the toggle in the
   // top bar); the body alone always says the status and whether agents may work.
   const wide = useWideWindow();
+  const [editing, setEditing] = useState(false);
+  const editFocus = useReturnFocus();
   return (
     <article className="mx-auto flex max-w-3xl flex-col gap-5">
       <PageLabel>{project.name}</PageLabel>
@@ -98,6 +103,17 @@ function ProjectPage({ project }: { project: ProjectDetail }) {
             <StatusBadge kind="project" status={project.status} />
           </div>
         </div>
+        {project.actions.edit ? (
+          <Button
+            variant="outline"
+            onClick={() => {
+              editFocus.remember();
+              setEditing(true);
+            }}
+          >
+            Projeyi düzenle
+          </Button>
+        ) : null}
       </header>
 
       {/* Said once when it changes; the same words are on screen, never a color alone. */}
@@ -127,6 +143,16 @@ function ProjectPage({ project }: { project: ProjectDetail }) {
       <PropertiesPanel open={wide}>
         <ProjectProperties project={project} />
       </PropertiesPanel>
+      {/* Mounted only while open: every opening starts from the project as it is now. */}
+      {editing ? (
+        <EditProjectDialog
+          project={project}
+          onClose={() => {
+            setEditing(false);
+          }}
+          onCloseAutoFocus={editFocus.onCloseAutoFocus}
+        />
+      ) : null}
     </article>
   );
 }
