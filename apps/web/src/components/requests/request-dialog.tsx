@@ -112,6 +112,11 @@ function RequestDialog({
   const [dueDate, setDueDate] = useState(initial.dueDate);
   // The browser could not read what is in the date field (a part is missing).
   const [dueUnreadable, setDueUnreadable] = useState(false);
+  // "Before today" is said once the person has left the field or tried to send, and for a day a
+  // draft brought. Not while the field is being typed in: a browser reports a whole date after
+  // every digit of the year, so 2026 passes through the years 0002, 0020 and 0202, and each of
+  // them would be called a day that has passed.
+  const [dueSettled, setDueSettled] = useState(initial.dueDate !== '');
   const [touched, setTouched] = useState(false);
   const helpId = useId();
   const noticeId = useId();
@@ -153,18 +158,19 @@ function RequestDialog({
     : touched && empty
       ? 'Ne istediğinizi yazın.'
       : null;
-  // Said as soon as it holds, not only after a send: a draft from yesterday that carries
-  // yesterday's day says so when the form opens.
+  // Said before a send too: when the field is left, and when the form opens with a draft from
+  // yesterday that carries yesterday's day.
   const dueProblem =
     dueUnreadable || (dueDate !== '' && !isDay(dueDate))
       ? 'Geçerli bir tarih seçin.'
-      : dueDate !== '' && dueDate < officeToday()
+      : dueSettled && dueDate !== '' && dueDate < officeToday()
         ? 'Son tarih bugünden önce olamaz.'
         : null;
 
   function submit(event: SyntheticEvent): void {
     event.preventDefault();
     setTouched(true);
+    setDueSettled(true);
     // A date field with a part missing has no value, and the browser fires no change event while
     // the value stays empty: the field itself is asked before anything is sent. Without this the
     // request would leave without the day the person was typing, for good.
@@ -251,11 +257,13 @@ function RequestDialog({
               }
               onChange={(event) => {
                 setDueDate(event.target.value);
+                setDueSettled(false);
                 // A date typed half way has no value; the browser says so here.
                 setDueUnreadable(event.target.validity.badInput);
                 saveDraftSoon(key, { id: initial.id, text, dueDate: event.target.value });
               }}
               onBlur={(event) => {
+                setDueSettled(true);
                 setDueUnreadable(event.target.validity.badInput);
               }}
               onKeyDown={(event) => {

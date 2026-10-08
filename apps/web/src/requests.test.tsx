@@ -321,6 +321,8 @@ describe('Yeni talep', () => {
       await userEvent.type(within(dialog).getByRole('textbox'), 'Bir gönderi yaz');
 
       fireEvent.change(due, { target: { value: officeDay(Date.now() - DAY_MS) } });
+      // Said when the field is left, not while it is being typed in (see the next test).
+      fireEvent.blur(due);
       const alert = within(dialog).getByRole('alert');
       expect(alert).toHaveTextContent('Son tarih bugünden önce olamaz.');
       // The problem is tied to the field, with the help.
@@ -353,6 +355,68 @@ describe('Yeni talep', () => {
       expect(within(dialog).queryByRole('alert')).toBeNull();
       expect(due).toHaveAttribute('aria-invalid', 'false');
       expect(due).toHaveAccessibleDescription(DUE_HELP);
+    });
+
+    it('does not call a year that is still being typed a day that has passed', async () => {
+      const api = mockApi(handlers());
+      await openList();
+      const dialog = await openForm();
+      const due = dueField(dialog);
+      await userEvent.type(within(dialog).getByRole('textbox'), 'Bir gönderi yaz');
+      const [year = '', month = '', day = ''] = officeDay(Date.now() + 5 * DAY_MS).split('-');
+
+      // A browser reports a whole date after every digit of the year: 2026 arrives as the years
+      // 0002, 0020 and 0202 first, each a real day long before today.
+      due.focus();
+      for (const digits of [1, 2, 3]) {
+        const soFar = `${year.slice(0, digits).padStart(4, '0')}-${month}-${day}`;
+        fireEvent.change(due, { target: { value: soFar } });
+        expect(within(dialog).queryByRole('alert')).toBeNull();
+        expect(due).toHaveAttribute('aria-invalid', 'false');
+        expect(due).toHaveAccessibleDescription(DUE_HELP);
+      }
+      // Left with the year unfinished: said now.
+      fireEvent.blur(due);
+      expect(within(dialog).getByRole('alert')).toHaveTextContent(
+        'Son tarih bugünden önce olamaz.',
+      );
+      expect(due).toHaveAttribute('aria-invalid', 'true');
+      // The person goes on typing: the sentence does not stay over a date that is right.
+      fireEvent.change(due, { target: { value: `${year}-${month}-${day}` } });
+      expect(within(dialog).queryByRole('alert')).toBeNull();
+      fireEvent.blur(due);
+      expect(within(dialog).queryByRole('alert')).toBeNull();
+
+      // A day that has passed and a send from inside the field (Ctrl+Enter, the focus never left
+      // it): said, and nothing is sent.
+      fireEvent.change(due, { target: { value: officeDay(Date.now() - DAY_MS) } });
+      expect(within(dialog).queryByRole('alert')).toBeNull();
+      due.focus();
+      await userEvent.keyboard('{Control>}{Enter}{/Control}');
+      expect(within(dialog).getByRole('alert')).toHaveTextContent(
+        'Son tarih bugünden önce olamaz.',
+      );
+      expect(api.callsTo('POST /requests')).toHaveLength(0);
+      expect(screen.getByRole('dialog', { name: 'Yeni talep' })).toBeVisible();
+    });
+
+    it('says at once that the day of a draft has passed', async () => {
+      mockApi(handlers());
+      await openList();
+      // A draft from yesterday that carries yesterday's day.
+      sessionStorage.setItem(
+        draftKey(USER_ID, ARMADX.companyId, 'request'),
+        JSON.stringify({
+          id: REQUEST_ID,
+          text: 'Dünden kalan taslak',
+          dueDate: officeDay(Date.now() - DAY_MS),
+        }),
+      );
+      const dialog = await openForm();
+      expect(within(dialog).getByRole('alert')).toHaveTextContent(
+        'Son tarih bugünden önce olamaz.',
+      );
+      expect(dueField(dialog)).toHaveAttribute('aria-invalid', 'true');
     });
 
     it('does not send a request whose date is only half typed', async () => {
