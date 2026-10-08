@@ -5,6 +5,7 @@ import {
   COMPANY_HEADER,
   COORDINATOR_AGENT_CODE,
   NOTIFICATION_LIST_LIMIT,
+  OFFICE_REQUEST_LIMIT,
   TODAY_REQUEST_LIMIT,
   agentStopIfOpenResponseSchema,
   apiErrorSchema,
@@ -2623,6 +2624,53 @@ describe.skipIf(noDatabase)('requests', () => {
           expect(closed.statusCode).toBe(200);
         }
         expect((await office(founder, ids.pillika)).body.work).toEqual([]);
+      });
+
+      it('says that the numbers are not whole when more requests are open than the office counts', async () => {
+        // Through the route: the pick asks for one row more than the limit and the count is cut
+        // at the limit. Opened with the API's role in the founder's context, as the Bugün test
+        // does; closed again, because the tests after this one read Pillika's desks.
+        const asFounder = { companyId: ids.pillika, userId: ids.founder };
+        const open = (count: number): Promise<string[]> =>
+          withContext(besidePool, asFounder, async (client) => {
+            const { rows } = await client.query<{ id: string }>(
+              `insert into office.tasks (company_id, kind, title, description)
+               select office.ctx_company_id(), 'request', 'Bekleyen talep ' || n, 'Kimse ilerletmedi.'
+               from generate_series(1, $1::int) n
+               returning id`,
+              [count],
+            );
+            return rows.map((row) => row.id);
+          });
+        const opened = await open(OFFICE_REQUEST_LIMIT);
+        try {
+          // Exactly the limit: every request is counted and the numbers are whole.
+          const whole = (await office(founder, ids.pillika)).body;
+          expect(whole.work).toEqual([
+            {
+              agentCode: 'KOR-1',
+              running: { count: OFFICE_REQUEST_LIMIT, requestId: null },
+              awaitingApproval: NONE,
+              failed: NONE,
+            },
+          ]);
+          expect(whole.workTruncated).toBe(false);
+          // One more: the same numbers, and the answer says that they are not whole.
+          opened.push(...(await open(1)));
+          const cut = (await office(founder, ids.pillika)).body;
+          expect(cut.work).toEqual(whole.work);
+          expect(cut.workTruncated).toBe(true);
+        } finally {
+          await withContext(besidePool, asFounder, async (client) => {
+            for (const id of opened) {
+              await closeRequest(client, id, null);
+            }
+          });
+        }
+        expect((await office(founder, ids.pillika)).body).toMatchObject({
+          work: [],
+          workTruncated: false,
+        });
       });
 
       it('a stop "only if open" stops the agent where it is open, one company per request, with one audit row each', async () => {
