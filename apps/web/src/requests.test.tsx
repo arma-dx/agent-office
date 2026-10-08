@@ -1,7 +1,7 @@
 import { COMPANY_HEADER, BACKGROUND_HEADER, officeDay } from '@agent-office/shared';
 import { startAuthentication } from '@simplewebauthn/browser';
 import { focusManager } from '@tanstack/react-query';
-import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -27,6 +27,7 @@ import {
 } from './test/request-fixtures.ts';
 import { ASSERTION, challengeId, signed, STEP_UP_OPTIONS, stepUpIssuer } from './test/passkeys.ts';
 import { currentLocation, renderApp } from './test/render-app.tsx';
+import { formatDay } from './lib/dates.ts';
 import { clearDrafts, draftKey } from './lib/drafts.ts';
 
 // The browser's passkey prompt: the person confirms, unless a test says otherwise.
@@ -588,9 +589,161 @@ describe('Talepler', () => {
     await userEvent.click(screen.getByRole('switch', { name: 'Yalnızca benim taleplerim' }));
     expect(await screen.findByRole('heading', { name: 'Açık talebiniz yok' })).toBeVisible();
   });
+
+  it('shows the due day of a row and says "Son tarihi geçti" for an open request whose day has ended', async () => {
+    const agentTurn = {
+      status: 'in_progress' as const,
+      stage: 'working' as const,
+      turn: { kind: 'agent' as const, code: 'SOS-2', name: 'Sosyal İçerik Yazım Ajanı' },
+      waitingForMe: false,
+    };
+    const due = requestDetail({ ...agentTurn, title: 'Kasım bülteni', dueDate: '2026-10-20' });
+    const overdue = requestDetail({
+      ...agentTurn,
+      id: '77777777-7777-4777-8777-777777777777',
+      title: 'Ekim duyurusu',
+      dueDate: '2026-10-05',
+      overdue: true,
+    });
+    const none = requestDetail({
+      ...agentTurn,
+      id: '88888888-8888-4888-8888-888888888888',
+      title: 'Fuar davetiyesi',
+    });
+    // Two different facts: the run takes too long ("gecikti") and the due day has passed.
+    const lateAndOverdue = requestDetail({
+      ...agentTurn,
+      id: '99999999-9999-4999-8999-999999999999',
+      title: 'Basın bülteni',
+      delayed: true,
+      dueDate: '2026-10-06',
+      overdue: true,
+    });
+    // A closed request keeps its day and is never said to be late (the API says `overdue`).
+    const closed = requestDetail({
+      id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      title: 'Eylül raporu',
+      status: 'done',
+      stage: 'done',
+      turn: { kind: 'none' },
+      waitingForMe: false,
+      dueDate: '2026-10-01',
+    });
+    mockApi({
+      'GET /session': sessionHandler(),
+      'GET /requests': () =>
+        json({
+          requests: [due, overdue, none, lateAndOverdue, closed].map(summaryOf),
+          truncated: false,
+        }),
+    });
+    renderApp('/c/armadx/requests');
+    const row = async (title: string) => {
+      const link = await screen.findByRole('link', { name: new RegExp(`^${title}`) });
+      const item = link.closest('li');
+      if (!item) throw new Error(`No row for ${title}`);
+      return { link, item };
+    };
+
+    const dueRow = await row('Kasım bülteni');
+    const dueMark = within(dueRow.item).getByText(`Son tarih: ${formatDay('2026-10-20')}`);
+    // jsdom lays nothing out; the classes are the contract of the two widths. A day that has not
+    // passed gives way to the title below 1280 px.
+    expect(dueMark).toHaveClass('hidden', 'xl:inline');
+    expect(dueRow.link).toHaveAccessibleName(
+      `Kasım bülteni, Ajan çalışıyor, sıra SOS-2, Son tarih: ${formatDay('2026-10-20')}`,
+    );
+
+    const overdueRow = await row('Ekim duyurusu');
+    const overdueMark = within(overdueRow.item).getByText(
+      `Son tarihi geçti: ${formatDay('2026-10-05')}`,
+    );
+    // A day that has passed is shown at every width, in words and without a colour of its own.
+    expect(overdueMark).not.toHaveClass('hidden');
+    expect(overdueMark.className).not.toMatch(/status|destructive|error/);
+    expect(overdueRow.link).toHaveAccessibleName(
+      `Ekim duyurusu, Ajan çalışıyor, sıra SOS-2, Son tarihi geçti: ${formatDay('2026-10-05')}`,
+    );
+
+    const noneRow = await row('Fuar davetiyesi');
+    expect(noneRow.item).not.toHaveTextContent(/Son tarih/);
+    expect(noneRow.link).toHaveAccessibleName('Fuar davetiyesi, Ajan çalışıyor, sıra SOS-2');
+
+    const lateRow = await row('Basın bülteni');
+    expect(lateRow.item).toHaveTextContent('Ajan çalışıyor (gecikti)');
+    const lateMark = within(lateRow.item).getByText(`Son tarihi geçti: ${formatDay('2026-10-06')}`);
+    expect(lateMark).not.toHaveTextContent(/gecikti/);
+    // "gecikti" is said once in the row, by the stage.
+    expect(lateRow.item.textContent.match(/gecikti/g)).toHaveLength(1);
+
+    const closedRow = await row('Eylül raporu');
+    expect(within(closedRow.item).getByText(`Son tarih: ${formatDay('2026-10-01')}`)).toBeVisible();
+    expect(closedRow.item).not.toHaveTextContent(/Son tarihi geçti/);
+    // The day is words in a row: still no control.
+    expect(within(screen.getByRole('main')).queryAllByRole('combobox')).toEqual([]);
+  });
 });
 
 describe('the page of a request', () => {
+  it('shows the due day beside the stage and says in its own words that it has passed', async () => {
+    const working = {
+      status: 'in_progress' as const,
+      stage: 'working' as const,
+      turn: { kind: 'agent' as const, code: 'SOS-2', name: 'Sosyal İçerik Yazım Ajanı' },
+      waitingForMe: false,
+      approval: null,
+    };
+    const open = async (detail: ReturnType<typeof requestDetail>) => {
+      cleanup();
+      mockApi({
+        'GET /session': sessionHandler(),
+        [`GET /requests/${REQUEST_ID}`]: () => json(detail),
+      });
+      renderApp(`/c/armadx/requests/${REQUEST_ID}`);
+      await screen.findByRole('heading', { level: 2, name: /LinkedIn için gönderi yaz/ });
+      return stageLine();
+    };
+
+    // A day that has not passed.
+    expect(await open(requestDetail({ ...working, dueDate: '2026-10-20' }))).toBe(
+      `Aşama: Ajan çalışıyor Sıra: SOS-2 Birim: Sosyal Medya Son tarih: ${formatDay('2026-10-20')}`,
+    );
+    const day = screen.getByText(formatDay('2026-10-20'));
+    expect(day.tagName).toBe('TIME');
+    expect(day).toHaveAttribute('datetime', '2026-10-20');
+
+    // A day that has passed, on an open request; a run that takes long is another sentence.
+    expect(
+      await open(
+        requestDetail({ ...working, delayed: true, dueDate: '2026-10-05', overdue: true }),
+      ),
+    ).toBe(
+      `Aşama: Ajan çalışıyor (gecikti) Sıra: SOS-2 Birim: Sosyal Medya Son tarihi geçti: ${formatDay('2026-10-05')}`,
+    );
+    expect(screen.getByText(formatDay('2026-10-05'))).toHaveAttribute('datetime', '2026-10-05');
+
+    // No day: nothing is said about one.
+    expect(await open(requestDetail(working))).toBe(
+      'Aşama: Ajan çalışıyor Sıra: SOS-2 Birim: Sosyal Medya',
+    );
+    expect(screen.getByRole('main')).not.toHaveTextContent(/Son tarih/);
+
+    // A closed request keeps its day and is not said to be late.
+    expect(
+      await open(
+        requestDetail({
+          status: 'done',
+          stage: 'done',
+          turn: { kind: 'none' },
+          waitingForMe: false,
+          approval: null,
+          dueDate: '2026-10-01',
+          actions: { cancel: false, stop: false, reroute: false },
+        }),
+      ),
+    ).toBe(`Aşama: Tamamlandı Birim: Sosyal Medya Son tarih: ${formatDay('2026-10-01')}`);
+  });
+
   it('shows the approver the card, sends the decision with the chosen option and shows the answer', async () => {
     const approved = requestDetail({
       stage: 'requester_approval',

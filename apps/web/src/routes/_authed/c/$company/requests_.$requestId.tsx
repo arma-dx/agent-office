@@ -26,6 +26,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { ApiError, userMessage } from '@/lib/api';
+import { formatDay } from '@/lib/dates';
 import { useReturnFocus } from '@/lib/focus';
 import { REFRESH_MS, useBackgroundRefresh } from '@/lib/refresh';
 import { decisionDialogOpen } from '@/lib/requests/hold';
@@ -137,6 +138,16 @@ function RequestScreen() {
               </span>
             ) : null}
             {request.unit ? <span>Birim: {request.unit.name}</span> : null}
+            {/* Information only (docs/SONRA.md W-h). "Son tarihi geçti" is the API's word for an
+                open request whose day has ended; "gecikti" is a run that takes too long. */}
+            {request.dueDate !== null ? (
+              <span>
+                {request.overdue ? 'Son tarihi geçti: ' : 'Son tarih: '}
+                <time dateTime={request.dueDate} className="text-ink">
+                  {formatDay(request.dueDate)}
+                </time>
+              </span>
+            ) : null}
           </p>
           {request.delayed ? (
             <p className="text-sm text-ink-secondary">

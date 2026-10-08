@@ -1,4 +1,4 @@
-import { OFFICE_TIME_ZONE } from '@agent-office/shared';
+import { officeDay } from '@agent-office/shared';
 
 /**
  * Times and days as the task screens write them. Days (a due date) are days of the office's time
@@ -21,12 +21,6 @@ const dayMonthYear = new Intl.DateTimeFormat('tr-TR', {
 });
 const clock = new Intl.DateTimeFormat('tr-TR', { hour: '2-digit', minute: '2-digit' });
 const full = new Intl.DateTimeFormat('tr-TR', { dateStyle: 'long', timeStyle: 'short' });
-const officeDay = new Intl.DateTimeFormat('en-CA', {
-  timeZone: OFFICE_TIME_ZONE,
-  year: 'numeric',
-  month: '2-digit',
-  day: '2-digit',
-});
 // A day has no time zone of its own: it is formatted as that day in UTC.
 const dayText = new Intl.DateTimeFormat('tr-TR', {
   day: 'numeric',
@@ -74,9 +68,12 @@ export function formatMessageTime(iso: string, now: number = Date.now()): string
   return `${(sameYear ? dayMonth : dayMonthYear).format(then)} ${time}`;
 }
 
-/** Today in the office's time zone, as YYYY-MM-DD. */
+/**
+ * Today in the office's time zone, as YYYY-MM-DD: the same function the API and the runner read
+ * the day with.
+ */
 export function officeToday(now: number = Date.now()): string {
-  return officeDay.format(now);
+  return officeDay(now);
 }
 
 /** A day (YYYY-MM-DD) as text: "20 Eki", with the year when it is not this year. */

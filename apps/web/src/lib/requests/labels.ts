@@ -8,6 +8,7 @@ import type {
   RequestTurn,
   TaskPerson,
 } from '@agent-office/shared';
+import { formatDay } from '../dates.ts';
 
 /**
  * The words of flow (A). Every sentence a person reads about a request is made here from codes
@@ -254,8 +255,24 @@ export function machineHasTurn(request: Pick<RequestDetail, 'stage'>): boolean {
   return request.stage === 'routing' || request.stage === 'working' || request.stage === 'revising';
 }
 
+/**
+ * The due day of a request in words, or null when it has none. "Son tarihi geçti" is said for an
+ * open request whose day has ended (the API decides: `overdue`); never "gecikti", which is the
+ * word of a run that takes too long.
+ */
+export function dueText(
+  request: Pick<RequestSummary, 'dueDate' | 'overdue'>,
+  now: number = Date.now(),
+): string | null {
+  if (request.dueDate === null) return null;
+  return `${request.overdue ? 'Son tarihi geçti' : 'Son tarih'}: ${formatDay(request.dueDate, now)}`;
+}
+
 /** The accessible sentence of a list row. */
-export function rowSentence(request: RequestSummary): string {
+export function rowSentence(request: RequestSummary, now: number = Date.now()): string {
   const turn = turnText(request.turn, request.waitingForMe);
-  return `${request.title}, ${stageText(request)}${turn === null ? '' : `, sıra ${turn === 'Sizde' ? 'sizde' : turn}`}`;
+  const due = dueText(request, now);
+  return `${request.title}, ${stageText(request)}${
+    turn === null ? '' : `, sıra ${turn === 'Sizde' ? 'sizde' : turn}`
+  }${due === null ? '' : `, ${due}`}`;
 }

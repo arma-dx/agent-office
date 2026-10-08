@@ -11,7 +11,7 @@ import { Switch } from '@/components/ui/switch';
 import { userMessage } from '@/lib/api';
 import { formatWhen } from '@/lib/dates';
 import { useBackgroundRefresh } from '@/lib/refresh';
-import { rowSentence, stageText, turnText } from '@/lib/requests/labels';
+import { dueText, rowSentence, stageText, turnText } from '@/lib/requests/labels';
 import { fetchRequests, requestsQueryOptions } from '@/lib/requests/query';
 import { useCompany } from '@/lib/session';
 import { cn } from '@/lib/utils';
@@ -28,10 +28,28 @@ export const Route = createFileRoute('/_authed/c/$company/requests')({
 
 function RequestRow({ request, company }: { request: RequestSummary; company: string }) {
   const turn = turnText(request.turn, request.waitingForMe);
+  const due = dueText(request);
   return (
     <ListRow
       leading={<StatusIcon kind="task" status={request.status} labelled />}
       title={request.title}
+      meta={
+        due ? (
+          // The words carry the meaning, not a colour: the status language has no "overdue". A day
+          // that has passed is the same text in the normal ink and a heavier weight.
+          <span
+            className={
+              request.overdue
+                ? 'text-xs font-medium'
+                : // Below 1280 px a day that has not passed gives way to the title, like the unit
+                  // code and the time; it is on the request's page and in the row's own sentence.
+                  'hidden text-xs text-ink-secondary xl:inline'
+            }
+          >
+            {due}
+          </span>
+        ) : undefined
+      }
       link={linkOptions({
         to: '/c/$company/requests/$requestId',
         params: { company, requestId: request.id },
