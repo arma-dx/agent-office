@@ -10,6 +10,7 @@ import {
   peopleNames,
   readCompanyKind,
   readProject,
+  removeProjectMember,
   setCustomerPermissions,
   updateProject,
   type ProjectChanges,
@@ -52,6 +53,8 @@ import type { RouteDeps } from '../services.ts';
  *   GET   /api/projects/member-candidates  who can be made a member: active founders, employees
  *   GET   /api/projects/:projectId         one answer for the whole page
  *   PATCH /api/projects/:projectId         a member or the founder changes its fields
+ *   PUT    /api/projects/:projectId/members/:userId  a member or the founder adds a member
+ *   DELETE /api/projects/:projectId/members/:userId  ... and removes one
  *   GET   /api/customers                   the customers of the company to choose from, by name
  *
  * No route here has a field for the AI permission of a project except the one made for it, and
@@ -71,6 +74,7 @@ import type { RouteDeps } from '../services.ts';
 const INSIDERS = { founderOnly: false, insidersOnly: true } as const;
 
 const projectParams = z.object({ projectId: z.uuid() });
+const memberParams = z.object({ projectId: z.uuid(), userId: z.uuid() });
 
 const privateSpace = (): ApiError =>
   new ApiError(409, 'private_space', 'Kurucu alanında proje açılamaz. Bir şirket seçin.');
@@ -92,6 +96,13 @@ const memberNotAllowed = (): ApiError =>
     'Seçilen kişi projeye üye olamaz: projeye yalnızca şirketin kurucusu ve çalışanları üye olur. Kişiyi listeden yeniden seçin.',
   );
 
+const ownMembership = (): ApiError =>
+  new ApiError(
+    409,
+    'own_project_membership',
+    'Kendinizi projeden çıkaramazsınız. Sizi başka bir üye ya da kurucu çıkarabilir.',
+  );
+
 const customerLocked = (): ApiError =>
   new ApiError(
     409,
@@ -110,6 +121,14 @@ function projectIdOf(request: FastifyRequest): string {
     throw notFound();
   }
   return params.data.projectId;
+}
+
+function memberOf(request: FastifyRequest): { projectId: string; userId: string } {
+  const params = memberParams.safeParse(request.params);
+  if (!params.success) {
+    throw notFound();
+  }
+  return { projectId: params.data.projectId, userId: params.data.userId.toLowerCase() };
 }
 
 /** Rule 12 as a whole: the project's permission and, if it has a customer, the customer's. */
@@ -409,6 +428,54 @@ export function registerProjectRoutes(app: FastifyInstance, { runner, config }: 
       }
       return detailOf(context, await projectOf(context, projectId));
     }),
+  );
+
+  /**
+   * A member or the founder adds a member: an active founder or employee of the company
+   * (docs/SONRA.md P-j); the database refuses anybody else. No passkey (5 October decision 4).
+   * Adding a person who is a member already changes nothing.
+   */
+  app.put(
+    '/api/projects/:projectId/members/:userId',
+    async (request, reply): Promise<ProjectDetail> =>
+      runner.withCompany(request, reply, INSIDERS, async (context) => {
+        const { projectId, userId } = memberOf(request);
+        const { client } = context;
+        await projectOf(context, projectId);
+        await client.query('savepoint add_member');
+        try {
+          await addProjectMember(client, projectId, userId);
+        } catch (error) {
+          await client.query('rollback to savepoint add_member');
+          const code = databaseErrorCode(error);
+          // foreign_key_violation: not a member of the company. check_violation: an external
+          // person or a deactivated account.
+          if (code === '23503' || code === '23514') throw memberNotAllowed();
+          throw error;
+        }
+        return detailOf(context, await projectOf(context, projectId));
+      }),
+  );
+
+  /**
+   * A member or the founder removes a member. An employee does not remove themselves (nobody
+   * loses sight of a project by a slip); the founder may, and still reads the project.
+   */
+  app.delete(
+    '/api/projects/:projectId/members/:userId',
+    async (request, reply): Promise<ProjectDetail> =>
+      runner.withCompany(request, reply, INSIDERS, async (context) => {
+        const { projectId, userId } = memberOf(request);
+        await projectOf(context, projectId);
+        if (userId === context.session.userId.toLowerCase() && context.role !== 'founder') {
+          throw ownMembership();
+        }
+        if ((await removeProjectMember(context.client, projectId, userId)) === 0) {
+          // Not a member of this project.
+          throw notFound();
+        }
+        return detailOf(context, await projectOf(context, projectId));
+      }),
   );
 
   /**

@@ -213,6 +213,8 @@ describe.skipIf(noDatabase)('projects', () => {
       ['GET', '/api/projects/member-candidates'],
       ['GET', `/api/projects/${project.id}`],
       ['PATCH', `/api/projects/${project.id}`, { name: 'Dış kişi' }],
+      ['PUT', `/api/projects/${project.id}/members/${ids.external}`],
+      ['DELETE', `/api/projects/${project.id}/members/${ids.employee}`],
       ['GET', '/api/customers'],
     ];
     for (const [method, url, payload] of routes) {
@@ -220,7 +222,7 @@ describe.skipIf(noDatabase)('projects', () => {
       expect(res.statusCode, `${method} ${url}`).toBe(403);
       expect(errorCode(res), `${method} ${url}`).toBe('insiders_only');
     }
-    expect((await read(employee, project.id)).name).toBe('Proje');
+    expect(await read(employee, project.id)).toMatchObject({ name: 'Proje', memberCount: 1 });
   });
 
   it('409 private_space in the founder space; its list is empty', async () => {
@@ -299,6 +301,9 @@ describe.skipIf(noDatabase)('projects', () => {
     const routes = (id: string): [Method, string, object?][] => [
       ['GET', `/api/projects/${id}`],
       ['PATCH', `/api/projects/${id}`, { name: 'Ele geçirildi' }],
+      // Adding themselves, and removing the member who opened it.
+      ['PUT', `/api/projects/${id}/members/${ids.holder}`],
+      ['DELETE', `/api/projects/${id}/members/${ids.employee}`],
     ];
     const expect404 = async (session: string, id: string, company: string = ids.arma) => {
       for (const [method, url, payload] of routes(id)) {
@@ -315,7 +320,15 @@ describe.skipIf(noDatabase)('projects', () => {
     await expect404(founder, PILLIKA_PROJECT);
     await expect404(employee, randomUUID());
     await expect404(employee, 'not-an-id');
-    expect((await read(founder, project.id)).name).toBe('Görünmeyen proje');
+    expect(await read(founder, project.id)).toMatchObject({
+      name: 'Görünmeyen proje',
+      memberCount: 1,
+    });
+    // A member id that is not an id.
+    for (const method of ['PUT', 'DELETE'] as const) {
+      const res = await call(employee, method, `/api/projects/${project.id}/members/not-an-id`);
+      expect(res.statusCode).toBe(404);
+    }
   });
 
   it('a new customer by name: closed permissions for an employee; 409 customer_exists for a name that exists, whatever the case; 409 customer_not_found for an unknown id and for a customer of the other company', async () => {
@@ -844,6 +857,91 @@ describe.skipIf(noDatabase)('projects', () => {
     expect(
       await count('customers', 'id = $1 and name = $2', [ARMA_CUSTOMER, 'Arma Müşterisi']),
     ).toBe(1);
+  });
+
+  // Members ---------------------------------------------------------------------------------------
+
+  it('a member adds and removes a colleague without a passkey; adding twice changes nothing; removing somebody who is not a member is 404', async () => {
+    const project = await open(employee, { name: 'Üyeleri değişen proje' });
+    const members = `/api/projects/${project.id}/members`;
+    const added = await call(employee, 'PUT', `${members}/${ids.holder}`);
+    expect(added.statusCode, added.body).toBe(200);
+    expect(projectDetailSchema.parse(added.json())).toMatchObject({ memberCount: 2 });
+    // The new member reads the project and adds the founder, also with the id in capitals.
+    expect((await read(colleague, project.id)).memberCount).toBe(2);
+    const byColleague = await call(colleague, 'PUT', `${members}/${ids.founder.toUpperCase()}`);
+    expect(projectDetailSchema.parse(byColleague.json()).memberCount).toBe(3);
+
+    const twice = await call(employee, 'PUT', `${members}/${ids.holder}`);
+    expect(twice.statusCode).toBe(200);
+    expect(projectDetailSchema.parse(twice.json()).memberCount).toBe(3);
+    expect(
+      await count('audit_log', `event = 'project_member_added' and project_id = $1`, [project.id]),
+    ).toBe(3);
+
+    // A member removes another member, the opener too.
+    const removed = await call(colleague, 'DELETE', `${members}/${ids.employee}`);
+    expect(removed.statusCode, removed.body).toBe(200);
+    expect(
+      projectDetailSchema
+        .parse(removed.json())
+        .members.map((member) => member.userId)
+        .sort(),
+    ).toEqual([ids.founder, ids.holder].sort());
+    // The removed person no longer reads it.
+    expect((await call(employee, 'GET', `/api/projects/${project.id}`)).statusCode).toBe(404);
+
+    for (const userId of [ids.employee, ids.newcomer, randomUUID()]) {
+      const res = await call(colleague, 'DELETE', `${members}/${userId}`);
+      expect(res.statusCode).toBe(404);
+      expect(errorCode(res)).toBe('not_found');
+    }
+    expect((await read(colleague, project.id)).memberCount).toBe(2);
+  });
+
+  it('409 own_project_membership when an employee removes themselves; the founder removes themselves and still reads the project', async () => {
+    const project = await open(employee, { name: 'Kendini çıkaran', memberIds: [ids.founder] });
+    const members = `/api/projects/${project.id}/members`;
+    for (const userId of [ids.employee, ids.employee.toUpperCase()]) {
+      const own = await call(employee, 'DELETE', `${members}/${userId}`);
+      expect(own.statusCode).toBe(409);
+      expect(errorCode(own)).toBe('own_project_membership');
+    }
+    expect((await read(employee, project.id)).memberCount).toBe(2);
+
+    const byFounder = await call(founder, 'DELETE', `${members}/${ids.founder}`);
+    expect(byFounder.statusCode, byFounder.body).toBe(200);
+    expect(projectDetailSchema.parse(byFounder.json())).toMatchObject({
+      memberCount: 1,
+      members: [{ userId: ids.employee }],
+    });
+    // The founder removes the last member too; the project stays, read by the founder alone.
+    const last = await call(founder, 'DELETE', `${members}/${ids.employee}`);
+    expect(projectDetailSchema.parse(last.json())).toMatchObject({ memberCount: 0, members: [] });
+    expect((await call(employee, 'GET', `/api/projects/${project.id}`)).statusCode).toBe(404);
+    expect((await read(founder, project.id)).name).toBe('Kendini çıkaran');
+  });
+
+  it('409 member_not_allowed for an external person, a person outside the company and a deactivated account', async () => {
+    const project = await open(employee, { name: 'Üye olamayanlar' });
+    for (const session of [employee, founder]) {
+      for (const userId of [
+        ids.external,
+        ids.lawyer,
+        ids.otherFounder,
+        randomUUID(),
+        DEACTIVATED,
+      ]) {
+        const res = await call(session, 'PUT', `/api/projects/${project.id}/members/${userId}`);
+        expect(res.statusCode, userId).toBe(409);
+        expect(errorCode(res), userId).toBe('member_not_allowed');
+      }
+    }
+    expect(await read(employee, project.id)).toMatchObject({
+      memberCount: 1,
+      members: [{ userId: ids.employee }],
+    });
+    expect(await count('project_members', 'project_id = $1', [project.id])).toBe(1);
   });
 
   it('409 project_customer_locked when the customer of a project with an open AI permission is changed, removed or replaced by a new one, for a member and for the founder; nothing is written, no customer is added; the other fields of the same body are not changed either', async () => {
