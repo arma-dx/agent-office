@@ -158,8 +158,9 @@ const requestSql = (chosen: string): string => `
 
 /**
  * The requests the person can see, the newest movement first; `mine` keeps only their own. The
- * order and the limit are applied to the requests themselves (the index tasks_requests_by_movement
- * serves them); the joins keep no order, so the page is ordered again.
+ * order and the limit are applied to the requests themselves, and an index serves each variant of
+ * that pick: tasks_requests_by_movement the full list, tasks_requests_of_requester the person's
+ * own. The joins keep no order, so the page is ordered again.
  */
 export async function listRequests(
   client: Queryable,
