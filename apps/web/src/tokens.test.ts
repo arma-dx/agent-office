@@ -1,3 +1,4 @@
+import { PROJECT_COLORS } from '@agent-office/shared';
 import { describe, expect, it } from 'vitest';
 import css from './index.css?raw';
 import { contrast, readTokens } from './test/contrast.ts';
@@ -45,6 +46,8 @@ const GRAPHIC_TOKENS = [
   '--status-live',
   ...STATUS_TONES.map((tone) => `--status-${tone}`),
 ];
+/** The fills of the project tile: a square on any surface, with a glyph in --surface on it. */
+const PROJECT_COLOR_TOKENS = Object.keys(light).filter((name) => name.startsWith('--project-'));
 
 function color(tokens: Record<string, string>, name: string): string {
   const value = tokens[name];
@@ -78,6 +81,11 @@ function requiredPairs(theme: 'light' | 'dark') {
     ...FIELD_SURFACES.map((surface) => ['--field-border', surface, GRAPHIC] as const),
     ['--on-brand', '--brand', TEXT] as const,
     ['--on-brand', '--brand-active', TEXT] as const,
+    // Project tile: the fill against every surface it can sit on, and the glyph against the fill.
+    ...PROJECT_COLOR_TOKENS.flatMap((token) => [
+      ...SURFACES.map((surface) => [token, surface, GRAPHIC] as const),
+      ['--surface', token, GRAPHIC] as const,
+    ]),
     // Status badge and inline banner: badge text, icon, body text and a link on the status fill.
     ...STATUS_TONES.flatMap((tone) => [
       [`--status-${tone}-text`, `--status-${tone}-fill`, TEXT] as const,
@@ -100,6 +108,10 @@ describe('color tokens (index.css)', () => {
       'cancelled',
       'error',
     ]);
+  });
+
+  it('has one colour token for every project colour of the shared contract', () => {
+    expect(PROJECT_COLOR_TOKENS).toEqual(PROJECT_COLORS.map((color) => `--project-${color}`));
   });
 
   it('defines the same tokens in the light and the dark theme', () => {

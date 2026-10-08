@@ -4,6 +4,8 @@ import css from '@/index.css?raw';
 import {
   APPROVAL_STATUS,
   APPROVAL_STATUSES,
+  PROJECT_STATUS,
+  PROJECT_STATUSES,
   RUN_STATUS,
   RUN_STATUSES,
   STATUS_TONES,
@@ -20,12 +22,14 @@ const ALL: StatusSpec[] = [
   ...TASK_STATUSES.map((status) => TASK_STATUS[status]),
   ...APPROVAL_STATUSES.map((status) => APPROVAL_STATUS[status]),
   ...RUN_STATUSES.map((status) => RUN_STATUS[status]),
+  ...PROJECT_STATUSES.map((status) => PROJECT_STATUS[status]),
 ];
 
 const ALL_REFS: StatusRef[] = [
   ...TASK_STATUSES.map((status) => ({ kind: 'task', status }) as const),
   ...APPROVAL_STATUSES.map((status) => ({ kind: 'approval', status }) as const),
   ...RUN_STATUSES.map((status) => ({ kind: 'run', status }) as const),
+  ...PROJECT_STATUSES.map((status) => ({ kind: 'project', status }) as const),
 ];
 
 /** The icon (by its lucide name) and the color role of each status, in the order of `statuses`. */
@@ -90,6 +94,33 @@ describe('status language', () => {
     });
   });
 
+  it('pins the five project statuses: three words keep their signs, two get signs to spare', () => {
+    // 8 October 2026, decision 17. "Sürüyor", "Tamamlandı" and "İptal" are the task's own signs;
+    // "Planlandı" shares the open circle and "Beklemede" has the dashed one to itself (a proposal
+    // awaiting the founder, docs/SONRA.md P1-l).
+    expect(PROJECT_STATUSES.map((status) => PROJECT_STATUS[status].label)).toEqual([
+      'Beklemede',
+      'Planlandı',
+      'Sürüyor',
+      'Tamamlandı',
+      'İptal',
+    ]);
+    expect(signs(PROJECT_STATUSES, PROJECT_STATUS)).toEqual({
+      backlog: 'CircleDashed, cancelled',
+      planned: 'Circle, open',
+      in_progress: 'ProgressCircle, in-progress',
+      completed: 'CircleCheck, done',
+      cancelled: 'Ban, cancelled',
+    });
+    // The dashed circle belongs to no task, approval or run status.
+    const others = [
+      ...TASK_STATUSES.map((status) => TASK_STATUS[status]),
+      ...APPROVAL_STATUSES.map((status) => APPROVAL_STATUS[status]),
+      ...RUN_STATUSES.map((status) => RUN_STATUS[status]),
+    ];
+    expect(others.map((spec) => spec.icon)).not.toContain(PROJECT_STATUS.backlog.icon);
+  });
+
   it('gives every status a known tone, and one icon and one tone per label', () => {
     for (const spec of ALL) expect(STATUS_TONES).toContain(spec.tone);
     // The same label always comes with the same icon and color, whatever the record is.
@@ -121,6 +152,7 @@ describe('status language', () => {
       TASK_STATUSES.map((status) => TASK_STATUS[status]),
       APPROVAL_STATUSES.map((status) => APPROVAL_STATUS[status]),
       RUN_STATUSES.map((status) => RUN_STATUS[status]),
+      PROJECT_STATUSES.map((status) => PROJECT_STATUS[status]),
     ]) {
       expect(new Set(specs.map((spec) => spec.icon)).size).toBe(specs.length);
     }

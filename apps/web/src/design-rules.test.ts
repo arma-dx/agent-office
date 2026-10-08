@@ -105,10 +105,11 @@ describe('design rules in class names (components and routes)', () => {
   });
 
   it('names only colors that the theme defines, so that no color class is silently empty', () => {
-    // Tailwind generates nothing for bg-sidebar-active or text-status-canceled, and says nothing.
+    // Tailwind generates nothing for bg-sidebar-active, text-status-canceled or bg-project-grey,
+    // and says nothing.
     const defined = new Set([...css.matchAll(/--color-([a-z0-9-]+):/g)].map((match) => match[1]));
     const families =
-      'status|sidebar|row|surface|ink|brand|on-brand|canvas|field|line|error|skeleton|google|' +
+      'status|project|sidebar|row|surface|ink|brand|on-brand|canvas|field|line|error|skeleton|google|' +
       'background|foreground|card|popover|primary|secondary|muted|accent|destructive|border|input|ring';
     const colorClass = new RegExp(
       `(?<![\\w-])(?:bg|text|border|outline|ring|fill|stroke)-((?:${families})(?:-[a-z0-9]+)*)(?![\\w-])`,

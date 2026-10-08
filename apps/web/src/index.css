@@ -15,6 +15,8 @@
  * - A field boundary (--field-border) reaches 3:1 only on --surface, --surface-muted, --row-hover
  *   and --canvas. Do not put an input, a select, a checkbox or a switch on --row-selected or on
  *   the sidebar row tones (2.45 to 2.77 there in the light theme).
+ * Project colours (--project-*) are fills of the project tile only: each reaches 3:1 on all seven
+ * surfaces, and --surface on each reaches 3:1.
  * tokens.test.ts measures these pairs from this file and fails below the thresholds.
  * --row-selected, --sidebar-line and --status-live have no user yet (a selected list row, a line
  * inside the sidebar, the live dot); they are kept because the set was measured as a whole.
@@ -165,6 +167,15 @@
   --status-error-fill: #fadede;
   --status-error-text: #b41f1f;
   --status-live: #2563eb;
+  /* Project colours: the fill of a project tile; the glyph on it is --surface. */
+  --project-gray: #5f6368;
+  --project-red: #c62828;
+  --project-orange: #b45309;
+  --project-green: #15803d;
+  --project-teal: #0f766e;
+  --project-blue: #1d4ed8;
+  --project-purple: #7e22ce;
+  --project-pink: #be185d;
   --radius: 0.375rem;
   /* Google sign-in button: colors fixed by Google's branding guidelines (light theme button). */
   --google-surface: #ffffff;
@@ -215,6 +226,15 @@
   --status-error-fill: #421a1a;
   --status-error-text: #ff6a68;
   --status-live: #51a2ff;
+  /* Project colours: the fill of a project tile; the glyph on it is --surface. */
+  --project-gray: #a3a3a3;
+  --project-red: #f87171;
+  --project-orange: #fb923c;
+  --project-green: #4ade80;
+  --project-teal: #2dd4bf;
+  --project-blue: #60a5fa;
+  --project-purple: #c084fc;
+  --project-pink: #f472b6;
   --google-surface: #131314;
   --google-border: #8e918f;
   --google-ink: #e3e3e3;
@@ -269,6 +289,15 @@
     --status-error-fill: #421a1a;
     --status-error-text: #ff6a68;
     --status-live: #51a2ff;
+    /* Project colours: the fill of a project tile; the glyph on it is --surface. */
+    --project-gray: #a3a3a3;
+    --project-red: #f87171;
+    --project-orange: #fb923c;
+    --project-green: #4ade80;
+    --project-teal: #2dd4bf;
+    --project-blue: #60a5fa;
+    --project-purple: #c084fc;
+    --project-pink: #f472b6;
     --google-surface: #131314;
     --google-border: #8e918f;
     --google-ink: #e3e3e3;
@@ -344,6 +373,14 @@
   --color-status-error-fill: var(--status-error-fill);
   --color-status-error-text: var(--status-error-text);
   --color-status-live: var(--status-live);
+  --color-project-gray: var(--project-gray);
+  --color-project-red: var(--project-red);
+  --color-project-orange: var(--project-orange);
+  --color-project-green: var(--project-green);
+  --color-project-teal: var(--project-teal);
+  --color-project-blue: var(--project-blue);
+  --color-project-purple: var(--project-purple);
+  --color-project-pink: var(--project-pink);
   --color-google-surface: var(--google-surface);
   --color-google-border: var(--google-border);
   --color-google-ink: var(--google-ink);
