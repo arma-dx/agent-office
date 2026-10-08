@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { agentStep } from '@agent-office/db';
 import { afterAll, describe, expect, it } from 'vitest';
 import { closeLostRun, runAgentJob } from '../src/runner/run.ts';
@@ -12,6 +13,7 @@ import {
   noDatabase,
   openRequest,
   runner,
+  testPools,
 } from './helpers.ts';
 import {
   ScriptedModel,
@@ -79,6 +81,70 @@ async function routedRequest(requestText = REQUEST): Promise<string> {
   const { deps } = await runner(new ScriptedModel([toolUse('route_task', ROUTE_TO_SOS)]));
   expect((await runAgentJob(deps, job(taskId, 'KOR-1', ids.founder))).outcome).toBe('routed');
   return taskId;
+}
+
+/** The founder gives the request to SOS-2 again, with a note ("Yönlendirmeyi düzelt"). */
+async function correctToSameAgent(taskId: string, note: string): Promise<void> {
+  await asPerson(ids.founder, 'select office.correct_routing($1, $2::jsonb)', [
+    taskId,
+    JSON.stringify([{ unit: 'SOS', agent: 'SOS-2', reason: note }]),
+  ]);
+}
+
+/** A run that is left "running", as a worker that died leaves it: opened with the worker's role. */
+async function leftOpen(taskId: string, agentCode: string, minutesLimit?: number): Promise<string> {
+  const [version] = await admin<{ id: string; model: string }>(
+    `select v.id, v.model from office.agent_definitions d
+     join office.card_versions v on v.id = d.current_version_id where d.code = $1`,
+    [agentCode],
+  );
+  return agentStep(
+    testPools().worker,
+    { companyId: ids.arma, userId: ids.founder, agentCode },
+    async (client) => {
+      const { rows } = await client.query<{ id: string }>(
+        `insert into office.runs
+           (company_id, task_id, agent_code, card_version_id, trigger_type, model, input)
+         values ($1, $2, $3, $4, 'request', $5, $6) returning id`,
+        [
+          ids.arma,
+          taskId,
+          agentCode,
+          version?.id,
+          version?.model,
+          minutesLimit === undefined
+            ? null
+            : JSON.stringify({ limits: { tool_calls: 10, duration_minutes: minutesLimit } }),
+        ],
+      );
+      return rows[0]?.id ?? '';
+    },
+  );
+}
+
+/** Moves the start of a run into the past (the column is fixed for every ordinary statement). */
+async function startedEarlier(runId: string, minutes: number): Promise<void> {
+  const client = await testPools().admin.connect();
+  try {
+    await client.query('begin');
+    await client.query(`set local session_replication_role = 'replica'`);
+    await client.query(
+      `update office.runs set started_at = started_at - make_interval(mins => $2) where id = $1`,
+      [runId, minutes],
+    );
+    await client.query('commit');
+  } finally {
+    client.release();
+  }
+}
+
+async function eventsOf(taskId: string, pattern: string): Promise<string[]> {
+  const rows = await admin<{ event: string }>(
+    `select event from office.audit_log
+     where record_type = 'task' and record_id = $1 and event like $2 order by id`,
+    [taskId, pattern],
+  );
+  return rows.map((row) => row.event);
 }
 
 function firstUserText(model: ScriptedModel, call = 0): string {
@@ -316,6 +382,16 @@ describe.skipIf(noDatabase)('the coordinator’s run', () => {
     });
     expect(await runCount(taskId)).toBe(1);
     expect(idle.requests).toHaveLength(0);
+    // The job leaves a trace of its own kind: a line in the log and a row on the request. It is
+    // not "run_refused", which the request's page reads as work that did not start.
+    expect(again.log).toEqual([
+      {
+        event: 'run_skipped',
+        fields: { reason: 'request_closed', task: taskId, agent: 'KOR-1' },
+      },
+    ]);
+    expect(await eventsOf(taskId, 'run_skipped')).toEqual(['run_skipped']);
+    expect(await eventsOf(taskId, 'run_refused')).toEqual([]);
   });
 
   it('tells the model what an empty agent does: in the tool, the card and the skill', async () => {
@@ -880,6 +956,21 @@ describe.skipIf(noDatabase)('what stops a run or keeps it from starting', () => 
       );
       expect(await runCount(taskId)).toBe(0);
       expect(idle.requests).toHaveLength(0);
+      // Work that was called for and did not start: the trace the request's page reads to say
+      // that the request stays with a person, in the name of the agent that was asked.
+      expect(before.log).toEqual([
+        {
+          event: 'run_refused',
+          fields: { reason: 'agent_not_enabled', task: taskId, agent: 'KOR-1' },
+        },
+      ]);
+      expect(
+        await admin(
+          `select event, agent_code, run_id from office.audit_log
+           where record_type = 'task' and record_id = $1 and event like 'run_%'`,
+          [taskId],
+        ),
+      ).toEqual([{ event: 'run_refused', agent_code: 'KOR-1', run_id: null }]);
     } finally {
       await admin(
         `update office.company_agents set status = 'enabled' where company_id = $1 and agent_code = 'KOR-1'`,
@@ -1108,36 +1199,156 @@ describe.skipIf(noDatabase)('a run never leaves its company, its request or its 
     expect(await statusOf(taskId)).toBe('open');
   });
 
-  it('routes once: a second job for the same request does nothing', async () => {
+  it('routes once: a second job for the same request does nothing and leaves a trace', async () => {
     const taskId = await routedRequest();
     const model = new ScriptedModel([]);
-    const { deps } = await runner(model);
+    const { deps, log } = await runner(model);
     expect((await runAgentJob(deps, job(taskId, 'KOR-1', ids.founder))).outcome).toBe(
       'duplicate_job',
     );
     expect(await runCount(taskId)).toBe(1);
+    expect(log).toEqual([
+      { event: 'run_skipped', fields: { reason: 'duplicate_job', task: taskId, agent: 'KOR-1' } },
+    ]);
+    expect(await eventsOf(taskId, 'run_skipped')).toEqual(['run_skipped']);
+    expect(await eventsOf(taskId, 'run_refused')).toEqual([]);
+  });
+});
+
+describe.skipIf(noDatabase)('a run belongs to the step it was opened for', () => {
+  afterAll(closeTestPools);
+
+  const NOTE = 'Tek paragraf olsun, fiyat yazma.';
+  const approvalsOf = (taskId: string) =>
+    admin<{ run_id: string; status: string; round: number }>(
+      `select a.run_id, a.status, r.round from office.approvals a
+       join office.task_routings r on r.id = a.routing_id where a.task_id = $1`,
+      [taskId],
+    );
+
+  it('a new routing to the same agent during its run stops that run before it submits', async () => {
+    const taskId = await routedRequest();
+    // The founder corrects the routing to the same agent while the model is answering; the answer
+    // is a result written without the founder's note.
+    const working = new ScriptedModel([
+      async () => {
+        await correctToSameAgent(taskId, NOTE);
+        return toolUse('submit_for_approval', RESULT, { input: 700, output: 50 });
+      },
+    ]);
+    const old = await runAgentJob((await runner(working)).deps, job(taskId, 'SOS-2', ids.founder));
+    expect(old).toMatchObject({ outcome: 'stopped', modelCalls: 1 });
+    // Stopped by the step, before the tool call was looked at; the call it paid for is recorded.
+    expect(await runRow(old.runId)).toMatchObject({
+      status: 'stopped',
+      error_code: 'routing_changed',
+      tool_call_count: 0,
+      input_tokens: 700,
+    });
+    expect(firstUserText(working)).not.toContain('<routing_note>');
+    expect(await approvalsOf(taskId)).toEqual([]);
+
+    // The job of the correction starts the work again, with the note.
+    const model = new ScriptedModel([toolUse('submit_for_approval', RESULT)]);
+    const fresh = await runAgentJob((await runner(model)).deps, job(taskId, 'SOS-2', ids.founder));
+    expect(fresh.outcome).toBe('submitted');
+    expect(firstUserText(model)).toContain('<routing_note>');
+    expect(firstUserText(model)).toContain(NOTE);
+    expect(await approvalsOf(taskId)).toEqual([
+      { run_id: fresh.runId, status: 'pending', round: 2 },
+    ]);
   });
 
-  it('closes a run its worker left open, so the request does not look busy for ever', async () => {
-    const taskId = await openRequest(ids.founder, REQUEST);
-    const { deps } = await runner(new ScriptedModel([]));
-    // A run that is left "running": opened by hand with the worker's role.
-    const [version] = await admin<{ id: string }>(
-      `select current_version_id as id from office.agent_definitions where code = 'KOR-1'`,
-    );
-    const runId = await agentStep(
-      deps.pool,
-      { companyId: ids.arma, userId: ids.founder, agentCode: 'KOR-1' },
-      async (client) => {
-        const { rows } = await client.query<{ id: string }>(
-          `insert into office.runs (company_id, task_id, agent_code, card_version_id, trigger_type, model)
-           values ($1, $2, 'KOR-1', $3, 'request', 'claude-haiku-4-5-20251001') returning id`,
-          [ids.arma, taskId, version?.id],
-        );
-        return rows[0]?.id ?? '';
+  it('the job of a new routing does not wait for the open run of the replaced step: it closes it and starts', async () => {
+    const taskId = await routedRequest();
+    const model = new ScriptedModel([toolUse('submit_for_approval', RESULT)]);
+    const next = await runner(model);
+    let fresh: Awaited<ReturnType<typeof runAgentJob>> | undefined;
+    // While the first run's model call is open: the correction, and the whole run of its job.
+    const working = new ScriptedModel([
+      async () => {
+        await correctToSameAgent(taskId, NOTE);
+        fresh = await runAgentJob(next.deps, job(taskId, 'SOS-2', ids.founder));
+        return toolUse('submit_for_approval', RESULT, { input: 700, output: 50 });
       },
+    ]);
+    const first = await runner(working);
+    const old = await runAgentJob(first.deps, job(taskId, 'SOS-2', ids.founder));
+    // The new job was not dropped as a duplicate: it ran with the note and submitted.
+    expect(fresh).toMatchObject({ outcome: 'submitted', modelCalls: 1 });
+    expect(firstUserText(model)).toContain(NOTE);
+    expect(next.log).toContainEqual({
+      event: 'run_superseded',
+      fields: { run: old.runId, task: taskId, agent: 'SOS-2' },
+    });
+    // The older run was closed when the new one opened; what its last call cost is still written,
+    // and its late answer stores nothing.
+    expect(old).toMatchObject({ outcome: 'stopped', modelCalls: 1 });
+    expect(await runRow(old.runId)).toMatchObject({
+      status: 'stopped',
+      error_code: 'routing_changed',
+      tool_call_count: 0,
+      input_tokens: 700,
+    });
+    expect(
+      await admin(`select event from office.audit_log where run_id = $1 order by id`, [old.runId]),
+    ).toEqual([{ event: 'run_started' }, { event: 'run_stopped' }]);
+    expect(await approvalsOf(taskId)).toEqual([
+      { run_id: fresh?.runId, status: 'pending', round: 2 },
+    ]);
+    expect(await statusOf(taskId)).toBe('awaiting_approval');
+  });
+
+  it('a run a dead worker left open does not swallow the retry, and a job of the same step is still a duplicate', async () => {
+    const taskId = await routedRequest();
+    const lost = await leftOpen(taskId, 'SOS-2', 5);
+    // A second job for the step that run was opened for: the work is already running.
+    const idle = new ScriptedModel([]);
+    const same = await runner(idle);
+    expect((await runAgentJob(same.deps, job(taskId, 'SOS-2', ids.founder))).outcome).toBe(
+      'duplicate_job',
     );
-    await closeLostRun(deps, job(taskId, 'KOR-1', ids.founder));
-    expect(await runRow(runId)).toMatchObject({ status: 'failed', error_code: 'worker_lost' });
+    expect(same.log).toEqual([
+      { event: 'run_skipped', fields: { reason: 'duplicate_job', task: taskId, agent: 'SOS-2' } },
+    ]);
+    expect(await runRow(lost)).toMatchObject({ status: 'running' });
+    // The founder retries the documented way: routes to the same agent again.
+    await correctToSameAgent(taskId, NOTE);
+    const model = new ScriptedModel([toolUse('submit_for_approval', RESULT)]);
+    const retry = await runAgentJob((await runner(model)).deps, job(taskId, 'SOS-2', ids.founder));
+    expect(retry.outcome).toBe('submitted');
+    expect(await runRow(lost)).toMatchObject({ status: 'stopped', error_code: 'routing_changed' });
+  });
+
+  it('closes the run a job lost, and never another run of the same request and agent', async () => {
+    const taskId = await routedRequest();
+    const { deps, log } = await runner(new ScriptedModel([]));
+    const lostJob = job(taskId, 'SOS-2', ids.founder);
+    // A healthy run of a newer job: open, inside its own time limit of five minutes.
+    const healthy = await leftOpen(taskId, 'SOS-2', 5);
+    // The older job reaches the dead letter queue; the runner of another job failed after opening
+    // another run, or before it opened one. None of them touches this run.
+    await closeLostRun(deps, lostJob, 'overdue');
+    await closeLostRun(deps, lostJob, { runId: randomUUID() });
+    await closeLostRun(deps, lostJob, { runId: null });
+    expect(await runRow(healthy)).toMatchObject({ status: 'running', error_code: null });
+    expect(log).toEqual([]);
+    // Past its own limit and still open: nobody is working on it. Closed, so that the request
+    // does not look busy for ever.
+    await startedEarlier(healthy, 7);
+    await closeLostRun(deps, lostJob, 'overdue');
+    expect(await runRow(healthy)).toMatchObject({ status: 'failed', error_code: 'worker_lost' });
+    expect(log).toEqual([{ event: 'run_lost', fields: { run: healthy } }]);
+    expect(
+      await admin(`select event from office.audit_log where run_id = $1 order by id`, [healthy]),
+    ).toEqual([{ event: 'run_failed' }]);
+
+    // The runner's own failure names the run it opened: that one is closed at once.
+    const other = await openRequest(ids.founder, REQUEST);
+    const crashed = await leftOpen(other, 'KOR-1');
+    await closeLostRun(deps, job(other, 'KOR-1', ids.founder), 'overdue');
+    expect(await runRow(crashed)).toMatchObject({ status: 'running' });
+    await closeLostRun(deps, job(other, 'KOR-1', ids.founder), { runId: crashed });
+    expect(await runRow(crashed)).toMatchObject({ status: 'failed', error_code: 'worker_lost' });
   });
 });

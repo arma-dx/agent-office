@@ -65,12 +65,16 @@ export async function assertWorkerRole(pool: Pool): Promise<void> {
  */
 export async function handleAgentRunJob(deps: RunnerDeps, data: unknown): Promise<void> {
   let failed = false;
+  // The run this job opened, if it got that far: only that run is this job's to close.
+  let runId: string | null = null;
   try {
-    await runAgentJob(deps, data);
+    await runAgentJob(deps, data, (opened) => {
+      runId = opened;
+    });
   } catch (error) {
     failed = true;
     deps.log('job_failed', { type: errorKind(error), state: sqlStateOf(error) });
-    await closeLostRun(deps, data).catch(() => undefined);
+    await closeLostRun(deps, data, { runId }).catch(() => undefined);
   }
   if (failed) {
     // Thrown outside the catch on purpose: the new error carries no cause, no message and no
@@ -130,7 +134,7 @@ export async function startWorker(env: WorkerEnv): Promise<RunningWorker> {
   );
   await queue.work(AGENT_RUN_DEAD_QUEUE, { batchSize: 1 }, async (jobs) => {
     for (const job of jobs) {
-      await closeLostRun(deps, job.data);
+      await closeLostRun(deps, job.data, 'overdue');
     }
   });
   logLine('worker_started', { mode: describeWorker(env) });

@@ -264,8 +264,16 @@ function finalText(message: ModelMessage): string | null {
   return text === '' ? null : text.slice(0, FINAL_TEXT_MAX).toWellFormed();
 }
 
-/** Runs one job. Never throws for anything a job, a card, the model or the request can cause. */
-export async function runAgentJob(deps: RunnerDeps, rawJob: unknown): Promise<RunResult> {
+/**
+ * Runs one job. Never throws for anything a job, a card, the model or the request can cause.
+ * `onRunOpened` is told the id of the run this job opened, so that the caller can close exactly
+ * that run if the runner itself fails.
+ */
+export async function runAgentJob(
+  deps: RunnerDeps,
+  rawJob: unknown,
+  onRunOpened?: (runId: string) => void,
+): Promise<RunResult> {
   const none = (outcome: RunOutcome): RunResult => ({ outcome, runId: null, modelCalls: 0 });
   const parsedJob = agentRunJobSchema.safeParse(rawJob);
   if (!parsedJob.success) {
@@ -288,6 +296,18 @@ export async function runAgentJob(deps: RunnerDeps, rawJob: unknown): Promise<Ru
     ).catch(() => undefined);
     return none(outcome);
   };
+  /**
+   * A job that found nothing to do: the work it called for is already running or waiting, or the
+   * request is closed. Not a missed start, so the trace has a name of its own (the request's page
+   * reads "run_refused" as work that was called for and did not start).
+   */
+  const skip = async (outcome: RunOutcome): Promise<RunResult> => {
+    deps.log('run_skipped', { reason: outcome, task: job.taskId, agent: job.agentCode });
+    await agentStep(deps.pool, context, (client) =>
+      audit(client, 'run_skipped', { recordType: 'task', recordId: job.taskId }),
+    ).catch(() => undefined);
+    return none(outcome);
+  };
 
   // Before any company data is read: the card version and the catalog (global tables).
   const version = await loadCard(deps.pool, job.agentCode);
@@ -307,7 +327,16 @@ export async function runAgentJob(deps: RunnerDeps, rawJob: unknown): Promise<Ru
   type Opened =
     | { kind: 'refused'; outcome: RunOutcome }
     | { kind: 'closed'; outcome: RunOutcome; runId: string }
-    | { kind: 'open'; runId: string; data: PromptData; previousApprovalId: string | null };
+    | {
+        kind: 'open';
+        runId: string;
+        // The step the run was opened for, as the database wrote it; null for the coordinator.
+        stepId: string | null;
+        data: PromptData;
+        previousApprovalId: string | null;
+      };
+  // Runs of this agent that were still open for a step that has since been replaced.
+  const superseded: string[] = [];
   const opened = await agentStep(deps.pool, context, async (client): Promise<Opened> => {
     // Two jobs for one request wait for each other here.
     await client.query('select pg_advisory_xact_lock(hashtextextended($1, 0))', [job.taskId]);
@@ -361,11 +390,35 @@ export async function runAgentJob(deps: RunnerDeps, rawJob: unknown): Promise<Ru
       // The coordinator routes once; a unit agent works only on a request routed to it now.
       return { kind: 'refused', outcome: coordinator ? 'duplicate_job' : 'job_stale' };
     }
-    const running = await client.query(
-      `select 1 from office.runs where task_id = $1 and agent_code = $2 and status = 'running'`,
+    // A run belongs to the step it was opened for (7 October decision 7: routing again starts the
+    // agent's work again). An open run of the step that is active now is this very work: the job
+    // is a duplicate. An open run of a step that gave way to a new routing, also one to the same
+    // agent, never read what the new step carries and cannot submit any more: it is closed here,
+    // and the new run opens. This is also what ends a run a dead worker left open, once a person
+    // routes the request again.
+    const running = await client.query<{ id: string; routing_id: string | null }>(
+      `select id, routing_id from office.runs
+       where task_id = $1 and agent_code = $2 and status = 'running'
+       order by started_at, id`,
       [job.taskId, job.agentCode],
     );
-    if (running.rows.length > 0) return { kind: 'refused', outcome: 'duplicate_job' };
+    if (running.rows.some((run) => run.routing_id === task.step_id)) {
+      return { kind: 'refused', outcome: 'duplicate_job' };
+    }
+    for (const stale of running.rows) {
+      await client.query(
+        `update office.runs set status = 'stopped', finished_at = now(),
+           error_code = 'routing_changed'
+         where id = $1 and status = 'running'`,
+        [stale.id],
+      );
+      await audit(client, 'run_stopped', {
+        runId: stale.id,
+        recordType: 'task',
+        recordId: job.taskId,
+      });
+      superseded.push(stale.id);
+    }
 
     // A second attempt: what was written before and what the person asked to change. Only the
     // results of the step that is active now count: a step a person routed again starts fresh.
@@ -469,11 +522,11 @@ export async function runAgentJob(deps: RunnerDeps, rawJob: unknown): Promise<Ru
       }
     }
 
-    const inserted = await client.query<{ id: string }>(
+    const inserted = await client.query<{ id: string; routing_id: string | null }>(
       `insert into office.runs
          (company_id, task_id, agent_code, card_version_id, trigger_type, model, input)
        values (office.ctx_company_id(), $1, $2, $3, $4, $5, $6)
-       returning id`,
+       returning id, routing_id`,
       [
         job.taskId,
         job.agentCode,
@@ -492,6 +545,7 @@ export async function runAgentJob(deps: RunnerDeps, rawJob: unknown): Promise<Ru
     if (runId === undefined) {
       throw new Error('The run could not be opened');
     }
+    const stepId = inserted.rows[0]?.routing_id ?? null;
     await audit(client, 'run_started', { runId, recordType: 'task', recordId: job.taskId });
 
     // The card and the model must allow the run; if not, the run is closed where it was opened,
@@ -515,6 +569,7 @@ export async function runAgentJob(deps: RunnerDeps, rawJob: unknown): Promise<Ru
     return {
       kind: 'open',
       runId,
+      stepId,
       previousApprovalId,
       data: {
         facts: {
@@ -535,16 +590,22 @@ export async function runAgentJob(deps: RunnerDeps, rawJob: unknown): Promise<Ru
     // check_violation from the run's own triggers: the agent was stopped or the request closed
     // between the checks above and the insert.
     if (sqlState(error) === '23514') {
+      // The transaction was rolled back, and with it the closing of older runs.
+      superseded.length = 0;
       return { kind: 'refused', outcome: 'job_stale' };
     }
     throw error;
   });
 
+  for (const run of superseded) {
+    deps.log('run_superseded', { run, task: job.taskId, agent: job.agentCode });
+  }
   if (opened.kind === 'refused') {
     return opened.outcome === 'duplicate_job' || opened.outcome === 'request_closed'
-      ? none(opened.outcome)
+      ? skip(opened.outcome)
       : refuse(opened.outcome);
   }
+  onRunOpened?.(opened.runId);
   if (opened.kind === 'closed') {
     deps.log('run_closed', { run: opened.runId, reason: opened.outcome });
     return { outcome: opened.outcome, runId: opened.runId, modelCalls: 0 };
@@ -869,14 +930,16 @@ export async function runAgentJob(deps: RunnerDeps, rawJob: unknown): Promise<Ru
       modelCalls += 1;
 
       // After every model call: what it cost, and whether the run may go on. The database does
-      // not stop a run that is already open, so the switch and the request are read again here.
+      // not stop a run that is already open, so the switch, the request and the step are read
+      // again here. The cost is written whatever the run's status: a call that was answered is
+      // paid for, also when the run was closed from elsewhere while the model was answering.
       const usage = usageOf(message);
       const goOn = await agentStep(deps.pool, context, async (client) => {
         await client.query(
           `update office.runs set input_tokens = input_tokens + $2,
              output_tokens = output_tokens + $3, cache_write_tokens = cache_write_tokens + $4,
              cache_read_tokens = cache_read_tokens + $5, cost_usd = cost_usd + $6::numeric
-           where id = $1 and status = 'running'`,
+           where id = $1`,
           [
             runId,
             usage.input,
@@ -893,15 +956,19 @@ export async function runAgentJob(deps: RunnerDeps, rawJob: unknown): Promise<Ru
         }>(
           `select (select ca.status from office.company_agents ca where ca.agent_code = $2) as agent,
                   t.status as task,
-                  (select s.agent_code from office.task_routings s
-                   where s.task_id = t.id and s.status = 'active') as step
+                  (select s.id from office.task_routings s
+                   where s.task_id = t.id and s.status = 'active' and s.agent_code = $2) as step
            from office.tasks t where t.id = $1`,
           [job.taskId, job.agentCode],
         );
         const row = state.rows[0];
         if (!row || row.task === 'done' || row.task === 'cancelled') return 'request_closed';
         if (row.agent !== 'enabled') return 'agent_stopped';
-        if (!coordinator && row.step !== job.agentCode) return 'routing_changed';
+        if (coordinator) return null;
+        // A unit agent works for the step its run was opened for, not for whichever step names
+        // its code now: a new routing to the same agent is a new step, with a note this run never
+        // read.
+        if (row.step === null || row.step !== opened.stepId) return 'routing_changed';
         return null;
       });
       if (goOn !== null) {
@@ -980,26 +1047,56 @@ export async function runAgentJob(deps: RunnerDeps, rawJob: unknown): Promise<Ru
   }
 }
 
+// How long after its own time limit a run that is still open counts as lost: the time the runner
+// needs to write its last records.
+const LOST_AFTER_LIMIT_SECONDS = 60;
+
 /**
- * A job that failed or expired without closing its run (the worker died): the run it left open is
- * closed as failed, so that the request falls to a person instead of looking busy for ever.
+ * A job that failed or expired without closing its run: the run it left open is closed as failed,
+ * so that the request falls to a person instead of looking busy for ever.
+ *
+ * Only the run of that job is closed, never another one of the same request and agent: after a
+ * new routing to the same agent a newer job has a healthy run of its own.
+ *   { runId }   the runner itself failed (the worker's catch): the run that job opened, if any;
+ *   'overdue'   the job reached the dead letter queue (the worker died, nothing remembers the
+ *               run's id): every open run of the request and agent whose own time limit, stored
+ *               with the run when it was opened, has passed. A run that is still inside its limit
+ *               belongs to a job that is alive.
  */
 export async function closeLostRun(
   deps: Pick<RunnerDeps, 'pool' | 'log'>,
   rawJob: unknown,
+  which: { runId: string | null } | 'overdue',
 ): Promise<void> {
   const parsed = agentRunJobSchema.safeParse(rawJob);
   if (!parsed.success) return;
   const job = parsed.data;
+  if (which !== 'overdue' && which.runId === null) return;
   await agentStep(
     deps.pool,
     { companyId: job.companyId, userId: job.userId, agentCode: job.agentCode },
     async (client) => {
-      const closed = await client.query<{ id: string }>(
-        `update office.runs set status = 'failed', finished_at = now(), error_code = 'worker_lost'
-         where task_id = $1 and agent_code = $2 and status = 'running' returning id`,
-        [job.taskId, job.agentCode],
-      );
+      const closed =
+        which === 'overdue'
+          ? await client.query<{ id: string }>(
+              `update office.runs set status = 'failed', finished_at = now(),
+                 error_code = 'worker_lost'
+               where task_id = $1 and agent_code = $2 and status = 'running'
+                 and started_at + make_interval(secs => ($3::int + 60 * case
+                       when jsonb_typeof(input -> 'limits' -> 'duration_minutes') = 'number'
+                       then (input -> 'limits' ->> 'duration_minutes')::numeric
+                       else 0
+                     end)::double precision) <= now()
+               returning id`,
+              [job.taskId, job.agentCode, LOST_AFTER_LIMIT_SECONDS],
+            )
+          : await client.query<{ id: string }>(
+              `update office.runs set status = 'failed', finished_at = now(),
+                 error_code = 'worker_lost'
+               where id = $3 and task_id = $1 and agent_code = $2 and status = 'running'
+               returning id`,
+              [job.taskId, job.agentCode, which.runId],
+            );
       for (const row of closed.rows) {
         await audit(client, 'run_failed', {
           runId: row.id,
