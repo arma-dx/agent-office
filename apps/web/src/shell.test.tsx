@@ -139,6 +139,7 @@ describe('top bar: location', () => {
     ['/c/armadx/approvals', 'Onaylar'],
     ['/c/armadx/tasks', 'Görevler'],
     ['/c/armadx/notes', 'Notlar'],
+    ['/c/armadx/projects', 'Projeler'],
     ['/c/armadx/office', 'Ofis görünümü'],
     ['/c/armadx/agents', 'Ajanlar'],
     ['/c/armadx/settings/users', 'Kullanıcılar'],
@@ -150,6 +151,7 @@ describe('top bar: location', () => {
       'GET /members': () => json({ members: [] }),
       'GET /invitations': () => json({ invitations: [] }),
       'GET /office': () => json({ units: [] }),
+      'GET /projects': () => json({ projects: [], truncated: false }),
     });
     renderApp(path);
     const bar = await screen.findByRole('banner');
@@ -191,6 +193,8 @@ describe('top bar: location', () => {
         '/_authed/c/$company/approvals',
         '/_authed/c/$company/tasks',
         '/_authed/c/$company/notes',
+        '/_authed/c/$company/projects',
+        '/_authed/c/$company/projects_/$projectId',
         '/_authed/c/$company/office',
         '/_authed/c/$company/agents',
         '/_authed/c/$company/settings/users',
