@@ -764,6 +764,57 @@ describe.skipIf(noDatabase)('a request from the first line to "done"', () => {
     await post(founder, `/api/requests/${id}/close`);
   });
 
+  it('a run is called late by its own time limit, as it was stored with the run', async () => {
+    const id = randomUUID();
+    await post(founder, '/api/requests', { id, text: 'LinkedIn için gönderi yaz' });
+    expect((await work(new ScriptedModel([toolUse('route_task', ROUTE_TO_SOS)]))).outcome).toBe(
+      'routed',
+    );
+    /** Moves the request's runs and its routing this many minutes into the past, in step. */
+    const earlier = async (minutes: number): Promise<void> => {
+      const client = await testPools().admin.connect();
+      try {
+        await client.query('begin');
+        await client.query(`set local session_replication_role = 'replica'`);
+        await client.query(
+          `update office.task_routings set created_at = created_at - make_interval(mins => $2)
+           where task_id = $1`,
+          [id, minutes],
+        );
+        await client.query(
+          `update office.runs set started_at = started_at - make_interval(mins => $2)
+           where task_id = $1`,
+          [id, minutes],
+        );
+        await client.query('commit');
+      } finally {
+        client.release();
+      }
+    };
+    const seen: { stage: string; delayed: boolean }[] = [];
+    const look = async (): Promise<void> => {
+      const { stage, delayed } = await detail(founder, id);
+      seen.push({ stage, delayed });
+    };
+    // While the unit agent's model call is open. Its card allows five minutes: after six the run
+    // is not late yet; after eight it is, although a fixed twelve minutes have not passed.
+    const model = new ScriptedModel([
+      async () => {
+        await earlier(6);
+        await look();
+        await earlier(2);
+        await look();
+        return toolUse('submit_for_approval', RESULT);
+      },
+    ]);
+    expect(await work(model)).toEqual({ outcome: 'submitted', agent: 'SOS-2' });
+    expect(seen).toEqual([
+      { stage: 'working', delayed: false },
+      { stage: 'working', delayed: true },
+    ]);
+    await post(founder, `/api/requests/${id}/close`);
+  });
+
   it('a worker that is stopped in the middle of a run does not leave the request busy for ever', async () => {
     const id = randomUUID();
     await post(founder, '/api/requests', { id, text: 'LinkedIn için gönderi yaz' });

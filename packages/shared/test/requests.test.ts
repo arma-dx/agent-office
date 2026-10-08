@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
   QUEUE_GRACE_MS,
   REQUEST_TITLE_MAX,
-  RUN_GRACE_MS,
   acceptanceDecisionSchema,
   approvalDecisionSchema,
   closeRequestSchema,
@@ -11,6 +10,7 @@ import {
   deriveRequestTitle,
   deriveStage,
   requestCauseSchema,
+  runGraceMs,
   type RequestFacts,
 } from '../src/requests.ts';
 
@@ -117,6 +117,7 @@ describe('the bodies a person sends', () => {
 describe('where a request is and whose turn it is', () => {
   const now = new Date('2026-10-07T12:00:00Z');
   const ago = (ms: number): Date => new Date(now.getTime() - ms);
+  const MINUTE = 60_000;
   const base: RequestFacts = {
     status: 'open',
     createdAt: ago(10_000),
@@ -146,7 +147,14 @@ describe('where a request is and whose turn it is', () => {
     status: NonNullable<RequestFacts['lastRun']>['status'],
     errorCode: string | null = null,
     startedMsAgo = 3_000,
-  ): RequestFacts['lastRun'] => ({ agentCode, status, errorCode, startedAt: ago(startedMsAgo) });
+    limitMinutes: number | null = null,
+  ): RequestFacts['lastRun'] => ({
+    agentCode,
+    status,
+    errorCode,
+    startedAt: ago(startedMsAgo),
+    limitMinutes,
+  });
   const of = (facts: Partial<RequestFacts>, from: RequestFacts = base): string => {
     const derived = deriveStage({ ...from, ...facts }, now);
     return [
@@ -161,7 +169,20 @@ describe('where a request is and whose turn it is', () => {
     expect(of({})).toBe('routing - coordinator on time');
     expect(of({ createdAt: ago(QUEUE_GRACE_MS + 1) })).toBe('routing - coordinator delayed');
     expect(of({ lastRun: run('KOR-1', 'running') })).toBe('routing - coordinator on time');
-    expect(of({ lastRun: run('KOR-1', 'running', null, RUN_GRACE_MS + 1) })).toBe(
+    // A run that carries no limit is measured by the default of a card: ten minutes and the margin.
+    expect(runGraceMs(null)).toBe(12 * MINUTE);
+    expect(of({ lastRun: run('KOR-1', 'running', null, 12 * MINUTE) })).toBe(
+      'routing - coordinator on time',
+    );
+    expect(of({ lastRun: run('KOR-1', 'running', null, 12 * MINUTE + 1) })).toBe(
+      'routing - coordinator delayed',
+    );
+    // The coordinator's card allows two minutes: a run of it that is still open after four is
+    // not being worked on.
+    expect(of({ lastRun: run('KOR-1', 'running', null, 4 * MINUTE, 2) })).toBe(
+      'routing - coordinator on time',
+    );
+    expect(of({ lastRun: run('KOR-1', 'running', null, 4 * MINUTE + 1, 2) })).toBe(
       'routing - coordinator delayed',
     );
     expect(of({ coordinatorEnabled: false })).toBe(
@@ -185,6 +206,21 @@ describe('where a request is and whose turn it is', () => {
     );
     expect(of({ awaitedSince: ago(QUEUE_GRACE_MS + 1) }, routed)).toBe('working - agent delayed');
     expect(of({ lastRun: run('SOS-2', 'running') }, routed)).toBe('working - agent on time');
+    // "Gecikti" follows the run's own limit. A card may allow sixty minutes: a healthy run of a
+    // thirty minute card is not late at minute twenty, and it is two minutes after its limit.
+    expect(of({ lastRun: run('SOS-2', 'running', null, 20 * MINUTE, 30) }, routed)).toBe(
+      'working - agent on time',
+    );
+    expect(of({ lastRun: run('SOS-2', 'running', null, 32 * MINUTE, 30) }, routed)).toBe(
+      'working - agent on time',
+    );
+    expect(of({ lastRun: run('SOS-2', 'running', null, 32 * MINUTE + 1, 30) }, routed)).toBe(
+      'working - agent delayed',
+    );
+    // And a lost run of a five minute card is noticed after seven minutes, not after twelve.
+    expect(of({ lastRun: run('SOS-2', 'running', null, 7 * MINUTE + 1, 5) }, routed)).toBe(
+      'working - agent delayed',
+    );
     expect(of({ lastRun: run('SOS-2', 'running'), changesRequested: true }, routed)).toBe(
       'revising - agent on time',
     );
@@ -322,10 +358,7 @@ describe('where a request is and whose turn it is', () => {
     expect(of({}, returned)).toBe('cancelled returned_no_agent none on time');
     // Old, and never late: nothing is awaited on a closed request.
     expect(
-      of(
-        { createdAt: ago(10 * RUN_GRACE_MS), lastRun: run('KOR-1', 'completed', null, 9e6) },
-        returned,
-      ),
+      of({ createdAt: ago(120 * MINUTE), lastRun: run('KOR-1', 'completed', null, 9e6) }, returned),
     ).toBe('cancelled returned_no_agent none on time');
     // A person's own close is said as that person's.
     expect(of({ closedBy: 'requester' }, returned)).toBe(

@@ -81,6 +81,7 @@ export function factsOf(row: RequestRow): RequestFacts {
             status: runStatusSchema.parse(row.run_status),
             errorCode: row.run_error_code,
             startedAt: row.run_started_at,
+            limitMinutes: row.run_limit_minutes,
           }
         : null,
   };

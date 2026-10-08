@@ -72,6 +72,8 @@ export interface RequestRow {
   run_status: string | null;
   run_error_code: string | null;
   run_started_at: Date | null;
+  // The time limit stored with that run when it opened (minutes); null when it carries none.
+  run_limit_minutes: number | null;
 }
 
 // One row per request with everything the stage is derived from. The facts about approvals the
@@ -137,7 +139,8 @@ const requestSql = (chosen: string): string => `
          f.last_result_status, f.last_result_attempt, f.last_change_request_at,
          f.not_started_at,
          lr.agent_code as run_agent_code, lr.status as run_status,
-         lr.error_code as run_error_code, lr.started_at as run_started_at
+         lr.error_code as run_error_code, lr.started_at as run_started_at,
+         lr.limit_minutes as run_limit_minutes
   from (
     select x.id, x.company_id, x.title, x.description, x.status, x.created_at, x.updated_at,
            x.requester_user_id, x.closed_by_user_id, x.close_reason, x.unit_code
@@ -150,7 +153,11 @@ const requestSql = (chosen: string): string => `
   left join office.agent_definitions sa on sa.code = s.agent_code
   left join office.request_flow_facts(array[t.id]) f on true
   left join lateral (
-    select r.agent_code, r.status, r.error_code, r.started_at
+    select r.agent_code, r.status, r.error_code, r.started_at,
+           case
+             when jsonb_typeof(r.input -> 'limits' -> 'duration_minutes') = 'number'
+             then (r.input -> 'limits' ->> 'duration_minutes')::float8
+           end as limit_minutes
     from office.runs r where r.task_id = t.id
     order by r.started_at desc, r.id desc
     limit 1

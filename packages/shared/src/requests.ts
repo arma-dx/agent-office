@@ -176,6 +176,9 @@ export interface RequestFacts {
     status: RunStatus;
     errorCode: string | null;
     startedAt: Date;
+    // The run's own time limit, as it was stored with the run when it opened (the limit of the
+    // card version it runs with). Null when the run carries none.
+    limitMinutes: number | null;
   } | null;
 }
 
@@ -188,10 +191,22 @@ export interface DerivedStage {
   delayed: boolean;
 }
 
-// A queued run should start within this time; a running one should end within the longest time
-// limit a card may have (CLAUDE.md default: 10 minutes) plus the same margin.
+// A queued run should start within this time.
 export const QUEUE_GRACE_MS = 2 * 60 * 1000;
-export const RUN_GRACE_MS = 12 * 60 * 1000;
+// CLAUDE.md: without a limit on the card a run may take 10 minutes. Used for a run that carries
+// no limit of its own.
+const DEFAULT_RUN_MINUTES = 10;
+
+/**
+ * How long a run may stay open before the panel says "gecikti": the run's own time limit plus the
+ * same margin. No fixed number fits every card (a card may allow from one to sixty minutes): a
+ * constant above the default would call a healthy run of a thirty minute card late and leave a
+ * lost run of a two minute card unnoticed for ten. The runner ends a run at its limit, so a run
+ * that is still open after this time is not being worked on.
+ */
+export function runGraceMs(limitMinutes: number | null): number {
+  return (limitMinutes ?? DEFAULT_RUN_MINUTES) * 60 * 1000 + QUEUE_GRACE_MS;
+}
 
 function causeOfRun(run: NonNullable<RequestFacts['lastRun']>, coordinator: boolean): RequestCause {
   if (run.status === 'limit_reached') return 'limit_reached';
@@ -255,7 +270,9 @@ export function deriveStage(facts: RequestFacts, now: Date): DerivedStage {
   const run = facts.lastRun;
   if (!facts.routed) {
     if (run?.status === 'running') {
-      return at('routing', 'coordinator', { delayed: since(run.startedAt) > RUN_GRACE_MS });
+      return at('routing', 'coordinator', {
+        delayed: since(run.startedAt) > runGraceMs(run.limitMinutes),
+      });
     }
     if (run) {
       return at('fell_to_person', 'founder', { cause: causeOfRun(run, true) });
@@ -278,7 +295,7 @@ export function deriveStage(facts: RequestFacts, now: Date): DerivedStage {
   }
   const working: RequestStage = facts.changesRequested ? 'revising' : 'working';
   if (run?.status === 'running' && run.agentCode === step.agentCode) {
-    return at(working, 'agent', { delayed: since(run.startedAt) > RUN_GRACE_MS });
+    return at(working, 'agent', { delayed: since(run.startedAt) > runGraceMs(run.limitMinutes) });
   }
   if (facts.lastResult?.status === 'changes_requested' && facts.lastResult.attempt >= 2) {
     // 2 October decision 10: after the second change request the work falls to a person.
