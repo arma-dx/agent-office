@@ -128,10 +128,20 @@ const ENDED_WITHOUT_RESULT = {
  * run that thinks, and the provider's own guidance is to check that the call was made and ask again.
  * The runner's own words, in a block of their own that no data block can imitate (dataBlock
  * escapes every "<").
+ *
+ * Two texts, because the two kinds of run end differently. A unit agent that cannot do the work
+ * says so in prose and does not call its tool. The coordinator never ends in prose: "no unit fits"
+ * is an answer of its tool too (an empty unit), so its reminder asks for the tool and nothing else.
  */
-const REMINDER = `<runner_notice>
-Çalışman bitiş aracı çağrılmadan sona erdi; yazdığın metin kaydedilmedi. Sonuç yalnızca bitiş aracınla kaydedilir. Sonucu sunacaksan şimdi bitiş aracını çağır. İşi yapamıyorsan aracı çağırma; nedenini bir iki cümleyle yeniden yaz.
-</runner_notice>`;
+const notice = (body: string): string => `<runner_notice>\n${body}\n</runner_notice>`;
+const REMINDER = {
+  coordinator: notice(
+    'Çalışman bitiş aracı çağrılmadan sona erdi; yazdığın metin kaydedilmedi. Yönlendirme kararın yalnızca `route_task` aracıyla kaydedilir; şimdi bitiş aracını çağır. Talep hiçbir birime oturmuyorsa ya da hangi birimin işi olduğu anlaşılmıyorsa aracı yine çağır: unit_code ve agent_code boş metin ("") olsun, nedenini reason alanına yaz. Düz metinle yanıt verme.',
+  ),
+  agent: notice(
+    'Çalışman bitiş aracı çağrılmadan sona erdi; yazdığın metin kaydedilmedi. Sonuç yalnızca bitiş aracınla kaydedilir. Sonucu sunacaksan şimdi bitiş aracını çağır. İşi yapamıyorsan aracı çağırma; nedenini bir iki cümleyle yeniden yaz.',
+  ),
+} as const;
 
 /**
  * What the model is told with a refused tool call, by refusal code: the common rules promise that
@@ -139,11 +149,13 @@ const REMINDER = `<runner_notice>
  * input is repeated. A refused input has sentences of its own (inputProblems).
  */
 const ONLY_GIVEN_TOOLS = 'yalnızca sana verilen araçları kullan';
+// The third way of route_task: a refused unit must not push the coordinator, which has to answer
+// through its tool, toward some other unit when in truth none fits.
+const NO_UNIT_FITS =
+  'talep hiçbir birime oturmuyorsa unit_code ve agent_code boş metin ("") olmalı';
 const REFUSAL_PROBLEMS: Readonly<Record<string, string>> = {
-  unit_not_routable:
-    'unit_code, agent_code: kendi birimine ya da kendine yönlendiremezsin; units_and_agents bloğundaki başka bir birimi seç',
-  unit_or_agent_not_available:
-    'unit_code, agent_code: units_and_agents bloğundaki bir birim ve o birimin orada yazan ajanlarından biri olmalı; birimde uygun ajan yoksa agent_code boş metin ("") olmalı',
+  unit_not_routable: `unit_code, agent_code: kendi birimine ya da kendine yönlendiremezsin; units_and_agents bloğundaki başka bir birimi seç; ${NO_UNIT_FITS}`,
+  unit_or_agent_not_available: `unit_code, agent_code: units_and_agents bloğundaki bir birim ve o birimin orada yazan ajanlarından biri olmalı; birimde uygun ajan yoksa agent_code boş metin ("") olmalı; ${NO_UNIT_FITS}`,
   parallel_call_refused:
     'Bir yanıtta yalnızca ilk araç çağrısı işlenir; bu çağrı çalıştırılmadı. Gerekiyorsa sonraki yanıtında yeniden çağır',
   tool_not_in_catalog: `Böyle bir araç yok; ${ONLY_GIVEN_TOOLS}`,
@@ -1212,7 +1224,12 @@ export async function runAgentJob(
             // Once: the turn goes back unchanged, then the runner's reminder (append only).
             reminded = true;
             messages.push({ role: 'assistant', content: message.content });
-            messages.push({ role: 'user', content: [{ type: 'text', text: REMINDER }] });
+            messages.push({
+              role: 'user',
+              content: [
+                { type: 'text', text: coordinator ? REMINDER.coordinator : REMINDER.agent },
+              ],
+            });
             break;
           }
           // The agent ended without its tool: it could not do the work and said why. Its words are

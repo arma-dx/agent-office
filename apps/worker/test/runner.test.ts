@@ -37,6 +37,18 @@ import {
 
 const REQUEST = 'LinkedIn için gönderi yaz\nKaynak: İzmir ofisimiz 1 Ekim’de açıldı.';
 
+// The runner's reminder after a turn that ended in prose, word for word. Two texts: the
+// coordinator always answers through its tool, a unit agent that cannot do the work does not.
+const COORDINATOR_REMINDER = `<runner_notice>
+Çalışman bitiş aracı çağrılmadan sona erdi; yazdığın metin kaydedilmedi. Yönlendirme kararın yalnızca \`route_task\` aracıyla kaydedilir; şimdi bitiş aracını çağır. Talep hiçbir birime oturmuyorsa ya da hangi birimin işi olduğu anlaşılmıyorsa aracı yine çağır: unit_code ve agent_code boş metin ("") olsun, nedenini reason alanına yaz. Düz metinle yanıt verme.
+</runner_notice>`;
+const AGENT_REMINDER = `<runner_notice>
+Çalışman bitiş aracı çağrılmadan sona erdi; yazdığın metin kaydedilmedi. Sonuç yalnızca bitiş aracınla kaydedilir. Sonucu sunacaksan şimdi bitiş aracını çağır. İşi yapamıyorsan aracı çağırma; nedenini bir iki cümleyle yeniden yaz.
+</runner_notice>`;
+// What a refused routing adds to its sentence: the empty unit is the answer when no unit fits.
+const NO_UNIT_FITS =
+  'talep hiçbir birime oturmuyorsa unit_code ve agent_code boş metin ("") olmalı';
+
 interface RunRow {
   status: string;
   error_code: string | null;
@@ -613,6 +625,12 @@ describe.skipIf(noDatabase)('the coordinator’s run', () => {
     // is not the coordinator's, and nowhere tells the coordinator to end without its tool.
     expect(systemOf(model)).toContain('İşi yapamıyorsan (bilgi yetersiz');
     expect(skill).toContain('"işi yapamıyorsan aracı çağırma" cümlesi senin için geçerli değildir');
+    // The reminder is not disclaimed any more: the coordinator has one of its own, and the skill
+    // says what that one asks for.
+    expect(skill).not.toContain('çalıştırıcının hatırlatmasındaki');
+    expect(skill).toContain(
+      'çalıştırıcının sana gönderdiği hatırlatma da bunu ister: nedeni düz metinle yeniden yazmazsın, `route_task` aracını çağırırsın.',
+    );
     expect(skill).not.toMatch(/araç çağırma;|yaz ve bitir/);
     // A request with several parts goes to the unit that owns the final output.
     expect(skill).toContain(
@@ -658,6 +676,16 @@ describe.skipIf(noDatabase)('the coordinator’s run', () => {
     const reminder = second?.messages[2]?.content;
     const notice = Array.isArray(reminder) && reminder[0]?.type === 'text' ? reminder[0].text : '';
     expect(notice).toMatch(/^<runner_notice>[\s\S]*bitiş aracını çağır[\s\S]*<\/runner_notice>$/);
+    // The coordinator's own reminder: it asks for route_task also when no unit fits, and never
+    // tells the coordinator to leave its tool uncalled (the unit agents' reminder does).
+    expect(notice).toBe(COORDINATOR_REMINDER);
+    expect(notice).not.toMatch(/aracı çağırma|yeniden yaz/);
+    // The forced choice and the reminder say the same thing in the same request.
+    expect(second?.tool_choice).toEqual({
+      type: 'tool',
+      name: 'route_task',
+      disable_parallel_tool_use: true,
+    });
     expect(second?.system).toEqual(first?.system);
     expect(second?.tools).toEqual(first?.tools);
     expect(await admin('select 1 from office.task_routings where task_id = $1', [taskId])).toEqual(
@@ -732,6 +760,17 @@ describe.skipIf(noDatabase)('the coordinator’s run', () => {
     }
     expect(told[0]?.problems?.[0]).toContain('units_and_agents bloğundaki bir birim');
     expect(told[1]?.problems?.[0]).toContain('kendi birimine ya da kendine yönlendiremezsin');
+    // A refused unit is not a push toward some other unit: both sentences name the third way of
+    // the tool, the empty unit, and only they do.
+    expect(told[0]?.problems?.[0]?.endsWith(`; ${NO_UNIT_FITS}`)).toBe(true);
+    expect(told[1]?.problems?.[0]?.endsWith(`; ${NO_UNIT_FITS}`)).toBe(true);
+    expect(told[0]?.problems?.[0]).toContain(
+      'birimde uygun ajan yoksa agent_code boş metin ("") olmalı',
+    );
+    expect(told[1]?.problems?.[0]).toContain('units_and_agents bloğundaki başka bir birimi seç');
+    for (const entry of told.slice(2)) {
+      expect(entry.problems?.[0]).not.toContain('unit_code');
+    }
     expect(told[2]?.problems?.[0]).toContain('görev kartında yok');
     expect(told[3]?.problems?.[0]).toContain('yalnızca ilk araç çağrısı işlenir');
     expect(told[4]?.problems?.[0]).toContain('bu sürümde kullanılamıyor');
@@ -1249,6 +1288,8 @@ describe.skipIf(noDatabase)('the unit agent’s run', () => {
         expect(request.thinking).toEqual({ type: 'adaptive' });
       }
       expect(noticeOf(thinking.requests[1])).toMatch(/^<runner_notice>[\s\S]*<\/runner_notice>$/);
+      // Its reminder is the coordinator's own: here it is the only thing that asks for the tool.
+      expect(noticeOf(thinking.requests[1])).toBe(COORDINATOR_REMINDER);
       // What is kept is the reason given through the tool, not the prose before the reminder.
       expect((await runRow(undecided.runId)).output).toMatchObject({ final_text: reason });
       await setThinking(coordinator.id, 'none');
@@ -1273,12 +1314,39 @@ describe.skipIf(noDatabase)('the unit agent’s run', () => {
       expect(noticeOf(silent.requests[1])).toMatch(
         /^<runner_notice>[\s\S]*bitiş aracını çağır[\s\S]*<\/runner_notice>$/,
       );
+      // A unit agent keeps the reminder it always had: it may decline in prose.
+      expect(noticeOf(silent.requests[1])).toBe(AGENT_REMINDER);
+      expect(AGENT_REMINDER).toContain('İşi yapamıyorsan aracı çağırma;');
+      expect(AGENT_REMINDER).not.toContain('route_task');
       expect(await runRow(unsubmitted.runId)).toMatchObject({
         status: 'completed',
         summary: 'Ajan sonucu onaya sunmadan çalışmasını bitirdi.',
         tool_call_count: 0,
         output: { outcome: 'no_submission', final_text: 'Kaynak bilgi olmadan gönderi yazamam.' },
       });
+
+      // Not "whoever is offered route_task", but the coordinator: a unit agent whose card version
+      // names the tool too (no card does today) and whose profile sends no thinking still chooses.
+      await admin(
+        `update office.card_versions
+         set content = jsonb_set(
+           jsonb_set(content, '{card,tools}', (content #> '{card,tools}') || '"route_task"'::jsonb),
+           '{tools}',
+           (content -> 'tools') || (
+             select jsonb_agg(t) from jsonb_array_elements($2::jsonb -> 'tools') t
+             where t ->> 'name' = 'route_task'))
+         where id = $1`,
+        [writer.id, JSON.stringify(coordinator.content)],
+      );
+      const offeredBoth = new ScriptedModel([toolUse('submit_for_approval', RESULT)]);
+      const submitted = await runAgentJob(
+        (await runner(offeredBoth)).deps,
+        job(await routedRequest(), 'SOS-2', ids.founder),
+      );
+      expect(submitted).toMatchObject({ outcome: 'submitted', modelCalls: 1 });
+      expect(toolNames(offeredBoth)).toEqual(['submit_for_approval', 'route_task']);
+      expect(offeredBoth.requests[0]?.tool_choice).toEqual(AUTO);
+      expect(offeredBoth.requests[0]).not.toHaveProperty('thinking');
     } finally {
       for (const version of [coordinator, writer]) {
         await admin('update office.card_versions set content = $2 where id = $1', [
