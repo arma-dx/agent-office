@@ -391,7 +391,7 @@ Skill klasörü: `skills/<ad>/SKILL.md` ve yanında `templates/`, `examples/`, `
 - Uç noktalar: `GET /api/projects`, `POST /api/projects`, `GET /api/projects/member-candidates`, `GET /api/projects/:projectId`, `PATCH /api/projects/:projectId`, `PUT` ve `DELETE /api/projects/:projectId/members/:userId`, `PUT /api/projects/:projectId/ai-permission`, `GET /api/customers`, `PATCH /api/customers/:customerId/permissions`
 - API hata kodları: `customer_exists`, `customer_not_found`, `member_not_allowed`, `own_project_membership`, `project_customer_locked` (yapay zekâ izni açıkken müşteri değiştirilemez), `project_changed` (projenin müşterisi kurucunun passkey ile onayladığından farklı; sayfa yeniden okunur).
 - Veritabanı hata kodu: `55000` (`set_project_ai_permission`: projenin müşterisi onaylanandan farklı; API `project_changed` der)
-- API yanıt alanları: projede `closed`, `targetDate`, `aiAllowed`, `agentsMayWork`, `customer`, `memberCount`, `createdBy`, `members`, `actions` (`edit`, `manageMembers`, `setAiPermission`, `setCustomerPermissions`); müşteri seçeneğinde `aiAllowed` ve `automatedProcessingAllowed` (çalışana `null` gider)
+- API yanıt alanları: projede `closed`, `targetDate`, `aiAllowed`, `agentsMayWork`, `customer`, `memberCount`, `createdBy`, `members`, `actions` (`edit`, `manageMembers`, `setAiPermission`, `setCustomerPermissions`; `manageMembers` karar 44 ile kalktı, yerine `addMembers` geldi, aşağıda); müşteri seçeneğinde `aiAllowed` ve `automatedProcessingAllowed` (çalışana `null` gider)
 - Sabitler: `PROJECT_NAME_MAX` (120), `CUSTOMER_NAME_MAX` (120), `PROJECT_DESCRIPTION_MAX` (5000), `PROJECT_MEMBER_MAX` (50), `PROJECT_LIST_LIMIT` (500); `DEFAULT_PROJECT_STATUS` (`planned`), `DEFAULT_PROJECT_COLOR` (`gray`), `DEFAULT_PROJECT_ICON` (`folder`)
 - Arayüz renk değişkenleri: `--project-gray`, `--project-red`, `--project-orange`, `--project-green`, `--project-teal`, `--project-blue`, `--project-purple`, `--project-pink` (proje simgesinin zemini; üstündeki simge `--surface` rengindedir). Sınıfları `bg-project-<renk>`.
 - Panel adresleri: `/c/$company/projects` (liste), `/c/$company/projects/$projectId` (proje sayfası). Menüdeki etiket "Projeler".
@@ -399,6 +399,22 @@ Skill klasörü: `skills/<ad>/SKILL.md` ve yanında `templates/`, `examples/`, `
 - Durum dili: `PROJECT_STATUS` (beş proje durumunun sözü, simgesi ve rengi; `lib/status.ts`), durum türü `project`.
 - Menü: `MenuSpace` (`any`: her yerde, `company`: yalnızca şirkette; Kurucu alanında sunulmaz), menü satırlarında `space` alanı.
 - Kodda izin değişikliği türleri: `project_on`, `project_off`, `customer_ai_on`, `customer_ai_off`, `automated_on`, `automated_off`; müşteri seçiminde `new` ("Yeni müşteri ekle") ve boş değer ("Müşteri yok").
+
+Projede sahip, yönetici ve üye ayrımıyla (8 Ekim karar 44) eklenen adlar:
+
+- "Projenin sahibi" → `owner`; "projenin yöneticisi" → `manager`; "üye" (sahip ya da yönetici olmayan) → `member`; "sahipliği devretmek" → bir üyeye `owner` rolünü vermek.
+- `project_members.role`: üyenin projedeki rolü; değerleri `owner` (sahip; projeyi açan kişi, projede en çok bir tane), `manager` (yönetici), `member` (üye; yeni eklenen herkes böyle başlar). Kısıtı `project_members_role_check`.
+- `project_members_one_owner`: bir projede en çok bir sahip olmasını sağlayan tekil dizin.
+- `office.project_role(proje)`: bağlamdaki kişinin o projedeki rolünü verir; üye değilse boş döner.
+- `office.set_project_member_role(proje, kişi, rol)`: bir üyeye rol verir; yalnızca projenin sahibi ve kurucu için çalışır, yalnızca API rolü çağırabilir. `manager` yönetici atar, `member` yöneticilikten alır, `owner` sahipliği devreder (o ana kadarki sahip üye olur). Rol sütununu başka hiçbir yol yazamaz.
+- Veritabanı hata kodları (`set_project_member_role`): `42501` (çağıran sahip ya da kurucu değil), `P0002` (böyle bir üye yok ya da proje görünmüyor), `55000` (sahibin kendi rolü doğrudan değiştirilemez), `22023` (eksik değişken ya da bilinmeyen rol), `23514` (devre dışı hesaba rol verilemez).
+- Tetikleyici: `check_project_member_role` (`project_members`; bir üye yönetici ya da sahip yapılırken hesabın etkin olduğunu denetler). `audit_project_member` artık rol değişikliğinde de çalışır. `creator_becomes_member` projeyi açanı sahip olarak yazar.
+- Satır kuralları `members_add` ve `members_remove` yeniden yazıldı: üyeyi sahip, yöneticiler ve kurucu ekler; yöneticiyi ve üyeyi sahip ve kurucu, yalnızca üyeyi yönetici çıkarır; sahip çıkarılamaz.
+- İz kaydı olayları: `project_member_role_owner` (kişi sahip oldu), `project_member_role_manager` (kişi yönetici yapıldı), `project_member_role_member` (kişi yöneticilikten alındı ya da sahipliği devretti). Kaydın konusu kişidir, proje `project_id` alanındadır.
+- Uç nokta: `PUT /api/projects/:projectId/members/:userId/role` (sahip ya da kurucu bir üyeye rol verir; gövdesi `role`).
+- API hata kodları: `project_members_not_allowed` (üye eklemeyi ve çıkarmayı yalnızca sahip, yöneticiler ve kurucu yapar), `project_manager_protected` (yöneticiyi yalnızca sahip ya da kurucu çıkarır), `project_owner_fixed` (sahip çıkarılamaz ve rolü doğrudan değiştirilemez), `project_roles_not_allowed` (rolleri yalnızca sahip ya da kurucu verir), `project_members_changed` (üyeler az önce değişti; sayfa yeniden okunur).
+- API yanıt alanları: üyede `projectRole` (projedeki rolü), `removable` (okuyan kişi bu üyeyi çıkarabilir), `roleChanges` (okuyan kişinin bu üyeye verebileceği roller); `actions` içinde `addMembers` (okuyan kişi üye ekleyebilir). `actions.manageMembers` kalktı.
+- Kodda: `projectMemberRoleSchema` ve `ProjectMemberRole` (üç rol), `ProjectActor` (üyeler üzerinde işlem yapan kişi), `mayAddProjectMembers`, `memberRemoval` (yanıtları `ok`, `self`, `not_allowed`, `owner`, `manager_protected`), `memberRoleChanges`, `setProjectMemberRoleSchema` (`packages/shared`); `setProjectMemberRole`, satır alanları `reader_project_role` ve `project_role` (`packages/db`).
 
 ## 0.4a adım 2 ile eklenen adlar: ofiste canlı durumlar ve "Her yerde durdur" (karşılığı olan eski Türkçe ad yok)
 
