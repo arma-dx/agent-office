@@ -371,3 +371,7 @@ Sormadan yapılan varsayımlar (ince dilimin planında; hepsi **kurucu onayı be
 - Y-g (karar 5): ortak kurallardaki "talepteki kişi bilgisini çıktına taşıma" cümlesi kaldırıldı, çünkü yazılmasına izin verilen bilgiyi ajanın kullanamaması işi bozar. Müşteri adı geçen talepte ajanın bunu onaylayana not düşmesi cümlesi kaldı (kural 12 için; talep sahibini uyarmaz). Kurucu `agents/common-rules.md` metnini okurken karar verir.
 - Y-h (karar 5): karar yalnızca kişinin forma elle yazdığı metin içindir. Bağlanan kaynaklar için kural (avukat görüşüne kadar kişisel veri içeren kaynak bağlanmaz) ve kural 12 değişmedi; serbest metinde yazılanı kod denetleyemez. Kişisel veri, avukat görüşü gelmeden yurt dışındaki modele gidebilir; bu sonuç kurucuya soruda yazılmıştı.
 
+İlk dilimin incelemesinde bulunan hatalar düzeltilirken yapılan yorumlar (hepsi **kurucu onayı bekliyor**):
+
+- Y-i (5 Ekim karar 2): talep sahibi "istediğim bu değil" dedikten sonra ajanın yeni sonucu, aynı adımın bir önceki sonucundaki "para içeriyor" ve "dışarı gidecek" işaretlerini düşüremez. Kural o güne kadar yalnızca onaylayıcının düzeltme isteğinden sonraki deneme için geçerliydi; talep sahibinin isteğinden sonraki yeni sonuç passkey istemeden onaylanabiliyordu. Yorum güvenli yöndedir: passkey daha çok istenir, daha az değil.
+

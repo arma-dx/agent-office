@@ -1233,6 +1233,110 @@ describe.skipIf(noDatabase)('the approval of a request and the status that follo
   });
 });
 
+describe.skipIf(noDatabase)('the money and outside marks across the attempts of a step', () => {
+  afterAll(closePools);
+
+  // A result with the marks as arguments ($3 money, $4 outside); $5 names the attempt before it.
+  const RESULT = `insert into office.approvals (company_id, task_id, run_id, agent_code, title,
+      payload, basis_type, basis_id, basis_version, involves_money, goes_external,
+      previous_approval_id)
+    values (office.ctx_company_id(), $1, $2, 'HAF-1', 'Result', '{"text": "Output"}', 'task', $1,
+      (select version from office.tasks where id = $1), $3, $4, $5) returning id`;
+  const TAKEN_BACK = {
+    code: '23514',
+    message: 'A new attempt cannot take back that the work involves money or goes outside',
+  };
+
+  /** HAF-1 has a run open on a request the coordinator routed to it. */
+  async function routedRequest(tx: Tx): Promise<{ task: string; run: string }> {
+    await enableHaf(tx);
+    await tx.setContext(employeeA);
+    const task = await openRequest(tx);
+    await tx.setContext(agentRun(ids.employeeA, 'KOR-1'));
+    const korRun = await openRun(tx, task, 'KOR-1');
+    await tx.rows(ROUTE, [task, HAF_STEP, korRun]);
+    await tx.exec(
+      `update office.runs set status = 'completed', finished_at = now() where id = $1`,
+      [korRun],
+    );
+    await tx.setContext(agentRun(ids.employeeA, 'HAF-1'));
+    return { task, run: await openRun(tx, task, 'HAF-1') };
+  }
+
+  it('after the requester’s "not what I asked for" the new result cannot state less than the approved one', async () => {
+    await inTransaction(async (tx) => {
+      const { task, run } = await routedRequest(tx);
+      const first = (await one<{ id: string }>(tx, RESULT, [task, run, true, true, null])).id;
+      // Important work: approved with the passkey.
+      await stepUp(tx, founderA, 'approve', first);
+      await tx.setContext(founderA);
+      await tx.exec(`update office.approvals set status = 'approved' where id = $1`, [first]);
+      await tx.setContext(employeeA);
+      await tx.exec(
+        `update office.requester_approvals set status = 'changes_requested',
+           decision_reason = 'Shorter' where task_id = $1 and status = 'pending'`,
+        [task],
+      );
+      expect(await statusOf(tx, task)).toBe('in_progress');
+      // The rework is a new chain (the earlier result was approved), on the same step.
+      await tx.setContext(agentRun(ids.employeeA, 'HAF-1'));
+      for (const [money, outside] of [
+        [false, false],
+        [true, false],
+        [false, true],
+      ]) {
+        expect(await tx.expectError(RESULT, [task, run, money, outside, null])).toEqual(TAKEN_BACK);
+      }
+      const second = await one<{ id: string; attempt: number }>(tx, `${RESULT}, attempt`, [
+        task,
+        run,
+        true,
+        true,
+        null,
+      ]);
+      expect(second.attempt).toBe(1);
+      // And it still asks for the passkey.
+      await tx.setContext(founderA);
+      expect(
+        (
+          await tx.expectError(`update office.approvals set status = 'approved' where id = $1`, [
+            second.id,
+          ])
+        ).code,
+      ).toBe('28000');
+    });
+  });
+
+  it('a result may state more than the one before it, and a step routed again starts fresh', async () => {
+    await inTransaction(async (tx) => {
+      const { task, run } = await routedRequest(tx);
+      const first = (await one<{ id: string }>(tx, RESULT, [task, run, false, false, null])).id;
+      await tx.setContext(founderA);
+      await tx.exec(
+        `update office.approvals set status = 'changes_requested', rejection_reason = 'incomplete'
+         where id = $1`,
+        [first],
+      );
+      // The approver's change request: the second attempt raises a mark, which is allowed.
+      await tx.setContext(agentRun(ids.employeeA, 'HAF-1'));
+      const second = (await one<{ id: string }>(tx, RESULT, [task, run, true, false, first])).id;
+      // A person routes the request to the same agent again: a new step, with no earlier result.
+      await tx.setContext(founderA);
+      await tx.rows(CORRECT, [task, HAF_STEP]);
+      expect(
+        await one(
+          tx,
+          'select invalidated_at is not null as closed from office.approvals where id = $1',
+          [second],
+        ),
+      ).toEqual({ closed: true });
+      await tx.setContext(agentRun(ids.employeeA, 'HAF-1'));
+      const fresh = await openRun(tx, task, 'HAF-1');
+      expect(await tx.rows(RESULT, [task, fresh, false, false, null])).toHaveLength(1);
+    });
+  });
+});
+
 describe.skipIf(noDatabase)('cancelling and stopping a request', () => {
   afterAll(closePools);
 
