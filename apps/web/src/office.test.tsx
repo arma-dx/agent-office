@@ -349,7 +349,7 @@ describe('office page: the selection in the properties panel', () => {
     ).toBeVisible();
     expect(field('Durum')).toHaveTextContent('Kapalı');
     expect(within(panel).getByText('Bu ajan kapalı.')).toBeVisible();
-    // Nothing the office does not know: three fields, one sentence, the counts, two buttons.
+    // Nothing the office does not know: three fields, one sentence, the counts, three buttons.
     expect(
       within(panel)
         .getAllByRole('term')
@@ -359,7 +359,7 @@ describe('office page: the selection in the properties panel', () => {
       within(panel)
         .getAllByRole('button')
         .map((button) => button.textContent),
-    ).toEqual(['Koordinasyon Katmanı', 'Ajanı aç', 'Seçimi kaldır']);
+    ).toEqual(['Koordinasyon Katmanı', 'Ajanı aç', 'Her yerde durdur', 'Seçimi kaldır']);
 
     // The page asked for the panel: the person's choice is not written, and there is no toggle.
     expect(localStorage.getItem(PANEL_STORAGE_KEY)).toBeNull();
@@ -569,7 +569,7 @@ describe('office page: the selection in the properties panel', () => {
       within(panel)
         .getAllByRole('button')
         .map((button) => button.textContent),
-    ).toEqual(['Koordinasyon Katmanı', 'Seçimi kaldır']);
+    ).toEqual(['Koordinasyon Katmanı', 'Her yerde durdur', 'Seçimi kaldır']);
 
     await userEvent.click(screen.getByRole('button', { name: /^HAF-1 / }));
     expect(within(panel).getByText(sentence)).toBeVisible();

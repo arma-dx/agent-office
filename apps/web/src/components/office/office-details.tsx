@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useId, useState, type Ref } from 'react';
 import { AgentWorkList } from '@/components/office/agent-work';
+import { StopEverywhere } from '@/components/office/stop-everywhere';
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -180,8 +181,8 @@ function AgentSwitchButton({ agent }: { agent: OfficeAgent }) {
 
 /**
  * An agent: its code, its unit (which can be chosen from here), its state, its open requests in
- * this company and, for the founder, the company's switch. Kurucu alanı has no request, so no
- * count is shown there.
+ * this company and, for the founder, the company's switch and "Her yerde durdur". Kurucu alanı has
+ * no request, so no count is shown there.
  */
 function AgentDetails({
   unit,
@@ -219,7 +220,12 @@ function AgentDetails({
       {company.kind === 'company' ? (
         <AgentWorkList work={agent.work} truncated={workTruncated} />
       ) : null}
-      {company.role === 'founder' ? <AgentSwitch agent={agent} /> : null}
+      {company.role === 'founder' ? (
+        <>
+          <AgentSwitch agent={agent} />
+          <StopEverywhere agent={agent} />
+        </>
+      ) : null}
     </>
   );
 }

@@ -1,5 +1,6 @@
 import {
   BACKGROUND_HEADER,
+  COMPANY_HEADER,
   type CompanyAgentStatus,
   type MembershipSummary,
   type OfficeResponse,
@@ -11,8 +12,17 @@ import { describe, expect, it, vi } from 'vitest';
 import type { OfficeUnit } from './lib/office/model.ts';
 import { WIDE_WINDOW_QUERY } from './lib/office/use-wide-window.ts';
 import { stubMatchMedia } from './test/match-media.ts';
-import { apiError, ARMADX, json, mockApi, sessionHandler } from './test/mock-api.ts';
-import { ARMADX_OFFICE, FOUNDER_OFFICE } from './test/office-fixtures.ts';
+import {
+  apiError,
+  ARMADX,
+  FOUNDER_SPACE,
+  json,
+  mockApi,
+  PILLIKA,
+  sessionHandler,
+  type ApiCall,
+} from './test/mock-api.ts';
+import { ARMADX_OFFICE, FOUNDER_OFFICE, PILLIKA_OFFICE } from './test/office-fixtures.ts';
 import { currentLocation, renderApp } from './test/render-app.tsx';
 
 // The live states of the office view, the counts of the selected agent and "Her yerde durdur"
@@ -276,5 +286,402 @@ describe('office page: live states', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('office page: "Her yerde durdur"', () => {
+  const switchKey = 'PUT /agents/SOS-2/switch';
+  const STOP = { status: 'stopped', onlyIfOpen: true };
+
+  /** An office per company whose SOS-2 switch the test sets, read by the company header. */
+  function twoCompanies(
+    switches: { arma: CompanyAgentStatus | null; pillika: CompanyAgentStatus | null },
+    put: (call: ApiCall) => Response | Promise<Response>,
+  ) {
+    const state = { ...switches };
+    const bodyOf = (call: ApiCall): Response => {
+      switch (call.headers.get(COMPANY_HEADER)) {
+        case ARMADX.companyId:
+          return json(officeBody(ARMADX_OFFICE, state.arma ? { 'SOS-2': state.arma } : {}));
+        case PILLIKA.companyId:
+          return json(officeBody(PILLIKA_OFFICE, state.pillika ? { 'SOS-2': state.pillika } : {}));
+        default:
+          // Kurucu alanı has no such agent.
+          return json(officeBody(FOUNDER_OFFICE));
+      }
+    };
+    const api = mockApi({
+      'GET /session': sessionHandler(),
+      'GET /office': bodyOf,
+      [switchKey]: put,
+    });
+    return { api, state };
+  }
+
+  /** The answer of a conditional stop: the switch as it is now, and whether this request set it. */
+  const stopped = (
+    status: CompanyAgentStatus | null = 'stopped',
+    changed: boolean = status === 'stopped',
+  ) => json({ code: 'SOS-2', name: 'Sosyal İçerik Yazım Ajanı', status, ready: true, changed });
+  const sentTo = (calls: ApiCall[]) => calls.map((call) => call.headers.get(COMPANY_HEADER));
+  const items = (list: HTMLElement) =>
+    within(list)
+      .getAllByRole('listitem')
+      .map((item) => item.textContent);
+
+  it('names the companies where the agent is open, stops it in each with a request of its own, and says what happened', async () => {
+    wide();
+    const { api, state } = twoCompanies({ arma: 'enabled', pillika: 'enabled' }, (call) => {
+      if (call.headers.get(COMPANY_HEADER) === ARMADX.companyId) state.arma = 'stopped';
+      else state.pillika = 'stopped';
+      return stopped();
+    });
+    renderApp('/c/armadx/office');
+    await userEvent.click(await label('SOS-2'));
+    const button = within(panel()).getByRole('button', { name: 'Her yerde durdur' });
+    await userEvent.click(button);
+    const dialog = await screen.findByRole('alertdialog', {
+      name: 'SOS-2 her yerde durdurulsun mu?',
+    });
+    // The switch is read in every company the person is the founder of, by a request of the
+    // person; nothing is stopped by opening the dialog.
+    const places = await within(dialog).findByRole('list', { name: 'Durdurulacağı yerler' });
+    await waitFor(() => {
+      expect(items(places)).toEqual(['Arma DX', 'Pillika']);
+    });
+    expect(dialog).toHaveTextContent(
+      'Yeni iş almaz; süren çalışması bir sonraki adımdan önce durur. Kapalı ya da durdurulmuş olduğu yerde bir şey değişmez. Yeniden açma her yerde ayrı yapılır.',
+    );
+    expect(api.callsTo(switchKey)).toEqual([]);
+    const reads = api.callsTo('GET /office').slice(1);
+    expect(sentTo(reads).sort()).toEqual(
+      [ARMADX.companyId, PILLIKA.companyId, FOUNDER_SPACE.companyId].sort(),
+    );
+    for (const read of reads) expect(read.headers.get(BACKGROUND_HEADER)).toBeNull();
+
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Her yerde durdur' }));
+    const results = await within(dialog).findByRole('list', { name: 'Sonuç' });
+    await waitFor(() => {
+      expect(items(results)).toEqual(['Arma DX: durduruldu.', 'Pillika: durduruldu.']);
+    });
+    expect(dialog).toHaveTextContent(
+      'Her yer için sonuç aşağıda. Yeniden açma her yerde ayrı yapılır.',
+    );
+    // One request per company, each in that company's context, each a stop "only if open".
+    expect(api.callsTo(switchKey).map((call) => call.body)).toEqual([STOP, STOP]);
+    expect(sentTo(api.callsTo(switchKey))).toEqual([ARMADX.companyId, PILLIKA.companyId]);
+    expect(screen.getByRole('alertdialog', { name: 'SOS-2 için sonuç' })).toBeVisible();
+    // The focus is on the button that closes; the desk behind the dialog shows the stop.
+    const close = within(dialog).getByRole('button', { name: 'Kapat' });
+    await waitFor(() => {
+      expect(close).toHaveFocus();
+    });
+    expect(within(dialog).queryByRole('button', { name: 'Yeniden dene' })).toBeNull();
+    await userEvent.click(close);
+    await waitFor(() => {
+      expect(screen.queryByRole('alertdialog')).toBeNull();
+      expect(button).toHaveFocus();
+    });
+    expect(desk('SOS-2')).toHaveAttribute('data-state', 'stopped');
+    expect(within(panel()).getByRole('button', { name: 'Ajanı yeniden aç' })).toBeVisible();
+    expect(api.unexpected).toEqual([]);
+  });
+
+  it('sends nothing to a company where the agent is closed or stopped, and says so when it is open nowhere', async () => {
+    wide();
+    const { api, state } = twoCompanies({ arma: 'enabled', pillika: 'disabled' }, () => {
+      state.arma = 'stopped';
+      return stopped();
+    });
+    renderApp('/c/armadx/office');
+    await userEvent.click(await label('SOS-2'));
+    await userEvent.click(within(panel()).getByRole('button', { name: 'Her yerde durdur' }));
+    let dialog = await screen.findByRole('alertdialog');
+    const places = await within(dialog).findByRole('list', { name: 'Durdurulacağı yerler' });
+    expect(items(places)).toEqual(['Arma DX']);
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Her yerde durdur' }));
+    await within(dialog).findByText('durduruldu.', { exact: false });
+    expect(sentTo(api.callsTo(switchKey))).toEqual([ARMADX.companyId]);
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Kapat' }));
+    await waitFor(() => {
+      expect(screen.queryByRole('alertdialog')).toBeNull();
+    });
+
+    // Open nowhere now: the dialog says so and offers nothing to confirm.
+    await userEvent.click(within(panel()).getByRole('button', { name: 'Her yerde durdur' }));
+    dialog = await screen.findByRole('alertdialog');
+    expect(
+      await within(dialog).findByText(
+        'Bu ajan, kurucusu olduğunuz hiçbir yerde açık değil. Durdurulacak bir şey yok.',
+      ),
+    ).toBeVisible();
+    expect(within(dialog).queryByRole('button', { name: 'Her yerde durdur' })).toBeNull();
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Kapat' }));
+    expect(api.callsTo(switchKey)).toHaveLength(1);
+  });
+
+  it('says which company could not be stopped, and tries that one again', async () => {
+    wide();
+    let pillikaFails = true;
+    const { api, state } = twoCompanies({ arma: 'enabled', pillika: 'enabled' }, (call) => {
+      if (call.headers.get(COMPANY_HEADER) === ARMADX.companyId) {
+        state.arma = 'stopped';
+        return stopped();
+      }
+      if (pillikaFails) return new Response('bad gateway', { status: 502 });
+      state.pillika = 'stopped';
+      return stopped();
+    });
+    renderApp('/c/armadx/office');
+    await userEvent.click(await label('SOS-2'));
+    await userEvent.click(within(panel()).getByRole('button', { name: 'Her yerde durdur' }));
+    const dialog = await screen.findByRole('alertdialog');
+    await within(dialog).findByRole('list', { name: 'Durdurulacağı yerler' });
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Her yerde durdur' }));
+    const results = await within(dialog).findByRole('list', { name: 'Sonuç' });
+    await waitFor(() => {
+      expect(items(results)).toEqual([
+        'Arma DX: durduruldu.',
+        'Pillika: durdurulamadı. Sunucuda bir sorun oluştu. Biraz sonra yeniden deneyin.',
+      ]);
+    });
+    // The company that was stopped stays stopped; the dialog stays, with a way to try again.
+    expect(desk('SOS-2')).toHaveAttribute('data-state', 'stopped');
+    pillikaFails = false;
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Yeniden dene' }));
+    await waitFor(() => {
+      expect(items(results)).toEqual(['Arma DX: durduruldu.', 'Pillika: durduruldu.']);
+    });
+    // Only the company that failed was asked again.
+    expect(sentTo(api.callsTo(switchKey))).toEqual([
+      ARMADX.companyId,
+      PILLIKA.companyId,
+      PILLIKA.companyId,
+    ]);
+    expect(within(dialog).queryByRole('button', { name: 'Yeniden dene' })).toBeNull();
+  });
+
+  // Pillika's switch cannot be read, so the stop is sent there too and the server decides. Only an
+  // agent this request stopped is told as stopped by it.
+  it.each([
+    ['was not open', null, 'Pillika: açık değildi, bir şey değişmedi.'],
+    ['was closed', 'disabled', 'Pillika: açık değildi, bir şey değişmedi.'],
+    ['was already stopped', 'stopped', 'Pillika: zaten durdurulmuş, bir şey değişmedi.'],
+  ] as const)(
+    'tells a company whose switch could not be read, and says what the stop found there: the agent %s',
+    async (_what, status, row) => {
+      wide();
+      const api = mockApi({
+        'GET /session': sessionHandler({ memberships: [ARMADX, PILLIKA] }),
+        'GET /office': (call) =>
+          call.headers.get(COMPANY_HEADER) === PILLIKA.companyId
+            ? new Response('bad gateway', { status: 502 })
+            : json(officeBody(ARMADX_OFFICE, { 'SOS-2': 'enabled' })),
+        [switchKey]: (call) =>
+          call.headers.get(COMPANY_HEADER) === PILLIKA.companyId
+            ? stopped(status, false)
+            : stopped(),
+      });
+      renderApp('/c/armadx/office');
+      await userEvent.click(await label('SOS-2'));
+      await userEvent.click(within(panel()).getByRole('button', { name: 'Her yerde durdur' }));
+      const dialog = await screen.findByRole('alertdialog');
+      const places = await within(dialog).findByRole('list', { name: 'Durdurulacağı yerler' });
+      expect(items(places)).toEqual([
+        'Arma DX',
+        'Pillika: durumu okunamadı; ajan orada açıksa durdurulur.',
+      ]);
+      await userEvent.click(within(dialog).getByRole('button', { name: 'Her yerde durdur' }));
+      const results = await within(dialog).findByRole('list', { name: 'Sonuç' });
+      await waitFor(() => {
+        expect(items(results)).toEqual(['Arma DX: durduruldu.', row]);
+      });
+      expect(api.callsTo(switchKey)).toHaveLength(2);
+    },
+  );
+
+  it('names Kurucu alanı as it is and calls no place a company, while it reads, asks and answers', async () => {
+    wide();
+    const key = 'PUT /agents/KOR-4/switch';
+    let space: CompanyAgentStatus = 'enabled';
+    // Pillika's read for the dialog is held, so that the dialog is seen while it reads.
+    let release: (() => void) | undefined;
+    const api = mockApi({
+      'GET /session': sessionHandler(),
+      'GET /office': (call) => {
+        switch (call.headers.get(COMPANY_HEADER)) {
+          case FOUNDER_SPACE.companyId:
+            return json(officeBody(FOUNDER_OFFICE, { 'KOR-4': space }));
+          case PILLIKA.companyId:
+            return new Promise<Response>((resolve) => {
+              release = () => {
+                resolve(json(officeBody(PILLIKA_OFFICE)));
+              };
+            });
+          default:
+            return json(officeBody(ARMADX_OFFICE));
+        }
+      },
+      [key]: () => {
+        space = 'stopped';
+        return json({
+          code: 'KOR-4',
+          name: 'Yönetici Asistanı',
+          status: 'stopped',
+          ready: true,
+          changed: true,
+        });
+      },
+    });
+    renderApp('/c/founder_space/office');
+    await userEvent.click(await label('KOR-4'));
+    await userEvent.click(within(panel()).getByRole('button', { name: 'Her yerde durdur' }));
+    const dialog = await screen.findByRole('alertdialog', {
+      name: 'KOR-4 her yerde durdurulsun mu?',
+    });
+    // While the switches are read: one sentence, nothing to confirm yet.
+    expect(within(dialog).getByText('Ajanın nerede açık olduğu denetleniyor.')).toBeVisible();
+    expect(within(dialog).getByRole('button', { name: 'Vazgeç' })).toBeVisible();
+    expect(within(dialog).queryByRole('button', { name: 'Her yerde durdur' })).toBeNull();
+    expect(dialog.textContent).not.toMatch(/şirket/iu);
+    await waitFor(() => {
+      expect(release).toBeDefined();
+    });
+    release?.();
+
+    // The one place where the agent is open is not a company and is named as the menu names it.
+    const places = await within(dialog).findByRole('list', { name: 'Durdurulacağı yerler' });
+    expect(items(places)).toEqual(['Kurucu alanı']);
+    expect(dialog.textContent).not.toMatch(/şirket/iu);
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Her yerde durdur' }));
+    const results = await within(dialog).findByRole('list', { name: 'Sonuç' });
+    await waitFor(() => {
+      expect(items(results)).toEqual(['Kurucu alanı: durduruldu.']);
+    });
+    expect(dialog.textContent).not.toMatch(/şirket/iu);
+    expect(sentTo(api.callsTo(key))).toEqual([FOUNDER_SPACE.companyId]);
+    expect(api.unexpected).toEqual([]);
+  });
+
+  it('reads nothing by itself under its open dialog: not on the timer, not on coming back to the tab', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      wide();
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      const { api } = twoCompanies({ arma: 'enabled', pillika: 'enabled' }, () => stopped());
+      renderApp('/c/armadx/office');
+      await user.click(await label('SOS-2'));
+      await user.click(within(panel()).getByRole('button', { name: 'Her yerde durdur' }));
+      const dialog = await screen.findByRole('alertdialog', {
+        name: 'SOS-2 her yerde durdurulsun mu?',
+      });
+      await within(dialog).findByRole('list', { name: 'Durdurulacağı yerler' });
+      // The page's own read and one read per company for the dialog.
+      const before = api.callsTo('GET /office').length;
+      expect(before).toBe(4);
+      await vi.advanceTimersByTimeAsync(61_000);
+      expect(api.callsTo('GET /office')).toHaveLength(before);
+      focusManager.setFocused(false);
+      focusManager.setFocused(true);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(api.callsTo('GET /office')).toHaveLength(before);
+      await user.click(within(dialog).getByRole('button', { name: 'Vazgeç' }));
+      await waitFor(() => {
+        expect(screen.queryByRole('alertdialog')).toBeNull();
+      });
+      await vi.advanceTimersByTimeAsync(30_100);
+      await waitFor(() => {
+        expect(api.callsTo('GET /office')).toHaveLength(before + 1);
+      });
+      expect(api.callsTo('GET /office').at(-1)?.headers.get(BACKGROUND_HEADER)).not.toBeNull();
+      expect(api.callsTo(switchKey)).toEqual([]);
+    } finally {
+      focusManager.setFocused(undefined);
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps the title, the pressed button and the focus while a retry is on its way, and after it failed again', async () => {
+    wide();
+    let attempts = 0;
+    // The answers of the retries that are on their way, held until the test gives them.
+    const waiting: ((response: Response) => void)[] = [];
+    const { api } = twoCompanies({ arma: 'enabled', pillika: 'enabled' }, (call) => {
+      if (call.headers.get(COMPANY_HEADER) !== PILLIKA.companyId) return stopped();
+      attempts += 1;
+      if (attempts === 1) return new Response('bad gateway', { status: 502 });
+      return new Promise<Response>((resolve) => {
+        waiting.push(resolve);
+      });
+    });
+    renderApp('/c/armadx/office');
+    await userEvent.click(await label('SOS-2'));
+    await userEvent.click(within(panel()).getByRole('button', { name: 'Her yerde durdur' }));
+    const dialog = await screen.findByRole('alertdialog');
+    await userEvent.click(await within(dialog).findByRole('button', { name: 'Her yerde durdur' }));
+    const retry = await within(dialog).findByRole('button', { name: 'Yeniden dene' });
+    // Once something was sent the dialog is the result; the first confirmation is over.
+    expect(screen.getByRole('alertdialog', { name: 'SOS-2 için sonuç' })).toBe(dialog);
+    expect(within(dialog).queryByRole('button', { name: 'Her yerde durdur' })).toBeNull();
+
+    await userEvent.click(retry);
+    await waitFor(() => {
+      expect(waiting).toHaveLength(1);
+    });
+    // On its way: the same button, busy, with the focus; the title is still the result and the
+    // button of the first confirmation does not come back.
+    expect(retry).toBeInTheDocument();
+    expect(retry).toHaveAttribute('aria-disabled', 'true');
+    expect(retry).toHaveFocus();
+    expect(screen.getByRole('alertdialog', { name: 'SOS-2 için sonuç' })).toBe(dialog);
+    expect(within(dialog).queryByRole('button', { name: 'Her yerde durdur' })).toBeNull();
+    expect(items(within(dialog).getByRole('list', { name: 'Sonuç' }))).toEqual([
+      'Arma DX: durduruldu.',
+      'Pillika: durduruluyor.',
+    ]);
+    // Nothing closes the dialog while a company is being asked.
+    await userEvent.keyboard('{Escape}');
+    expect(screen.getByRole('alertdialog')).toBe(dialog);
+    expect(retry).toHaveFocus();
+
+    // It failed again: the button is still there and keeps the focus, so Enter tries once more.
+    waiting.shift()?.(new Response('bad gateway', { status: 502 }));
+    await waitFor(() => {
+      expect(retry).not.toHaveAttribute('aria-disabled', 'true');
+    });
+    expect(retry).toHaveFocus();
+    await userEvent.keyboard('{Enter}');
+    await waitFor(() => {
+      expect(waiting).toHaveLength(1);
+    });
+    // It worked: nothing is left to try and the focus goes to the button that closes.
+    waiting.shift()?.(stopped());
+    await waitFor(() => {
+      expect(within(dialog).getByRole('button', { name: 'Kapat' })).toHaveFocus();
+    });
+    expect(retry).not.toBeInTheDocument();
+    expect(sentTo(api.callsTo(switchKey))).toEqual([
+      ARMADX.companyId,
+      PILLIKA.companyId,
+      PILLIKA.companyId,
+      PILLIKA.companyId,
+    ]);
+    expect(api.unexpected).toEqual([]);
+  });
+
+  it.each([
+    ['an employee of the company who is the founder of another', [EMPLOYEE, PILLIKA]],
+    ['the founder of one company alone', [ARMADX]],
+  ])('is not offered to %s', async (_who, memberships) => {
+    wide();
+    const api = mockApi({
+      'GET /session': sessionHandler({ memberships }),
+      'GET /office': () => json(officeBody(ARMADX_OFFICE, { 'SOS-2': 'enabled' })),
+    });
+    renderApp('/c/armadx/office');
+    await userEvent.click(await label('SOS-2'));
+    expect(within(panel()).getByText('Bu ajan açık ve boşta.')).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Her yerde durdur' })).toBeNull();
+    expect(api.calls.filter((call) => call.method === 'PUT')).toEqual([]);
   });
 });
