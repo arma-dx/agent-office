@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { agentStep, withContext } from '@agent-office/db';
 import { afterAll, describe, expect, it } from 'vitest';
 import { closeLostRun, runAgentJob } from '../src/runner/run.ts';
+import { handleAgentRunJob } from '../src/worker.ts';
 import {
   RESULT,
   ROUTE_TO_SOS,
@@ -1382,20 +1383,34 @@ describe.skipIf(noDatabase)('what stops a run or keeps it from starting', () => 
   });
 
   it('a model call gets the time the run has left, not a shorter limit of its own', async () => {
-    // KOR-1's card allows two minutes. A cap below that would cut a slow answer and send the
-    // request again; the call is given the run's remaining time and ends with the run.
-    const taskId = await openRequest(ids.founder, REQUEST);
-    const model = new ScriptedModel([toolUse('route_task', ROUTE_TO_SOS)]);
+    // SOS-2's card allows five minutes. A cap of its own for one call (it used to be two minutes)
+    // would cut a slow answer and end the run long before its limit; the call is given the run's
+    // remaining time and ends with the run.
+    const taskId = await routedRequest();
+    const model = new ScriptedModel([toolUse('submit_for_approval', RESULT)]);
     const { deps } = await runner(model);
     const limits: number[] = [];
     const callModel: typeof model.call = (params, options) => {
       limits.push(options.timeoutMs);
       return model.call(params, options);
     };
-    await runAgentJob({ ...deps, callModel }, job(taskId, 'KOR-1', ids.founder));
+    const result = await runAgentJob({ ...deps, callModel }, job(taskId, 'SOS-2', ids.founder));
+    expect(result.outcome).toBe('submitted');
     expect(limits).toHaveLength(1);
-    expect(limits[0]).toBeGreaterThan(115_000);
-    expect(limits[0]).toBeLessThanOrEqual(120_000);
+    expect(limits[0]).toBeGreaterThan(295_000);
+    expect(limits[0]).toBeLessThanOrEqual(300_000);
+    // A shorter limit is used only where the caller sets one.
+    const other = await routedRequest();
+    const again = new ScriptedModel([toolUse('submit_for_approval', RESULT)]);
+    const short: typeof again.call = (params, options) => {
+      limits.push(options.timeoutMs);
+      return again.call(params, options);
+    };
+    await runAgentJob(
+      { ...deps, callModel: short, perCallTimeoutMs: 30_000 },
+      job(other, 'SOS-2', ids.founder),
+    );
+    expect(limits[1]).toBe(30_000);
   });
 
   it('a failed, refused or truncated model call ends the run with its code and executes nothing', async () => {
@@ -1817,5 +1832,41 @@ describe.skipIf(noDatabase)('a run belongs to the step it was opened for', () =>
     expect(await runRow(crashed)).toMatchObject({ status: 'running' });
     await closeLostRun(deps, job(other, 'KOR-1', ids.founder), { runId: crashed });
     expect(await runRow(crashed)).toMatchObject({ status: 'failed', error_code: 'worker_lost' });
+  });
+
+  it('a runner that fails has exactly the run its job opened closed by the worker', async () => {
+    const taskId = await openRequest(ids.founder, REQUEST);
+    const { deps, log } = await runner(null);
+    // The model seam throws what nobody foresaw. By then another run of the same request and
+    // agent is open (inside its limit: not this job's to close), and the runner's own closing
+    // statement fails once, as it does when the database is away for a moment: the run the job
+    // opened is still "running" when the error reaches the worker's handler.
+    let other = '';
+    const callModel = async (): Promise<never> => {
+      other = await leftOpen(taskId, 'KOR-1', 2);
+      throw new Error('unforeseen');
+    };
+    const pool = meeting(deps.pool, 'error_code = $3, summary = $4', () =>
+      Promise.reject(new Error('connection lost')),
+    );
+    const thrown = await handleAgentRunJob(
+      { ...deps, pool, callModel },
+      job(taskId, 'KOR-1', ids.founder),
+    ).then(
+      () => null,
+      (error: unknown) => error,
+    );
+    expect(thrown).toMatchObject({ message: 'runner_error' });
+    const runs = await admin<{ id: string; status: string; error_code: string | null }>(
+      'select id, status, error_code from office.runs where task_id = $1 order by started_at, id',
+      [taskId],
+    );
+    const opened = runs.find((run) => run.id !== other);
+    // The handler knew the run from the runner and closed that one; the other is untouched.
+    expect(runs).toHaveLength(2);
+    expect(opened).toMatchObject({ status: 'failed', error_code: 'worker_lost' });
+    expect(await runRow(other)).toMatchObject({ status: 'running', error_code: null });
+    expect(log).toContainEqual({ event: 'run_lost', fields: { run: opened?.id } });
+    expect(log).not.toContainEqual({ event: 'run_lost', fields: { run: other } });
   });
 });
