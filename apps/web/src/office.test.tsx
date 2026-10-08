@@ -39,6 +39,7 @@ function officeBody(
         code: agent.code,
         name: agent.name,
         status: switches[agent.code] ?? null,
+        ready: true,
       })),
     })),
   };

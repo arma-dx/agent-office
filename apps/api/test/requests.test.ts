@@ -1487,6 +1487,8 @@ describe.skipIf(noDatabase)('requests', () => {
       code: 'HAF-2',
       name: 'Kurumsal Arama Ajanı',
       status: 'stopped',
+      // Its card has a version to run with: it can be opened again.
+      ready: true,
     });
     // A request routed to a stopped agent waits for a person instead of an agent.
     const { id } = await open(employee);

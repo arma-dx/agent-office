@@ -5,6 +5,8 @@ import { accounts, ids } from './fixtures.ts';
 import {
   SAME_ORIGIN,
   SESSION_COOKIE,
+  adminExec,
+  closeAdminPool,
   createTestServer,
   noDatabase,
   sessionOf,
@@ -23,18 +25,19 @@ import {
 // budget), in Pillika P-IST-1 enabled.
 
 describe('groupOffice', () => {
-  const row = (unit: string, agent: string, status: string | null = null) => ({
+  const row = (unit: string, agent: string, status: string | null = null, ready = false) => ({
     unit_code: unit,
     unit_name: `Unit ${unit}`,
     agent_code: agent,
     agent_name: `Agent ${agent}`,
     status,
+    ready,
   });
 
   it('groups consecutive rows of a unit and keeps the order of units and agents', () => {
     const units = groupOffice([
-      row('HAF', 'HAF-1', 'stopped'),
-      row('KOR', 'KOR-1', 'enabled'),
+      row('HAF', 'HAF-1', 'stopped', true),
+      row('KOR', 'KOR-1', 'enabled', true),
       row('KOR', 'KOR-2'),
       row('A-KES', 'A-KES-2'),
     ]);
@@ -42,20 +45,20 @@ describe('groupOffice', () => {
       {
         code: 'HAF',
         name: 'Unit HAF',
-        agents: [{ code: 'HAF-1', name: 'Agent HAF-1', status: 'stopped' }],
+        agents: [{ code: 'HAF-1', name: 'Agent HAF-1', status: 'stopped', ready: true }],
       },
       {
         code: 'KOR',
         name: 'Unit KOR',
         agents: [
-          { code: 'KOR-1', name: 'Agent KOR-1', status: 'enabled' },
-          { code: 'KOR-2', name: 'Agent KOR-2', status: null },
+          { code: 'KOR-1', name: 'Agent KOR-1', status: 'enabled', ready: true },
+          { code: 'KOR-2', name: 'Agent KOR-2', status: null, ready: false },
         ],
       },
       {
         code: 'A-KES',
         name: 'Unit A-KES',
-        agents: [{ code: 'A-KES-2', name: 'Agent A-KES-2', status: null }],
+        agents: [{ code: 'A-KES-2', name: 'Agent A-KES-2', status: null, ready: false }],
       },
     ]);
   });
@@ -79,7 +82,10 @@ describe.skipIf(noDatabase)('office', () => {
     external = await sessionOf(server, accounts.external);
     otherFounder = await sessionOf(server, accounts.otherFounder);
   });
-  afterAll(() => server.close());
+  afterAll(async () => {
+    await server.close();
+    await closeAdminPool();
+  });
 
   function request(options: { session?: string | null; company?: string | null } = {}) {
     const session = options.session === undefined ? founder : options.session;
@@ -126,8 +132,9 @@ describe.skipIf(noDatabase)('office', () => {
       code: 'HAF',
       name: 'Kurumsal Hafıza',
       agents: [
-        { code: 'HAF-1', name: 'Bilgi Tabanı Ajanı', status: 'stopped' },
-        { code: 'HAF-2', name: 'Kurumsal Arama Ajanı', status: null },
+        // No card of these fixtures has a version to run with.
+        { code: 'HAF-1', name: 'Bilgi Tabanı Ajanı', status: 'stopped', ready: false },
+        { code: 'HAF-2', name: 'Kurumsal Arama Ajanı', status: null, ready: false },
       ],
     });
     // No unit without an agent, nothing of Pillika, nothing of the founder space, and no agent
@@ -159,10 +166,48 @@ describe.skipIf(noDatabase)('office', () => {
         {
           code: 'KOR',
           name: 'Koordinasyon Katmanı',
-          agents: [{ code: 'KOR-4', name: 'Yönetici Asistanı', status: null }],
+          agents: [{ code: 'KOR-4', name: 'Yönetici Asistanı', status: null, ready: false }],
         },
       ],
     });
+  });
+
+  it('says which agents have a card version to run with, whatever their switch says', async () => {
+    const readyOf = async (company: string): Promise<Record<string, boolean>> => {
+      const { units } = officeResponseSchema.parse((await request({ company })).json());
+      return Object.fromEntries(
+        units.flatMap((unit) => unit.agents.map((agent) => [agent.code, agent.ready])),
+      );
+    };
+    expect(Object.values(await readyOf(ids.arma))).not.toContain(true);
+    const version = '00000000-0000-4000-8000-000000000911';
+    try {
+      // KOR-2 gets a version: a card that can run, with no switch in either company. HAF-1 stays
+      // without one, although the company has a switch for it.
+      await adminExec(`
+        insert into office.card_versions (id, agent_code, git_commit, content, authority_level, model)
+          values ('${version}', 'KOR-2', 'abc0911', '{"card": {"status": "draft"}}', 'Y1',
+                  'test-model')
+          on conflict do nothing;
+        update office.agent_definitions set current_version_id = '${version}' where code = 'KOR-2';
+      `);
+      for (const company of [ids.arma, ids.pillika]) {
+        const ready = await readyOf(company);
+        // The card is global: the same answer in both companies, and only for that agent. The
+        // status written on the card (a draft here) does not decide it.
+        expect(ready).toMatchObject({ 'KOR-2': true, 'KOR-1': false, 'HAF-1': false });
+        expect(Object.values(ready).filter(Boolean)).toHaveLength(1);
+      }
+      // Nothing of the version itself leaves the database.
+      const body = (await request()).body;
+      expect(body).not.toContain(version);
+      expect(body).not.toContain('abc0911');
+    } finally {
+      await adminExec(
+        `update office.agent_definitions set current_version_id = null where code = 'KOR-2'`,
+      );
+    }
+    expect((await readyOf(ids.arma))['KOR-2']).toBe(false);
   });
 
   it('gives an employee the same answer as the founder', async () => {
@@ -227,7 +272,7 @@ describe.skipIf(noDatabase)('office', () => {
     for (const unit of body.units) {
       expect(Object.keys(unit).sort()).toEqual(['agents', 'code', 'name']);
       for (const agent of unit.agents as Record<string, unknown>[]) {
-        expect(Object.keys(agent).sort()).toEqual(['code', 'name', 'status']);
+        expect(Object.keys(agent).sort()).toEqual(['code', 'name', 'ready', 'status']);
       }
     }
     // HAF-1's row has settings and a monthly budget in the fixtures.

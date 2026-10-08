@@ -567,6 +567,10 @@ export const officeAgentSchema = z.object({
   name: z.string(),
   // null: the company has no company_agents row for this agent.
   status: companyAgentStatusSchema.nullable(),
+  // The agent's card has a version to run with. An agent that is not ready cannot be opened (the
+  // switch answers 409 agent_not_ready): the panel says so instead of offering the button. Only
+  // the missing version decides this, never the status written on the card.
+  ready: z.boolean(),
 });
 export type OfficeAgent = z.output<typeof officeAgentSchema>;
 

@@ -9,19 +9,19 @@ const RESPONSE: OfficeResponse = {
       code: 'KOR',
       name: 'Koordinasyon Katmanı',
       agents: [
-        { code: 'KOR-10', name: 'Onuncu Ajan', status: 'enabled' },
-        { code: 'KOR-2', name: 'Görev Takip Ajanı', status: null },
+        { code: 'KOR-10', name: 'Onuncu Ajan', status: 'enabled', ready: true },
+        { code: 'KOR-2', name: 'Görev Takip Ajanı', status: null, ready: false },
       ],
     },
     {
       code: 'A-KES',
       name: 'Keşif ve Dönüşüm Danışmanlığı',
-      agents: [{ code: 'A-KES-2', name: 'Süreç Analizi Ajanı', status: 'disabled' }],
+      agents: [{ code: 'A-KES-2', name: 'Süreç Analizi Ajanı', status: 'disabled', ready: true }],
     },
     {
       code: 'HAF',
       name: 'Kurumsal Hafıza',
-      agents: [{ code: 'HAF-1', name: 'Bilgi Tabanı Ajanı', status: 'stopped' }],
+      agents: [{ code: 'HAF-1', name: 'Bilgi Tabanı Ajanı', status: 'stopped', ready: true }],
     },
   ],
 };

@@ -20,7 +20,7 @@ const INSIDERS = { founderOnly: false, insidersOnly: true } as const;
 interface GroupedUnit {
   code: string;
   name: string;
-  agents: { code: string; name: string; status: string | null }[];
+  agents: { code: string; name: string; status: string | null; ready: boolean }[];
 }
 
 /** Groups the rows (ordered by unit) into units with their agents, keeping the order. */
@@ -32,7 +32,12 @@ export function groupOffice(rows: readonly OfficeRow[]): GroupedUnit[] {
       unit = { code: row.unit_code, name: row.unit_name, agents: [] };
       units.push(unit);
     }
-    unit.agents.push({ code: row.agent_code, name: row.agent_name, status: row.status });
+    unit.agents.push({
+      code: row.agent_code,
+      name: row.agent_name,
+      status: row.status,
+      ready: row.ready,
+    });
   }
   return units;
 }

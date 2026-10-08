@@ -68,11 +68,17 @@ export function registerAgentRoutes(app: FastifyInstance, { runner }: RouteDeps)
         'company_agent',
         row.id,
       );
-      const { rows } = await client.query<{ name: string }>(
-        'select name from office.agent_definitions where code = $1',
+      const { rows } = await client.query<{ name: string; ready: boolean }>(
+        `select name, current_version_id is not null as ready
+         from office.agent_definitions where code = $1`,
         [agentCode],
       );
-      return { code: agentCode, name: rows[0]?.name ?? agentCode, status: body.data.status };
+      return {
+        code: agentCode,
+        name: rows[0]?.name ?? agentCode,
+        status: body.data.status,
+        ready: rows[0]?.ready === true,
+      };
     }),
   );
 }

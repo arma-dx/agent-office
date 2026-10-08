@@ -51,6 +51,7 @@ describe.skipIf(noDatabase)('office query', () => {
         agent_code: 'HAF-1',
         agent_name: 'Bilgi Düzenleme',
         status: 'stopped',
+        ready: true,
       },
       {
         unit_code: 'KOR',
@@ -58,6 +59,7 @@ describe.skipIf(noDatabase)('office query', () => {
         agent_code: 'KOR-1',
         agent_name: 'Ofis Koordinatörü',
         status: 'enabled',
+        ready: true,
       },
     ]);
     // Pillika's unit and agent, and the founder space's agent, are not there; A-KES has no agent
@@ -89,6 +91,8 @@ describe.skipIf(noDatabase)('office query', () => {
         agent_code: 'KOR-4',
         agent_name: 'Yönetici Asistanı',
         status: null,
+        // No card version in the fixtures: this agent cannot be opened yet.
+        ready: false,
       },
     ]);
   });
@@ -165,11 +169,12 @@ describe.skipIf(noDatabase)('office query', () => {
     ]);
   });
 
-  it('reads only the five columns of the contract', async () => {
+  it('reads only the six columns of the contract', async () => {
     const [row] = await office({ companyId: ids.arma, userId: ids.founder });
     expect(Object.keys(row ?? {}).sort()).toEqual([
       'agent_code',
       'agent_name',
+      'ready',
       'status',
       'unit_code',
       'unit_name',

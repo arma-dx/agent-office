@@ -8,10 +8,13 @@ export interface OfficeRow {
   agent_name: string;
   // company_agents.status; null when the company has no row for the agent.
   status: string | null;
+  // The agent's card has a version to run with. Without one the agent cannot be opened: it could
+  // be given a request and would never start (office.flow_route_request asks the same).
+  ready: boolean;
 }
 
 // Only the switch is read from company_agents: its settings and budget never leave the database
-// through this query. Units shared by every company come first, then the company's own, each by
+// through this query. Of the card only whether a version exists, never the version or its content. Units shared by every company come first, then the company's own, each by
 // code; agents by the number at the end of their code, so KOR-10 follows KOR-9. The number is read
 // as numeric: the code pattern does not limit its digits, and one that is too large for an integer
 // would fail the whole query. The "C" collation keeps the order independent of the database locale.
@@ -20,7 +23,8 @@ const OFFICE_SQL = `
          u.name as unit_name,
          a.code as agent_code,
          a.name as agent_name,
-         ca.status
+         ca.status,
+         a.current_version_id is not null as ready
   from office.companies c
   join office.agent_definitions a on c.code = any (a.company_codes)
   join office.units u on u.code = a.unit_code
