@@ -337,6 +337,38 @@ describe.skipIf(noDatabase)('the approver of a unit and of an agent', () => {
       ).toBeNull();
     });
   });
+
+  it('answers who approves only to an insider of the context company', async () => {
+    // The fixtures appoint the founder for HAF in Arma DX.
+    const ask = `select office.approver_for('HAF', null) as approver,
+        office.member_can_approve($1) as founder_can, office.member_can_approve($2) as employee_can`;
+    const answer = (tx: Tx): Promise<Record<string, unknown>> =>
+      one(tx, ask, [ids.founder, ids.employeeA]);
+    const told = { approver: ids.founder, founder_can: true, employee_can: false };
+    const nothing = { approver: null, founder_can: false, employee_can: false };
+    for (const inRole of [inTransaction, inWorkerTransaction]) {
+      await inRole(async (tx) => {
+        for (const insider of [founderA, employeeA, agentRun(ids.employeeA, 'KOR-1')]) {
+          await tx.setContext(insider);
+          expect(await answer(tx)).toEqual(told);
+        }
+        for (const outsider of [
+          // A Pillika employee who names the Arma DX context, an external member, a person who
+          // has left, and nobody at all.
+          { companyId: ids.arma, userId: ids.employeeP },
+          externalA,
+          { companyId: ids.arma, userId: ids.formerEmployee },
+          { companyId: ids.arma },
+          agentRun(ids.externalA, 'KOR-1'),
+        ]) {
+          await tx.setContext(outsider);
+          expect(await answer(tx)).toEqual(nothing);
+          // What the same context reads of the table itself, for comparison.
+          expect(await tx.count('approvers')).toBe(0);
+        }
+      });
+    }
+  });
 });
 
 describe.skipIf(noDatabase)('routing a request', () => {
