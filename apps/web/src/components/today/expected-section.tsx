@@ -60,13 +60,17 @@ export function ExpectedSection({
   const order = useStableOrder(requests.map((request) => request.id));
   const { headingRef, onFocusCapture, onBlurCapture } = useRowFocus(order.join(' '));
   if (requests.length === 0) {
+    // The same ref as the heading of the list: when a refresh takes the last row away under the
+    // keyboard, the focus goes to this heading (useRowFocus), not to the page.
     return company.role === 'external' ? (
       <EmptyState
+        headingRef={headingRef}
         title="Sizden beklenen iş yok"
         description="Ajanların yürüttüğü talepler şirketin kurucusuna ve çalışanlarına açıktır."
       />
     ) : (
       <EmptyState
+        headingRef={headingRef}
         title="Sizden beklenen iş yok"
         description="Onayınızı ya da bakmanızı bekleyen talepler burada görünür. Ajanlardan bir iş istemek için talep gönderin."
         action={

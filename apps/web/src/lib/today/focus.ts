@@ -8,7 +8,8 @@ import { useEffect, useRef, type FocusEvent, type RefObject } from 'react';
  * Nothing is moved when the focus is somewhere else by then.
  *
  * `signature` changes when the rows change (their ids, joined). Put the two handlers on the list
- * and the ref on its heading (tabIndex -1).
+ * and the ref on its heading (tabIndex -1). A list that is replaced by an empty state when its
+ * last row leaves puts the same ref on the heading of that state.
  */
 export function useRowFocus(signature: string): {
   headingRef: RefObject<HTMLHeadingElement | null>;

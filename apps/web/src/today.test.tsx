@@ -316,6 +316,42 @@ describe('Bugün: Sizden beklenenler', () => {
     }
   });
 
+  it('a refresh that takes the last row away moves the focus to the heading of the empty list', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const api = mockApi({
+        'GET /session': sessionHandler(),
+        'GET /today': () => json(todayBody({ expected: [DECIDE], notifications: [RETURNED_NOTE] })),
+      });
+      renderApp('/c/armadx');
+      const region = await screen.findByRole('region', { name: 'Sizden beklenenler 1' });
+      // The focus is on the only row and the row leaves: the list and its heading go with it, so
+      // the focus goes to the heading that says nothing is expected, not to the page.
+      within(region).getByRole('link').focus();
+      api.handle('GET /today', () => json(todayBody({ notifications: [RETURNED_NOTE] })));
+      await vi.advanceTimersByTimeAsync(30_100);
+      expect(await screen.findByRole('heading', { name: 'Sizden beklenen iş yok' })).toHaveFocus();
+
+      // The focus is somewhere else when the list empties: it stays where the person put it.
+      api.handle('GET /today', () =>
+        json(todayBody({ expected: [DECIDE], notifications: [RETURNED_NOTE] })),
+      );
+      await vi.advanceTimersByTimeAsync(30_100);
+      const again = await screen.findByRole('region', { name: 'Sizden beklenenler 1' });
+      within(again).getByRole('link').focus();
+      const elsewhere = within(screen.getByRole('region', { name: 'Bildirimler' })).getByRole(
+        'link',
+      );
+      elsewhere.focus();
+      api.handle('GET /today', () => json(todayBody({ notifications: [RETURNED_NOTE] })));
+      await vi.advanceTimersByTimeAsync(30_100);
+      await screen.findByRole('heading', { name: 'Sizden beklenen iş yok' });
+      expect(elsewhere).toHaveFocus();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('says that the list could not be read and offers to try again', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {

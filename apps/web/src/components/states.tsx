@@ -4,7 +4,7 @@
 // License text: THIRD_PARTY_NOTICES.md.
 // Changes: only that layout was taken, as the "page" variant of our EmptyState; no large icon; the
 // action is any node (a typed link or a button) instead of a label with a callback.
-import type { ReactNode } from 'react';
+import type { ReactNode, Ref } from 'react';
 import { InlineBanner } from '@/components/inline-banner';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -13,17 +13,21 @@ import { cn } from '@/lib/utils';
 /**
  * An empty screen shows the first step (CLAUDE.md, interface texts). `section` is a bordered box
  * inside a page section; `page` fills an otherwise empty page, centered and without a box.
+ * `headingRef` is for a list that can empty by itself while the keyboard is in it: the heading
+ * can then take the focus from a script (it is not a stop of the Tab key).
  */
 export function EmptyState({
   title,
   description,
   action,
   variant = 'section',
+  headingRef,
 }: {
   title: string;
   description: string;
   action?: ReactNode;
   variant?: 'section' | 'page';
+  headingRef?: Ref<HTMLHeadingElement>;
 }) {
   return (
     <section
@@ -34,7 +38,13 @@ export function EmptyState({
           : 'items-start rounded-lg border border-line bg-surface p-6',
       )}
     >
-      <h2 className="text-base font-semibold">{title}</h2>
+      <h2
+        ref={headingRef}
+        tabIndex={headingRef ? -1 : undefined}
+        className="text-base font-semibold"
+      >
+        {title}
+      </h2>
       <p className="max-w-md text-sm text-ink-secondary">{description}</p>
       {action ? <div className="pt-2">{action}</div> : null}
     </section>
