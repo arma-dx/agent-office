@@ -343,6 +343,15 @@ Skill klasörü: `skills/<ad>/SKILL.md` ve yanında `templates/`, `examples/`, `
 - İşlevler: `coordinator_agent_code`, `route_request` (koordinatör), `correct_routing` (kişi), `close_request`, `approver_for`, `member_can_approve`, `approval_released`; akışın iç işlevleri `flow_` ile başlar
 - İz kaydı olayları: `request_created`, `request_routed`, `request_rerouted`, `request_returned`, `request_cancelled`, `request_stopped`; `approval_opened`, `approval_approved`, `approval_changes_requested`, `approval_rejected`, `approval_closed`, `approval_summary_changed`; `requester_approval_*`; `approver_appointed`, `approver_changed`, `approver_removed`
 
+## 8 Ekim incelemesinin düzeltmeleriyle eklenen adlar (karşılığı olan eski Türkçe ad yok)
+
+- Alanlar: `runs.routing_id` (çalışmanın açıldığı yönlendirme adımı; veritabanı yazar, sonradan değişmez)
+- İşlevler: `lock_request` (bir kişinin işleminde talebin kilidini önce alır; yalnızca API çağırır)
+- İz kaydı olayları: `run_not_started` (düzeltme istendiğinde adımın ajanı durdurulmuştu, çalışma başlatılmadı; API yazar), `run_refused` (çalıştırıcı işi çalışma açmadan geri çevirdi). Talep sayfası "çalışma başlamadı" bilgisini bu iki olaydan okur.
+- Talep nedeni kodu: `not_started` (çalışma başlamadı; talep insana düşer, ajan yeniden açılsa da iş kendiliğinden başlamaz)
+- API hata kodu: `request_changed` (aynı talepte başka bir işlem bunu geçersiz kıldı; sayfa yenilenir)
+- API yanıt alanları: `acceptance.returnsToAgent` ("istediğim bu değil" işi ajana geri döndürür mü), ofis yanıtında ajan başına `ready` (kartın çalışacak sürümü var mı)
+
 ## Notlar
 
 - Hata metinleri (veritabanı tetikleyicilerinin `raise exception` metinleri, geliştiriciye dönük iletiler) İngilizcedir. Kullanıcıya gösterilecek Türkçe metni API üretir; API hata metnine göre değil SQLSTATE koduna göre dallanır.
