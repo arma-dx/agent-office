@@ -349,7 +349,7 @@ describe('office page: the selection in the properties panel', () => {
     ).toBeVisible();
     expect(field('Durum')).toHaveTextContent('Kapalı');
     expect(within(panel).getByText('Bu ajan kapalı.')).toBeVisible();
-    // Nothing the office does not know: three fields, one sentence, two buttons.
+    // Nothing the office does not know: three fields, one sentence, the counts, two buttons.
     expect(
       within(panel)
         .getAllByRole('term')

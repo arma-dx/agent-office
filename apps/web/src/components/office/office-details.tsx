@@ -1,5 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useId, useState, type Ref } from 'react';
+import { AgentWorkList } from '@/components/office/agent-work';
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -174,14 +175,20 @@ function AgentSwitchButton({ agent }: { agent: OfficeAgent }) {
   );
 }
 
-/** An agent: its code, its unit (which can be chosen from here) and the company's switch for it. */
+/**
+ * An agent: its code, its unit (which can be chosen from here), its state, its open requests in
+ * this company and, for the founder, the company's switch. Kurucu alanı has no request, so no
+ * count is shown there.
+ */
 function AgentDetails({
   unit,
   agent,
+  workTruncated,
   onSelect,
 }: {
   unit: OfficeUnit;
   agent: OfficeAgent;
+  workTruncated: boolean;
   onSelect: (id: string) => void;
 }) {
   const company = useCompany();
@@ -206,6 +213,9 @@ function AgentDetails({
         <dd>{AGENT_STATE_LABEL[agent.state]}</dd>
       </dl>
       <p className="text-ink-secondary">{AGENT_STATE_SENTENCE[agent.state]}</p>
+      {company.kind === 'company' ? (
+        <AgentWorkList work={agent.work} truncated={workTruncated} />
+      ) : null}
       {company.role === 'founder' ? <AgentSwitch agent={agent} /> : null}
     </>
   );
@@ -218,11 +228,14 @@ function AgentDetails({
  */
 export function OfficeDetails({
   selection,
+  workTruncated = false,
   headingRef,
   onSelect,
   onClear,
 }: {
   selection: OfficeSelection;
+  /** The company has more open requests than the office answer looked at. */
+  workTruncated?: boolean;
   headingRef?: Ref<HTMLHeadingElement>;
   /** Another unit or agent was chosen from this content. */
   onSelect: (id: string) => void;
@@ -236,7 +249,12 @@ export function OfficeDetails({
       {selection.kind === 'unit' ? (
         <UnitDetails unit={selection.unit} onSelect={onSelect} />
       ) : (
-        <AgentDetails unit={selection.unit} agent={selection.agent} onSelect={onSelect} />
+        <AgentDetails
+          unit={selection.unit}
+          agent={selection.agent}
+          workTruncated={workTruncated}
+          onSelect={onSelect}
+        />
       )}
       <Button type="button" variant="outline" className="self-start" onClick={onClear}>
         Seçimi kaldır

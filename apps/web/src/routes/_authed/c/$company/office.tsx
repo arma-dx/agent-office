@@ -136,6 +136,7 @@ function OfficeForCompany({ company }: { company: MembershipSummary }) {
         <PropertiesPanel open={wide}>
           <OfficeDetails
             selection={selection}
+            workTruncated={query.data.workTruncated}
             headingRef={detailsHeading}
             onSelect={selectFromDetails}
             onClear={clearFromDetails}

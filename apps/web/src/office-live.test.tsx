@@ -1,13 +1,17 @@
-import { type CompanyAgentStatus, type OfficeResponse } from '@agent-office/shared';
-import { screen, within } from '@testing-library/react';
+import {
+  type CompanyAgentStatus,
+  type MembershipSummary,
+  type OfficeResponse,
+} from '@agent-office/shared';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import type { OfficeUnit } from './lib/office/model.ts';
 import { WIDE_WINDOW_QUERY } from './lib/office/use-wide-window.ts';
 import { stubMatchMedia } from './test/match-media.ts';
-import { json, mockApi, sessionHandler } from './test/mock-api.ts';
-import { ARMADX_OFFICE } from './test/office-fixtures.ts';
-import { renderApp } from './test/render-app.tsx';
+import { apiError, ARMADX, json, mockApi, sessionHandler } from './test/mock-api.ts';
+import { ARMADX_OFFICE, FOUNDER_OFFICE } from './test/office-fixtures.ts';
+import { currentLocation, renderApp } from './test/render-app.tsx';
 
 // The live states of the office view, the counts of the selected agent and "Her yerde durdur"
 // (8 October decisions 9 and 10; docs/SONRA.md W-d, W-e and W-f).
@@ -49,6 +53,7 @@ function officeBody(
   };
 }
 
+const EMPLOYEE: MembershipSummary = { ...ARMADX, role: 'employee', canApprove: false };
 const OPEN = {
   'KOR-1': 'enabled',
   'SOS-2': 'enabled',
@@ -65,6 +70,13 @@ function desk(code: string): Element {
 const label = (code: string) => screen.findByRole('button', { name: new RegExp(`^${code} `) });
 const panel = () => screen.getByRole('complementary', { name: 'Özellikler' });
 const wide = () => stubMatchMedia([WIDE_WINDOW_QUERY]);
+
+/** The rows of the list "Açık talepleri" as text. */
+function workRows(): (string | null)[] {
+  return within(within(panel()).getByRole('list', { name: 'Açık talepleri' }))
+    .getAllByRole('listitem')
+    .map((item) => item.textContent);
+}
 
 describe('office page: live states', () => {
   it('shows on each desk what the open requests of its agent say, with a word and a mark for every state', async () => {
@@ -111,5 +123,66 @@ describe('office page: live states', () => {
       within(panel()).getByText('Durum', { selector: 'dt' }).nextElementSibling,
     ).toHaveTextContent('Hata');
     expect(within(panel()).getByText('Bu ajanın yürüttüğü bir talep insana düştü.')).toBeVisible();
+  });
+
+  it('lists the three counts of the selected agent; a count of one leads to that request', async () => {
+    wide();
+    mockApi({
+      'GET /session': sessionHandler(),
+      'GET /office': () =>
+        json(
+          officeBody(ARMADX_OFFICE, OPEN, [
+            work('SOS-2', { running: many(2), awaitingApproval: NONE, failed: one(R1) }),
+          ]),
+        ),
+      [`GET /requests/${R1}`]: () => apiError(404, 'not_found', 'Kayıt bulunamadı.'),
+    });
+    const { router } = renderApp('/c/armadx/office');
+    await userEvent.click(await label('SOS-2'));
+    expect(workRows()).toEqual(['Çalışıyor2 talep', 'Onay bekliyor0 talep', 'Hata1']);
+    const list = within(panel()).getByRole('list', { name: 'Açık talepleri' });
+    // One link: the request that fell to a person. Several requests are a number alone.
+    const links = within(list).getAllByRole('link');
+    expect(links).toHaveLength(1);
+    expect(links[0]).toHaveAccessibleName('Hata: 1 talep, talebi aç');
+    // The founder sees every request of the company: no note about what the numbers leave out.
+    expect(within(panel()).queryByText(/görebildiğiniz/)).toBeNull();
+    expect(within(panel()).queryByText(/fazlası açık/)).toBeNull();
+    await userEvent.click(links[0] as HTMLElement);
+    await waitFor(() => {
+      expect(currentLocation(router).pathname).toBe(`/c/armadx/requests/${R1}`);
+    });
+  });
+
+  it('shows zeros for an agent without work, tells an employee what the numbers are counted from, and says when they were cut', async () => {
+    wide();
+    mockApi({
+      'GET /session': sessionHandler({ memberships: [EMPLOYEE] }),
+      'GET /office': () => json(officeBody(ARMADX_OFFICE, OPEN, [], true)),
+    });
+    renderApp('/c/armadx/office');
+    await userEvent.click(await label('KOR-1'));
+    expect(workRows()).toEqual(['Çalışıyor0 talep', 'Onay bekliyor0 talep', 'Hata0 talep']);
+    expect(within(panel()).queryByRole('link')).toBeNull();
+    expect(
+      within(panel()).getByText('Durum ve sayılar, görebildiğiniz taleplerden hesaplanır.'),
+    ).toBeVisible();
+    expect(
+      within(panel()).getByText(
+        'Şirkette 200 talepten fazlası açık; durumlar ve sayılar en uzun süredir bekleyen 200 talepten hesaplandı.',
+      ),
+    ).toBeVisible();
+  });
+
+  it('shows no counts in Kurucu alanı, where no request can be opened', async () => {
+    wide();
+    mockApi({
+      'GET /session': sessionHandler(),
+      'GET /office': () => json(officeBody(FOUNDER_OFFICE, { 'KOR-4': 'enabled' })),
+    });
+    renderApp('/c/founder_space/office');
+    await userEvent.click(await label('KOR-4'));
+    expect(within(panel()).getByText('Bu ajan açık ve boşta.')).toBeVisible();
+    expect(within(panel()).queryByRole('list', { name: 'Açık talepleri' })).toBeNull();
   });
 });
