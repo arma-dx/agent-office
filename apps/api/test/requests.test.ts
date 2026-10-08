@@ -1107,6 +1107,138 @@ describe.skipIf(noDatabase)('requests', () => {
     });
   });
 
+  it('work that could not be started stays with a person, also after the agent is opened again', async () => {
+    const stop = () => put(founder, '/api/agents/HAF-2/switch', { status: 'stopped' });
+    const openAgain = () => put(founder, '/api/agents/HAF-2/switch', { status: 'enabled' });
+    const notStarted = {
+      status: 'in_progress',
+      stage: 'fell_to_person',
+      cause: 'not_started',
+      delayed: false,
+      turn: { kind: 'founder' },
+    };
+    const traceOf = (id: string) =>
+      adminQuery(
+        `select event, user_id, agent_code from office.audit_log
+         where record_type = 'task' and record_id = $1 and event like 'run_%' order by id`,
+        [id],
+      );
+    /** What the runner leaves when it refuses a job at its gate: one row, in the agent's context. */
+    const refusedAtTheGate = (taskId: string, agentCode: string) =>
+      agentStep(workerPool, { companyId: ids.arma, userId: ids.employee, agentCode }, (client) =>
+        client.query(
+          `insert into office.audit_log (company_id, event, record_type, record_id)
+           values (office.ctx_company_id(), 'run_refused', 'task', $1)`,
+          [taskId],
+        ),
+      );
+
+    // The approver asks for changes while the agent is stopped: no job, and the page says why.
+    const first = await open(employee);
+    await route(first.id, ids.employee);
+    const approvalId = await submit(first.id, ids.employee);
+    // The requester says "not what I asked for" while the agent is stopped.
+    const second = await open(employee);
+    await route(second.id, ids.employee);
+    await post(founder, `/api/approvals/${await submit(second.id, ids.employee)}/decision`, {
+      decision: 'approved',
+      selectedOption: 'A',
+    });
+    // A job the runner refuses at its gate because the agent is stopped when it arrives.
+    const third = await open(employee);
+    await route(third.id, ids.employee);
+    const jobs = server.jobs.sent.length;
+    await stop();
+    try {
+      const sentBack = await post(founder, `/api/approvals/${approvalId}/decision`, {
+        decision: 'changes_requested',
+        reason: 'incomplete',
+      });
+      expect(requestDetailSchema.parse(sentBack.json())).toMatchObject({
+        stage: 'fell_to_person',
+        cause: 'agent_stopped',
+      });
+      const refusedResult = await post(employee, `/api/requests/${second.id}/acceptance`, {
+        decision: 'changes_requested',
+        note: 'Açılış tarihi de yazsın.',
+      });
+      expect(requestDetailSchema.parse(refusedResult.json())).toMatchObject({
+        stage: 'fell_to_person',
+        cause: 'agent_stopped',
+      });
+      await refusedAtTheGate(third.id, 'HAF-2');
+      expect(await read(employee, third.id)).toMatchObject({ cause: 'agent_stopped' });
+    } finally {
+      await openAgain();
+    }
+    // Nothing was put on the queue, neither by the change requests nor by opening the agent.
+    expect(server.jobs.sent).toHaveLength(jobs);
+    expect(await traceOf(first.id)).toEqual([
+      { event: 'run_not_started', user_id: ids.founder, agent_code: null },
+    ]);
+    expect(await traceOf(second.id)).toEqual([
+      { event: 'run_not_started', user_id: ids.employee, agent_code: null },
+    ]);
+    // The agent is open again, and still nobody is told that it has the turn: the page says the
+    // work did not start, to the requester and to the founder, who is the one to act.
+    for (const id of [first.id, second.id, third.id]) {
+      expect(await read(employee, id)).toMatchObject({ ...notStarted, waitingForMe: false });
+      expect(await read(founder, id)).toMatchObject({
+        ...notStarted,
+        waitingForMe: true,
+        actions: { cancel: false, stop: true, reroute: true },
+      });
+    }
+    const list = requestListSchema.parse((await get(employee, '/api/requests')).json());
+    expect(list.requests.find((request) => request.id === first.id)).toMatchObject(notStarted);
+    // The way on: the founder gives the work to the agent again, and a job is sent.
+    const again = await post(founder, `/api/requests/${first.id}/routing`, {
+      unitCode: 'HAF',
+      agentCode: 'HAF-2',
+    });
+    expect(requestDetailSchema.parse(again.json())).toMatchObject({
+      stage: 'working',
+      cause: null,
+      turn: { kind: 'agent', code: 'HAF-2' },
+    });
+    expect(server.jobs.sent.slice(jobs)).toEqual([
+      { companyId: ids.arma, userId: ids.employee, taskId: first.id, agentCode: 'HAF-2' },
+    ]);
+
+    // A refusal that is about another agent says nothing about this step: a stale job of the
+    // coordinator on a request that is routed.
+    const routed = await open(employee);
+    await route(routed.id, ids.employee);
+    await refusedAtTheGate(routed.id, COORDINATOR_AGENT_CODE);
+    expect(await read(employee, routed.id)).toMatchObject({ stage: 'working', cause: null });
+
+    // Before the routing: the coordinator's job was refused before a run existed. The founder
+    // makes the first routing.
+    const unrouted = await open(employee);
+    expect(await read(founder, unrouted.id)).toMatchObject({ stage: 'routing', cause: null });
+    await refusedAtTheGate(unrouted.id, COORDINATOR_AGENT_CODE);
+    expect(await read(employee, unrouted.id)).toMatchObject({
+      ...notStarted,
+      status: 'open',
+      waitingForMe: false,
+    });
+    expect(await read(founder, unrouted.id)).toMatchObject({
+      ...notStarted,
+      status: 'open',
+      waitingForMe: true,
+      actions: { cancel: false, stop: true, reroute: true },
+    });
+    const byHand = await post(founder, `/api/requests/${unrouted.id}/routing`, {
+      unitCode: 'HAF',
+      agentCode: 'HAF-2',
+    });
+    expect(requestDetailSchema.parse(byHand.json())).toMatchObject({
+      status: 'in_progress',
+      stage: 'working',
+      cause: null,
+    });
+  });
+
   it('only the founder opens and stops an agent, and only an agent of the company', async () => {
     const byEmployee = await put(employee, '/api/agents/HAF-2/switch', { status: 'stopped' });
     expect([byEmployee.statusCode, errorCode(byEmployee)]).toEqual([403, 'founder_only']);

@@ -20,6 +20,8 @@ import {
   readIntake,
   readRequest,
   readResultApprovals,
+  writeAudit,
+  type AgentRunSender,
   type Queryable,
   type RequestRow,
 } from '@agent-office/db';
@@ -163,6 +165,35 @@ async function intakeOf(client: Queryable, role: Role): Promise<RequestIntake> {
   }
   if (row.card_status === 'trial' && role !== 'founder') return closed('trial_founder_only');
   return { open: true, reason: null };
+}
+
+/**
+ * Calls for the agent's run after a change request: the job of the agent of the active step, in
+ * the requester's name. A stopped agent takes no new work, so nothing is put on the queue for it;
+ * the trace run_not_started is written instead (ids only), and the request page reads from it that
+ * the work stays with a person, also after the agent is opened again (opening an agent starts
+ * nothing; the person routes the request again). No active step: nothing is called for.
+ */
+async function runAgain(
+  client: Queryable,
+  jobs: AgentRunSender,
+  companyId: string,
+  requestId: string,
+): Promise<void> {
+  const again = await agentToRunAgain(client, requestId);
+  if (!again) {
+    return;
+  }
+  if (!again.enabled) {
+    await writeAudit(client, 'run_not_started', 'task', requestId);
+    return;
+  }
+  await jobs.send(client, {
+    companyId,
+    userId: again.requesterUserId,
+    taskId: requestId,
+    agentCode: again.agentCode,
+  });
 }
 
 function requestIdOf(request: FastifyRequest): string {
@@ -474,15 +505,7 @@ export function registerRequestRoutes(
       if (body.data.decision === 'changes_requested') {
         // The same agent takes the requester's words; after the second time no step is active and
         // nothing starts by itself.
-        const again = await agentToRunAgain(client, requestId);
-        if (again) {
-          await jobs.send(client, {
-            companyId,
-            userId: again.requesterUserId,
-            taskId: requestId,
-            agentCode: again.agentCode,
-          });
-        }
+        await runAgain(client, jobs, companyId, requestId);
       }
       const row = await readRequest(client, COORDINATOR_AGENT_CODE, requestId);
       if (!row) {
@@ -593,18 +616,10 @@ export function registerRequestRoutes(
         if (code === '42501') throw notFound();
         throw error;
       }
-      if (decision.decision === 'changes_requested') {
+      if (decision.decision === 'changes_requested' && approval.attempt < 2) {
         // Back to the same agent with the approver's reason (2 October decision 10). After the
         // second change request the database refuses a third result and nothing is started.
-        const again = approval.attempt < 2 ? await agentToRunAgain(client, approval.task_id) : null;
-        if (again) {
-          await jobs.send(client, {
-            companyId,
-            userId: again.requesterUserId,
-            taskId: approval.task_id,
-            agentCode: again.agentCode,
-          });
-        }
+        await runAgain(client, jobs, companyId, approval.task_id);
       }
       const row = await readRequest(client, COORDINATOR_AGENT_CODE, approval.task_id);
       if (!row) {

@@ -73,6 +73,7 @@ export function factsOf(row: RequestRow): RequestFacts {
         : null,
     changesRequested: row.last_change_request_at !== null,
     awaitedSince: latest(row.step_created_at, row.last_change_request_at),
+    notStartedAt: row.not_started_at,
     lastRun:
       row.run_agent_code !== null && row.run_status !== null && row.run_started_at !== null
         ? {

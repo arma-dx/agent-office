@@ -374,4 +374,5 @@ Sormadan yapılan varsayımlar (ince dilimin planında; hepsi **kurucu onayı be
 İlk dilimin incelemesinde bulunan hatalar düzeltilirken yapılan yorumlar (hepsi **kurucu onayı bekliyor**):
 
 - Y-i (5 Ekim karar 2): talep sahibi "istediğim bu değil" dedikten sonra ajanın yeni sonucu, aynı adımın bir önceki sonucundaki "para içeriyor" ve "dışarı gidecek" işaretlerini düşüremez. Kural o güne kadar yalnızca onaylayıcının düzeltme isteğinden sonraki deneme için geçerliydi; talep sahibinin isteğinden sonraki yeni sonuç passkey istemeden onaylanabiliyordu. Yorum güvenli yöndedir: passkey daha çok istenir, daha az değil.
+- Y-j (Y-f'nin devamı): ajan durdurulmuşken düzeltme istenirse ya da çalıştırıcı işi hiç başlatamazsa talep insana düşer ve ajan yeniden açıldığında da orada kalır; sayfa "çalışma başlamadı" der. İşi bir kişi "Yönlendirmeyi düzelt" ile yeniden verir; ajanı açmak hiçbir talebi kendiliğinden başlatmaz. Açık soru: ajan yeniden açıldığında onu bekleyen işler kendiliğinden başlasın mı?
 

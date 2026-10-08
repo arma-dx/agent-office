@@ -92,6 +92,10 @@ export const requestCauseSchema = z.enum([
   'coordinator_closed',
   'no_routing',
   'agent_stopped',
+  // A run was called for and never started: the agent was stopped when changes were asked for, or
+  // the runner refused the job before a run existed. The agent may be open again by now; nothing
+  // starts by itself, a person routes the request again.
+  'not_started',
   'no_submission',
   'run_failed',
   'limit_reached',
@@ -156,6 +160,10 @@ export interface RequestFacts {
   // The latest moment a run was called for: the routing of the active step or the last change
   // request. Null before the first routing.
   awaitedSince: Date | null;
+  // The latest time a run was called for and not started, for the agent whose turn it is: the
+  // trace of a change request that found the agent stopped, or of a job refused at the runner's
+  // gate. Null when there is none.
+  notStartedAt: Date | null;
   // The latest run on the request, whoever ran it.
   lastRun: {
     agentCode: string;
@@ -249,6 +257,11 @@ export function deriveStage(facts: RequestFacts, now: Date): DerivedStage {
     if (!facts.coordinatorEnabled) {
       return at('fell_to_person', 'founder', { cause: 'coordinator_closed' });
     }
+    if (facts.notStartedAt !== null) {
+      // The coordinator's job was refused before a run existed. Nothing is on the queue any more,
+      // also when the coordinator is open again: a person makes the first routing.
+      return at('fell_to_person', 'founder', { cause: 'not_started' });
+    }
     return at('routing', 'coordinator', { delayed: since(facts.createdAt) > QUEUE_GRACE_MS });
   }
 
@@ -272,6 +285,12 @@ export function deriveStage(facts: RequestFacts, now: Date): DerivedStage {
   }
   if (!step.agentEnabled) {
     return at('fell_to_person', 'approver', { cause: 'agent_stopped' });
+  }
+  if (facts.notStartedAt !== null && facts.notStartedAt >= awaitedSince) {
+    // The run that was called for was never started and nothing is on the queue for it. The agent
+    // is open (again), but opening an agent starts no request: it stays with a person until
+    // somebody routes it again, which is a later moment than this trace.
+    return at('fell_to_person', 'approver', { cause: 'not_started' });
   }
   return at(working, 'agent', { delayed: since(awaitedSince) > QUEUE_GRACE_MS });
 }

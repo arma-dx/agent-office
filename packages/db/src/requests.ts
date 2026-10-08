@@ -65,6 +65,9 @@ export interface RequestRow {
   last_result_status: string | null;
   last_result_attempt: number | null;
   last_change_request_at: Date | null;
+  // The latest time a run was called for and not started, for the agent whose turn it is (a change
+  // request that found the agent stopped, a job the runner refused at its gate).
+  not_started_at: Date | null;
   run_agent_code: string | null;
   run_status: string | null;
   run_error_code: string | null;
@@ -129,6 +132,7 @@ const REQUEST_SQL = `
          ) as pending_acceptance,
          coalesce(f.pending_result, false) as pending_result,
          f.last_result_status, f.last_result_attempt, f.last_change_request_at,
+         f.not_started_at,
          lr.agent_code as run_agent_code, lr.status as run_status,
          lr.error_code as run_error_code, lr.started_at as run_started_at
   from office.tasks t
@@ -584,23 +588,34 @@ export async function decideAcceptance(
 
 /**
  * The agent a new run is called for after a change request: the agent of the step that is active
- * now, if it is enabled. Null when nothing starts by itself (no active step, a stopped agent).
+ * now, and whether it is enabled in this company. Null when no step is active (after the second
+ * change request nothing starts by itself). A stopped agent takes no new work: the caller sends
+ * no job for it and leaves the trace that the run was not started (run_not_started).
  */
 export async function agentToRunAgain(
   client: Queryable,
   requestId: string,
-): Promise<{ agentCode: string; requesterUserId: string } | null> {
-  const { rows } = await client.query<{ agent_code: string; requester_user_id: string }>(
-    `select s.agent_code, t.requester_user_id
+): Promise<{ agentCode: string; requesterUserId: string; enabled: boolean } | null> {
+  const { rows } = await client.query<{
+    agent_code: string;
+    requester_user_id: string;
+    enabled: boolean;
+  }>(
+    `select s.agent_code, t.requester_user_id,
+            exists (
+              select 1 from office.company_agents ca
+              where ca.company_id = s.company_id and ca.agent_code = s.agent_code
+                and ca.status = 'enabled'
+            ) as enabled
      from office.task_routings s
      join office.tasks t on t.id = s.task_id and t.kind = 'request'
-     join office.company_agents ca
-       on ca.company_id = s.company_id and ca.agent_code = s.agent_code and ca.status = 'enabled'
      where s.task_id = $1 and s.status = 'active' and t.status = 'in_progress'`,
     [requestId],
   );
   const row = rows[0];
-  return row ? { agentCode: row.agent_code, requesterUserId: row.requester_user_id } : null;
+  return row
+    ? { agentCode: row.agent_code, requesterUserId: row.requester_user_id, enabled: row.enabled }
+    : null;
 }
 
 /** The names of people on the records the person read (members of the context company only). */

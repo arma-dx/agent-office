@@ -111,6 +111,7 @@ describe('where a request is and whose turn it is', () => {
     lastResult: null,
     changesRequested: false,
     awaitedSince: null,
+    notStartedAt: null,
     lastRun: null,
   };
   const routed: RequestFacts = {
@@ -169,6 +170,55 @@ describe('where a request is and whose turn it is', () => {
     );
     expect(of({ step: { agentCode: 'SOS-2', agentEnabled: false } }, routed)).toBe(
       'fell_to_person agent_stopped approver on time',
+    );
+  });
+
+  it('work that was called for and never started stays with a person, also once the agent is open again', () => {
+    // The agent is open and no run started since the work was called for (5 s ago), but a trace
+    // says the start was missed: the agent was stopped at the change request, or the job was
+    // refused at the runner's gate. Nothing is on the queue, so it is nobody's turn but a person's.
+    expect(of({ notStartedAt: ago(4_000) }, routed)).toBe(
+      'fell_to_person not_started approver on time',
+    );
+    // The trace of a change request carries the very moment of that request.
+    expect(of({ notStartedAt: ago(5_000), changesRequested: true }, routed)).toBe(
+      'fell_to_person not_started approver on time',
+    );
+    // It does not turn into "the agent is working, delayed" with time.
+    const later = new Date(now.getTime() + 60 * 60 * 1000);
+    expect(deriveStage({ ...routed, notStartedAt: ago(4_000) }, later)).toEqual({
+      stage: 'fell_to_person',
+      cause: 'not_started',
+      turn: 'approver',
+      delayed: false,
+    });
+    // While the agent is still stopped that is the cause the person reads.
+    expect(
+      of({ notStartedAt: ago(4_000), step: { agentCode: 'SOS-2', agentEnabled: false } }, routed),
+    ).toBe('fell_to_person agent_stopped approver on time');
+    // A person routed the request again after the missed start: the agent has the turn.
+    expect(of({ notStartedAt: ago(6_000) }, routed)).toBe('working - agent on time');
+    // A run that did start since then says more than the trace.
+    expect(of({ notStartedAt: ago(4_000), lastRun: run('SOS-2', 'running') }, routed)).toBe(
+      'working - agent on time',
+    );
+    expect(of({ notStartedAt: ago(4_000), lastRun: run('SOS-2', 'completed') }, routed)).toBe(
+      'fell_to_person no_submission approver on time',
+    );
+    expect(of({ notStartedAt: ago(4_000), pendingApproval: true }, routed)).toBe(
+      'unit_approval - approver on time',
+    );
+
+    // Before the routing: the coordinator's job was refused before a run existed.
+    expect(of({ notStartedAt: ago(4_000) })).toBe('fell_to_person not_started founder on time');
+    expect(of({ notStartedAt: ago(4_000), createdAt: ago(60 * 60 * 1000) })).toBe(
+      'fell_to_person not_started founder on time',
+    );
+    expect(of({ notStartedAt: ago(4_000), coordinatorEnabled: false })).toBe(
+      'fell_to_person coordinator_closed founder on time',
+    );
+    expect(of({ notStartedAt: ago(4_000), lastRun: run('KOR-1', 'running') })).toBe(
+      'routing - coordinator on time',
     );
   });
 

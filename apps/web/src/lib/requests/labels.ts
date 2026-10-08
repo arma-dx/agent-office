@@ -45,6 +45,7 @@ export const CAUSE_SHORT: Record<RequestCause, string> = {
   coordinator_closed: 'koordinasyon merkezi kapalı',
   no_routing: 'yönlendirilemedi',
   agent_stopped: 'ajan durduruldu',
+  not_started: 'çalışma başlamadı',
   no_submission: 'ajan sonuç sunmadı',
   run_failed: 'çalışma tamamlanamadı',
   limit_reached: 'sınıra takıldı',
@@ -70,6 +71,7 @@ export const CAUSE_SENTENCE: Record<RequestCause, string> = {
   coordinator_closed: 'Koordinasyon merkezi bu şirkette açık olmadığı için talep yönlendirilemedi.',
   no_routing: 'Koordinasyon merkezi bu talebi bir birime yönlendiremedi.',
   agent_stopped: 'Ajan durdurulduğu için iş yarıda kaldı.',
+  not_started: 'Ajanın çalışması başlatılamadı; iş ajana kendiliğinden dönmez.',
   no_submission: 'Ajan sonucu onaya sunmadan çalışmasını bitirdi.',
   run_failed: 'Ajanın çalışması bir hata nedeniyle tamamlanamadı.',
   limit_reached: 'Ajan çalışma sınırına takıldı.',
@@ -112,6 +114,7 @@ export const CAUSE_NEXT: Partial<Record<RequestCause, string>> = {
   no_routing: '"Yönlendirmeyi düzelt" ile talebi bir birime ve ajana kendiniz verebilirsiniz.',
   agent_stopped:
     'Ajanı Ofis görünümünden yeniden açmak bu talebi kendiliğinden başlatmaz. Açtıktan sonra "Yönlendirmeyi düzelt" ile işi yeniden verin.',
+  not_started: '"Yönlendirmeyi düzelt" ile işi ajana yeniden verin; yeni bir çalışma başlar.',
   no_submission:
     '"Yönlendirmeyi düzelt" ile işi aynı ajana yeniden verebilir (yeni bir çalışma başlar) ya da talebi kapatabilirsiniz.',
   run_failed:

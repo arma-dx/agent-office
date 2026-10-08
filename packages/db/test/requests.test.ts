@@ -1873,6 +1873,53 @@ describe.skipIf(noDatabase)('what a reader may know about approvals they cannot 
     });
   });
 
+  it('tells a reader that the run that was called for did not start, from two trace events only', async () => {
+    const MISSED = `select not_started_at is not null as missed
+      from office.request_flow_facts(array[$1::uuid])`;
+    const TRACE = `insert into office.audit_log (company_id, event, record_type, record_id)
+      values (office.ctx_company_id(), $1, 'task', $2)`;
+    await inTransaction(async (tx) => {
+      const missed = async (task: string): Promise<boolean> => {
+        await tx.setContext(employeeA);
+        // The trace itself stays the founder's to read.
+        expect(await tx.count('audit_log')).toBe(0);
+        return (await one<{ missed: boolean }>(tx, MISSED, [task])).missed;
+      };
+      // Not routed yet: the coordinator's refused job counts, another agent's does not.
+      await tx.setContext(employeeA);
+      const unrouted = await openRequest(tx);
+      await tx.setContext(agentRun(ids.employeeA, 'HAF-1'));
+      await tx.exec(TRACE, ['run_refused', unrouted]);
+      expect(await missed(unrouted)).toBe(false);
+      await tx.setContext(agentRun(ids.employeeA, 'KOR-1'));
+      await tx.exec(TRACE, ['run_refused', unrouted]);
+      expect(await missed(unrouted)).toBe(true);
+
+      // Routed to HAF-1: only that agent's refused job counts, and no other event of a run.
+      const { task } = await submittedRequest(tx);
+      await tx.setContext(agentRun(ids.employeeA, 'KOR-1'));
+      await tx.exec(TRACE, ['run_refused', task]);
+      await tx.setContext(agentRun(ids.employeeA, 'HAF-1'));
+      await tx.exec(TRACE, ['run_started', task]);
+      await tx.exec(TRACE, ['run_failed', task]);
+      expect(await missed(task)).toBe(false);
+      await tx.setContext(agentRun(ids.employeeA, 'HAF-1'));
+      await tx.exec(TRACE, ['run_refused', task]);
+      expect(await missed(task)).toBe(true);
+      // A row about another record of the same id space, or of another company, is not read.
+      await tx.setContext(founderP);
+      expect(await tx.rows(MISSED, [task])).toEqual([]);
+    });
+    await inTransaction(async (tx) => {
+      // The API's trace of a change request that found the agent stopped, in a person's name.
+      const { task } = await submittedRequest(tx);
+      await tx.setContext(founderA);
+      await tx.exec(TRACE, ['run_not_started', task]);
+      await tx.setContext(employeeA);
+      expect(await tx.rows(MISSED, [task])).toEqual([{ missed: true }]);
+    });
+  });
+
   it('gives nothing outside the company, outside the project, without a context or to an agent run', async () => {
     await inTransaction(async (tx) => {
       for (const outside of [founderP, employeeP, externalA, {}]) {
