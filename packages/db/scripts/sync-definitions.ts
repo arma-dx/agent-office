@@ -24,6 +24,13 @@ import { LocalAddressError, localAdminUrl } from './local-admin.ts';
  * A card version is stored under the git commit that carries the files, so agents/ and skills/
  * must be committed before the sync writes.
  *
+ * Run it again after every change of a card, a skill, the common rules, the tool catalog
+ * (tools.yaml) or the model table (models.yaml): a version holds its own copy of all of them. And
+ * once after an update of the code that changes what a version holds: the runner refuses a
+ * version that lacks a field it needs ("card_invalid", every request of that agent then falls to
+ * a person as "çalışma başlamadı"), and the worker names such agents in its log when it starts
+ * (card_version_invalid). The versions written before 8 October 2026 are of that kind.
+ *
  * Usage (from the repository root, after `supabase start` or `supabase db reset`):
  *   pnpm db:sync-definitions                  validate the files, then write
  *   pnpm db:sync-definitions --check          validate the files only; no connection

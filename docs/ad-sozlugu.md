@@ -357,6 +357,7 @@ Skill klasörü: `skills/<ad>/SKILL.md` ve yanında `templates/`, `examples/`, `
 - Çalışma hata kodları: `routing_changed` (çalışmanın adımı yeni bir yönlendirmeyle değişti; koordinatörde: çalışma sürerken talebi bir kişi yönlendirdi), `request_changed` (sonuç kaydedilemedi: talep kapandı, yeniden yönlendirildi ya da başka bir çalışmanın sonucu bekliyor)
 - `runs.output` alanı: `model_sends` (sağlayıcıya gönderilen istek sayısı; yanıt alınamayan çağrılar ve istemcinin yeniden denemeleri dahil, `model_calls` yalnızca yanıtları sayar)
 - Kart sürümü içeriği (`card_versions.content`): `tools` (kartın kendi araçlarının katalog satırları: tür ve onay kuralı), `model` (kartın modelinin `agents/models.yaml` satırı). Araç kataloğu ya da model tablosu değişince ilgili kartlara yeni sürüm yazılır.
+- Worker'ın açılış günlüğü: `card_version_invalid` (ajanın geçerli kart sürümü bu sürümün beklediği alanları taşımıyor, örneğin 8 Ekim'den önce yazılmış ve `tools` ile `model` yok; çalıştırıcı o ajanın her işini `card_invalid` diye geri çevirir, talep "çalışma başlamadı" diye insana düşer. Çözüm: kart senkronizasyonunu yeniden çalıştırmak, yerelde `pnpm db:sync-definitions`)
 - Ortam: worker `ANTHROPIC_CUSTOM_HEADERS` doluysa açılmaz (SDK bu başlıkları her model isteğine ekler ve kapatılamaz)
 
 ## Notlar

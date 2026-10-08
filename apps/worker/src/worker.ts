@@ -9,6 +9,7 @@ import {
   ensureAgentRunQueues,
   sendAgentRunLookAgain,
 } from '@agent-office/db';
+import { storedCardSchema } from '@agent-office/shared';
 import type { WorkerEnv } from './env.ts';
 import type { CallModel } from './model/client.ts';
 import { closeLostRun, runAgentJob, type RunnerDeps } from './runner/run.ts';
@@ -52,6 +53,24 @@ export async function assertWorkerRole(pool: Pool): Promise<void> {
       'The database role is the API role; WORKER_DATABASE_URL must use the worker role',
     );
   }
+}
+
+/**
+ * The agents whose current card version the runner cannot read. A version is read with the schema
+ * of this build; one that was written before the stored card got a field the runner needs (the
+ * tool rows and the model profile, 8 October) is refused, and every job of that agent ends as
+ * "card_invalid" until the card sync has written a new version. The coordinator and the API still
+ * offer such an agent, so the worker says it once at its start, where the operator reads.
+ */
+export async function unreadableCardVersions(pool: Pool): Promise<string[]> {
+  // Global tables: readable without a context, and they hold no company data.
+  const { rows } = await pool.query<{ code: string; content: unknown }>(
+    `select d.code, v.content
+     from office.agent_definitions d
+     join office.card_versions v on v.id = d.current_version_id
+     order by d.code collate "C"`,
+  );
+  return rows.filter((row) => !storedCardSchema.safeParse(row.content).success).map((r) => r.code);
 }
 
 /**
@@ -159,6 +178,10 @@ export async function startWorker(env: WorkerEnv): Promise<RunningWorker> {
     logLine('pool_error', { type: error.name });
   });
   await assertWorkerRole(pool);
+  for (const agent of await unreadableCardVersions(pool)) {
+    // Not a reason to stay down: the other agents run. The card sync writes a readable version.
+    logLine('card_version_invalid', { agent });
+  }
   let callModel: CallModel | null = null;
   if (env.ANTHROPIC_API_KEY !== undefined) {
     // The SDK is loaded only when a key is configured, and only here.
