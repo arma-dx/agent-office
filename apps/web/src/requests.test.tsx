@@ -3014,25 +3014,59 @@ describe('the page of a request', () => {
         const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
         const { api } = await openPage(withComments([QUESTION]));
         await user.type(box(), 'Yarım kalan yorum');
+        const typed = box();
+        typed.setSelectionRange(3, 8);
         // The routing is corrected to another unit meanwhile: this approver may not write any more.
         api.handle(GET, () => json(requestDetail({ comments: withComments([QUESTION], false) })));
         await vi.advanceTimersByTimeAsync(30_100);
         expect(await within(region()).findByText(RIGHT_GONE)).toBeVisible();
+        // The refresh took nothing from the person who was typing: the same box (never mounted
+        // anew), the focus in it and the caret where it was. A keyboard or screen reader user
+        // is not thrown to the top of the page.
+        expect(box()).toBe(typed);
+        expect(typed).toHaveFocus();
+        expect([typed.selectionStart, typed.selectionEnd]).toEqual([3, 8]);
         // The text is still there to be copied, and cannot be sent or changed.
         expect(box()).toHaveValue('Yarım kalan yorum');
         expect(box()).toHaveAttribute('readonly');
+        expect(box()).toHaveAttribute('aria-invalid', 'false');
         expect(box()).toHaveAccessibleDescription(RIGHT_GONE);
         expect(within(region()).queryByRole('button', { name: 'Yorumu gönder' })).toBeNull();
         expect(within(region()).queryByText(WHO_MAY_WRITE)).toBeNull();
         await user.type(box(), ' daha');
+        await user.keyboard('{Control>}{Enter}{/Control}');
         expect(box()).toHaveValue('Yarım kalan yorum');
+        expect(within(region()).queryByRole('alert')).toBeNull();
         expect(api.callsTo(POST)).toEqual([]);
 
-        await user.click(within(region()).getByRole('button', { name: 'Taslağı at' }));
+        // With the keyboard: the next stop after the box is "Taslağı at". It removes the box and
+        // itself; the focus goes to the sentence that takes their place.
+        await user.tab();
+        expect(within(region()).getByRole('button', { name: 'Taslağı at' })).toHaveFocus();
+        await user.keyboard('{Enter}');
         expect(within(region()).getByText(WHO_MAY_WRITE)).toBeVisible();
+        expect(within(region()).getByText(WHO_MAY_WRITE)).toHaveFocus();
         expect(within(region()).queryByRole('textbox')).toBeNull();
         expect(within(region()).queryByRole('button')).toBeNull();
         expect(sessionStorage.getItem(draftOf(REQUEST_ID))).toBeNull();
+        // The sentence does not take the focus again on a later refresh.
+        const elsewhere = within(screen.getByRole('navigation', { name: 'Ana menü' })).getByRole(
+          'link',
+          { name: 'Talepler' },
+        );
+        elsewhere.focus();
+        await vi.advanceTimersByTimeAsync(30_100);
+        expect(elsewhere).toHaveFocus();
+        // The right comes back: an empty box, and the Ctrl+Enter pressed while it could not be
+        // sent is not held against it.
+        api.handle(GET, () => json(requestDetail({ comments: withComments([QUESTION]) })));
+        await vi.advanceTimersByTimeAsync(30_100);
+        await waitFor(() => {
+          expect(box()).toHaveValue('');
+        });
+        expect(box()).not.toHaveAttribute('readonly');
+        expect(within(region()).queryByRole('alert')).toBeNull();
+        expect(elsewhere).toHaveFocus();
       } finally {
         vi.useRealTimers();
       }
@@ -3045,11 +3079,16 @@ describe('the page of a request', () => {
       api.handle(GET, () => json(requestDetail({ comments: withComments([QUESTION], false) })));
       api.handle(POST, () => apiError(403, 'comment_not_allowed', WHO_MAY_WRITE));
       const before = api.callsTo(GET).length;
+      const typed = box();
       await userEvent.click(within(region()).getByRole('button', { name: 'Yorumu gönder' }));
       expect(await within(region()).findByText(RIGHT_GONE)).toBeVisible();
       expect(api.callsTo(GET)).toHaveLength(before + 1);
       expect(box()).toHaveValue('Yarım kalan yorum');
       expect(box()).toHaveAttribute('readonly');
+      // The button that was pressed is gone with the right: the focus is in the box, which holds
+      // the text and is described by the sentence, not at the top of the page.
+      expect(box()).toBe(typed);
+      expect(typed).toHaveFocus();
       expect(within(region()).queryByRole('button', { name: 'Yorumu gönder' })).toBeNull();
       expect(listed()).toHaveLength(1);
     });

@@ -1,6 +1,6 @@
 import { REQUEST_COMMENT_MAX, type RequestDetail } from '@agent-office/shared';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { useId, useRef, useState, type SyntheticEvent } from 'react';
+import { useEffect, useId, useRef, useState, type SyntheticEvent } from 'react';
 import { z } from 'zod';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -24,9 +24,9 @@ import { busyProps } from '@/lib/utils';
  *
  * The list comes with the page's one answer and is refreshed with it. What is being typed is
  * this component's own state and a draft of the tab (lib/drafts.ts): a refresh adds comments
- * above the box and never touches the box, its text, its caret or the focus. The page mounts the
- * section with the request's id as its key: a text typed for one request never opens in the box
- * of another.
+ * above the box and never touches the box, its text, its caret or the focus, also when it brings
+ * the news that the person may no longer write. The page mounts the section with the request's
+ * id as its key: a text typed for one request never opens in the box of another.
  */
 
 const draftSchema = z.string();
@@ -114,6 +114,15 @@ function CommentBox({ requestId, mayWrite }: { requestId: string; mayWrite: bool
   // The id of the comment being sent: another try of the same text carries it again, so the API
   // stores the comment once even when the first answer was lost. A changed text is a new comment.
   const sendId = useRef<string | null>(null);
+  // "Taslağı at" removes the box and its own button: the focus goes to the sentence that takes
+  // their place, not to the top of the page.
+  const [discards, setDiscards] = useState(0);
+  const whoMayWrite = useRef<HTMLParagraphElement>(null);
+  const form = useRef<HTMLFormElement>(null);
+  const box = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    if (discards > 0) whoMayWrite.current?.focus();
+  }, [discards]);
 
   const send = useMutation({
     mutationFn: (body: string) => {
@@ -130,11 +139,14 @@ function CommentBox({ requestId, mayWrite }: { requestId: string; mayWrite: bool
     },
     onError: (error) => {
       // The page on screen is older than the API's: the right to comment or the request itself
-      // went away meanwhile. It is read again; the text stays in the box (see below).
+      // went away meanwhile. It is read again; the text stays in the box (see below). The send
+      // button goes with the right: a focus that is on it moves to the box first, so that it
+      // does not fall to the top of the page.
       if (
         error instanceof ApiError &&
         (error.code === 'comment_not_allowed' || error.status === 404)
       ) {
+        if (form.current?.contains(document.activeElement)) box.current?.focus();
         void queryClient.invalidateQueries({
           queryKey: requestKey(company.companyId, requestId),
           exact: true,
@@ -154,67 +166,59 @@ function CommentBox({ requestId, mayWrite }: { requestId: string; mayWrite: bool
   // A closed session is not said here: the panel opens the login screen, which says it, and the
   // draft brings the text back afterwards.
   const failure = send.isError && !isUnauthorized(send.error) ? userMessage(send.error) : null;
+  // The right went away while a text was in the box (the routing was corrected to another unit):
+  // the text is not taken from the person. It can be copied or discarded, not sent or changed.
+  const gone = !mayWrite && !empty;
 
   function submit(event: SyntheticEvent): void {
     event.preventDefault();
+    if (gone) return;
     setTouched(true);
     if (busy || empty || tooLong || !mayWrite) return;
     send.mutate(text);
   }
 
-  if (!mayWrite) {
-    if (empty) {
-      return (
-        <p className="text-sm text-ink-secondary">
-          Bu talebe yalnızca talep sahibi, birimin onaylayıcısı ve kurucu yorum yazabilir.
-        </p>
-      );
-    }
-    // The right went away while a text was in the box (the routing was corrected to another
-    // unit): the text is not taken from the person. It can be copied or discarded, not sent.
+  if (!mayWrite && empty) {
     return (
-      <div className="flex flex-col gap-2">
+      <p ref={whoMayWrite} tabIndex={-1} className="text-sm text-ink-secondary">
+        Bu talebe yalnızca talep sahibi, birimin onaylayıcısı ve kurucu yorum yazabilir.
+      </p>
+    );
+  }
+
+  // One form and one box for the person who may write and for the one who no longer may: the box
+  // a person is typing in is never replaced by another element, so the focus and the caret stay
+  // in it when a refresh brings the news.
+  return (
+    <form
+      ref={form}
+      className={gone ? 'flex flex-col gap-2' : 'flex flex-col gap-1.5'}
+      noValidate
+      onSubmit={submit}
+    >
+      <label htmlFor={`${id}-text`} className={gone ? 'sr-only' : 'text-sm font-medium'}>
+        Yorum yaz
+      </label>
+      {gone ? (
         <p id={`${id}-gone`} role="status" className="text-sm">
           Bu talebe artık yorum yazamazsınız. Yazdığınız metin aşağıda duruyor; gerekiyorsa
           kopyalayın.
         </p>
-        <Textarea
-          aria-label="Yorum yaz"
-          aria-describedby={`${id}-gone`}
-          className="max-h-60"
-          readOnly
-          value={text}
-        />
-        <Button
-          type="button"
-          variant="ghost"
-          className="self-start"
-          onClick={() => {
-            saveDraft(key, null);
-            setText('');
-          }}
-        >
-          Taslağı at
-        </Button>
-      </div>
-    );
-  }
-
-  return (
-    <form className="flex flex-col gap-1.5" noValidate onSubmit={submit}>
-      <label htmlFor={`${id}-text`} className="text-sm font-medium">
-        Yorum yaz
-      </label>
+      ) : null}
       <Textarea
         id={`${id}-text`}
+        ref={box}
         rows={3}
         className="max-h-60"
         value={text}
         // Not disabled while the comment is being sent: the box keeps the focus.
-        readOnly={busy}
-        aria-invalid={problem !== null}
-        aria-describedby={`${id}-help ${id}-keys${problem ? ` ${id}-error` : ''}`}
+        readOnly={busy || gone}
+        aria-invalid={!gone && problem !== null}
+        aria-describedby={
+          gone ? `${id}-gone` : `${id}-help ${id}-keys${problem ? ` ${id}-error` : ''}`
+        }
         onChange={(event) => {
+          if (gone) return;
           const next = event.target.value;
           setText(next);
           // A new text is a new comment, and the reason the last one failed no longer applies.
@@ -226,30 +230,47 @@ function CommentBox({ requestId, mayWrite }: { requestId: string; mayWrite: bool
           if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) submit(event);
         }}
       />
-      {problem ? (
-        <p id={`${id}-error`} role="alert" className="text-sm text-destructive">
-          {problem}
-        </p>
-      ) : null}
-      <p id={`${id}-help`} className="text-sm text-ink-secondary">
-        Yorumları yalnızca insanlar okur: talebi görebilen herkes. Ajanlar yorumları görmez; yorum
-        talebi ve işin gidişini değiştirmez.
-      </p>
-      <div className="flex items-center gap-3 pt-1">
-        <p id={`${id}-keys`} className="shrink-0 text-xs text-ink-secondary">
-          {SEND_KEY}+Enter ile de gönderilir.
-        </p>
-        {failure === null ? (
-          <span className="flex-1" />
-        ) : (
-          <p role="alert" className="min-w-0 flex-1 text-right text-sm text-destructive">
-            Yorum gönderilemedi. {failure}
-          </p>
-        )}
-        <Button type="submit" {...busyProps(busy)}>
-          {busy ? 'Gönderiliyor' : 'Yorumu gönder'}
+      {gone ? (
+        <Button
+          type="button"
+          variant="ghost"
+          className="self-start"
+          onClick={() => {
+            saveDraft(key, null);
+            setText('');
+            setDiscards((count) => count + 1);
+          }}
+        >
+          Taslağı at
         </Button>
-      </div>
+      ) : (
+        <>
+          {problem ? (
+            <p id={`${id}-error`} role="alert" className="text-sm text-destructive">
+              {problem}
+            </p>
+          ) : null}
+          <p id={`${id}-help`} className="text-sm text-ink-secondary">
+            Yorumları yalnızca insanlar okur: talebi görebilen herkes. Ajanlar yorumları görmez;
+            yorum talebi ve işin gidişini değiştirmez.
+          </p>
+          <div className="flex items-center gap-3 pt-1">
+            <p id={`${id}-keys`} className="shrink-0 text-xs text-ink-secondary">
+              {SEND_KEY}+Enter ile de gönderilir.
+            </p>
+            {failure === null ? (
+              <span className="flex-1" />
+            ) : (
+              <p role="alert" className="min-w-0 flex-1 text-right text-sm text-destructive">
+                Yorum gönderilemedi. {failure}
+              </p>
+            )}
+            <Button type="submit" {...busyProps(busy)}>
+              {busy ? 'Gönderiliyor' : 'Yorumu gönder'}
+            </Button>
+          </div>
+        </>
+      )}
     </form>
   );
 }
