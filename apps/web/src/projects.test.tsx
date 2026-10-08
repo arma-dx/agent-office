@@ -1,7 +1,8 @@
 import { PROJECT_COLORS, PROJECT_ICONS } from '@agent-office/shared';
+import { startAuthentication } from '@simplewebauthn/browser';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ProjectTile } from './components/projects/project-tile.tsx';
 import { formatDay, formatFull } from './lib/dates.ts';
 import { COLOR_NAME, ICON_NAME, PROJECT_FILL, PROJECT_ICON } from './lib/projects/labels.ts';
@@ -9,6 +10,7 @@ import { WIDE_WINDOW_QUERY } from './lib/office/use-wide-window.ts';
 import { stubMatchMedia } from './test/match-media.ts';
 import {
   apiError,
+  ARMADX,
   FOUNDER_SPACE,
   json,
   mockApi,
@@ -23,6 +25,7 @@ import {
   EMPLOYEE_AT_ARMADX,
   EXTERNAL_AT_ARMADX,
   FOUNDER_MEMBER,
+  OTHER_CUSTOMER_ID,
   project,
   PROJECT_ID,
   projectDetail,
@@ -30,7 +33,18 @@ import {
   projectHandlers,
   sessionAs,
 } from './test/project-fixtures.ts';
+import { ASSERTION, challengeId, signed, stepUpIssuer } from './test/passkeys.ts';
 import { currentLocation, renderApp } from './test/render-app.tsx';
+
+vi.mock('@simplewebauthn/browser', () => ({
+  startAuthentication: vi.fn(),
+  startRegistration: vi.fn(),
+  browserSupportsWebAuthn: vi.fn(() => true),
+}));
+
+beforeEach(() => {
+  vi.mocked(startAuthentication).mockReset().mockResolvedValue(ASSERTION);
+});
 
 const LIST = '/c/armadx/projects';
 const PAGE = `/c/armadx/projects/${PROJECT_ID}`;
@@ -506,23 +520,6 @@ describe('projects: the page', () => {
     expect(space.callsTo(`GET /projects/${PROJECT_ID}`)).toEqual([]);
     expect(space.unexpected).toEqual([]);
   });
-
-  it('page: an employee reads the words of the permissions and who changes them', async () => {
-    stubMatchMedia([WIDE_WINDOW_QUERY]);
-    mockApi(
-      projectHandlers(projectForEmployee(), { 'GET /session': sessionAs(EMPLOYEE_AT_ARMADX) }),
-    );
-    renderApp(PAGE);
-    await screen.findByRole('heading', { level: 2, name: 'Depo otomasyonu' });
-    const ai = within(panel()).getByRole('region', { name: 'Yapay zekâ izni' });
-    expect(within(ai).getByText('İzin kapalı')).toBeVisible();
-    expect(within(ai).getByText('İzni yalnızca kurucu değiştirir.')).toBeVisible();
-    const contract = within(panel()).getByRole('region', { name: 'Müşterinin sözleşmesi' });
-    expect(valueOf(contract, 'Yapay zekâ kullanımı')).toHaveTextContent('İzin yok');
-    // The automated processing permission is not an employee's to read.
-    expect(within(contract).queryByText('Kodla otomatik işleme')).toBeNull();
-    expect(within(contract).getByText('İzinleri yalnızca kurucu değiştirir.')).toBeVisible();
-  });
 });
 
 describe('projects: members', () => {
@@ -772,6 +769,455 @@ describe('projects: members', () => {
     });
     expect(
       await screen.findByText('Şirketteki bütün kurucu ve çalışanlar bu projenin üyesi.'),
+    ).toBeVisible();
+  });
+});
+
+describe('projects: permissions', () => {
+  const CUSTOMER_OPEN = {
+    id: CUSTOMER_ID,
+    name: 'Beta Lojistik',
+    aiAllowed: true,
+    automatedProcessingAllowed: false,
+  };
+  const OTHER_CUSTOMER = {
+    id: OTHER_CUSTOMER_ID,
+    name: 'Gama Enerji',
+    aiAllowed: true,
+    automatedProcessingAllowed: false,
+  };
+  const AI = `PUT /projects/${PROJECT_ID}/ai-permission`;
+  const CONTRACT = `PATCH /customers/${CUSTOMER_ID}/permissions`;
+  const aiSection = () => within(panel()).getByRole('region', { name: 'Yapay zekâ izni' });
+  const contractSection = () =>
+    within(panel()).getByRole('region', { name: 'Müşterinin sözleşmesi' });
+  const aiSwitch = () => within(aiSection()).getByRole('switch', { name: 'Yapay zekâ izni' });
+  // While a confirmation is open the page behind it is hidden from assistive technology.
+  const aiSwitchBehindDialog = () =>
+    screen.getByRole('switch', { name: 'Yapay zekâ izni', hidden: true });
+  const ready = async (button: HTMLElement) => {
+    await waitFor(() => {
+      expect(button).not.toHaveAttribute('aria-disabled');
+    });
+    return button;
+  };
+  const closed = async () => {
+    await waitFor(() => {
+      expect(screen.queryByRole('alertdialog')).toBeNull();
+    });
+  };
+
+  beforeEach(() => {
+    // The panel shows by itself in a wide window.
+    stubMatchMedia([WIDE_WINDOW_QUERY]);
+  });
+
+  it('AI permission: an employee sees the word and the sentences and no switch', async () => {
+    mockApi(
+      projectHandlers(projectForEmployee(), { 'GET /session': sessionAs(EMPLOYEE_AT_ARMADX) }),
+    );
+    renderApp(PAGE);
+    await screen.findByRole('heading', { level: 2, name: 'Depo otomasyonu' });
+    expect(within(aiSection()).getByText('İzin kapalı')).toBeVisible();
+    expect(
+      within(aiSection()).getByText('Bu projede ajanlar çalışamaz: yapay zekâ izni kapalı.'),
+    ).toBeVisible();
+    expect(within(aiSection()).getByText('İzni yalnızca kurucu değiştirir.')).toBeVisible();
+    // No switch anywhere on the page for them, also not a disabled one.
+    expect(screen.queryByRole('switch')).toBeNull();
+  });
+
+  it('AI permission: the founder turns it on with a passkey; the switch moves only when the API has stored it; the focus returns to the switch', async () => {
+    const stepUp = stepUpIssuer();
+    let answer: (response: Response) => void = () => undefined;
+    const api = mockApi(
+      projectHandlers(projectDetail(), {
+        'POST /step-up/options': stepUp.handler,
+        [AI]: () =>
+          new Promise<Response>((resolve) => {
+            answer = resolve;
+          }),
+      }),
+    );
+    renderApp(PAGE);
+    await screen.findByRole('heading', { level: 2, name: 'Depo otomasyonu' });
+    expect(aiSwitch()).not.toBeChecked();
+    // The switch is described by the sentence about agents.
+    expect(aiSwitch()).toHaveAccessibleDescription(
+      'Bu projede ajanlar çalışamaz: yapay zekâ izni kapalı.',
+    );
+    // The founder has no "only the founder" sentence.
+    expect(within(aiSection()).queryByText('İzni yalnızca kurucu değiştirir.')).toBeNull();
+
+    await userEvent.click(aiSwitch());
+    const dialog = await screen.findByRole('alertdialog', {
+      name: 'Depo otomasyonu için yapay zekâ izni açılsın mı?',
+    });
+    // The customer's contract permission is closed: the dialog says that agents still cannot work.
+    expect(dialog).toHaveTextContent(
+      'İzin açılınca ajanlar bu projede çalışabilir ve projenin kayıtları yapay zekâ modeline gönderilebilir. Projenin müşterisi varsa izni yalnızca müşterinin sözleşmesi yapay zekâ kullanımına izin veriyorsa açın. İzin açıkken projenin müşterisi değiştirilemez. Müşterinin sözleşme izni kapalı olduğu için ajanlar yine de çalışamaz.',
+    );
+    // The click changed nothing: the switch keeps the saved value and nothing was sent.
+    expect(aiSwitchBehindDialog()).not.toBeChecked();
+    expect(api.callsTo(AI)).toEqual([]);
+    await waitFor(() => {
+      expect(stepUp.issued).toHaveLength(1);
+    });
+    // The passkey is bound to this project, this act and the customer the page shows.
+    expect(stepUp.issued[0]?.body).toEqual({
+      purpose: 'project_ai_permission',
+      companyId: ARMADX.companyId,
+      subjectId: PROJECT_ID,
+      details: { action: 'open', customerId: CUSTOMER_ID },
+    });
+    await userEvent.click(await ready(within(dialog).getByRole('button', { name: 'İzni aç' })));
+    await waitFor(() => {
+      expect(api.callsTo(AI)).toHaveLength(1);
+    });
+    expect(api.callsTo(AI)[0]?.body).toEqual({
+      allowed: true,
+      customerId: CUSTOMER_ID,
+      stepUp: signed(challengeId(1)),
+    });
+    // Still on its way: the switch has not moved.
+    expect(aiSwitchBehindDialog()).not.toBeChecked();
+
+    answer(json(projectDetail({ aiAllowed: true, agentsMayWork: false })));
+    await closed();
+    expect(aiSwitch()).toBeChecked();
+    expect(within(aiSection()).getByText('İzin açık')).toBeVisible();
+    await waitFor(() => {
+      expect(aiSwitch()).toHaveFocus();
+    });
+    // The page was not asked again: the answer of the change is the project.
+    expect(api.callsTo(`GET /projects/${PROJECT_ID}`)).toHaveLength(1);
+  });
+
+  it('AI permission: a project without a customer is confirmed for no customer, without the sentence about the contract', async () => {
+    const stepUp = stepUpIssuer();
+    const api = mockApi(
+      projectHandlers(projectDetail({ customer: null }), {
+        'POST /step-up/options': stepUp.handler,
+        [AI]: () => json(projectDetail({ customer: null, aiAllowed: true, agentsMayWork: true })),
+      }),
+    );
+    renderApp(PAGE);
+    await screen.findByRole('heading', { level: 2, name: 'Depo otomasyonu' });
+    await userEvent.click(aiSwitch());
+    const dialog = await screen.findByRole('alertdialog');
+    expect(dialog).not.toHaveTextContent('ajanlar yine de çalışamaz');
+    await waitFor(() => {
+      expect(stepUp.issued).toHaveLength(1);
+    });
+    expect(stepUp.issued[0]?.body).toMatchObject({
+      details: { action: 'open', customerId: null },
+    });
+    await userEvent.click(await ready(within(dialog).getByRole('button', { name: 'İzni aç' })));
+    await waitFor(() => {
+      expect(aiSwitch()).toBeChecked();
+    });
+    expect(api.callsTo(AI)[0]?.body).toEqual({
+      allowed: true,
+      customerId: null,
+      stepUp: signed(challengeId(1)),
+    });
+    expect(within(aiSection()).getByText('Bu projede ajanlar çalışabilir.')).toBeVisible();
+  });
+
+  it('AI permission: turning it off asks plainly and sends no stepUp', async () => {
+    const open = projectDetail({ aiAllowed: true, agentsMayWork: true, customer: CUSTOMER_OPEN });
+    const api = mockApi(
+      projectHandlers(open, {
+        [AI]: () => json(projectDetail({ aiAllowed: false, customer: CUSTOMER_OPEN })),
+      }),
+    );
+    renderApp(PAGE);
+    await screen.findByRole('heading', { level: 2, name: 'Depo otomasyonu' });
+    expect(aiSwitch()).toBeChecked();
+    await userEvent.click(aiSwitch());
+    const dialog = await screen.findByRole('alertdialog', {
+      name: 'Depo otomasyonu için yapay zekâ izni kapatılsın mı?',
+    });
+    expect(dialog).toHaveTextContent(
+      'Ajanlar bu projede artık çalışamaz. İzni yeniden açmak passkey ister.',
+    );
+    // The safe button has the focus; giving up sends nothing and returns the focus to the switch.
+    expect(within(dialog).getByRole('button', { name: 'Vazgeç' })).toHaveFocus();
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Vazgeç' }));
+    expect(api.callsTo(AI)).toEqual([]);
+    await waitFor(() => {
+      expect(aiSwitch()).toHaveFocus();
+    });
+    expect(aiSwitch()).toBeChecked();
+
+    await userEvent.click(aiSwitch());
+    await userEvent.click(
+      within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'İzni kapat' }),
+    );
+    await closed();
+    expect(aiSwitch()).not.toBeChecked();
+    expect(within(aiSection()).getByText('İzin kapalı')).toBeVisible();
+    // Closing needs no passkey: no options were asked for and the body carries none.
+    expect(api.callsTo(AI).map((call) => call.body)).toEqual([{ allowed: false }]);
+    expect(api.callsTo('POST /step-up/options')).toEqual([]);
+    expect(startAuthentication).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(aiSwitch()).toHaveFocus();
+    });
+  });
+
+  it("AI permission: the API's refusal shows in the dialog and the switch stays", async () => {
+    const stepUp = stepUpIssuer();
+    const open = projectDetail({ aiAllowed: true, agentsMayWork: true, customer: CUSTOMER_OPEN });
+    const api = mockApi(
+      projectHandlers(projectDetail(), {
+        'POST /step-up/options': stepUp.handler,
+        [AI]: () => apiError(403, 'founder_only', 'Bu işlemi yalnızca kurucu yapabilir.'),
+      }),
+    );
+    const first = renderApp(PAGE);
+    await screen.findByRole('heading', { level: 2, name: 'Depo otomasyonu' });
+    // Opening, with a passkey.
+    await userEvent.click(aiSwitch());
+    let dialog = await screen.findByRole('alertdialog');
+    await userEvent.click(await ready(within(dialog).getByRole('button', { name: 'İzni aç' })));
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(
+      'Bu işlemi yalnızca kurucu yapabilir.',
+    );
+    expect(screen.getByRole('alertdialog')).toBeVisible();
+    expect(aiSwitchBehindDialog()).not.toBeChecked();
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Vazgeç' }));
+    await closed();
+    expect(aiSwitch()).not.toBeChecked();
+    first.queryClient.clear();
+    document.body.innerHTML = '';
+
+    // Closing, plainly.
+    api.handle(`GET /projects/${PROJECT_ID}`, () => json(open));
+    renderApp(PAGE);
+    await screen.findByRole('heading', { level: 2, name: 'Depo otomasyonu' });
+    await userEvent.click(aiSwitch());
+    dialog = await screen.findByRole('alertdialog');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'İzni kapat' }));
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(
+      'Bu işlemi yalnızca kurucu yapabilir.',
+    );
+    expect(aiSwitchBehindDialog()).toBeChecked();
+  });
+
+  it("AI permission: when the project's customer changed meanwhile the confirmation closes, the page says so and reads the project again", async () => {
+    const stepUp = stepUpIssuer();
+    const sentence =
+      'Bu projenin müşterisi az önce değişti. Projeye yeniden bakın; izni açmak için yeniden onaylayın.';
+    const api = mockApi(
+      projectHandlers(projectDetail(), {
+        'POST /step-up/options': stepUp.handler,
+        [AI]: () => apiError(409, 'project_changed', sentence),
+      }),
+    );
+    renderApp(PAGE);
+    await screen.findByRole('heading', { level: 2, name: 'Depo otomasyonu' });
+    expect(valueOf(panel(), 'Müşteri')).toHaveTextContent('Beta Lojistik');
+    await userEvent.click(aiSwitch());
+    const dialog = await screen.findByRole('alertdialog');
+    const confirm = await ready(within(dialog).getByRole('button', { name: 'İzni aç' }));
+    // A member gave the project another customer after the founder opened the page.
+    api.handle(`GET /projects/${PROJECT_ID}`, () =>
+      json(projectDetail({ customer: OTHER_CUSTOMER })),
+    );
+    await userEvent.click(confirm);
+    // The founder is not left confirming, behind a dialog, a customer they have not looked at.
+    await closed();
+    expect(within(aiSection()).getByRole('alert')).toHaveTextContent(sentence);
+    await waitFor(() => {
+      expect(valueOf(panel(), 'Müşteri')).toHaveTextContent('Gama Enerji');
+    });
+    expect(api.callsTo(`GET /projects/${PROJECT_ID}`)).toHaveLength(2);
+    expect(aiSwitch()).not.toBeChecked();
+    await waitFor(() => {
+      expect(aiSwitch()).toHaveFocus();
+    });
+
+    // Confirming anew is for the customer the page now shows, with a new passkey prompt.
+    api.handle(AI, () =>
+      json(projectDetail({ aiAllowed: true, agentsMayWork: true, customer: OTHER_CUSTOMER })),
+    );
+    await userEvent.click(aiSwitch());
+    // The sentence goes when the founder acts on it.
+    expect(screen.queryByText(sentence)).toBeNull();
+    await userEvent.click(
+      await ready(
+        within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'İzni aç' }),
+      ),
+    );
+    await waitFor(() => {
+      expect(aiSwitch()).toBeChecked();
+    });
+    expect(stepUp.issued.at(-1)?.body).toMatchObject({
+      subjectId: PROJECT_ID,
+      details: { action: 'open', customerId: OTHER_CUSTOMER_ID },
+    });
+    expect(api.callsTo(AI).at(-1)?.body).toMatchObject({
+      allowed: true,
+      customerId: OTHER_CUSTOMER_ID,
+    });
+  });
+
+  it('customer permissions: the founder turns the AI permission on with a passkey for the customer and automated processing with a plain confirmation; an employee sees one row and no switch', async () => {
+    const stepUp = stepUpIssuer();
+    let customer = { ...CUSTOMER_OPEN, aiAllowed: false };
+    const api = mockApi(
+      projectHandlers(projectDetail(), {
+        'POST /step-up/options': stepUp.handler,
+        [`GET /projects/${PROJECT_ID}`]: () => json(projectDetail({ customer })),
+        [CONTRACT]: (call) => {
+          const body = call.body as { aiAllowed?: boolean; automatedProcessingAllowed?: boolean };
+          customer = {
+            ...customer,
+            ...(body.aiAllowed === undefined ? {} : { aiAllowed: body.aiAllowed }),
+            ...(body.automatedProcessingAllowed === undefined
+              ? {}
+              : { automatedProcessingAllowed: body.automatedProcessingAllowed }),
+          };
+          return json(customer);
+        },
+      }),
+    );
+    const first = renderApp(PAGE);
+    await screen.findByRole('heading', { level: 2, name: 'Depo otomasyonu' });
+    const ai = () =>
+      within(contractSection()).getByRole('switch', {
+        name: 'Sözleşme yapay zekâ kullanımına izin veriyor',
+      });
+    const automated = () =>
+      within(contractSection()).getByRole('switch', {
+        name: 'Sözleşme kodla otomatik işlemeye izin veriyor',
+      });
+    expect(ai()).not.toBeChecked();
+    expect(automated()).not.toBeChecked();
+    expect(
+      within(contractSection()).getByText('Bu izinler müşterinin bütün projeleri için geçerlidir.'),
+    ).toBeVisible();
+
+    // The contract's AI permission: a passkey bound to this customer.
+    await userEvent.click(ai());
+    let dialog = await screen.findByRole('alertdialog', {
+      name: 'Beta Lojistik için yapay zekâ izni açılsın mı?',
+    });
+    expect(dialog).toHaveTextContent(
+      'Sözleşmenin yapay zekâ kullanımına izin verdiğini işaretliyorsunuz. Bu izin müşterinin bütün projeleri için geçerlidir; ajanlar yalnızca yapay zekâ izni açık projelerde çalışır.',
+    );
+    await waitFor(() => {
+      expect(stepUp.issued).toHaveLength(1);
+    });
+    expect(stepUp.issued[0]?.body).toEqual({
+      purpose: 'customer_ai_permission',
+      companyId: ARMADX.companyId,
+      subjectId: CUSTOMER_ID,
+      details: { action: 'update', aiAllowed: true },
+    });
+    await userEvent.click(await ready(within(dialog).getByRole('button', { name: 'İzni aç' })));
+    await closed();
+    expect(api.callsTo(CONTRACT)[0]?.body).toEqual({
+      aiAllowed: true,
+      stepUp: signed(challengeId(1)),
+    });
+    // The page was read again and the switch shows what the API stored.
+    expect(ai()).toBeChecked();
+    expect(valueOf(contractSection(), 'Yapay zekâ kullanımı')).toHaveTextContent('İzin var');
+    await waitFor(() => {
+      expect(ai()).toHaveFocus();
+    });
+
+    // Automated processing: a plain confirmation, no passkey.
+    await userEvent.click(automated());
+    dialog = await screen.findByRole('alertdialog', {
+      name: 'Beta Lojistik için kodla otomatik işleme izni açılsın mı?',
+    });
+    expect(dialog).toHaveTextContent(
+      'Sözleşmenin kodla yapılan otomatik işlemeye izin verdiğini işaretliyorsunuz. Hatırlatma gibi model kullanmayan otomatik işler bu müşteri için çalışabilir.',
+    );
+    await userEvent.click(within(dialog).getByRole('button', { name: 'İzni aç' }));
+    await closed();
+    expect(automated()).toBeChecked();
+    expect(api.callsTo(CONTRACT)[1]?.body).toEqual({ automatedProcessingAllowed: true });
+    expect(stepUp.issued).toHaveLength(1);
+
+    // ... and off again, plainly.
+    await userEvent.click(automated());
+    dialog = await screen.findByRole('alertdialog', {
+      name: 'Beta Lojistik için kodla otomatik işleme izni kapatılsın mı?',
+    });
+    expect(dialog).toHaveTextContent(
+      'Hatırlatma gibi model kullanmayan otomatik işler de bu müşteri için durur.',
+    );
+    await userEvent.click(within(dialog).getByRole('button', { name: 'İzni kapat' }));
+    await closed();
+    expect(automated()).not.toBeChecked();
+    expect(api.callsTo(CONTRACT)[2]?.body).toEqual({ automatedProcessingAllowed: false });
+    first.queryClient.clear();
+    document.body.innerHTML = '';
+
+    // An employee: one row, in words, and no switch.
+    mockApi(
+      projectHandlers(projectForEmployee(), { 'GET /session': sessionAs(EMPLOYEE_AT_ARMADX) }),
+    );
+    renderApp(PAGE);
+    await screen.findByRole('heading', { level: 2, name: 'Depo otomasyonu' });
+    expect(valueOf(contractSection(), 'Yapay zekâ kullanımı')).toHaveTextContent('İzin yok');
+    expect(within(contractSection()).queryByText('Kodla otomatik işleme')).toBeNull();
+    expect(within(contractSection()).queryByRole('switch')).toBeNull();
+  });
+
+  it("customer permissions: turning the customer's AI permission off asks plainly and sends no stepUp; an employee reads who changes the permissions", async () => {
+    let customer = CUSTOMER_OPEN;
+    const api = mockApi(
+      projectHandlers(projectDetail(), {
+        [`GET /projects/${PROJECT_ID}`]: () =>
+          json(projectDetail({ aiAllowed: true, agentsMayWork: customer.aiAllowed, customer })),
+        [CONTRACT]: () => {
+          customer = { ...customer, aiAllowed: false };
+          return json(customer);
+        },
+      }),
+    );
+    const first = renderApp(PAGE);
+    await screen.findByRole('heading', { level: 2, name: 'Depo otomasyonu' });
+    const ai = () =>
+      within(contractSection()).getByRole('switch', {
+        name: 'Sözleşme yapay zekâ kullanımına izin veriyor',
+      });
+    expect(ai()).toBeChecked();
+    await userEvent.click(ai());
+    const dialog = await screen.findByRole('alertdialog', {
+      name: 'Beta Lojistik için yapay zekâ izni kapatılsın mı?',
+    });
+    expect(dialog).toHaveTextContent(
+      'Bu müşterinin bütün projelerinde ajanlar artık çalışamaz. İzni yeniden açmak passkey ister.',
+    );
+    await userEvent.click(within(dialog).getByRole('button', { name: 'İzni kapat' }));
+    await closed();
+    expect(api.callsTo(CONTRACT).map((call) => call.body)).toEqual([{ aiAllowed: false }]);
+    expect(api.callsTo('POST /step-up/options')).toEqual([]);
+    expect(startAuthentication).not.toHaveBeenCalled();
+    expect(ai()).not.toBeChecked();
+    // The project's own permission is still open; the page says why agents stopped.
+    expect(aiSwitch()).toBeChecked();
+    expect(
+      within(aiSection()).getByText(
+        'Bu projede ajanlar çalışamaz: müşterinin sözleşmesi yapay zekâ kullanımına izin vermiyor.',
+      ),
+    ).toBeVisible();
+    first.queryClient.clear();
+    document.body.innerHTML = '';
+
+    mockApi(
+      projectHandlers(projectForEmployee(), { 'GET /session': sessionAs(EMPLOYEE_AT_ARMADX) }),
+    );
+    renderApp(PAGE);
+    await screen.findByRole('heading', { level: 2, name: 'Depo otomasyonu' });
+    expect(
+      within(contractSection()).getByText('İzinleri yalnızca kurucu değiştirir.'),
     ).toBeVisible();
   });
 });
