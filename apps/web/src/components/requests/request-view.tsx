@@ -23,6 +23,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { userMessage } from '@/lib/api';
 import { formatMessageTime } from '@/lib/dates';
 import { useReturnFocus } from '@/lib/focus';
+import { useDecisionDialog } from '@/lib/requests/hold';
 import {
   CAUSE_FOR_FOUNDER,
   CAUSE_NEXT,
@@ -54,7 +55,8 @@ import { busyProps } from '@/lib/utils';
  * buttons stay busy and a refusal is said in the card); a card cannot be dismissed; text an agent
  * wrote is drawn as plain text under a label that says whose words it is, apart from the marks
  * that come from the record (money, outside, passkey); a dialog gives the focus back to the
- * control that opened it.
+ * control that opened it; while a decision dialog is open the page does not read the request
+ * again by itself, so the dialog and what was typed in it stay until the person sends or closes.
  */
 
 /** Stores the answer of a decision and lets every list that showed the request read again. */
@@ -65,6 +67,22 @@ function useSettle(): (detail: RequestDetail) => void {
     queryClient.setQueryData(requestKey(company.companyId, detail.id), detail);
     void queryClient.invalidateQueries({ queryKey: approvalDeskKey(company.companyId) });
     void queryClient.invalidateQueries({ queryKey: ['company', company.companyId, 'requests'] });
+  };
+}
+
+/**
+ * For a decision dialog that was closed without a decision: the request and the desk are read
+ * again, so that what was held back while the dialog was open (lib/requests/hold.ts) shows now.
+ */
+function useCatchUp(requestId: string): () => void {
+  const company = useCompany();
+  const queryClient = useQueryClient();
+  return () => {
+    void queryClient.invalidateQueries({
+      queryKey: requestKey(company.companyId, requestId),
+      exact: true,
+    });
+    void queryClient.invalidateQueries({ queryKey: approvalDeskKey(company.companyId) });
   };
 }
 
@@ -237,6 +255,8 @@ export function ApprovalCardView({
   const hintId = useId();
   const [selected, setSelected] = useState<string | null>(null);
   const [dialog, setDialog] = useState<'changes_requested' | 'rejected' | 'passkey' | null>(null);
+  useDecisionDialog(dialog !== null);
+  const catchUp = useCatchUp(card.requestId);
   const focus = useReturnFocus();
   const hasOptions = card.options.length > 0;
   const chosen = hasOptions ? selected : null;
@@ -405,6 +425,7 @@ export function ApprovalCardView({
           onClose={() => {
             decide.reset();
             setDialog(null);
+            catchUp();
           }}
           onConfirm={(reason, note) => {
             if (reason === null) return;
@@ -416,7 +437,9 @@ export function ApprovalCardView({
       <StepUpDialog<RequestDetail>
         open={dialog === 'passkey'}
         onOpenChange={(open) => {
-          if (!open) setDialog(null);
+          if (open) return;
+          setDialog(null);
+          catchUp();
         }}
         request={
           dialog === 'passkey'
@@ -522,6 +545,8 @@ export function AcceptanceCardView({
   const settle = useSettle();
   const headingId = useId();
   const [asking, setAsking] = useState(false);
+  useDecisionDialog(asking);
+  const catchUp = useCatchUp(requestId);
   const focus = useReturnFocus();
   const decide = useMutation({
     mutationFn: (decision: Parameters<typeof decideAcceptance>[2]) =>
@@ -587,6 +612,7 @@ export function AcceptanceCardView({
           onClose={() => {
             decide.reset();
             setAsking(false);
+            catchUp();
           }}
           onConfirm={(_reason, note) => {
             decide.mutate({ decision: 'changes_requested', note });

@@ -11,6 +11,7 @@ import { EmptyState, ErrorMessage, LoadingRows } from '@/components/states';
 import { Button } from '@/components/ui/button';
 import { userMessage } from '@/lib/api';
 import { useBackgroundRefresh } from '@/lib/refresh';
+import { decisionDialogOpen } from '@/lib/requests/hold';
 import { personName } from '@/lib/requests/labels';
 import { approvalDeskQueryOptions, fetchApprovalDesk } from '@/lib/requests/query';
 import { useCompany } from '@/lib/session';
@@ -38,6 +39,8 @@ function ApprovalsScreen() {
   useBackgroundRefresh({
     queryKey: approvalDeskQueryOptions(company.companyId).queryKey,
     fetch: (signal) => fetchApprovalDesk(company.companyId, { signal, background: true }),
+    // A card that left the desk would take its open dialog and the typed reason with it.
+    paused: decisionDialogOpen,
   });
 
   if (!insider) {

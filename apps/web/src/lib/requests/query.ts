@@ -17,6 +17,7 @@ import {
 } from '@agent-office/shared';
 import { queryOptions } from '@tanstack/react-query';
 import { apiRequest } from '../api.ts';
+import { decisionDialogOpen } from './hold.ts';
 
 /**
  * Flow (A), "Talepler": the requests agents carry out. Every answer is validated with the shared
@@ -71,6 +72,8 @@ export function requestQueryOptions(companyId: string, requestId: string) {
     queryFn: ({ signal }) => fetchRequest(companyId, requestId, { signal }),
     // A hidden and a missing request are one answer; asking again changes nothing.
     retry: false,
+    // Not under an open decision dialog (lib/requests/hold.ts).
+    refetchOnWindowFocus: () => !decisionDialogOpen(),
   });
 }
 
@@ -85,6 +88,8 @@ export function approvalDeskQueryOptions(companyId: string) {
   return queryOptions({
     queryKey: approvalDeskKey(companyId),
     queryFn: ({ signal }) => fetchApprovalDesk(companyId, { signal }),
+    // Not under an open decision dialog (lib/requests/hold.ts).
+    refetchOnWindowFocus: () => !decisionDialogOpen(),
   });
 }
 

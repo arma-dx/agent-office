@@ -1,4 +1,5 @@
 import { COMPANY_HEADER, BACKGROUND_HEADER } from '@agent-office/shared';
+import { focusManager } from '@tanstack/react-query';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -1049,6 +1050,116 @@ describe('the page of a request', () => {
     );
   });
 
+  it('starts another result with nothing chosen: the option picked for the one before is not carried over', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      const key = `GET /requests/${REQUEST_ID}`;
+      const NEXT_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+      const first = { ...APPROVAL_CARD, needsStepUp: false, goesExternal: false };
+      const api = mockApi({
+        'GET /session': sessionHandler(),
+        [key]: () => json(requestDetail({ approval: first })),
+      });
+      renderApp(`/c/armadx/requests/${REQUEST_ID}`);
+      const card = await screen.findByRole('region', { name: 'Yeni ofis için LinkedIn gönderisi' });
+      await user.click(within(card).getByRole('radio', { name: /Seçenek B/ }));
+      expect(within(card).getByRole('button', { name: 'Onayla' })).not.toHaveAttribute(
+        'aria-disabled',
+      );
+      // Changes were asked for from another tab and the agent submitted again: the next refresh
+      // brings another approval with other texts into the place of the card.
+      api.handle(key, () =>
+        json(
+          requestDetail({
+            approval: {
+              ...first,
+              id: NEXT_ID,
+              attempt: 2,
+              options: [
+                { code: 'A', text: 'Yeni A metni', hashtags: [] },
+                { code: 'B', text: 'Yeni B metni', hashtags: [] },
+              ],
+            },
+          }),
+        ),
+      );
+      await vi.advanceTimersByTimeAsync(30_100);
+      expect(await screen.findByText('Yeni B metni')).toBeVisible();
+      // Nobody chose an option of this result.
+      for (const radio of screen.getAllByRole('radio')) expect(radio).not.toBeChecked();
+      const approve = screen.getByRole('button', { name: 'Onayla' });
+      expect(approve).toHaveAttribute('aria-disabled', 'true');
+      await user.click(approve);
+      expect(api.callsTo(`POST /approvals/${NEXT_ID}/decision`)).toHaveLength(0);
+      expect(api.unexpected).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps an open reason dialog and its text when the approval stops waiting meanwhile', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      const key = `GET /requests/${REQUEST_ID}`;
+      const refusal =
+        'Bu onay kapanmış: karar verilmiş ya da dayandığı talep değişmiş. Sayfayı yenileyin.';
+      const api = mockApi({
+        'GET /session': sessionHandler(),
+        [key]: () => json(requestDetail()),
+        [`POST /approvals/${APPROVAL_ID}/decision`]: () =>
+          apiError(409, 'approval_closed', refusal),
+      });
+      renderApp(`/c/armadx/requests/${REQUEST_ID}`);
+      const card = await screen.findByRole('region', { name: 'Yeni ofis için LinkedIn gönderisi' });
+      await user.click(within(card).getByRole('button', { name: 'Düzeltme iste' }));
+      const dialog = await screen.findByRole('dialog', { name: 'Düzeltme iste' });
+      await user.selectOptions(within(dialog).getByRole('combobox', { name: 'Neden' }), 'Eksik');
+      const note = within(dialog).getByRole('textbox', { name: /^Açıklama/ });
+      await user.type(note, 'Açılış tarihi eksik.');
+      // The requester cancels meanwhile: the approval no longer waits.
+      api.handle(key, () =>
+        json(
+          requestDetail({
+            status: 'cancelled',
+            stage: 'cancelled',
+            cause: 'cancelled_by_requester',
+            turn: { kind: 'none' },
+            waitingForMe: false,
+            approval: null,
+            closure: { by: EMPLOYEE, reason: null, note: null },
+            actions: { cancel: false, stop: false, reroute: false },
+          }),
+        ),
+      );
+      const before = api.callsTo(key).length;
+      // Neither the timer nor coming back to the tab reads the request under the open dialog.
+      await vi.advanceTimersByTimeAsync(31_000);
+      focusManager.setFocused(false);
+      focusManager.setFocused(true);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(api.callsTo(key)).toHaveLength(before);
+      expect(screen.getByRole('dialog', { name: 'Düzeltme iste' })).toBeVisible();
+      expect(note).toHaveValue('Açılış tarihi eksik.');
+      // The person sends and reads the API's own answer in the dialog, with the text still there.
+      await user.click(within(dialog).getByRole('button', { name: 'Düzeltme iste' }));
+      expect(await within(dialog).findByText(refusal)).toBeVisible();
+      expect(note).toHaveValue('Açılış tarihi eksik.');
+      // Closing the dialog reads the page again: it now says what happened.
+      await user.click(within(dialog).getByRole('button', { name: 'Vazgeç' }));
+      expect(await screen.findByText('Ayşe Yılmaz talebi iptal etti.')).toBeVisible();
+      expect(screen.queryByRole('dialog')).toBeNull();
+      expect(
+        screen.queryByRole('region', { name: 'Yeni ofis için LinkedIn gönderisi' }),
+      ).toBeNull();
+      expect(api.callsTo(key)).toHaveLength(before + 1);
+    } finally {
+      focusManager.setFocused(undefined);
+      vi.useRealTimers();
+    }
+  });
+
   it('links back to the list from the top bar', async () => {
     mockApi({
       'GET /session': sessionHandler(),
@@ -1166,6 +1277,38 @@ describe('Onaylar', () => {
         name: 'Onaylar, 2 bekleyen',
       }),
     ).toBeVisible();
+  });
+
+  it('keeps an open reason dialog and its text when the card leaves the desk meanwhile', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      let waiting = true;
+      const api = mockApi({
+        'GET /session': sessionHandler(),
+        'GET /approvals': () =>
+          json({ approvals: waiting ? [APPROVAL_CARD] : [], acceptances: [] }),
+      });
+      renderApp('/c/armadx/approvals');
+      const approvals = await screen.findByRole('region', { name: /Birim onayları/ });
+      await user.click(within(approvals).getByRole('button', { name: 'Düzeltme iste' }));
+      const dialog = await screen.findByRole('dialog', { name: 'Düzeltme iste' });
+      const note = within(dialog).getByRole('textbox', { name: /^Açıklama/ });
+      await user.type(note, 'Daha sade olsun.');
+      // Somebody else decided it. The desk is read by the screen and by the sidebar's count;
+      // neither reads it under the open dialog.
+      waiting = false;
+      const before = api.callsTo('GET /approvals').length;
+      await vi.advanceTimersByTimeAsync(31_000);
+      expect(api.callsTo('GET /approvals')).toHaveLength(before);
+      expect(screen.getByRole('dialog', { name: 'Düzeltme iste' })).toBeVisible();
+      expect(note).toHaveValue('Daha sade olsun.');
+      // Closing the dialog reads the desk again.
+      await user.click(within(dialog).getByRole('button', { name: 'Vazgeç' }));
+      expect(await screen.findByRole('heading', { name: 'Onay bekleyen iş yok' })).toBeVisible();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('says what will appear here when nothing waits', async () => {

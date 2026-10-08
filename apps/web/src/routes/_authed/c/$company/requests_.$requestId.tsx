@@ -28,6 +28,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { ApiError, userMessage } from '@/lib/api';
 import { useReturnFocus } from '@/lib/focus';
 import { REFRESH_MS, useBackgroundRefresh } from '@/lib/refresh';
+import { decisionDialogOpen } from '@/lib/requests/hold';
 import { machineHasTurn, personName, stageText, turnText } from '@/lib/requests/labels';
 import { closeRequest, fetchRequest, requestKey, requestQueryOptions } from '@/lib/requests/query';
 import { useCompany } from '@/lib/session';
@@ -77,6 +78,9 @@ function RequestScreen() {
     queryKey: requestKey(company.companyId, requestId),
     fetch: (signal) => fetchRequest(company.companyId, requestId, { signal, background: true }),
     intervalMs: request && machineHasTurn(request) ? FAST_REFRESH_MS : REFRESH_MS,
+    // An approval that stopped waiting would take its card, the open dialog and the typed reason
+    // with it; the person sends and reads the API's answer in the dialog instead.
+    paused: decisionDialogOpen,
   });
   const [confirming, setConfirming] = useState(false);
   const [rerouting, setRerouting] = useState(false);
@@ -173,9 +177,14 @@ function RequestScreen() {
 
       <FellNotice request={request} isFounder={company.role === 'founder'} />
       <ClosedNotice request={request} />
-      {request.approval ? <ApprovalCardView card={request.approval} /> : null}
+      {/* A card belongs to one approval (one round of the acceptance): what was chosen or opened
+          on it is not carried to the next one that takes its place. */}
+      {request.approval ? (
+        <ApprovalCardView key={request.approval.id} card={request.approval} />
+      ) : null}
       {request.acceptance ? (
         <AcceptanceCardView
+          key={request.acceptance.round}
           requestId={request.id}
           round={request.acceptance.round}
           approver={request.result?.approvedBy ? personName(request.result.approvedBy) : null}

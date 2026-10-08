@@ -15,6 +15,7 @@ import { CompanyMenu } from '@/components/shell/company-menu';
 import { SidebarNavItem } from '@/components/shell/sidebar-nav-item';
 import { isOfferedTo, MENU_SECTIONS } from '@/lib/menu';
 import { useBackgroundRefresh } from '@/lib/refresh';
+import { decisionDialogOpen } from '@/lib/requests/hold';
 import { approvalDeskQueryOptions, fetchApprovalDesk } from '@/lib/requests/query';
 import { SIDEBAR_ID } from '@/lib/shell';
 
@@ -30,6 +31,8 @@ function useWaitingCount(company: MembershipSummary): number {
   useBackgroundRefresh({
     queryKey: options.queryKey,
     fetch: (signal) => fetchApprovalDesk(company.companyId, { signal, background: true }),
+    // The Onaylar screen draws its cards from this answer: not under an open decision dialog.
+    paused: decisionDialogOpen,
   });
   return desk.data ? desk.data.approvals.length + desk.data.acceptances.length : 0;
 }
