@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { modelProfileSchema } from './models.ts';
 
 /**
  * Codes and file shapes of the unit catalog (agents/units.yaml) and the agent cards
@@ -139,28 +140,38 @@ export const cardSchema = z.strictObject({
 });
 export type Card = z.output<typeof cardSchema>;
 
+/** One row of the tool catalog. */
+export const catalogToolSchema = z.strictObject({
+  name: toolNameSchema,
+  kind: toolKindSchema,
+  description: line,
+  approval_rule: line.optional(),
+});
+export type CatalogToolRow = z.output<typeof catalogToolSchema>;
+
 /** agents/tools.yaml */
 export const toolsFileSchema = z.strictObject({
-  tools: z
-    .array(
-      z.strictObject({
-        name: toolNameSchema,
-        kind: toolKindSchema,
-        description: line,
-        approval_rule: line.optional(),
-      }),
-    )
-    .min(1),
+  tools: z.array(catalogToolSchema).min(1),
 });
 export type ToolsFile = z.output<typeof toolsFileSchema>;
 
 /**
- * What a card version holds (card_versions.content): the common rules, the card and the text of
- * every skill it names, so that a run points at exactly the instructions the model got and the
- * worker reads no file of the repository at run time.
+ * What a card version holds (card_versions.content): everything of the repository's files a run
+ * of this card is decided by, so that a run points at exactly what it ran with and the worker
+ * reads no file of the repository at run time:
+ *   - the common rules, the card and the text of every skill it names (the instructions);
+ *   - the catalog rows of the card's own tools: the kind and the approval rule are what the gate
+ *     decides a tool call with;
+ *   - the profile of the card's model: how it is called and what it costs.
+ * A change of any of them writes a new version for the cards it touches. What lives in code is
+ * not here: the input schema and the model-facing sentence of a tool the runner has a handler for.
  */
 export const storedCardSchema = z.strictObject({
   card: cardSchema,
+  // agents/tools.yaml: the rows of the tools the card names, in the card's order.
+  tools: z.array(catalogToolSchema),
+  // agents/models.yaml: the row of card.model.
+  model: modelProfileSchema,
   // agents/common-rules.md: the rules every agent gets before its card.
   rules: z.strictObject({ sha256: z.string().regex(/^[0-9a-f]{64}$/), body: z.string().min(1) }),
   skills: z.array(

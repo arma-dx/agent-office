@@ -145,7 +145,11 @@ export function parseCards(raw: CardFiles): CardSet {
     if (toolNames.has(tool.name)) problems.push(`tools.yaml: ${tool.name} is listed twice`);
     toolNames.add(tool.name);
   }
-  const priced = new Set(models.success ? models.data.models.map((model) => model.id) : []);
+  const catalogRows = new Map(tools.map((tool) => [tool.name, tool]));
+  const profiles = new Map(
+    models.success ? models.data.models.map((model) => [model.id, model]) : [],
+  );
+  const priced = new Set(profiles.keys());
 
   const rulesBody = raw.rules.trim();
   if (rulesBody === '') problems.push(`${RULES_FILE}: empty`);
@@ -183,7 +187,20 @@ export function parseCards(raw: CardFiles): CardSet {
         skills.push({ name, sha256: sha256(result.body), body: result.body });
       }
     }
-    versions.push({ card, rules, skills });
+    // The catalog rows of the card's own tools and the profile of its model are part of the
+    // version: a change of tools.yaml or models.yaml writes a new version for the cards it touches.
+    const profile = profiles.get(card.model);
+    if (profile === undefined) continue;
+    versions.push({
+      card,
+      tools: card.tools.flatMap((name) => {
+        const row = catalogRows.get(name);
+        return row ? [row] : [];
+      }),
+      model: profile,
+      rules,
+      skills,
+    });
   }
   if (problems.length > 0) {
     throw new DefinitionsError('invalid_files', 'The card files are not valid', problems);
@@ -265,8 +282,9 @@ export async function syncCards(
 }
 
 /**
- * agents/models.yaml by model id: how each model is called and what it costs. Read by the worker
- * once at start; the directory URL ends with a slash.
+ * agents/models.yaml by model id: how each model is called and what it costs. A run takes the
+ * profile from its card version; this reads the file itself, for the scripts that work without a
+ * database (the smoke call). The directory URL ends with a slash.
  */
 export async function readModels(agentsDir: URL): Promise<Map<string, ModelProfile>> {
   const file = modelsFileSchema.safeParse(await yaml(agentsDir, 'models.yaml'));

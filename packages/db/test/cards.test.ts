@@ -57,7 +57,14 @@ describe('the card files of the repository', () => {
     }
     for (const version of set.versions) {
       expect(storedCardSchema.safeParse(version).success).toBe(true);
+      // The catalog rows of the card's own tools, in the card's order, and its model's profile.
+      expect(version.tools.map((tool) => tool.name)).toEqual(version.card.tools);
+      expect(version.model.id).toBe(version.card.model);
     }
+    expect(sos?.tools.find((tool) => tool.name === 'submit_for_approval')).toMatchObject({
+      kind: 'draft',
+    });
+    expect(sos?.model).toMatchObject({ id: 'claude-sonnet-5-5', thinking: 'adaptive' });
   });
 
   it('refuses a key it does not know, a tool outside the catalog, an unpriced model and a bad skill', async () => {
@@ -126,6 +133,36 @@ describe.skipIf(noDatabase)('the card sync', () => {
       expect(
         await tx.count('card_versions', `agent_code = 'KOR-1' and git_commit = 'ccccccc'`),
       ).toBe(1);
+      // The catalog row of one tool changes (its kind is what the gate decides with): exactly the
+      // cards that name the tool get a new version. The table of the catalog alone, which every
+      // sync overwrites in place, would leave no trace of what an earlier run was gated with.
+      const catalog = raw.tools as { tools: { name: string; kind: string }[] };
+      const submit = catalog.tools.find((tool) => tool.name === 'submit_for_approval');
+      if (!submit) throw new Error('No submit_for_approval in the catalog');
+      submit.kind = 'internal_write';
+      const regated = await syncCards(tx.client, parseCards(raw), 'ddddddd');
+      expect(regated.written).toEqual(['SOS-2']);
+      const [gated] = await tx.rows<{ kind: string }>(
+        `select t ->> 'kind' as kind
+         from office.agent_definitions d
+         join office.card_versions v on v.id = d.current_version_id,
+              jsonb_array_elements(v.content -> 'tools') t
+         where d.code = 'SOS-2' and t ->> 'name' = 'submit_for_approval'`,
+      );
+      expect(gated).toEqual({ kind: 'internal_write' });
+      // A tool no card with a version names: the catalog row is written, no version is.
+      const unused = catalog.tools.find((tool) => tool.name === 'read_stations');
+      if (!unused) throw new Error('No read_stations in the catalog');
+      unused.kind = 'draft';
+      expect((await syncCards(tx.client, parseCards(raw), 'eeeeeee')).written).toEqual([]);
+      expect(await tx.count('tools', `name = 'read_stations' and kind = 'draft'`)).toBe(1);
+      // The profile of a model changes (a price): the cards that run with that model.
+      const table = raw.models as { models: { id: string; prices: { input: number } }[] };
+      const haiku = table.models.find((model) => model.id === 'claude-haiku-4-5-20251001');
+      if (!haiku) throw new Error('No haiku in the model table');
+      haiku.prices.input += 1;
+      expect((await syncCards(tx.client, parseCards(raw), 'fffffff')).written).toEqual(['KOR-1']);
+
       // A second content under the same commit cannot be stored: the tree was not committed.
       raw.skills.set('routing', `${raw.skills.get('routing') ?? ''}\nVe bir satır daha.\n`);
       const error = await syncCards(tx.client, parseCards(raw), 'ccccccc').catch(

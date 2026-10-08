@@ -5,8 +5,6 @@ import {
   type AgentRunJob,
   type AgentRunSender,
 } from '@agent-office/db';
-import { modelsFileSchema, type ModelProfile } from '@agent-office/shared';
-import { readModels } from '@agent-office/db/cards';
 import type pg from 'pg';
 import { inject } from 'vitest';
 import { ids } from '../../api/test/fixtures.ts';
@@ -16,8 +14,6 @@ import type { ScriptedModel } from './scripted-model.ts';
 const database = inject('database');
 export const noDatabase = database === null;
 export { ids };
-
-const AGENTS_DIR = new URL('../../../agents/', import.meta.url);
 
 function url(kind: 'app' | 'worker' | 'admin'): string {
   if (!database) throw new Error('No test database');
@@ -87,39 +83,29 @@ export class RecordingJobs implements AgentRunSender {
   }
 }
 
-let modelTable: Map<string, ModelProfile> | undefined;
-
-export async function models(): Promise<Map<string, ModelProfile>> {
-  modelTable ??= await readModels(AGENTS_DIR);
-  // The table the worker reads is the table the cards were checked against.
-  modelsFileSchema.parse({ models: [...modelTable.values()] });
-  return modelTable;
-}
-
 export interface TestRunner {
   deps: RunnerDeps;
   jobs: RecordingJobs;
   log: { event: string; fields: Record<string, string | number | null> }[];
 }
 
-export async function runner(
+export function runner(
   model: ScriptedModel | null,
   overrides: Partial<RunnerDeps> = {},
 ): Promise<TestRunner> {
   const jobs = new RecordingJobs();
   const log: TestRunner['log'] = [];
-  return {
+  return Promise.resolve({
     jobs,
     log,
     deps: {
       pool: testPools().worker,
       callModel: model?.call ?? null,
-      models: await models(),
       jobs,
       log: (event, fields) => log.push({ event, fields }),
       ...overrides,
     },
-  };
+  });
 }
 
 export function job(

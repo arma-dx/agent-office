@@ -33,7 +33,6 @@ import {
   admin,
   closeTestPools,
   ids,
-  models,
   noDatabase,
   testPools,
 } from './helpers.ts';
@@ -115,7 +114,6 @@ describe.skipIf(noDatabase)('a request from the first line to "done"', () => {
       {
         pool: testPools().worker,
         callModel: model.call,
-        models: await models(),
         jobs: agentRunSender(workerQueue),
         log: () => undefined,
       },
@@ -725,7 +723,6 @@ describe.skipIf(noDatabase)('a request from the first line to "done"', () => {
       {
         pool: testPools().worker,
         callModel: () => Promise.reject(Object.assign(new Error(secret), { where: secret })),
-        models: await models(),
         jobs: agentRunSender(workerQueue),
         log: (event, fields) => log.push({ event, fields }),
       },

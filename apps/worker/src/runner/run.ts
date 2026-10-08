@@ -96,8 +96,6 @@ export interface RunnerDeps {
   pool: pg.Pool;
   // null: no model is configured (no key). Runs then end at once with "model_unavailable".
   callModel: CallModel | null;
-  // agents/models.yaml, by model id.
-  models: ReadonlyMap<string, ModelProfile>;
   // Puts the unit agent's run on the queue in the transaction of the routing.
   jobs: AgentRunSender;
   // Codes and ids only: never a prompt, an answer or a key (rule 6).
@@ -250,15 +248,20 @@ async function loadCard(
   return stored.success ? { id: row.id, model: row.model, stored: stored.data } : 'invalid';
 }
 
-async function loadCatalog(pool: pg.Pool): Promise<Map<string, CatalogTool>> {
-  // The whole catalog: a call of a tool that is not on the card is still recorded by its name.
-  // What the gate needs of a tool; its sentence there is for people, not for the model.
+/**
+ * What the gate decides with. The rows of the card's own tools come from the card version: the
+ * kind and the approval rule a run was gated with are the ones its version holds, whatever the
+ * catalog table says by now. The table (written in place by every sync) is read for the other
+ * tools only, so that a call of a tool that is not on the card is refused as such and recorded by
+ * its name.
+ */
+async function loadCatalog(pool: pg.Pool, stored: StoredCard): Promise<Map<string, CatalogTool>> {
   const { rows } = await pool.query<{
     name: string;
     kind: string;
     approval_rule: string | null;
   }>('select name, kind, approval_rule from office.tools');
-  return new Map(
+  const catalog = new Map<string, CatalogTool>(
     rows.map((row) => [
       row.name,
       {
@@ -268,6 +271,14 @@ async function loadCatalog(pool: pg.Pool): Promise<Map<string, CatalogTool>> {
       },
     ]),
   );
+  for (const tool of stored.tools) {
+    catalog.set(tool.name, {
+      name: tool.name,
+      kind: tool.kind,
+      approvalRule: tool.approval_rule ?? null,
+    });
+  }
+  return catalog;
 }
 
 async function audit(
@@ -369,14 +380,15 @@ export async function runAgentJob(
   if (version === 'none') return refuse('no_card_version');
   if (version === 'invalid') return refuse('card_invalid');
   const { card } = version.stored;
-  const catalog = await loadCatalog(deps.pool);
+  const catalog = await loadCatalog(deps.pool, version.stored);
   const offered: ModelTool[] = card.tools
     .filter((name) => HANDLED_TOOLS.includes(name))
     .flatMap((name) => {
       const tool = modelTool(name);
       return tool ? [tool] : [];
     });
-  const profile = deps.models.get(version.model);
+  // How the model is called and what it costs: the profile the card version holds.
+  const profile: ModelProfile = version.stored.model;
 
   // Gate and open the run: one transaction, agent context.
   type Opened =
@@ -628,7 +640,7 @@ export async function runAgentJob(
     const closeWith =
       card.status === 'draft' || trialRefused || offered.length === 0
         ? 'card_not_runnable'
-        : deps.callModel === null || profile === undefined
+        : deps.callModel === null
           ? 'model_unavailable'
           : null;
     if (closeWith !== null) {
@@ -687,7 +699,7 @@ export async function runAgentJob(
   }
   const { runId } = opened;
   const callModel = deps.callModel;
-  if (callModel === null || profile === undefined) {
+  if (callModel === null) {
     // Not reachable: the run was closed above. Kept for the types.
     return { outcome: 'model_unavailable', runId, modelCalls: 0 };
   }

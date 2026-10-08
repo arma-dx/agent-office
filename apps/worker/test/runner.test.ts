@@ -986,6 +986,57 @@ describe.skipIf(noDatabase)('the unit agent’s run', () => {
     }
   });
 
+  it('gates and calls with what the card version holds, whatever the catalog table says by now', async () => {
+    const [version] = await admin<{ id: string; content: Record<string, unknown> }>(
+      `select v.id, v.content from office.agent_definitions d
+       join office.card_versions v on v.id = d.current_version_id where d.code = 'SOS-2'`,
+    );
+    const submit = async (): Promise<{ outcome: string; maxTokens: number | undefined }> => {
+      const taskId = await routedRequest();
+      const model = new ScriptedModel([
+        toolUse('submit_for_approval', RESULT),
+        text('Yapamadım.'),
+        text('Yapamadım.'),
+      ]);
+      const result = await runAgentJob(
+        (await runner(model)).deps,
+        job(taskId, 'SOS-2', ids.founder),
+      );
+      return { outcome: result.outcome, maxTokens: model.requests[0]?.max_tokens };
+    };
+    try {
+      // The catalog table is overwritten in place by every sync. A later sync that changed the
+      // tool's kind there (to one the runner's gate would send to approval for this Y1 card) does
+      // not change how a run of this version is gated.
+      await admin(
+        `update office.tools set kind = 'internal_write' where name = 'submit_for_approval'`,
+      );
+      expect(await submit()).toEqual({ outcome: 'submitted', maxTokens: 16000 });
+      await admin(`update office.tools set kind = 'draft' where name = 'submit_for_approval'`);
+      // The version itself decides: with another kind in its own row of the tool the call of this
+      // Y1 card is not executed, and with another profile the model is called differently.
+      await admin(
+        `update office.card_versions
+         set content = jsonb_set(
+           jsonb_set(content, '{model,max_tokens}', '1234'),
+           '{tools}',
+           (select jsonb_agg(
+              case when t ->> 'name' = 'submit_for_approval'
+                   then jsonb_set(t, '{kind}', '"internal_write"') else t end)
+            from jsonb_array_elements(content -> 'tools') t))
+         where id = $1`,
+        [version?.id],
+      );
+      expect(await submit()).toEqual({ outcome: 'no_submission', maxTokens: 1234 });
+    } finally {
+      await admin(`update office.tools set kind = 'draft' where name = 'submit_for_approval'`);
+      await admin('update office.card_versions set content = $2 where id = $1', [
+        version?.id,
+        JSON.stringify(version?.content),
+      ]);
+    }
+  });
+
   it('a person’s correction of the routing starts the agent fresh, with the note as data', async () => {
     const taskId = await routedRequest();
     // Two change requests of the approver: the work falls to a person.

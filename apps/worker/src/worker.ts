@@ -1,4 +1,3 @@
-import { readModels } from '@agent-office/db/cards';
 import {
   AGENT_RUN_DEAD_QUEUE,
   AGENT_RUN_QUEUE,
@@ -17,8 +16,6 @@ import { closeLostRun, runAgentJob, type RunnerDeps } from './runner/run.ts';
  * with the restricted role office_worker only (rule 9) and refuses any role that would switch the
  * row policies off or that carries the API's own privileges.
  */
-
-const AGENTS_DIR = new URL('../../../agents/', import.meta.url);
 
 export function describeWorker(env: Pick<WorkerEnv, 'NODE_ENV' | 'ANTHROPIC_API_KEY'>): string {
   return `worker:${QUEUE_SCHEMA}:${env.NODE_ENV}:${env.ANTHROPIC_API_KEY === undefined ? 'no-model' : 'model'}`;
@@ -107,7 +104,6 @@ export async function startWorker(env: WorkerEnv): Promise<RunningWorker> {
     logLine('pool_error', { type: error.name });
   });
   await assertWorkerRole(pool);
-  const models = await readModels(AGENTS_DIR);
   let callModel: CallModel | null = null;
   if (env.ANTHROPIC_API_KEY !== undefined) {
     // The SDK is loaded only when a key is configured, and only here.
@@ -121,7 +117,7 @@ export async function startWorker(env: WorkerEnv): Promise<RunningWorker> {
   });
   await queue.start();
   await ensureAgentRunQueues(queue);
-  const deps: RunnerDeps = { pool, callModel, models, jobs: agentRunSender(queue), log: logLine };
+  const deps: RunnerDeps = { pool, callModel, jobs: agentRunSender(queue), log: logLine };
 
   await queue.work(
     AGENT_RUN_QUEUE,
