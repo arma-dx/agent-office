@@ -31,8 +31,11 @@ import { useCompany } from '@/lib/session';
  * cannot see is the same screen as one that does not exist.
  */
 export const Route = createFileRoute('/_authed/c/$company/projects_/$projectId')({
-  // The list the project belongs to. It is named as text until the menu has the row of the list.
-  staticData: { location: { label: 'Proje', parent: 'Projeler' } },
+  // The list the project belongs to: the top bar links back to it, and a change of company opens
+  // it there (a project of one company does not exist in the other).
+  staticData: {
+    location: { label: 'Proje', parent: { label: 'Projeler', to: '/c/$company/projects' } },
+  },
   component: ProjectScreen,
 });
 

@@ -37,6 +37,7 @@ describe('app layout', () => {
       'Talepler',
       'Görevler',
       'Notlar',
+      'Projeler',
       'Ofis görünümü',
       'Ajanlar',
     ]);
@@ -46,6 +47,7 @@ describe('app layout', () => {
       '/c/armadx/requests',
       '/c/armadx/tasks',
       '/c/armadx/notes',
+      '/c/armadx/projects',
       '/c/armadx/office',
       '/c/armadx/agents',
     ]);
@@ -54,7 +56,7 @@ describe('app layout', () => {
       within(work)
         .getAllByRole('link')
         .map((link) => link.textContent),
-    ).toEqual(['Talepler', 'Görevler', 'Notlar']);
+    ).toEqual(['Talepler', 'Görevler', 'Notlar', 'Projeler']);
     const office = within(mainMenu).getByRole('list', { name: 'Ofis' });
     expect(
       within(office)
@@ -90,6 +92,7 @@ describe('app layout', () => {
       '/c/pillika/requests',
       '/c/pillika/tasks',
       '/c/pillika/notes',
+      '/c/pillika/projects',
       '/c/pillika/office',
       '/c/pillika/agents',
     ]);

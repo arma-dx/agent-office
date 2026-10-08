@@ -41,7 +41,7 @@ describe('app shell: regions and keyboard order', () => {
     renderApp('/c/armadx');
     await screen.findByRole('navigation', { name: 'Ana menü' });
     const stops: string[] = [];
-    for (let i = 0; i < 12; i += 1) {
+    for (let i = 0; i < 13; i += 1) {
       await userEvent.tab();
       const element = document.activeElement;
       stops.push(element?.getAttribute('aria-label') ?? element?.textContent ?? '');
@@ -55,6 +55,7 @@ describe('app shell: regions and keyboard order', () => {
       'Talepler',
       'Görevler',
       'Notlar',
+      'Projeler',
       'Ofis görünümü',
       'Ajanlar',
       'Hesap: Ömer Kadıoğlu',

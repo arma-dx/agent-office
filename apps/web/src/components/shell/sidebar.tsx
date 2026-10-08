@@ -3,7 +3,7 @@
 // ui/src/components/primary-sidebar-styles.ts at commit dd868ed125cd709506dd9b29fca640a44d580501.
 // License text: THIRD_PARTY_NOTICES.md.
 // Changes: our menu (lib/menu.ts) instead of Paperclip's routes, queries and plugin outlets, with
-// rows that only some roles are offered; sentence-case group labels in the secondary text color;
+// rows that only some roles are offered, or only in a company; sentence-case group labels in the secondary text color;
 // groups do not collapse; the sidebar is sticky because the window scrolls.
 import type { MembershipSummary, SidebarCounts } from '@agent-office/shared';
 import { useQuery } from '@tanstack/react-query';
@@ -98,7 +98,7 @@ export function Sidebar({
         {MENU_SECTIONS.map((section) => (
           <SidebarSection key={section.id} label={section.label}>
             {section.items
-              .filter((item) => isOfferedTo(item, company.role))
+              .filter((item) => isOfferedTo(item, company))
               .map((item) => (
                 <li key={item.to}>
                   <SidebarNavItem

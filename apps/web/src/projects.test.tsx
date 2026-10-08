@@ -1,4 +1,9 @@
-import { PROJECT_COLORS, PROJECT_ICONS } from '@agent-office/shared';
+import {
+  createProjectSchema,
+  PROJECT_COLORS,
+  PROJECT_ICONS,
+  stepUpOptionsRequestSchema,
+} from '@agent-office/shared';
 import { startAuthentication } from '@simplewebauthn/browser';
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -24,6 +29,7 @@ import {
   CANDIDATES,
   CUSTOMER_ID,
   CUSTOMER_NAMES,
+  CUSTOMERS,
   EMPLOYEE_AT_ARMADX,
   EXTERNAL_AT_ARMADX,
   FOUNDER_MEMBER,
@@ -35,7 +41,13 @@ import {
   projectHandlers,
   sessionAs,
 } from './test/project-fixtures.ts';
-import { ASSERTION, challengeId, signed, stepUpIssuer } from './test/passkeys.ts';
+import {
+  ASSERTION,
+  cancelledByPerson,
+  challengeId,
+  signed,
+  stepUpIssuer,
+} from './test/passkeys.ts';
 import { currentLocation, renderApp } from './test/render-app.tsx';
 
 vi.mock('@simplewebauthn/browser', () => ({
@@ -66,6 +78,55 @@ function valueOf(container: HTMLElement, name: string): HTMLElement {
 function panel() {
   return screen.getByRole('complementary', { name: 'Özellikler' });
 }
+
+describe('projects: the menu', () => {
+  const work = async () =>
+    within(await screen.findByRole('navigation', { name: 'Ana menü' })).getByRole('list', {
+      name: 'İş',
+    });
+  const rows = (list: HTMLElement) =>
+    within(list)
+      .getAllByRole('link')
+      .map((link) => link.textContent);
+
+  it('menu: Projeler is in the İş group after Notlar for a founder and for an employee', async () => {
+    mockApi(projectHandlers());
+    const { router } = renderApp('/c/armadx');
+    expect(rows(await work())).toEqual(['Talepler', 'Görevler', 'Notlar', 'Projeler']);
+    const row = within(await work()).getByRole('link', { name: 'Projeler' });
+    expect(row).toHaveAttribute('href', LIST);
+    await userEvent.click(row);
+    expect(await screen.findByRole('heading', { level: 1, name: 'Projeler' })).toBeVisible();
+    expect(row).toHaveAttribute('aria-current', 'page');
+    // The row stays selected on a project's page.
+    await router.navigate({ to: PAGE as never });
+    await screen.findByRole('heading', { level: 2, name: 'Depo otomasyonu' });
+    expect(within(await work()).getByRole('link', { name: 'Projeler' })).toHaveAttribute(
+      'data-status',
+      'active',
+    );
+    cleanup();
+
+    mockApi(
+      projectHandlers(projectForEmployee(), { 'GET /session': sessionAs(EMPLOYEE_AT_ARMADX) }),
+    );
+    renderApp('/c/armadx');
+    expect(rows(await work())).toEqual(['Talepler', 'Görevler', 'Notlar', 'Projeler']);
+  });
+
+  it('menu: Projeler is not offered to an external person, and not in Kurucu alanı', async () => {
+    mockApi({ 'GET /session': sessionAs(EXTERNAL_AT_ARMADX) });
+    renderApp('/c/armadx');
+    expect(rows(await work())).toEqual(['Görevler', 'Notlar']);
+    cleanup();
+
+    // No project is opened in the founder's private space: the row would lead nowhere.
+    mockApi({ 'GET /session': sessionHandler() });
+    renderApp(`/c/${FOUNDER_SPACE.code}`);
+    expect(rows(await work())).toEqual(['Talepler', 'Görevler', 'Notlar']);
+    expect(screen.queryByRole('link', { name: 'Projeler' })).toBeNull();
+  });
+});
 
 describe('projects: the list', () => {
   it('list: open projects first and closed ones after, each group with its count', async () => {
@@ -230,6 +291,40 @@ describe('projects: the list', () => {
     expect(screen.queryByText(/Yapay zekâ (açık|kapalı)/)).toBeNull();
   });
 
+  it("list: the first step when there is no project, in the founder's words and in an employee's", async () => {
+    mockApi(projectHandlers(projectDetail(), { 'GET /projects': listOf() }));
+    renderApp(LIST);
+    expect(await screen.findByRole('heading', { level: 2, name: 'Henüz proje yok' })).toBeVisible();
+    expect(
+      screen.getByText(
+        'İlk projeyi Yeni proje düğmesiyle açın. Bir projeyi ve ona bağlı kayıtları yalnızca üyeleri ve kurucu görür.',
+      ),
+    ).toBeVisible();
+    // One button, the empty state's; the bar's own is not shown beside it. It opens the dialog.
+    expect(screen.getAllByRole('button', { name: 'Yeni proje' })).toHaveLength(1);
+    expect(screen.queryByRole('region', { name: /projeler/ })).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'Yeni proje' }));
+    expect(await screen.findByRole('dialog', { name: 'Yeni proje' })).toBeVisible();
+    cleanup();
+
+    mockApi(
+      projectHandlers(projectDetail(), {
+        'GET /session': sessionAs(EMPLOYEE_AT_ARMADX),
+        'GET /projects': listOf(),
+      }),
+    );
+    renderApp(LIST);
+    expect(
+      await screen.findByRole('heading', { level: 2, name: 'Üyesi olduğunuz proje yok' }),
+    ).toBeVisible();
+    expect(
+      screen.getByText(
+        'Yeni proje düğmesiyle bir proje açabilirsiniz; açtığınız projenin üyesi olursunuz. Var olan bir projeye sizi o projenin bir üyesi ya da kurucu ekler.',
+      ),
+    ).toBeVisible();
+    expect(screen.getAllByRole('button', { name: 'Yeni proje' })).toHaveLength(1);
+  });
+
   it('list: says why and sends nothing for an external person and in Kurucu alanı', async () => {
     const external = mockApi({ 'GET /session': sessionAs(EXTERNAL_AT_ARMADX) });
     renderApp(LIST);
@@ -299,7 +394,11 @@ describe('projects: the page', () => {
     expect(
       await within(bar).findByRole('heading', { level: 1, name: 'Depo otomasyonu' }),
     ).toBeVisible();
-    expect(within(bar).getByText('Projeler')).toBeVisible();
+    // Projeler in the top bar is a link to the list.
+    expect(within(bar).getByRole('link', { name: 'Projeler' })).toHaveAttribute(
+      'href',
+      '/c/armadx/projects',
+    );
     expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
     // The name on the page itself is an h2; the sections under it are h3.
     expect(screen.getByRole('heading', { level: 2, name: 'Depo otomasyonu' })).toBeVisible();
@@ -1534,6 +1633,731 @@ describe('projects: editing', () => {
     await userEvent.keyboard('{Escape}');
     await gone();
     expect(api.callsTo(PATCH)).toEqual([]);
+  });
+});
+
+describe('projects: a new project', () => {
+  const NEW_ID = 'a7777777-7777-4777-8777-777777777777';
+  const openNew = async () => {
+    await userEvent.click(await screen.findByRole('button', { name: 'Yeni proje' }));
+    return screen.findByRole('dialog', { name: 'Yeni proje' });
+  };
+  const create = (dialog: HTMLElement) =>
+    within(dialog).getByRole('button', { name: 'Projeyi oluştur' });
+  const nameOf = (dialog: HTMLElement) =>
+    within(dialog).getByRole('textbox', { name: 'Proje adı' });
+  const customerOf = (dialog: HTMLElement) =>
+    within(dialog).getByRole('combobox', { name: 'Müşteri' });
+  /** What POST /projects carries, checked against the request contract. */
+  const sentBody = (call: { body: unknown } | undefined) => createProjectSchema.parse(call?.body);
+  /** A fake API that stores the project it is sent and can then show its page. */
+  function creatingApi(extra: Record<string, Handler> = {}) {
+    const api = mockApi(
+      projectHandlers(projectDetail(), {
+        'POST /projects': (call) => {
+          const body = sentBody(call);
+          const created = projectDetail({
+            id: body.id,
+            name: body.name,
+            status: body.status,
+            color: body.color,
+            icon: body.icon,
+            targetDate: body.targetDate,
+            customer: null,
+            members: [FOUNDER_MEMBER],
+          });
+          api.handle(`GET /projects/${body.id}`, () => json(created));
+          return json(created, 201);
+        },
+        ...extra,
+      }),
+    );
+    return api;
+  }
+  const exists = 'Bu adla bir müşteri zaten var. Müşteriyi listeden seçin.';
+
+  it('new project: the name has the focus; an empty name is said in Turkish and nothing is sent', async () => {
+    const api = creatingApi();
+    renderApp(LIST);
+    const dialog = await openNew();
+    expect(dialog).toHaveTextContent('Arma DX için açılır.');
+    expect(nameOf(dialog)).toHaveFocus();
+    expect(nameOf(dialog)).toHaveAttribute('aria-required', 'true');
+    await userEvent.click(create(dialog));
+    const problem = await within(dialog).findByRole('alert');
+    expect(problem).toHaveTextContent('Proje adını yazın.');
+    expect(nameOf(dialog)).toHaveAttribute('aria-invalid', 'true');
+    expect(nameOf(dialog)).toHaveAccessibleDescription('Proje adını yazın.');
+    // The first field that is wrong takes the focus.
+    expect(nameOf(dialog)).toHaveFocus();
+    expect(api.callsTo('POST /projects')).toEqual([]);
+    // Typing a name takes the sentence away at the next send.
+    await userEvent.type(nameOf(dialog), 'Depo');
+    await userEvent.click(create(dialog));
+    await waitFor(() => {
+      expect(api.callsTo('POST /projects')).toHaveLength(1);
+    });
+  });
+
+  it('new project: sends the id, the name, the description, no customer, the checked members, planned, gray, folder and no date, then opens the page', async () => {
+    const api = creatingApi();
+    const { router } = renderApp(LIST);
+    const dialog = await openNew();
+    await userEvent.type(nameOf(dialog), '  Yeni depo ');
+    await userEvent.type(
+      within(dialog).getByRole('textbox', { name: 'Açıklama' }),
+      'İlk satır{Enter}ikinci',
+    );
+    await userEvent.click(await within(dialog).findByRole('checkbox', { name: 'Çağan Ünal' }));
+    // The defaults a person sees before choosing anything.
+    expect(customerOf(dialog)).toHaveValue('');
+    expect(within(dialog).getByRole('combobox', { name: 'Durum' })).toHaveValue('planned');
+    expect(within(dialog).getByRole('radio', { name: 'Gri' })).toBeChecked();
+    expect(within(dialog).getByRole('radio', { name: 'Klasör' })).toBeChecked();
+    expect(within(dialog).getByLabelText('Hedef tarih')).toHaveValue('');
+    await userEvent.click(create(dialog));
+
+    const page = await screen.findByRole('heading', { level: 2, name: 'Yeni depo' });
+    expect(page).toBeVisible();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    const [call] = api.callsTo('POST /projects');
+    expect(call?.body).toEqual({
+      id: expect.stringMatching(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+      ) as string,
+      name: 'Yeni depo',
+      description: 'İlk satır\nikinci',
+      customer: { kind: 'none' },
+      memberIds: [CAGAN.userId],
+      status: 'planned',
+      color: 'gray',
+      icon: 'folder',
+      targetDate: null,
+    });
+    // The page is the confirmation; its address carries the id the panel chose.
+    expect(currentLocation(router).pathname).toBe(`/c/armadx/projects/${sentBody(call).id}`);
+    expect(api.unexpected).toEqual([]);
+  });
+
+  it('new project: the opener is checked and stays checked', async () => {
+    creatingApi();
+    renderApp(LIST);
+    const dialog = await openNew();
+    const members = within(dialog).getByRole('group', { name: 'Üyeler' });
+    await within(members).findByRole('checkbox', { name: 'Ayşe Yılmaz' });
+    // The opener first, then the others by name; the founder is not listed twice.
+    expect(
+      within(members)
+        .getAllByRole('checkbox')
+        .map((box) => box.closest('label')?.textContent),
+    ).toEqual(['Ömer Kadıoğlu (siz)', 'Ayşe Yılmaz', 'Çağan Ünal']);
+    const own = within(members).getByRole('checkbox', { name: 'Ömer Kadıoğlu (siz)' });
+    expect(own).toBeChecked();
+    expect(own).toHaveAttribute('aria-disabled', 'true');
+    // Fixed, and still reachable with the keyboard.
+    expect(own).not.toBeDisabled();
+    await userEvent.click(own);
+    expect(own).toBeChecked();
+    expect(members).toHaveAccessibleDescription(
+      'Projeyi ve ona bağlı kayıtları yalnızca üyeler ve kurucu görür. Projeyi açan kişi üyedir.',
+    );
+    expect(within(members).getByRole('checkbox', { name: 'Ayşe Yılmaz' })).not.toBeChecked();
+  });
+
+  it('new project: a customer by name; an employee sees no permission switch and the request carries closed permissions', async () => {
+    const api = creatingApi({
+      'GET /session': sessionAs(EMPLOYEE_AT_ARMADX),
+      'GET /customers': () => json({ customers: CUSTOMER_NAMES }),
+    });
+    renderApp(LIST);
+    const dialog = await openNew();
+    await userEvent.type(nameOf(dialog), 'Depo');
+    await userEvent.selectOptions(customerOf(dialog), 'new');
+    expect(
+      within(dialog).getByText(
+        'Yeni müşterinin sözleşme izinleri kapalı başlar. İzinleri kurucu işaretler.',
+      ),
+    ).toBeVisible();
+    expect(within(dialog).queryByRole('switch')).toBeNull();
+    await userEvent.type(within(dialog).getByRole('textbox', { name: 'Müşteri adı' }), ' Delta ');
+    await userEvent.click(create(dialog));
+    await waitFor(() => {
+      expect(api.callsTo('POST /projects')).toHaveLength(1);
+    });
+    const body = sentBody(api.callsTo('POST /projects')[0]);
+    expect(body.customer).toEqual({
+      kind: 'new',
+      id: expect.stringMatching(/^[0-9a-f-]{36}$/) as string,
+      name: 'Delta',
+      aiAllowed: false,
+      automatedProcessingAllowed: false,
+    });
+    expect(body.stepUp).toBeUndefined();
+    expect(api.callsTo('POST /step-up/options')).toEqual([]);
+  });
+
+  it("new project: the founder marks the customer's AI permission and confirms with a passkey; the options are asked for the new customer's id and the request carries stepUp", async () => {
+    const stepUp = stepUpIssuer();
+    const api = creatingApi({ 'POST /step-up/options': stepUp.handler });
+    renderApp(LIST);
+    const form = await openNew();
+    await userEvent.type(nameOf(form), 'Depo');
+    await userEvent.selectOptions(customerOf(form), 'new');
+    await userEvent.type(within(form).getByRole('textbox', { name: 'Müşteri adı' }), 'Delta');
+    const ai = within(form).getByRole('switch', {
+      name: 'Sözleşme yapay zekâ kullanımına izin veriyor',
+    });
+    expect(ai).not.toBeChecked();
+    expect(ai).toHaveAccessibleDescription(
+      'Açarsanız projeyi passkey ile onaylayarak oluşturursunuz. Kapalıyken bu müşterinin projelerinde ajanlar çalışamaz.',
+    );
+    expect(
+      within(form).getByRole('switch', { name: 'Sözleşme kodla otomatik işlemeye izin veriyor' }),
+    ).toHaveAccessibleDescription(
+      'Kapalıyken hatırlatma gibi model kullanmayan otomatik işler de bu müşteri için durur.',
+    );
+    await userEvent.click(ai);
+    await userEvent.click(create(form));
+
+    // The same dialog shows its second view; nothing was sent yet.
+    const step = await screen.findByRole('dialog', {
+      name: 'Müşterinin yapay zekâ izni açılsın mı?',
+    });
+    expect(step).toHaveTextContent(
+      'Delta için sözleşmenin yapay zekâ kullanımına izin verdiğini işaretlediniz. Proje ve müşteri, passkey ile onayladığınızda oluşturulur.',
+    );
+    expect(within(step).getByRole('heading', { level: 2 })).toHaveFocus();
+    expect(api.callsTo('POST /projects')).toEqual([]);
+    await waitFor(() => {
+      expect(stepUp.issued).toHaveLength(1);
+    });
+    const asked = stepUpOptionsRequestSchema.parse(stepUp.issued[0]?.body);
+    expect(asked).toEqual({
+      purpose: 'customer_ai_permission',
+      companyId: ARMADX.companyId,
+      subjectId: asked.subjectId,
+      details: {
+        action: 'create',
+        name: 'Delta',
+        aiAllowed: true,
+        automatedProcessingAllowed: false,
+      },
+    });
+    const confirm = within(step).getByRole('button', { name: 'Onayla ve oluştur' });
+    await waitFor(() => {
+      expect(confirm).not.toHaveAttribute('aria-disabled');
+    });
+    await userEvent.click(confirm);
+    expect(await screen.findByRole('heading', { level: 2, name: 'Depo' })).toBeVisible();
+    const body = sentBody(api.callsTo('POST /projects')[0]);
+    // The passkey names the customer that is created: one id in the options and in the request.
+    expect(body.customer).toEqual({
+      kind: 'new',
+      id: asked.subjectId,
+      name: 'Delta',
+      aiAllowed: true,
+      automatedProcessingAllowed: false,
+    });
+    expect(body.stepUp).toEqual(signed(challengeId(1)));
+    expect(api.callsTo('POST /projects')).toHaveLength(1);
+  });
+
+  it('new project: Geri returns to the form with its values; a cancelled passkey prompt sends nothing', async () => {
+    const stepUp = stepUpIssuer();
+    const api = creatingApi({ 'POST /step-up/options': stepUp.handler });
+    vi.mocked(startAuthentication).mockReset().mockRejectedValue(cancelledByPerson());
+    renderApp(LIST);
+    let form = await openNew();
+    await userEvent.type(nameOf(form), 'Depo');
+    await userEvent.selectOptions(customerOf(form), 'new');
+    await userEvent.type(within(form).getByRole('textbox', { name: 'Müşteri adı' }), 'Delta');
+    await userEvent.click(
+      within(form).getByRole('switch', { name: 'Sözleşme yapay zekâ kullanımına izin veriyor' }),
+    );
+    await userEvent.click(within(form).getByRole('radio', { name: 'Mor' }));
+    await userEvent.click(create(form));
+    const step = await screen.findByRole('dialog', {
+      name: 'Müşterinin yapay zekâ izni açılsın mı?',
+    });
+    const confirm = within(step).getByRole('button', { name: 'Onayla ve oluştur' });
+    await waitFor(() => {
+      expect(confirm).not.toHaveAttribute('aria-disabled');
+    });
+    await userEvent.click(confirm);
+    // The person closed the passkey prompt: said quietly, and nothing reached the API.
+    expect(await within(step).findByText('Doğrulama iptal edildi.')).toBeVisible();
+    expect(api.callsTo('POST /projects')).toEqual([]);
+
+    await userEvent.click(within(step).getByRole('button', { name: 'Geri' }));
+    form = await screen.findByRole('dialog', { name: 'Yeni proje' });
+    expect(nameOf(form)).toHaveValue('Depo');
+    expect(customerOf(form)).toHaveValue('new');
+    expect(within(form).getByRole('textbox', { name: 'Müşteri adı' })).toHaveValue('Delta');
+    expect(
+      within(form).getByRole('switch', { name: 'Sözleşme yapay zekâ kullanımına izin veriyor' }),
+    ).toBeChecked();
+    expect(within(form).getByRole('radio', { name: 'Mor' })).toBeChecked();
+    await waitFor(() => {
+      expect(create(form)).toHaveFocus();
+    });
+    expect(api.callsTo('POST /projects')).toEqual([]);
+  });
+
+  it("new project: the API's customer_exists sentence shows under the customer name, which takes the focus", async () => {
+    const api = creatingApi({
+      'POST /projects': () => apiError(409, 'customer_exists', exists),
+    });
+    renderApp(LIST);
+    const dialog = await openNew();
+    await userEvent.type(nameOf(dialog), 'Depo');
+    await userEvent.selectOptions(customerOf(dialog), 'new');
+    const customerName = within(dialog).getByRole('textbox', { name: 'Müşteri adı' });
+    expect(customerName).toHaveAttribute('aria-required', 'true');
+    await userEvent.type(customerName, 'BETA LOJİSTİK');
+    await userEvent.click(create(dialog));
+    const alerts = await within(dialog).findAllByRole('alert');
+    // Under its field, and nowhere else: not also above the footer.
+    expect(alerts.map((alert) => alert.textContent)).toEqual([exists]);
+    expect(customerName).toHaveAttribute('aria-invalid', 'true');
+    expect(customerName).toHaveAccessibleDescription(exists);
+    await waitFor(() => {
+      expect(customerName).toHaveFocus();
+    });
+    // The form stays as it was, and the list of customers is read again for the person to choose.
+    expect(nameOf(dialog)).toHaveValue('Depo');
+    await waitFor(() => {
+      expect(api.callsTo('GET /customers')).toHaveLength(2);
+    });
+  });
+
+  it('new project: a name that exists, found after the passkey, brings the form back with the sentence under the name', async () => {
+    const stepUp = stepUpIssuer();
+    const api = creatingApi({
+      'POST /step-up/options': stepUp.handler,
+      'POST /projects': () => apiError(409, 'customer_exists', exists),
+    });
+    renderApp(LIST);
+    const form = await openNew();
+    await userEvent.type(nameOf(form), 'Depo');
+    await userEvent.selectOptions(customerOf(form), 'new');
+    await userEvent.type(
+      within(form).getByRole('textbox', { name: 'Müşteri adı' }),
+      'Beta Lojistik',
+    );
+    await userEvent.click(
+      within(form).getByRole('switch', { name: 'Sözleşme yapay zekâ kullanımına izin veriyor' }),
+    );
+    await userEvent.click(create(form));
+    const step = await screen.findByRole('dialog', {
+      name: 'Müşterinin yapay zekâ izni açılsın mı?',
+    });
+    const confirm = within(step).getByRole('button', { name: 'Onayla ve oluştur' });
+    await waitFor(() => {
+      expect(confirm).not.toHaveAttribute('aria-disabled');
+    });
+    await userEvent.click(confirm);
+    const back = await screen.findByRole('dialog', { name: 'Yeni proje' });
+    const customerName = within(back).getByRole('textbox', { name: 'Müşteri adı' });
+    await waitFor(() => {
+      expect(customerName).toHaveAccessibleDescription(exists);
+    });
+    await waitFor(() => {
+      expect(customerName).toHaveFocus();
+    });
+    expect(customerName).toHaveValue('Beta Lojistik');
+    // No new passkey prompt was prepared behind the form.
+    expect(api.callsTo('POST /projects')).toHaveLength(1);
+    expect(stepUp.issued).toHaveLength(1);
+  });
+
+  it('new project: there is no AI permission control, and the dialog says who opens it and how', async () => {
+    const api = creatingApi();
+    renderApp(LIST);
+    const dialog = await openNew();
+    expect(
+      within(dialog).getByText(
+        'Yapay zekâ izni kapalı başlar; izin açılana kadar bu projede ajanlar çalışamaz. İzni kurucu, proje sayfasından passkey ile açar.',
+      ),
+    ).toBeVisible();
+    // Not for the founder either: without a new customer the dialog has no switch at all.
+    expect(within(dialog).queryByRole('switch')).toBeNull();
+    await userEvent.selectOptions(customerOf(dialog), 'new');
+    // With a new customer the founder has the two contract switches, and nothing for the project.
+    expect(
+      within(dialog)
+        .getAllByRole('switch')
+        .map((control) => control.getAttribute('aria-label') ?? control.id).length,
+    ).toBe(2);
+    expect(within(dialog).queryByRole('switch', { name: /Yapay zekâ izni/ })).toBeNull();
+    await userEvent.type(nameOf(dialog), 'Depo');
+    await userEvent.type(within(dialog).getByRole('textbox', { name: 'Müşteri adı' }), 'Delta');
+    await userEvent.click(create(dialog));
+    await waitFor(() => {
+      expect(api.callsTo('POST /projects')).toHaveLength(1);
+    });
+    // The body has no field for the project's AI permission.
+    expect(Object.keys(api.callsTo('POST /projects')[0]?.body as object)).not.toContain(
+      'aiAllowed',
+    );
+  });
+
+  it('new project: colour and icon are radio groups the arrow keys move in, and the choice is named', async () => {
+    creatingApi();
+    renderApp(LIST);
+    const dialog = await openNew();
+    const colours = within(dialog).getByRole('radiogroup', { name: 'Renk' });
+    const icons = within(dialog).getByRole('radiogroup', { name: 'Simge' });
+    expect(within(colours).getAllByRole('radio')).toHaveLength(8);
+    expect(within(icons).getAllByRole('radio')).toHaveLength(12);
+    expect(within(colours).getByText('Seçili: Gri')).toHaveAttribute('aria-hidden', 'true');
+    expect(within(icons).getByText('Seçili: Klasör')).toBeVisible();
+
+    // The arrow keys move inside a group and choose; Tab leaves it.
+    within(colours).getByRole('radio', { name: 'Gri' }).focus();
+    await userEvent.keyboard('{ArrowRight}');
+    expect(within(colours).getByRole('radio', { name: 'Kırmızı' })).toBeChecked();
+    expect(within(colours).getByRole('radio', { name: 'Kırmızı' })).toHaveFocus();
+    expect(within(colours).getByText('Seçili: Kırmızı')).toBeVisible();
+    await userEvent.keyboard('{ArrowLeft}{ArrowLeft}');
+    // Around the end of the group.
+    expect(within(colours).getByRole('radio', { name: 'Pembe' })).toBeChecked();
+    await userEvent.tab();
+    expect(within(icons).getByRole('radio', { name: 'Klasör' })).toHaveFocus();
+    await userEvent.keyboard('{ArrowRight}{ArrowRight}');
+    expect(within(icons).getByRole('radio', { name: 'Kod' })).toBeChecked();
+    expect(within(icons).getByText('Seçili: Kod')).toBeVisible();
+
+    // The chosen mark carries a sign, not only a colour; the ring is drawn on the mark.
+    const chosen = within(colours).getByRole('radio', { name: 'Pembe' }).nextElementSibling;
+    expect(chosen).toHaveClass('bg-project-pink', 'peer-focus-visible:outline-2');
+    expect(chosen?.querySelector('svg')).toBeInTheDocument();
+    const other = within(colours).getByRole('radio', { name: 'Gri' }).nextElementSibling;
+    expect(other?.querySelector('svg')).toBeNull();
+    expect(within(icons).getByRole('radio', { name: 'Kod' }).nextElementSibling).toHaveClass(
+      'border-brand',
+      'bg-row-hover',
+    );
+    expect(within(icons).getByRole('radio', { name: 'Klasör' }).nextElementSibling).toHaveClass(
+      'border-line',
+    );
+  });
+
+  it("new project: every colour and every icon has its Turkish name as the radio's name and as the title of its mark", async () => {
+    creatingApi();
+    renderApp(LIST);
+    const dialog = await openNew();
+    const named = (group: string) =>
+      within(within(dialog).getByRole('radiogroup', { name: group }))
+        .getAllByRole('radio')
+        .map((radio) => [radio.getAttribute('aria-label'), radio.closest('label')?.title]);
+    expect(named('Renk')).toEqual(
+      PROJECT_COLORS.map((color) => [COLOR_NAME[color], COLOR_NAME[color]]),
+    );
+    expect(named('Simge')).toEqual(PROJECT_ICONS.map((icon) => [ICON_NAME[icon], ICON_NAME[icon]]));
+    // A swatch keeps its fill when the system replaces colours.
+    for (const radio of within(
+      within(dialog).getByRole('radiogroup', { name: 'Renk' }),
+    ).getAllByRole('radio')) {
+      expect(radio.nextElementSibling).toHaveClass('forced-color-adjust-none');
+    }
+  });
+
+  it('new project: Vazgeç gives the focus back to the button; a press outside does not close it', async () => {
+    const api = creatingApi();
+    renderApp(LIST);
+    const dialog = await openNew();
+    await userEvent.type(nameOf(dialog), 'Depo');
+    const overlay = document.querySelector('[data-slot="dialog-overlay"]');
+    if (!overlay) throw new Error('The dialog has no overlay');
+    await userEvent.click(overlay);
+    expect(screen.getByRole('dialog', { name: 'Yeni proje' })).toBeVisible();
+    expect(nameOf(dialog)).toHaveValue('Depo');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Vazgeç' }));
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).toBeNull();
+    });
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Yeni proje' })).toHaveFocus();
+    });
+    expect(api.callsTo('POST /projects')).toEqual([]);
+    // Every opening starts empty.
+    expect(nameOf(await openNew())).toHaveValue('');
+  });
+
+  it('new project: a people list that fails still lets the project be opened', async () => {
+    const api = creatingApi({
+      'GET /projects/member-candidates': () => apiError(409, 'invalid_request', 'Okunamadı.'),
+      'GET /customers': () => apiError(409, 'invalid_request', 'Okunamadı.'),
+    });
+    renderApp(LIST);
+    const dialog = await openNew();
+    const members = within(dialog).getByRole('group', { name: 'Üyeler' });
+    expect(
+      await within(members).findByText(
+        'Kişi listesi alınamadı. Üyeleri sonra proje sayfasından ekleyebilirsiniz.',
+      ),
+    ).toBeVisible();
+    // The opener's own row is there all the same.
+    expect(within(members).getAllByRole('checkbox')).toHaveLength(1);
+    expect(within(members).getByRole('checkbox', { name: 'Ömer Kadıoğlu (siz)' })).toBeChecked();
+    // A customer list that fails leaves "no customer" and "a new one" to choose from.
+    expect(
+      await within(dialog).findByText(
+        'Müşteri listesi alınamadı. Müşteriyi sonra proje sayfasından seçebilirsiniz.',
+      ),
+    ).toBeVisible();
+    expect(
+      within(customerOf(dialog))
+        .getAllByRole('option')
+        .map((option) => option.textContent),
+    ).toEqual(['Müşteri yok', 'Yeni müşteri ekle']);
+    await userEvent.type(nameOf(dialog), 'Depo');
+    api.handle('GET /projects/member-candidates', () => json({ people: CANDIDATES }));
+    await userEvent.click(create(dialog));
+    expect(await screen.findByRole('heading', { level: 2, name: 'Depo' })).toBeVisible();
+    expect(sentBody(api.callsTo('POST /projects')[0]).memberIds).toEqual([]);
+  });
+
+  it('new project: a second press while the request is on its way sends nothing more', async () => {
+    let answer: (response: Response) => void = () => undefined;
+    const api = creatingApi({
+      'POST /projects': () =>
+        new Promise<Response>((resolve) => {
+          answer = resolve;
+        }),
+    });
+    renderApp(LIST);
+    const dialog = await openNew();
+    await userEvent.type(nameOf(dialog), 'Depo');
+    await userEvent.click(create(dialog));
+    const busy = await within(dialog).findByRole('button', { name: 'Oluşturuluyor' });
+    expect(busy).toHaveAttribute('aria-disabled', 'true');
+    await userEvent.click(busy);
+    await userEvent.keyboard('{Enter}');
+    // It cannot be closed while the request is on its way.
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Vazgeç' }));
+    await userEvent.keyboard('{Escape}');
+    expect(screen.getByRole('dialog', { name: 'Yeni proje' })).toBeVisible();
+    expect(api.callsTo('POST /projects')).toHaveLength(1);
+
+    // A refusal that belongs to no field shows above the footer; the form stays as it was.
+    answer(apiError(409, 'private_space', 'Kurucu alanında proje açılamaz. Bir şirket seçin.'));
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(
+      'Kurucu alanında proje açılamaz. Bir şirket seçin.',
+    );
+    expect(nameOf(dialog)).toHaveValue('Depo');
+    // A send that is repeated carries the same id: the API answers the first project.
+    await userEvent.click(create(dialog));
+    await waitFor(() => {
+      expect(api.callsTo('POST /projects')).toHaveLength(2);
+    });
+    const [first, second] = api.callsTo('POST /projects').map((call) => sentBody(call).id);
+    expect(second).toBe(first);
+  });
+
+  it('new project: an existing customer is chosen from the list and its id is sent; the founder reads its two contract permissions under the field, an employee reads none', async () => {
+    const api = creatingApi();
+    renderApp(LIST);
+    let dialog = await openNew();
+    await waitFor(() => {
+      expect(within(customerOf(dialog)).getAllByRole('option')).toHaveLength(4);
+    });
+    expect(
+      within(customerOf(dialog))
+        .getAllByRole('option')
+        .map((option) => option.textContent),
+    ).toEqual(['Müşteri yok', 'Beta Lojistik', 'Gama Enerji', 'Yeni müşteri ekle']);
+    expect(customerOf(dialog)).toHaveAccessibleDescription('İsteğe bağlı.');
+    await userEvent.selectOptions(customerOf(dialog), OTHER_CUSTOMER_ID);
+    expect(
+      within(dialog).getByText(
+        'Sözleşme izinleri: yapay zekâ kullanımı açık, kodla otomatik işleme kapalı. İzinleri proje sayfasından değiştirebilirsiniz.',
+      ),
+    ).toBeVisible();
+    await userEvent.selectOptions(customerOf(dialog), CUSTOMER_ID);
+    expect(
+      within(dialog).getByText(
+        'Sözleşme izinleri: yapay zekâ kullanımı kapalı, kodla otomatik işleme kapalı. İzinleri proje sayfasından değiştirebilirsiniz.',
+      ),
+    ).toBeVisible();
+    // An existing customer's permissions are not marked here.
+    expect(within(dialog).queryByRole('switch')).toBeNull();
+    await userEvent.type(nameOf(dialog), 'Depo');
+    await userEvent.click(create(dialog));
+    await waitFor(() => {
+      expect(api.callsTo('POST /projects')).toHaveLength(1);
+    });
+    expect(sentBody(api.callsTo('POST /projects')[0]).customer).toEqual({
+      kind: 'existing',
+      customerId: CUSTOMER_ID,
+    });
+    cleanup();
+
+    creatingApi({
+      'GET /session': sessionAs(EMPLOYEE_AT_ARMADX),
+      'GET /customers': () => json({ customers: CUSTOMER_NAMES }),
+    });
+    renderApp(LIST);
+    dialog = await openNew();
+    await waitFor(() => {
+      expect(within(customerOf(dialog)).getAllByRole('option')).toHaveLength(4);
+    });
+    await userEvent.selectOptions(customerOf(dialog), CUSTOMER_ID);
+    expect(within(dialog).queryByText(/Sözleşme izinleri/)).toBeNull();
+  });
+
+  it('new project: choosing Yeni müşteri ekle leaves the focus on the select; the name field is the next Tab stop and the help text says to write the name', async () => {
+    creatingApi();
+    renderApp(LIST);
+    const dialog = await openNew();
+    const select = customerOf(dialog);
+    await userEvent.selectOptions(select, 'new');
+    // A change of a setting does not move the person (WCAG 3.2.2).
+    expect(select).toHaveFocus();
+    expect(select).toHaveAccessibleDescription('İsteğe bağlı. Müşteri adını aşağıya yazın.');
+    await userEvent.tab();
+    expect(within(dialog).getByRole('textbox', { name: 'Müşteri adı' })).toHaveFocus();
+    // Back to "no customer": the name field goes away and is not asked for.
+    await userEvent.selectOptions(select, '');
+    expect(within(dialog).queryByRole('textbox', { name: 'Müşteri adı' })).toBeNull();
+    expect(select).toHaveAccessibleDescription('İsteğe bağlı.');
+  });
+
+  it('new project: the founder marks only automated processing for a new customer and the project is created without a passkey step', async () => {
+    const api = creatingApi();
+    renderApp(LIST);
+    const dialog = await openNew();
+    await userEvent.type(nameOf(dialog), 'Depo');
+    await userEvent.selectOptions(customerOf(dialog), 'new');
+    await userEvent.type(within(dialog).getByRole('textbox', { name: 'Müşteri adı' }), 'Delta');
+    await userEvent.click(
+      within(dialog).getByRole('switch', { name: 'Sözleşme kodla otomatik işlemeye izin veriyor' }),
+    );
+    await userEvent.click(create(dialog));
+    expect(await screen.findByRole('heading', { level: 2, name: 'Depo' })).toBeVisible();
+    const body = sentBody(api.callsTo('POST /projects')[0]);
+    expect(body.customer).toMatchObject({
+      kind: 'new',
+      name: 'Delta',
+      aiAllowed: false,
+      automatedProcessingAllowed: true,
+    });
+    expect(body.stepUp).toBeUndefined();
+    expect(api.callsTo('POST /step-up/options')).toEqual([]);
+    expect(startAuthentication).not.toHaveBeenCalled();
+  });
+
+  it('new project: Escape on the passkey view goes back to the form; Escape on the form closes the dialog', async () => {
+    const api = creatingApi({ 'POST /step-up/options': stepUpIssuer().handler });
+    renderApp(LIST);
+    const form = await openNew();
+    await userEvent.type(nameOf(form), 'Depo');
+    await userEvent.selectOptions(customerOf(form), 'new');
+    await userEvent.type(within(form).getByRole('textbox', { name: 'Müşteri adı' }), 'Delta');
+    await userEvent.click(
+      within(form).getByRole('switch', { name: 'Sözleşme yapay zekâ kullanımına izin veriyor' }),
+    );
+    await userEvent.click(create(form));
+    await screen.findByRole('dialog', { name: 'Müşterinin yapay zekâ izni açılsın mı?' });
+    await userEvent.keyboard('{Escape}');
+    // The filled form is not lost by the key a person presses to back out of a passkey prompt.
+    const back = await screen.findByRole('dialog', { name: 'Yeni proje' });
+    expect(nameOf(back)).toHaveValue('Depo');
+    await waitFor(() => {
+      expect(create(back)).toHaveFocus();
+    });
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).toBeNull();
+    });
+    expect(api.callsTo('POST /projects')).toEqual([]);
+  });
+
+  it('new project: a founder without a passkey is told that the Güvenlik link leaves the form', async () => {
+    creatingApi({
+      'POST /step-up/options': () =>
+        apiError(409, 'no_passkey', 'Bu işlem için kayıtlı bir passkey gerekiyor.'),
+    });
+    renderApp(LIST);
+    const form = await openNew();
+    await userEvent.type(nameOf(form), 'Depo');
+    await userEvent.selectOptions(customerOf(form), 'new');
+    await userEvent.type(within(form).getByRole('textbox', { name: 'Müşteri adı' }), 'Delta');
+    await userEvent.click(
+      within(form).getByRole('switch', { name: 'Sözleşme yapay zekâ kullanımına izin veriyor' }),
+    );
+    await userEvent.click(create(form));
+    const step = await screen.findByRole('dialog', {
+      name: 'Müşterinin yapay zekâ izni açılsın mı?',
+    });
+    expect(await within(step).findByRole('link', { name: 'Güvenlik sayfasını aç' })).toBeVisible();
+    expect(
+      within(step).getByText(
+        'Güvenlik sayfasına giderseniz bu form kapanır. Geri ile dönüp izni kapalı bırakarak projeyi şimdi oluşturabilirsiniz.',
+      ),
+    ).toBeVisible();
+  });
+
+  it('new project: after customer_not_found and member_not_allowed the lists are fetched again', async () => {
+    const notFound = 'Seçilen müşteri bulunamadı. Müşteriyi listeden yeniden seçin.';
+    const notAllowed =
+      'Seçilen kişi projeye üye olamaz: projeye yalnızca şirketin kurucusu ve çalışanları üye olur. Kişiyi listeden yeniden seçin.';
+    const api = creatingApi({
+      'POST /projects': () => apiError(409, 'customer_not_found', notFound),
+    });
+    renderApp(LIST);
+    const dialog = await openNew();
+    await userEvent.type(nameOf(dialog), 'Depo');
+    await waitFor(() => {
+      expect(within(customerOf(dialog)).getAllByRole('option')).toHaveLength(4);
+    });
+    await userEvent.selectOptions(customerOf(dialog), OTHER_CUSTOMER_ID);
+    await userEvent.click(await within(dialog).findByRole('checkbox', { name: 'Çağan Ünal' }));
+    await userEvent.click(within(dialog).getByRole('checkbox', { name: 'Ayşe Yılmaz' }));
+
+    // The customer was... gone from the company's list meanwhile.
+    api.handle('GET /customers', () =>
+      json({ customers: CUSTOMERS.filter((customer) => customer.id !== OTHER_CUSTOMER_ID) }),
+    );
+    await userEvent.click(create(dialog));
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(notFound);
+    // The person cannot refresh a list inside a dialog: the panel read it again and took the
+    // choice that is gone back to "no customer".
+    await waitFor(() => {
+      expect(api.callsTo('GET /customers')).toHaveLength(2);
+    });
+    await waitFor(() => {
+      expect(customerOf(dialog)).toHaveValue('');
+    });
+    expect(within(customerOf(dialog)).queryByRole('option', { name: 'Gama Enerji' })).toBeNull();
+
+    // A chosen person became an external person meanwhile.
+    api.handle('POST /projects', () => apiError(409, 'member_not_allowed', notAllowed));
+    api.handle('GET /projects/member-candidates', () =>
+      json({ people: CANDIDATES.filter((person) => person.userId !== CAGAN.userId) }),
+    );
+    await userEvent.click(create(dialog));
+    await waitFor(() => {
+      expect(within(dialog).getByRole('alert')).toHaveTextContent(notAllowed);
+    });
+    await waitFor(() => {
+      expect(api.callsTo('GET /projects/member-candidates')).toHaveLength(2);
+    });
+    await waitFor(() => {
+      expect(within(dialog).queryByRole('checkbox', { name: 'Çağan Ünal' })).toBeNull();
+    });
+    // The people who are still offered stay checked; the one who is gone is not sent again.
+    expect(within(dialog).getByRole('checkbox', { name: 'Ayşe Yılmaz' })).toBeChecked();
+    const created = projectDetail({ id: NEW_ID, name: 'Depo' });
+    api.handle('POST /projects', () => json(created, 201));
+    api.handle(`GET /projects/${NEW_ID}`, () => json(created));
+    await userEvent.click(create(dialog));
+    await waitFor(() => {
+      expect(api.callsTo('POST /projects')).toHaveLength(3);
+    });
+    const last = sentBody(api.callsTo('POST /projects')[2]);
+    expect(last.memberIds).toEqual([AYSE.userId]);
+    expect(last.customer).toEqual({ kind: 'none' });
   });
 });
 

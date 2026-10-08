@@ -8,13 +8,16 @@
 import type { MembershipSummary, ProjectSummary } from '@agent-office/shared';
 import { useQuery } from '@tanstack/react-query';
 import { createFileRoute, linkOptions } from '@tanstack/react-router';
-import { useId } from 'react';
+import { useId, useState } from 'react';
 import { ListRow } from '@/components/list-row';
+import { NewProjectDialog } from '@/components/projects/new-project-dialog';
 import { ProjectTile } from '@/components/projects/project-tile';
 import { EmptyState, ErrorMessage, LoadingRows } from '@/components/states';
 import { StatusBadge } from '@/components/status';
+import { Button } from '@/components/ui/button';
 import { userMessage } from '@/lib/api';
 import { formatDay } from '@/lib/dates';
+import { useReturnFocus } from '@/lib/focus';
 import {
   agentsWord,
   memberCountText,
@@ -127,32 +130,90 @@ function ProjectsScreen() {
 
 function ProjectList({ company }: { company: MembershipSummary }) {
   const list = useQuery(projectsQueryOptions(company.companyId));
+  const [creating, setCreating] = useState(false);
+  // The dialog is opened from state: the button that opened it takes the focus back.
+  const focus = useReturnFocus();
 
-  if (list.isPending) return <LoadingRows rows={5} />;
-  if (list.isError) {
-    return (
-      <ErrorMessage
-        message={userMessage(list.error)}
-        onRetry={() => {
-          void list.refetch();
-        }}
-      />
-    );
-  }
+  const newProject = (
+    <Button
+      size="lg"
+      onClick={() => {
+        focus.remember();
+        setCreating(true);
+      }}
+    >
+      Yeni proje
+    </Button>
+  );
+  // Mounted only while open: every opening starts with an empty form and new ids.
+  const dialog = creating ? (
+    <NewProjectDialog
+      onClose={() => {
+        setCreating(false);
+      }}
+      onCloseAutoFocus={focus.onCloseAutoFocus}
+    />
+  ) : null;
 
-  const sorted = list.data.projects.toSorted(
+  const sorted = (list.data?.projects ?? []).toSorted(
     (a, b) => byName.compare(a.name, b.name) || a.id.localeCompare(b.id),
   );
   const open = sorted.filter((project) => !project.closed);
   const closed = sorted.filter((project) => project.closed);
 
+  if (list.isSuccess && sorted.length === 0) {
+    // The first step, in the words of who reads it: the founder sees every project of the
+    // company, an employee the ones they are a member of. The button stands in the empty state;
+    // the bar's own is not shown beside it.
+    return (
+      <>
+        <EmptyState
+          variant="page"
+          {...(company.role === 'founder'
+            ? {
+                title: 'Henüz proje yok',
+                description:
+                  'İlk projeyi Yeni proje düğmesiyle açın. Bir projeyi ve ona bağlı kayıtları yalnızca üyeleri ve kurucu görür.',
+              }
+            : {
+                title: 'Üyesi olduğunuz proje yok',
+                description:
+                  'Yeni proje düğmesiyle bir proje açabilirsiniz; açtığınız projenin üyesi olursunuz. Var olan bir projeye sizi o projenin bir üyesi ya da kurucu ekler.',
+              })}
+          action={newProject}
+        />
+        {dialog}
+      </>
+    );
+  }
+
   return (
     <div className="flex flex-col gap-5">
-      <Group title="Açık projeler" projects={open} company={company.code} empty="Açık proje yok." />
-      <Group title="Kapalı projeler" projects={closed} company={company.code} />
-      {list.data.truncated ? (
-        <p className="px-2 text-sm text-ink-secondary">Liste ilk 500 projeyi gösteriyor.</p>
-      ) : null}
+      <div className="flex justify-end">{newProject}</div>
+      {list.isPending ? (
+        <LoadingRows rows={5} />
+      ) : list.isError ? (
+        <ErrorMessage
+          message={userMessage(list.error)}
+          onRetry={() => {
+            void list.refetch();
+          }}
+        />
+      ) : (
+        <>
+          <Group
+            title="Açık projeler"
+            projects={open}
+            company={company.code}
+            empty="Açık proje yok."
+          />
+          <Group title="Kapalı projeler" projects={closed} company={company.code} />
+          {list.data.truncated ? (
+            <p className="px-2 text-sm text-ink-secondary">Liste ilk 500 projeyi gösteriyor.</p>
+          ) : null}
+        </>
+      )}
+      {dialog}
     </div>
   );
 }
