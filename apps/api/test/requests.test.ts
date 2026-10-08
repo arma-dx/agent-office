@@ -276,6 +276,18 @@ describe.skipIf(noDatabase)('requests', () => {
     expect(row).toEqual({ kind: 'request', requester_user_id: ids.employee });
   });
 
+  it('takes a text that starts with a separator line: the title is the first line that says something', async () => {
+    // Such a text was accepted by the schema and then failed at the table's title check (500).
+    const pasted = await open(
+      employee,
+      `${'-'.repeat(90)}\nToplantı notlarını özetle\n${'-'.repeat(90)}`,
+    );
+    expect(pasted.title).toBe('Toplantı notlarını özetle');
+    const dots = await open(employee, '.'.repeat(120));
+    expect(dots.title).toBe('.'.repeat(80));
+    expect(dots.text).toBe('.'.repeat(120));
+  });
+
   it('refuses a body that tries to route, an external person, the founder space and no session', async () => {
     const id = randomUUID();
     for (const extra of [{ unit: 'HAF' }, { agent: 'HAF-2' }, { status: 'done' }, { title: 'x' }]) {

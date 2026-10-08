@@ -33,26 +33,32 @@ export const requestTextSchema = z
   .refine(withoutNul, NO_NUL);
 
 /**
- * The title of a request is not asked for: it is the first line of the text that is not empty, cut
- * at a word to REQUEST_TITLE_MAX characters. Made by code, never by a model: a title is shown in
- * lists and in the top bar, and agent text reaches people only as a run summary, an approval's
- * reasoning or a question.
+ * The title of a request is not asked for: it is the first line of the text that says something
+ * (has a letter or a digit), cut at a word to REQUEST_TITLE_MAX characters. A separator line, as
+ * mail programs and documents put on top of a text (dashes, dots), is passed over; a text made of
+ * such lines alone keeps its first line. Never empty for a text the request schema accepts: the
+ * table refuses an empty title. Made by code, never by a model: a title is shown in lists and in
+ * the top bar, and agent text reaches people only as a run summary, an approval's reasoning or a
+ * question.
  */
 export function deriveRequestTitle(text: string): string {
-  const line =
-    text
-      .split(/\r?\n/)
-      .map((part) => part.replace(/\s+/g, ' ').trim())
-      .find((part) => part.length > 0) ?? '';
+  const lines = text
+    .split(/\r?\n/)
+    .map((part) => part.replace(/\s+/g, ' ').trim())
+    .filter((part) => part.length > 0);
+  const line = lines.find((part) => /[\p{L}\p{N}]/u.test(part)) ?? lines[0] ?? '';
   if (line.length <= REQUEST_TITLE_MAX) {
     return line;
   }
   const cut = line.slice(0, REQUEST_TITLE_MAX + 1);
   const space = cut.lastIndexOf(' ');
   // A first word longer than the limit is cut inside the word; nothing else can be done with it.
-  return (space > REQUEST_TITLE_MAX / 2 ? cut.slice(0, space) : cut.slice(0, REQUEST_TITLE_MAX))
-    .replace(/[\s,;:.-]+$/u, '')
-    .trim();
+  const kept = (
+    space > REQUEST_TITLE_MAX / 2 ? cut.slice(0, space) : cut.slice(0, REQUEST_TITLE_MAX)
+  ).trim();
+  const title = kept.replace(/[\s,;:.-]+$/u, '').trim();
+  // Nothing but punctuation was cut: it stays as it is, a title is never empty.
+  return title.length > 0 ? title : kept;
 }
 
 /**

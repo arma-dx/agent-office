@@ -34,6 +34,26 @@ describe('the title of a request', () => {
   it('cuts a single word that is longer than the limit', () => {
     expect(deriveRequestTitle('x'.repeat(300))).toHaveLength(REQUEST_TITLE_MAX);
   });
+
+  it('passes over a separator line and is never empty for a text the schema accepts', () => {
+    // SV-6: a first line of 81 or more dashes or dots was cut and then stripped to nothing; the
+    // table refuses an empty title and the request could never be sent.
+    expect(deriveRequestTitle(`${'.'.repeat(81)}\nGerçek talep`)).toBe('Gerçek talep');
+    expect(deriveRequestTitle('---\n\n  2026 bütçesi için özet hazırla.')).toBe(
+      '2026 bütçesi için özet hazırla.',
+    );
+    // A text of separators alone keeps its first line, cut to the limit.
+    for (const text of ['-'.repeat(90), '- '.repeat(60), `${'.'.repeat(200)}\n;;;`, '...']) {
+      expect(
+        createRequestSchema.safeParse({ id: '00000000-0000-4000-8000-000000000001', text }).success,
+      ).toBe(true);
+      const title = deriveRequestTitle(text);
+      expect(title.trim().length).toBeGreaterThan(0);
+      expect(title.length).toBeLessThanOrEqual(REQUEST_TITLE_MAX);
+      expect(text.startsWith(title.slice(0, 10))).toBe(true);
+    }
+    expect(deriveRequestTitle('-'.repeat(90))).toBe('-'.repeat(80));
+  });
 });
 
 describe('the bodies a person sends', () => {
