@@ -9,8 +9,9 @@ import { useEffect } from 'react';
  * answer in the dialog ("Bu onay kapanmış ..."), with the typed text still there, and the page is
  * read again when the dialog closes.
  *
- * Module state: the request page, the Onaylar screen and the sidebar's count read the same data
- * from different places, and one tab shows one dialog at a time. The count is for safety.
+ * Module state: the request page and the Onaylar screen read the same data from different places,
+ * and one tab shows one dialog at a time. The count is for safety. (The numbers of the sidebar are
+ * not held: they come from their own light request and move nothing the person aims at.)
  */
 let open = 0;
 

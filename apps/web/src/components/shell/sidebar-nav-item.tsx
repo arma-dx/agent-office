@@ -16,6 +16,7 @@ export function SidebarNavItem({
   icon: Icon,
   exact,
   count = 0,
+  countNoun = 'bekleyen',
 }: {
   to: MenuItem['to'];
   company: string;
@@ -24,6 +25,8 @@ export function SidebarNavItem({
   exact: boolean;
   /** How many things wait for the person behind this row; nothing is drawn at zero. */
   count?: number;
+  /** What the count counts, for the row's accessible name: "Bugün, 3 bekleyen iş". */
+  countNoun?: string;
 }) {
   return (
     <Link
@@ -39,7 +42,9 @@ export function SidebarNavItem({
           <span aria-hidden="true" className="text-xs font-semibold tabular-nums">
             {count > 99 ? '99+' : count}
           </span>
-          <span className="sr-only">, {count} bekleyen</span>
+          <span className="sr-only">
+            , {count} {countNoun}
+          </span>
         </>
       ) : null}
     </Link>

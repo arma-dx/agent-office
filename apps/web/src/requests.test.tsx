@@ -1353,6 +1353,8 @@ describe('the page of a request', () => {
     const api = mockApi({
       'GET /session': sessionHandler(),
       'GET /approvals': () => json({ approvals: waiting ? [APPROVAL_CARD] : [], acceptances: [] }),
+      // The sidebar counts it from the light endpoint, not from the desk.
+      'GET /today/counts': () => json({ today: waiting ? 1 : 0, approvals: waiting ? 1 : 0 }),
       [`GET /requests/${REQUEST_ID}`]: () => json(requestDetail()),
       [`POST /requests/${REQUEST_ID}/close`]: () => {
         waiting = false;
@@ -1924,6 +1926,7 @@ describe('Onaylar', () => {
   it('lists what waits for the person in two groups and counts them on the sidebar row', async () => {
     mockApi({
       'GET /session': sessionHandler(),
+      'GET /today/counts': () => json({ today: 2, approvals: 2 }),
       'GET /approvals': () =>
         json({
           approvals: [APPROVAL_CARD],
@@ -1985,8 +1988,8 @@ describe('Onaylar', () => {
       const dialog = await screen.findByRole('dialog', { name: 'Düzeltme iste' });
       const note = within(dialog).getByRole('textbox', { name: /^Açıklama/ });
       await user.type(note, 'Daha sade olsun.');
-      // Somebody else decided it. The desk is read by the screen and by the sidebar's count;
-      // neither reads it under the open dialog.
+      // Somebody else decided it. The desk is read by the screen alone (the sidebar counts from
+      // its own light request), and the screen does not read it under the open dialog.
       waiting = false;
       const before = api.callsTo('GET /approvals').length;
       await vi.advanceTimersByTimeAsync(31_000);

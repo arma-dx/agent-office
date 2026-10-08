@@ -5,7 +5,7 @@
 // Changes: our menu (lib/menu.ts) instead of Paperclip's routes, queries and plugin outlets, with
 // rows that only some roles are offered; sentence-case group labels in the secondary text color;
 // groups do not collapse; the sidebar is sticky because the window scrolls.
-import type { MembershipSummary } from '@agent-office/shared';
+import type { MembershipSummary, SidebarCounts } from '@agent-office/shared';
 import { useQuery } from '@tanstack/react-query';
 import { Plus } from 'lucide-react';
 import { useId, type ReactNode } from 'react';
@@ -15,26 +15,26 @@ import { CompanyMenu } from '@/components/shell/company-menu';
 import { SidebarNavItem } from '@/components/shell/sidebar-nav-item';
 import { isOfferedTo, MENU_SECTIONS } from '@/lib/menu';
 import { useBackgroundRefresh } from '@/lib/refresh';
-import { decisionDialogOpen } from '@/lib/requests/hold';
-import { approvalDeskQueryOptions, fetchApprovalDesk } from '@/lib/requests/query';
 import { SIDEBAR_ID } from '@/lib/shell';
+import { fetchSidebarCounts, sidebarCountsQueryOptions } from '@/lib/today/query';
+
+const NOTHING_WAITS: SidebarCounts = { today: 0, approvals: 0 };
 
 /**
- * How many decisions wait for the person in this company: results they may decide and results of
- * their own requests that wait for acceptance. The same answer the Onaylar screen shows, refreshed
- * in the background.
+ * What waits for the person in this company, as two numbers from one light request: everything
+ * that is expected of them (the Bugün row) and the part of it that is a decision (the Onaylar
+ * row). Notifications are not counted. Refreshed in the background; not asked for an external
+ * person or in Kurucu alanı, where no request exists.
  */
-function useWaitingCount(company: MembershipSummary): number {
-  const insider = company.role !== 'external';
-  const options = approvalDeskQueryOptions(company.companyId);
-  const desk = useQuery({ ...options, enabled: insider });
+function useSidebarCounts(company: MembershipSummary): SidebarCounts {
+  const asked = company.role !== 'external' && company.kind === 'company';
+  const options = sidebarCountsQueryOptions(company.companyId);
+  const counts = useQuery({ ...options, enabled: asked });
   useBackgroundRefresh({
     queryKey: options.queryKey,
-    fetch: (signal) => fetchApprovalDesk(company.companyId, { signal, background: true }),
-    // The Onaylar screen draws its cards from this answer: not under an open decision dialog.
-    paused: decisionDialogOpen,
+    fetch: (signal) => fetchSidebarCounts(company.companyId, { signal, background: true }),
   });
-  return desk.data ? desk.data.approvals.length + desk.data.acceptances.length : 0;
+  return counts.data ?? NOTHING_WAITS;
 }
 
 /** A group of menu rows; a labelled group names its list after the label. */
@@ -69,7 +69,7 @@ export function Sidebar({
   onSelectCompany: (code: string) => void;
 }) {
   const openRequest = useOpenRequestDialog();
-  const waiting = useWaitingCount(company);
+  const counts = useSidebarCounts(company);
   return (
     <aside
       id={SIDEBAR_ID}
@@ -107,7 +107,14 @@ export function Sidebar({
                     label={item.label}
                     icon={item.icon}
                     exact={item.exact}
-                    count={item.to === '/c/$company/approvals' ? waiting : 0}
+                    count={
+                      item.to === '/c/$company'
+                        ? counts.today
+                        : item.to === '/c/$company/approvals'
+                          ? counts.approvals
+                          : 0
+                    }
+                    countNoun={item.to === '/c/$company' ? 'bekleyen iş' : undefined}
                   />
                 </li>
               ))}
