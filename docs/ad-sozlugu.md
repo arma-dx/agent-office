@@ -412,6 +412,22 @@ Skill klasörü: `skills/<ad>/SKILL.md` ve yanında `templates/`, `examples/`, `
 - Panel: `AgentWork`, `NO_WORK`, `WORK_ROWS`, `isOpen` (`lib/office/model.ts`); `officeKey`, `fetchOffice`, `agentSwitchQueryOptions` (sorgu anahtarı `agent-switch`; yanıtı şirketteki düğme ya da ofiste böyle bir ajan yoksa `absent`), `stopAgentIfOpen` (koşullu durdurma isteği) (`lib/office/query.ts`); `officeDialogOpen`, `useOfficeDialog` (`lib/office/hold.ts`); bileşenler `AgentWorkList` ("Açık talepleri") ve `StopEverywhere` ("Her yerde durdur"). "Her yerde durdur" penceresinde bir yerin sonucu: `stopped` (durduruldu), `already_stopped` (zaten durdurulmuş), `not_open` (açık değildi), `failed` (durdurulamadı).
 - Stil sınıfları: `office-screen-dot` (ekranda nokta: onay bekliyor), `office-screen-cross` (ekranda çarpı: hata).
 
+## 0.4a adım 3 ile eklenen adlar: son tarih ve yorum (karşılığı olan eski Türkçe ad yok)
+
+- "Son tarih" → API ve panelde `dueDate` (gün, `YYYY-MM-DD`); veritabanında var olan `tasks.due_at` (o günün İstanbul saatiyle son saniyesi); ifade satırında `due_date`. "Son tarihi geçti" → `overdue` (yalnızca açık talepte doğru). "Gecikti" (`delayed`) başka bir şeydir: çalışmanın beklenenden uzun sürmesi.
+- "Yorum" → `comment`; talep yanıtında `comments` (`items`, `truncated`, `mayWrite`); yorumda `id`, `author`, `body`, `createdAt`
+- İşlev: `may_comment_on_request` (bağlamdaki kişi bu talebe yorum yazabilir mi: talep sahibi, kurucu ya da talebin onaylayıcısı)
+- Tetikleyici: `check_task_comment` (talep yorumunu yalnızca API rolüyle, bu üç kişiden biri yazar; ajan çalışması ve worker rolü yazamaz)
+- Politika: `request_comments_for_people` (talep yorumunu ajan çalışması ve worker rolü okuyamaz; dış kişi okuyamaz)
+- İz kaydı olayı (var olan): `task_comment_added`, talep yorumunda da yazılır; kayıt taleptir, metin yazılmaz
+- Uç nokta: `POST /api/requests/:requestId/comments`; `POST /api/requests` gövdesinde isteğe bağlı `dueDate`
+- API hata kodları: `comment_not_allowed` (yorumu yalnızca talep sahibi, onaylayıcı ve kurucu yazar), `due_date_past` (son tarih bugünden önce)
+- Şemalar: `requestDueDateSchema`, `requestCommentBodySchema`, `requestCommentSchema`, `createRequestCommentSchema`
+- Sabitler: `REQUEST_COMMENT_MAX` (10.000), `REQUEST_COMMENT_LIMIT` (200)
+- Paylaşılan işlev: `officeDay` (bir anın ofis saat dilimindeki günü); veritabanı ifadeleri `dueDaySql`, `dueAtSql`
+- Veritabanı ifadeleri (yorum): `listRequestComments`, `insertRequestComment`, `ownRequestCommentExists`, `mayCommentOnRequest`; API'de `toComments`
+- Çalıştırıcı: `run_facts` bloğunda `dueDate` (talebin son tarihi, veri olarak)
+
 ## Notlar
 
 - Hata metinleri (veritabanı tetikleyicilerinin `raise exception` metinleri, geliştiriciye dönük iletiler) İngilizcedir. Kullanıcıya gösterilecek Türkçe metni API üretir; API hata metnine göre değil SQLSTATE koduna göre dallanır.
