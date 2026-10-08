@@ -41,6 +41,8 @@ Henüz olmayanlar: veritabanı (göç dosyası yok), giriş, işlevli ekran (yal
 
 8 Ekim 2026 (akşam): Projeler'in ilk adımı kuruldu (0.4c adım 1): menüde "Projeler", proje listesi, "Yeni proje" penceresi, proje sayfası, üyeler, yapay zekâ izni ve müşterinin sözleşme izinleri. Adım tasarlanırken türetilen seçimler `docs/SONRA.md` içinde P1-a ila P1-z olarak duruyor; hepsi kurucu onayı bekliyor. Dört yeni göç yerel veritabanına henüz uygulanmadı (son uygulanan `20261008101500`); uygulanana kadar yerelde Projeler ekranı sunucu hatası verir. Sıradaki adım talep formunda proje alanı (adım 2).
 
+8 Ekim 2026 (gece): 0.4a adım 2 yapıldı: ofiste masalar Boşta, Çalışıyor, Onay bekliyor ve Hata durumlarını gösteriyor, seçili ajanın panelinde açık taleplerinin sayıları var, kurucu bir ajanı "Her yerde durdur" ile açık olduğu her şirkette durdurabiliyor. Adım tasarlanırken türetilen seçimler `docs/SONRA.md` içinde Z-a ila Z-s olarak duruyor; hepsi kurucu onayı bekliyor. Çizim tarayıcıda görülmeden yazıldı; kurucunun ofise bir kez bakması gerekir (Z-l). Sıradaki adım: son tarih ve yorum (adım 3).
+
 ## Sprint 0
 
 ### 0.1 Arayüz temeli
@@ -364,9 +366,9 @@ Adım 1: Bugün listesi ve bildirimler (karar 7 ve 8)
 
 Adım 2: Ofiste canlı durumlar ve "Her yerde durdur" (karar 9 ve 10)
 
-- [ ] Masada ajanın durumu: Boşta, Çalışıyor, Onay bekliyor, Hata
-- [ ] Ajan panelinde sayılar
-- [ ] "Her yerde durdur": ajan açık olduğu her şirkette durur; şirket şirket sonuç
+- [x] Masada ajanın durumu: Boşta, Çalışıyor, Onay bekliyor, Hata
+- [x] Ajan panelinde sayılar
+- [x] "Her yerde durdur": ajan açık olduğu her şirkette durur; şirket şirket sonuç
 
 Adım 3: Son tarih ve yorum (karar 13); proje alanı Projeler'i (0.4c) bekler
 
@@ -692,13 +694,13 @@ Testler:
 Ofis görünümünden (0.3b) gelen iki bağımlılık:
 
 - `company_agents` satırlarını açan ekran, M40 yanıtlanmadan yayına alınmaz. Tam senkronizasyon `card_versions` yazana kadar veritabanı taslak kartı onaylı karttan ayıramaz (kartın `status` alanı hiçbir yerde saklanmıyor) ve bir ajanın şirkette açılıp açılamayacağına yalnızca kartın şirket listesine bakılarak karar verilir.
-- Ajanlar ekranı gerçek bir ortamda bir ajanı etkin yapabildiği gün, Ofis görünümünün canlı durumları da (çalışıyor, onay bekliyor, boşta, hata) bağlanmış olmalıdır. Bunun için canlı durumları veren ikinci, küçük bir okuma ucu o güne kadar yapılır (planlanan: `GET /api/office/activity`; sayılar değişince tanımlar yeniden okunmasın diye ayrı). O günden sonra "Etkin" tek başına ajanın çalışıp çalışmadığını söylemez (Karar: U26).
+- Ofis görünümünün canlı durumları (boşta, çalışıyor, onay bekliyor, hata) 0.4a adım 2 ile bağlandı: durumlar ayrı bir uçtan değil, `GET /api/office` yanıtının içinde gelir ve yarım dakikada bir yenilenir (`docs/SONRA.md`, Z-o). Ajanlar ekranı bir ajanı açtığında masası kendiliğinden "Boşta" görünür.
 
 - [ ] Kart senkronizasyonu: depodaki YAML'ın git commit kimliğiyle `card_versions`'a yazılması (birim ve ajan tanımlarını, yani `units` ve `agent_definitions` satırlarını `pnpm db:sync-definitions` şimdiden yazıyor: 0.3b; 6 Ekim, karar 8. Kalanlar: `card_versions` ve kartın tam içeriği, yetki seviyesi ve model, geçerli sürüm işareti, `agents/tools.yaml`'dan araç kataloğu, tam kart şeması ve "status: draft"ın anlamı (Karar: M40), depodan çıkan karta ne olacağı (Karar: U31), `supabase/seed.sql` içindeki birim listesinin kaldırılması)
 - [ ] Her çalışmanın hangi kart sürümüyle koştuğunu kaydetmesi
 - [ ] `company_agents` satırlarının açılması ve ayar ekranı (Karar: M40)
 - [ ] Ajanlar ekranı: birimlere göre ajanlar, durum, yetki seviyesi
-- [ ] Şirket başına durdurma düğmesi ve "her yerde durdur" (Karar: U32)
+- [ ] Şirket başına durdurma düğmesi ve "her yerde durdur" (Karar: U32) Ofis görünümünde ikisi de var (0.3b ve 0.4a adım 2; 8 Ekim, karar 9); Ajanlar ekranına taşınması kaldı.
 - [ ] Görev kartı ekranı: kart ve skill salt okunur, sürüm geçmişi
 - [ ] Ajan sayfasında ikinci kenar çubuğu; kart salt okunur (inceleme 13.3; 5 Ekim, karar 5)
 - [ ] "Bu ajan neye erişebiliyor ve neden" görünümü (1.8'deki izin görünümüyle birlikte; inceleme 13.3; 5 Ekim, karar 5)

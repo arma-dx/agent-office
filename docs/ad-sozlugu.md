@@ -402,13 +402,15 @@ Skill klasörü: `skills/<ad>/SKILL.md` ve yanında `templates/`, `examples/`, `
 
 ## 0.4a adım 2 ile eklenen adlar: ofiste canlı durumlar ve "Her yerde durdur" (karşılığı olan eski Türkçe ad yok)
 
-- Masa durumları (kodda `OfficeAgentState`): `closed` (Kapalı), `idle` (Boşta), `running` (Çalışıyor), `awaiting_approval` (Onay bekliyor), `error` (Hata), `stopped` (Durduruldu). `company_agents.status` değerleri değişmedi (`enabled` açık ajandır).
+- Masa durumları (kodda `OfficeAgentState`): `closed` (Kapalı), `idle` (Boşta), `running` (Çalışıyor), `awaiting_approval` (Onay bekliyor), `error` (Hata), `stopped` (Durduruldu). Ofiste "Etkin" sözü kalktı; `company_agents.status` değerleri değişmedi (`enabled` açık ajandır).
 - Açık bir talebin masadaki türü (`AgentWorkKind`): `running` (sıra ajanda), `awaiting_approval` (sonucu birim onayında), `failed` (çalışma yüzünden insana düştü). "Hata" sayılan nedenler `AGENT_FAILURE_CAUSES`: `run_failed`, `limit_reached`, `no_submission`.
 - İşlevler: `agentWorkOf` (talebin hangi masada, hangi türde durduğu), `officeAgentState` (masanın durumu), `workOfRequest`, `officeWork` ve `officeLive` (API'de sayım ve sınırda kesme), `listOpenRequests` (okuyanın görebildiği açık talepler), `stopAgentIfOpen` (ajanı yalnızca açıksa durdurur), `readAgentSwitch` (ajanın adı, kartının hazır olup olmadığı, şirketteki düğmesi).
 - API yanıt alanları (`GET /api/office`): `work` (ajan başına `agentCode`, `running`, `awaitingApproval`, `failed`; her biri `count` ve tek talep sayılıyorsa `requestId`), `workTruncated` (sayım sınırı aşıldı).
 - API istek alanı (`PUT /api/agents/:agentCode/switch`): `onlyIfOpen` ("Her yerde durdur": yalnızca açık ajan durur; kapalı, durdurulmuş ya da hiç açılmamış ajana dokunulmaz, iz kaydı yazılmaz).
 - API yanıt alanı (`onlyIfOpen` ile gönderilen durdurmanın yanıtı, `agentStopIfOpenResponseSchema`): `changed` (ajanı bu istek durdurduysa `true`; zaten durdurulmuş, kapalı ya da hiç açılmamışsa `false`). Koşulsuz düğmenin yanıtı değişmedi.
 - Sabit: `OFFICE_REQUEST_LIMIT` (200).
+- Panel: `AgentWork`, `NO_WORK`, `WORK_ROWS`, `isOpen` (`lib/office/model.ts`); `officeKey`, `fetchOffice`, `agentSwitchQueryOptions` (sorgu anahtarı `agent-switch`; yanıtı şirketteki düğme ya da ofiste böyle bir ajan yoksa `absent`), `stopAgentIfOpen` (koşullu durdurma isteği) (`lib/office/query.ts`); `officeDialogOpen`, `useOfficeDialog` (`lib/office/hold.ts`); bileşenler `AgentWorkList` ("Açık talepleri") ve `StopEverywhere` ("Her yerde durdur"). "Her yerde durdur" penceresinde bir yerin sonucu: `stopped` (durduruldu), `already_stopped` (zaten durdurulmuş), `not_open` (açık değildi), `failed` (durdurulamadı).
+- Stil sınıfları: `office-screen-dot` (ekranda nokta: onay bekliyor), `office-screen-cross` (ekranda çarpı: hata).
 
 ## Notlar
 
