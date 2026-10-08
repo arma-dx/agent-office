@@ -1299,6 +1299,48 @@ describe.skipIf(noDatabase)('a run belongs to the step it was opened for', () =>
     expect(await statusOf(taskId)).toBe('awaiting_approval');
   });
 
+  it('a result that meets another run’s waiting approval is not recorded as submitted', async () => {
+    const taskId = await routedRequest();
+    // What a result that slipped in beside a new routing used to leave behind: an approval of
+    // another run that still waits on the request. Written by hand, past every trigger.
+    const client = await testPools().admin.connect();
+    try {
+      await client.query('begin');
+      await client.query(`set local session_replication_role = 'replica'`);
+      await client.query(
+        `insert into office.approvals
+           (company_id, task_id, run_id, agent_code, tool_name, title, payload, basis_type,
+            basis_id, basis_version, involves_money, goes_external)
+         select t.company_id, t.id, c.id, c.agent_code, 'submit_for_approval', 'Eski sonuç',
+                '{}', 'task', t.id, t.version, false, false
+         from office.tasks t join office.runs c on c.task_id = t.id and c.agent_code = 'KOR-1'
+         where t.id = $1`,
+        [taskId],
+      );
+      await client.query('commit');
+    } finally {
+      client.release();
+    }
+    const model = new ScriptedModel([toolUse('submit_for_approval', RESULT)]);
+    const { deps } = await runner(model);
+    const result = await runAgentJob(deps, job(taskId, 'SOS-2', ids.founder));
+    // Nothing of this run was stored: the run says so instead of "completed, submitted".
+    expect(result).toMatchObject({ outcome: 'stopped', modelCalls: 1 });
+    expect(await runRow(result.runId)).toMatchObject({
+      status: 'stopped',
+      error_code: 'request_changed',
+      summary: null,
+    });
+    expect(
+      await admin('select status, error_code from office.tool_calls where run_id = $1', [
+        result.runId,
+      ]),
+    ).toEqual([{ status: 'failed', error_code: 'request_changed' }]);
+    expect(await admin('select 1 from office.approvals where run_id = $1', [result.runId])).toEqual(
+      [],
+    );
+  });
+
   it('a run a dead worker left open does not swallow the retry, and a job of the same step is still a duplicate', async () => {
     const taskId = await routedRequest();
     const lost = await leftOpen(taskId, 'SOS-2', 5);

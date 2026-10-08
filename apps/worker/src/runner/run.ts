@@ -871,11 +871,25 @@ export async function runAgentJob(
         // again within its limits.
         return { result: await refused(block, 'failed', 'unit_or_agent_not_available'), end: null };
       }
+      let taken = false;
       if (block.name === SUBMIT_FOR_APPROVAL && state === '23505') {
-        // A pending approval of this result exists: an earlier attempt of this very call stored it.
-        return { result: null, end: await finish('completed', 'submitted') };
+        // Something already waits for approval on this request. Only when it is this run's own
+        // result (an earlier attempt of this very call stored it) is the work submitted; a
+        // waiting approval of another run means this result was not stored at all, and the run
+        // must not be recorded as if it had been.
+        const own = await agentStep(deps.pool, context, (client) =>
+          client.query(
+            `select 1 from office.approvals
+             where run_id = $1 and status = 'pending' and invalidated_at is null`,
+            [runId],
+          ),
+        );
+        if (own.rows.length > 0) {
+          return { result: null, end: await finish('completed', 'submitted') };
+        }
+        taken = true;
       }
-      if (state === '23514' || state === '42501' || state === 'P0002') {
+      if (taken || state === '23514' || state === '42501' || state === 'P0002') {
         // The request was closed, routed elsewhere or cannot take this result any more.
         await refused(block, 'failed', 'request_changed');
         return {
