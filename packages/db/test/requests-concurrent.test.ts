@@ -80,6 +80,29 @@ describe.skipIf(noDatabase)('a request when two transactions meet', () => {
     });
   }
 
+  /**
+   * A request a person routed to KOR-1 as the unit agent, with a run of KOR-1 open on that step:
+   * the point where the agent is about to submit its result.
+   */
+  async function requestWithOpenRun(): Promise<{ task: string; run: string }> {
+    const task = await openRequest();
+    await withContext(appPool(), founderA, (client) => client.query(CORRECT, [task, TO_KOR]));
+    return { task, run: await openRun(task) };
+  }
+
+  const SUBMIT = `insert into office.approvals (company_id, task_id, run_id, agent_code, title,
+      payload, basis_type, basis_id, basis_version, involves_money, goes_external)
+    values (office.ctx_company_id(), $1, $2, 'KOR-1', 'Result', '{"text": "Output"}', 'task', $1,
+      (select version from office.tasks where id = $1), false, false)`;
+
+  const approvalsOf = (task: string): Promise<Record<string, unknown>[]> =>
+    adminQuery(
+      `select a.status, a.invalidated_at is not null as closed,
+              (select r.status from office.task_routings r where r.id = a.routing_id) as step
+       from office.approvals a where a.task_id = $1`,
+      [task],
+    );
+
   const stepsOf = (task: string): Promise<Record<string, unknown>[]> =>
     adminQuery(
       `select round, unit_code, agent_code, status, routed_by_user_id is not null as by_person
@@ -112,5 +135,56 @@ describe.skipIf(noDatabase)('a request when two transactions meet', () => {
       { round: 1, unit_code: 'KOR', agent_code: 'KOR-1', status: 'active', by_person: true },
     ]);
     expect(await statusOf(task)).toBe('in_progress');
+  });
+
+  it('a result that meets a cancel is refused: nothing waits on the cancelled request', async () => {
+    const { task, run } = await requestWithOpenRun();
+    const requester = await openTransaction('app', employeeA);
+    const agent = await openTransaction('worker', coordinatorRun);
+    try {
+      await requester.tx.rows('select office.close_request($1)', [task]);
+      // The agent's check reads the request as it was before the cancel; the insert then waits
+      // for the request's lock.
+      const submitted = agent.tx.rows(SUBMIT, [task, run]).then(
+        () => 'ok',
+        (error: unknown) => (error as { message?: string }).message ?? 'error',
+      );
+      await untilBlocked(agent.pid);
+      await requester.commit();
+      expect(await submitted).toBe('The request is closed');
+    } finally {
+      await requester.rollback();
+      await agent.rollback();
+    }
+    expect(await statusOf(task)).toBe('cancelled');
+    expect(await approvalsOf(task)).toEqual([]);
+  });
+
+  it('a result that meets a new routing is refused: nothing waits on the replaced step', async () => {
+    const { task, run } = await requestWithOpenRun();
+    const person = await openTransaction('app', founderA);
+    const agent = await openTransaction('worker', coordinatorRun);
+    try {
+      // To the same agent again: a new step, which the open run was not opened for.
+      await person.tx.rows(CORRECT, [task, TO_KOR]);
+      const submitted = outcomeOf(agent.tx.rows(SUBMIT, [task, run]));
+      await untilBlocked(agent.pid);
+      await person.commit();
+      expect(await submitted).toBe('23514');
+    } finally {
+      await person.rollback();
+      await agent.rollback();
+    }
+    expect(await statusOf(task)).toBe('in_progress');
+    expect(await approvalsOf(task)).toEqual([]);
+    expect(await stepsOf(task)).toEqual([
+      { round: 1, unit_code: 'KOR', agent_code: 'KOR-1', status: 'replaced', by_person: true },
+      { round: 2, unit_code: 'KOR', agent_code: 'KOR-1', status: 'active', by_person: true },
+    ]);
+    // The run opened for the new step submits as before.
+    const next = await openRun(task);
+    await withContext(workerPool(), coordinatorRun, (client) => client.query(SUBMIT, [task, next]));
+    expect(await statusOf(task)).toBe('awaiting_approval');
+    expect(await approvalsOf(task)).toEqual([{ status: 'pending', closed: false, step: 'active' }]);
   });
 });
