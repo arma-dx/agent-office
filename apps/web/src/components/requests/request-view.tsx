@@ -534,12 +534,17 @@ export function ResultBlock({ result }: { result: RequestResult }) {
 export function AcceptanceCardView({
   requestId,
   approver,
-  round,
+  returnsToAgent,
 }: {
   requestId: string;
   approver: string | null;
-  /** 1: the first time the result is put before the requester. */
-  round: number;
+  /**
+   * What "İstediğim bu değil" does this time, as the API says it: true, the work goes back to the
+   * same agent (the requester has not asked for changes on this request before); false, it falls
+   * to the founder (8 October decision 3). Not the round of the acceptance: a routing correction
+   * opens a new round without the requester having said anything.
+   */
+  returnsToAgent: boolean;
 }) {
   const company = useCompany();
   const settle = useSettle();
@@ -600,9 +605,9 @@ export function AcceptanceCardView({
         <ReasonDialog
           title="İstediğim bu değil"
           help={
-            round > 1
-              ? 'Neyin eksik ya da yanlış olduğunu yazın. Bu ikinci isteğiniz: iş ajana kendiliğinden dönmez, birimin onaylayıcısına düşer.'
-              : 'Neyin eksik ya da yanlış olduğunu yazın. İş bu açıklamayla aynı ajana bir kez geri döner; yeni sonuç önce birim onayına, sonra size gelir.'
+            returnsToAgent
+              ? 'Neyin eksik ya da yanlış olduğunu yazın. İş bu açıklamayla aynı ajana bir kez geri döner; yeni sonuç önce birim onayına, sonra size gelir.'
+              : 'Neyin eksik ya da yanlış olduğunu yazın. Bu ikinci isteğiniz: iş ajana kendiliğinden dönmez, kurucuya düşer.'
           }
           confirmLabel="Gönder"
           askClass={false}

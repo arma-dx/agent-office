@@ -186,7 +186,7 @@ function RequestScreen() {
         <AcceptanceCardView
           key={request.acceptance.round}
           requestId={request.id}
-          round={request.acceptance.round}
+          returnsToAgent={request.acceptance.returnsToAgent}
           approver={request.result?.approvedBy ? personName(request.result.approvedBy) : null}
         />
       ) : null}

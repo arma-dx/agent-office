@@ -539,10 +539,12 @@ describe('the page of a request', () => {
     const card = await screen.findByRole('region', { name: 'Sonuç hazır' });
     await userEvent.click(within(card).getByRole('button', { name: 'İstediğim bu değil' }));
     const dialog = await screen.findByRole('dialog', { name: 'İstediğim bu değil' });
-    // The second time the work does not go back to the agent, and the dialog says so.
+    // The second time the work does not go back to the agent: it falls to the founder (8 October
+    // decision 3), and the dialog says so.
     expect(dialog).toHaveTextContent(
-      'Bu ikinci isteğiniz: iş ajana kendiliğinden dönmez, birimin onaylayıcısına düşer.',
+      'Bu ikinci isteğiniz: iş ajana kendiliğinden dönmez, kurucuya düşer.',
     );
+    expect(dialog).not.toHaveTextContent(/onaylayıcısına|geri döner/);
     await userEvent.type(within(dialog).getByRole('textbox', { name: 'Açıklama' }), 'Çok uzun.');
     await userEvent.click(within(dialog).getByRole('button', { name: 'Gönder' }));
     await waitFor(() => {
@@ -556,6 +558,33 @@ describe('the page of a request', () => {
     expect(screen.queryByRole('button', { name: 'Yönlendirmeyi düzelt' })).toBeNull();
     expect(screen.getByText(/Talebiniz kayıtlı\. Sıradaki adımı Kurucu atacak\./)).toBeVisible();
     expect(screen.queryByText(/Yönlendirmeyi düzelt/)).toBeNull();
+  });
+
+  it('counts the requester’s own change requests, not the rounds of the acceptance', async () => {
+    // The routing was corrected while the result waited for the requester: the new result opened
+    // round 2, and the requester has not said "not what I asked for" yet. The API says the work
+    // goes back to the agent, and so does the dialog.
+    mockApi({
+      'GET /session': sessionHandler(EMPLOYEE_SESSION),
+      [`GET /requests/${REQUEST_ID}`]: () =>
+        json(
+          requestDetail({
+            stage: 'requester_approval',
+            turn: { kind: 'person', ...EMPLOYEE },
+            waitingForMe: true,
+            approval: null,
+            result: RESULT,
+            acceptance: { round: 2, returnsToAgent: true },
+            actions: { cancel: true, stop: false, reroute: false },
+          }),
+        ),
+    });
+    renderApp(`/c/armadx/requests/${REQUEST_ID}`);
+    const card = await screen.findByRole('region', { name: 'Sonuç hazır' });
+    await userEvent.click(within(card).getByRole('button', { name: 'İstediğim bu değil' }));
+    const dialog = await screen.findByRole('dialog', { name: 'İstediğim bu değil' });
+    expect(dialog).toHaveTextContent('İş bu açıklamayla aynı ajana bir kez geri döner');
+    expect(dialog).not.toHaveTextContent(/ikinci isteğiniz|kurucuya düşer/);
   });
 
   // The founder's own example: a KVKK text, routed to the legal unit, which has no agent. The
@@ -1253,7 +1282,7 @@ describe('Onaylar', () => {
               requestId: '77777777-7777-4777-8777-777777777777',
               requestTitle: 'Kasım bülteni',
               round: 1,
-              returnsToAgent: true,
+              returnsToAgent: false,
               openedAt: '2026-10-07T09:00:00.000Z',
               result: RESULT,
             },
@@ -1270,6 +1299,14 @@ describe('Onaylar', () => {
     const results = screen.getByRole('region', { name: /Taleplerinizin sonuçları/ });
     expect(within(results).getByRole('button', { name: 'Sonucu onayla' })).toBeVisible();
     expect(within(results).getByRole('link', { name: 'Kasım bülteni' })).toBeVisible();
+    // The card says here too what "not what I asked for" does this time, as the API gave it.
+    await userEvent.click(within(results).getByRole('button', { name: 'İstediğim bu değil' }));
+    const asking = await screen.findByRole('dialog', { name: 'İstediğim bu değil' });
+    expect(asking).toHaveTextContent('iş ajana kendiliğinden dönmez, kurucuya düşer.');
+    await userEvent.click(within(asking).getByRole('button', { name: 'Vazgeç' }));
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).toBeNull();
+    });
     // Nothing can be dismissed or postponed.
     expect(screen.queryByRole('button', { name: /Arşiv|Ertele|Kapat/ })).toBeNull();
     expect(
