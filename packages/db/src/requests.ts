@@ -466,9 +466,27 @@ export interface ResultApprovalRow {
 
 // The result approvals of requests (routing_id set). The row policy decides which of them the
 // person reads: every approved one; a pending, sent back or rejected one only with the approval
-// right (office.approval_released). `may_decide` is the database's own decision rule for the
-// result of a request, asked as a question: the founder, or the appointed person; with nobody
-// appointed only the founder (7 October decision 5).
+// right (office.approval_released).
+const RESULT_APPROVAL_FROM = `
+  from office.approvals a
+  join office.tasks t on t.id = a.task_id and t.kind = 'request'
+  join office.agent_definitions d on d.code = a.agent_code
+  where a.routing_id is not null and a.company_id = office.ctx_company_id()`;
+
+// The database's own decision rule for the result of a request, asked as a question: the founder,
+// or the appointed person; with nobody appointed only the founder (7 October decision 5).
+const MAY_DECIDE_RESULT = `(
+  office.ctx_agent_code() is null
+  and (
+    office.is_founder()
+    or (office.can_approve() and a.approver_user_id = office.ctx_user_id())
+  )
+) is true`;
+
+// A result that waits for a decision. The list of the approval desk and the count of the sidebar
+// are built from these same texts.
+const RESULT_WAITS = `a.status = 'pending' and a.invalidated_at is null`;
+
 const RESULT_APPROVAL_SQL = `
   select a.id, a.task_id, t.title as request_title, t.requester_user_id, a.agent_code,
          d.name as agent_name, a.attempt, a.status, a.created_at, a.decided_at,
@@ -476,17 +494,8 @@ const RESULT_APPROVAL_SQL = `
          a.title, a.summary, a.agent_rationale, a.risk_note, a.payload, a.selected_option,
          a.involves_money, a.goes_external,
          office.approval_needs_step_up(a.id) as needs_step_up,
-         (
-           office.ctx_agent_code() is null
-           and (
-             office.is_founder()
-             or (office.can_approve() and a.approver_user_id = office.ctx_user_id())
-           )
-         ) is true as may_decide
-  from office.approvals a
-  join office.tasks t on t.id = a.task_id and t.kind = 'request'
-  join office.agent_definitions d on d.code = a.agent_code
-  where a.routing_id is not null and a.company_id = office.ctx_company_id()`;
+         ${MAY_DECIDE_RESULT} as may_decide
+  ${RESULT_APPROVAL_FROM}`;
 
 export async function listResultApprovals(
   client: Queryable,
@@ -502,8 +511,7 @@ export async function listResultApprovals(
 /** The results that wait for a decision of this person, the one that has waited longest first. */
 export async function listPendingApprovals(client: Queryable): Promise<ResultApprovalRow[]> {
   const { rows } = await client.query<ResultApprovalRow>(
-    `select * from (${RESULT_APPROVAL_SQL}
-       and a.status = 'pending' and a.invalidated_at is null) w
+    `select * from (${RESULT_APPROVAL_SQL} and ${RESULT_WAITS}) w
      where w.may_decide
      order by w.created_at, w.id`,
   );
@@ -592,6 +600,15 @@ export interface AcceptanceRow {
   returns_to_agent: boolean;
 }
 
+const ACCEPTANCE_FROM = `
+  from office.requester_approvals q
+  join office.tasks t on t.id = q.task_id and t.kind = 'request'
+  where q.company_id = office.ctx_company_id()`;
+
+// An approved result that waits for the acceptance of the calling person, its requester.
+const ACCEPTANCE_WAITS_FOR_READER = `q.status = 'pending' and q.invalidated_at is null
+  and q.requester_user_id = office.ctx_user_id()`;
+
 const ACCEPTANCE_SQL = `
   select q.id, q.task_id, t.title as request_title, q.requester_user_id, q.round, q.status,
          q.created_at, q.decided_at, q.invalidated_at, q.rejection_reason, q.decision_reason,
@@ -600,9 +617,7 @@ const ACCEPTANCE_SQL = `
            select 1 from office.requester_approvals p
            where p.task_id = q.task_id and p.status = 'changes_requested'
          ) as returns_to_agent
-  from office.requester_approvals q
-  join office.tasks t on t.id = q.task_id and t.kind = 'request'
-  where q.company_id = office.ctx_company_id()`;
+  ${ACCEPTANCE_FROM}`;
 
 export async function listAcceptances(
   client: Queryable,
@@ -618,9 +633,7 @@ export async function listAcceptances(
 /** The approved results of this person's own requests that wait for their acceptance. */
 export async function listPendingAcceptances(client: Queryable): Promise<AcceptanceRow[]> {
   const { rows } = await client.query<AcceptanceRow>(
-    `${ACCEPTANCE_SQL}
-       and q.status = 'pending' and q.invalidated_at is null
-       and q.requester_user_id = office.ctx_user_id()
+    `${ACCEPTANCE_SQL} and ${ACCEPTANCE_WAITS_FOR_READER}
      order by q.created_at, q.id`,
   );
   return rows;
@@ -639,6 +652,38 @@ export async function readResultApprovals(
     [approvalIds],
   );
   return rows;
+}
+
+export interface PendingDecisionCounts {
+  // Results that wait for a decision of this person.
+  approvals: number;
+  // Approved results of this person's own requests that wait for their acceptance.
+  acceptances: number;
+}
+
+/**
+ * How many cards the approval desk has for the calling person: the count of listPendingApprovals
+ * and of the pending acceptances whose approved result the desk shows (listPendingAcceptances with
+ * readResultApprovals), by the same rule texts. Every one of them is counted: no limit, no order
+ * and no row is loaded, so the number does not depend on how many open requests the company has.
+ * The number says what waits for a person: an agent run is answered with nothing, also when it
+ * goes in the name of a requester whose acceptance waits.
+ */
+export async function countPendingDecisions(client: Queryable): Promise<PendingDecisionCounts> {
+  const { rows } = await client.query<PendingDecisionCounts>(
+    `select
+       (
+         select count(*) ${RESULT_APPROVAL_FROM} and ${RESULT_WAITS} and ${MAY_DECIDE_RESULT}
+       )::int as approvals,
+       (
+         select count(*) ${ACCEPTANCE_FROM} and ${ACCEPTANCE_WAITS_FOR_READER}
+           and office.ctx_agent_code() is null
+           and exists (
+             select 1 ${RESULT_APPROVAL_FROM} and a.id = q.approval_id and a.status = 'approved'
+           )
+       )::int as acceptances`,
+  );
+  return rows[0] ?? { approvals: 0, acceptances: 0 };
 }
 
 /**

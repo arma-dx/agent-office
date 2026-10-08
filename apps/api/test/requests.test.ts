@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import { agentStep, createPool, withContext } from '@agent-office/db';
+import { agentStep, closeRequest, createPool, withContext } from '@agent-office/db';
 import {
   BACKGROUND_HEADER,
   COMPANY_HEADER,
   COORDINATOR_AGENT_CODE,
   NOTIFICATION_LIST_LIMIT,
+  TODAY_REQUEST_LIMIT,
   apiErrorSchema,
   approvalDecisionDetails,
   approvalDeskSchema,
@@ -1875,6 +1876,53 @@ describe.skipIf(noDatabase)('requests', () => {
         approvals: employeeBefore.numbers.approvals + 1,
       });
       expect(employeeAfter.desk.acceptances.map((card) => card.requestId)).toContain(id);
+    });
+
+    it('Onaylar counts a decision that waits beyond the window of the Bugün list', async () => {
+      // The list looks at the TODAY_REQUEST_LIMIT open requests that have not moved for longest.
+      // A company with that many open requests that expect nothing of the founder: a colleague's,
+      // opened and never routed. They are closed again at the end, because the tests after this
+      // one read the founder's list.
+      const asColleague = { companyId: ids.arma, userId: ids.holder };
+      const waiting = await withContext(besidePool, asColleague, async (client) => {
+        const { rows } = await client.query<{ id: string }>(
+          `insert into office.tasks (company_id, kind, title, description)
+           select office.ctx_company_id(), 'request', 'Bekleyen talep ' || n, 'Kimse ilerletmedi.'
+           from generate_series(1, $1::int) n
+           returning id`,
+          [TODAY_REQUEST_LIMIT],
+        );
+        return rows.map((row) => row.id);
+      });
+      try {
+        expect(waiting).toHaveLength(TODAY_REQUEST_LIMIT);
+        const before = await counts(founder);
+        // A result is submitted now: its request is the one that moved last.
+        const { id } = await submitted();
+        const list = await today(founder);
+        expect(list.expectedTruncated).toBe(true);
+        expect(list.expected.map((row) => row.id)).not.toContain(id);
+        const desk = approvalDeskSchema.parse((await get(founder, '/api/approvals')).json());
+        expect(desk.approvals.map((card) => card.requestId)).toContain(id);
+        // The number for Onaylar is the desk, whatever the list was cut to; Bugün stays the list.
+        const after = await counts(founder);
+        expect(after.approvals).toBe(before.approvals + 1);
+        expect(after.approvals).toBe(desk.approvals.length + desk.acceptances.length);
+        expect(after.today).toBe(list.expected.length);
+      } finally {
+        await withContext(besidePool, asColleague, async (client) => {
+          for (const id of waiting) {
+            await closeRequest(client, id, null);
+          }
+        });
+      }
+      expect(
+        await adminQuery(
+          `select 1 from office.tasks
+           where id = any ($1::uuid[]) and status not in ('done', 'cancelled')`,
+          [waiting],
+        ),
+      ).toEqual([]);
     });
 
     it('a result is on the appointed approver’s list and still on the founder’s; a right holder who is appointed nowhere has none', async () => {

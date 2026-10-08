@@ -6,7 +6,16 @@ import {
   markNotificationsRead,
   type NotificationRow,
 } from '../src/notifications.ts';
-import { listExpectedRequests, listRequests, readRequest } from '../src/requests.ts';
+import {
+  countPendingDecisions,
+  listExpectedRequests,
+  listPendingAcceptances,
+  listPendingApprovals,
+  listRequests,
+  readRequest,
+  readResultApprovals,
+  type PendingDecisionCounts,
+} from '../src/requests.ts';
 import { ids } from './fixtures.ts';
 import {
   closePools,
@@ -2752,6 +2761,215 @@ describe.skipIf(noDatabase)('the requester is told when a request closes behind 
           code: '42501',
         });
         await tx.client.query('rollback to savepoint pick');
+      }
+    });
+  });
+
+  // The count of the approval desk (the Onaylar number of the sidebar) ---------------------------
+
+  /** The cards of the approval desk for the person, by the statements of GET /api/approvals. */
+  async function desk(
+    tx: Tx,
+    context: ContextInput,
+  ): Promise<{ approvals: string[]; acceptances: string[] }> {
+    await tx.setContext(context);
+    const approvals = await listPendingApprovals(tx.client);
+    const acceptances = await listPendingAcceptances(tx.client);
+    const results = await readResultApprovals(
+      tx.client,
+      acceptances.map((acceptance) => acceptance.approval_id),
+    );
+    return {
+      approvals: approvals.map((approval) => approval.task_id),
+      acceptances: acceptances
+        .filter((acceptance) => results.some((result) => result.id === acceptance.approval_id))
+        .map((acceptance) => acceptance.task_id),
+    };
+  }
+
+  /** The count for the person; it is always the number of cards on that person's desk. */
+  async function counted(tx: Tx, context: ContextInput): Promise<PendingDecisionCounts> {
+    const cards = await desk(tx, context);
+    const numbers = await countPendingDecisions(tx.client);
+    expect(numbers).toEqual({
+      approvals: cards.approvals.length,
+      acceptances: cards.acceptances.length,
+    });
+    return numbers;
+  }
+
+  /** The count alone, for a context the desk is never asked in. */
+  async function asked(tx: Tx, context: ContextInput): Promise<PendingDecisionCounts> {
+    await tx.setContext(context);
+    return countPendingDecisions(tx.client);
+  }
+
+  const NOTHING = { approvals: 0, acceptances: 0 };
+  const APPROVE = `update office.approvals set status = 'approved' where id = $1`;
+
+  it('counts the cards of the approval desk: the founder’s and the appointed approver’s decisions, the requester’s acceptances, nothing for anybody else', async () => {
+    await inTransaction(async (tx) => {
+      // The fixtures: the approved result of one request waits for employee A. The approvals of
+      // tool calls that wait for the founder are not results of a request and are not counted.
+      await tx.setContext(founderA);
+      expect(
+        await tx.count('approvals', `routing_id is null and status = 'pending'`),
+      ).toBeGreaterThan(0);
+      expect(await counted(tx, founderA)).toEqual(NOTHING);
+      expect(await counted(tx, employeeA)).toEqual({ approvals: 0, acceptances: 1 });
+
+      // A result is submitted while nobody else is appointed for the unit: the founder decides.
+      const w1 = await submittedRequest(tx);
+      expect(await counted(tx, founderA)).toEqual({ approvals: 1, acceptances: 0 });
+      // Not the requester, not a person who holds the approval right and is appointed nowhere,
+      // not another employee.
+      expect(await counted(tx, employeeA)).toEqual({ approvals: 0, acceptances: 1 });
+      expect(await counted(tx, approverA)).toEqual(NOTHING);
+      expect(await counted(tx, colleagueA)).toEqual(NOTHING);
+      // The count does not look through the window of the Bugün list: a pick of one request
+      // leaves the new one out, the count has it.
+      await tx.setContext(founderA);
+      expect(
+        (await listExpectedRequests(tx.client, { coordinator: 'KOR-1', limit: 1 })).map(
+          (row) => row.id,
+        ),
+      ).toEqual([ids.requestA]);
+      expect(await countPendingDecisions(tx.client)).toEqual({ approvals: 1, acceptances: 0 });
+
+      // Approved: the result leaves the founder's desk and waits for its requester.
+      const second = await submittedRequest(tx);
+      expect(await counted(tx, founderA)).toEqual({ approvals: 2, acceptances: 0 });
+      await tx.setContext(founderA);
+      await tx.exec(APPROVE, [second.approval]);
+      expect(await counted(tx, founderA)).toEqual({ approvals: 1, acceptances: 0 });
+      expect(await counted(tx, employeeA)).toEqual({ approvals: 0, acceptances: 2 });
+      // Another employee's own request: its acceptance is theirs alone.
+      const others = await submittedRequest(tx, colleagueA);
+      expect(await counted(tx, colleagueA)).toEqual(NOTHING);
+      await tx.setContext(founderA);
+      await tx.exec(APPROVE, [others.approval]);
+      expect(await counted(tx, colleagueA)).toEqual({ approvals: 0, acceptances: 1 });
+      expect(await counted(tx, employeeA)).toEqual({ approvals: 0, acceptances: 2 });
+      expect(await counted(tx, founderA)).toEqual({ approvals: 1, acceptances: 0 });
+      // Accepted: nothing waits for it any more.
+      await tx.setContext(employeeA);
+      await tx.exec(
+        `update office.requester_approvals set status = 'approved' where task_id = $1`,
+        [second.task],
+      );
+      expect(await counted(tx, employeeA)).toEqual({ approvals: 0, acceptances: 1 });
+
+      // Appointed for the unit: the results of the steps routed from now on, and not the earlier
+      // one (its step keeps the approver it was given). The founder may decide both.
+      await tx.setContext(founderA);
+      await tx.exec(
+        `update office.approvers set user_id = $2 where company_id = $1 and unit_code = 'HAF'`,
+        [ids.arma, ids.approverA],
+      );
+      const appointed = await submittedRequest(tx);
+      expect((await desk(tx, approverA)).approvals).toEqual([appointed.task]);
+      expect(await counted(tx, approverA)).toEqual({ approvals: 1, acceptances: 0 });
+      expect((await desk(tx, founderA)).approvals.sort()).toEqual([w1.task, appointed.task].sort());
+      expect(await counted(tx, founderA)).toEqual({ approvals: 2, acceptances: 0 });
+      expect(await counted(tx, colleagueA)).toEqual({ approvals: 0, acceptances: 1 });
+
+      // A result closed by a stop waits for nobody.
+      await tx.setContext(founderA);
+      await tx.rows(CLOSE_WITH, [w1.task, 'Sent twice by mistake']);
+      expect(await counted(tx, founderA)).toEqual({ approvals: 1, acceptances: 0 });
+      // The right is asked every time: without it the appointment counts nothing.
+      await stepUp(tx, founderA, 'membership_change', ids.approverA);
+      await tx.setContext(founderA);
+      await tx.exec(
+        `update office.memberships set can_approve = false where company_id = $1 and user_id = $2`,
+        [ids.arma, ids.approverA],
+      );
+      expect(await counted(tx, approverA)).toEqual(NOTHING);
+      expect(await counted(tx, founderA)).toEqual({ approvals: 1, acceptances: 0 });
+    });
+  });
+
+  it('the count gives nothing of another company, without a context, to an agent run, to an external person or outside the project', async () => {
+    await inTransaction(async (tx) => {
+      // In Arma DX one result waits for the founder and two approved ones for employee A.
+      await submittedRequest(tx);
+      const second = await submittedRequest(tx);
+      await tx.setContext(founderA);
+      await tx.exec(APPROVE, [second.approval]);
+      expect(await counted(tx, founderA)).toEqual({ approvals: 1, acceptances: 0 });
+      expect(await counted(tx, employeeA)).toEqual({ approvals: 0, acceptances: 2 });
+      // Pillika has its own: the fixture's approved result waits for its requester there, and
+      // nothing of Arma DX is counted for the same founder.
+      expect(await counted(tx, founderP)).toEqual(NOTHING);
+      expect(await counted(tx, employeeP)).toEqual({ approvals: 0, acceptances: 1 });
+      // The same people in a company they are not a member of, and no context at all.
+      expect(await counted(tx, { companyId: ids.pillika, userId: ids.employeeA })).toEqual(NOTHING);
+      expect(await counted(tx, { companyId: ids.arma, userId: ids.employeeP })).toEqual(NOTHING);
+      expect(await counted(tx, { userId: ids.founder })).toEqual(NOTHING);
+      expect(await counted(tx, { companyId: ids.arma })).toEqual(NOTHING);
+      expect(await counted(tx, {})).toEqual(NOTHING);
+      // An external person has no request and decides none.
+      expect(await counted(tx, externalA)).toEqual(NOTHING);
+      // Nothing waits for an agent run, also when it goes in the founder's or the requester's
+      // name.
+      expect(await asked(tx, agentRun(ids.founder, 'KOR-1'))).toEqual(NOTHING);
+      expect(await asked(tx, agentRun(ids.employeeA, 'HAF-1'))).toEqual(NOTHING);
+
+      // A result inside a project: its step names an approver who is a member of the project.
+      await tx.setContext(founderA);
+      await tx.exec(
+        `insert into office.approvers (company_id, unit_code, user_id) values ($1, 'KOR', $2)`,
+        [ids.arma, ids.approverA],
+      );
+      await tx.exec(
+        `insert into office.project_members (company_id, project_id, user_id) values ($1, $2, $3)`,
+        [ids.arma, ids.projectA, ids.approverA],
+      );
+      await tx.setContext(employeeA);
+      const inProject = await openRequest(tx, ids.projectA);
+      await tx.setContext(founderA);
+      await tx.rows(CORRECT, [inProject, JSON.stringify([{ unit: 'KOR', agent: 'KOR-1' }])]);
+      const projectRun = { ...agentRun(ids.employeeA, 'KOR-1'), projectId: ids.projectA };
+      await tx.setContext(projectRun);
+      const run = await openRun(tx, inProject, 'KOR-1');
+      await one(tx, SUBMIT.replace("'HAF-1'", "'KOR-1'"), [inProject, run, null]);
+      expect((await desk(tx, approverA)).approvals).toEqual([inProject]);
+      expect(await counted(tx, approverA)).toEqual({ approvals: 1, acceptances: 0 });
+      expect(await counted(tx, founderA)).toEqual({ approvals: 2, acceptances: 0 });
+      // An insider who is not a member of the project, and a run in the project.
+      expect(await counted(tx, colleagueA)).toEqual(NOTHING);
+      expect(await asked(tx, projectRun)).toEqual(NOTHING);
+      expect(
+        await asked(tx, { ...agentRun(ids.founder, 'KOR-1'), projectId: ids.projectA }),
+      ).toEqual(NOTHING);
+      // Taken out of the project, the approver no longer reads the request or its result: the
+      // step still names the person and nothing is counted.
+      await tx.setContext(founderA);
+      expect(
+        await tx.exec('delete from office.project_members where project_id = $1 and user_id = $2', [
+          ids.projectA,
+          ids.approverA,
+        ]),
+      ).toBe(1);
+      expect(
+        await tx.count(
+          'task_routings',
+          `task_id = $1 and status = 'active' and approver_user_id = $2`,
+          [inProject, ids.approverA],
+        ),
+      ).toBe(1);
+      expect(await counted(tx, approverA)).toEqual(NOTHING);
+      expect(await counted(tx, founderA)).toEqual({ approvals: 2, acceptances: 0 });
+    });
+    // The worker's role: a run is answered with nothing, in the name of the founder or of a
+    // requester whose acceptance waits (the fixture's), in either company.
+    await inWorkerTransaction(async (tx) => {
+      for (const context of [
+        agentRun(ids.founder, 'KOR-1'),
+        agentRun(ids.employeeA, 'KOR-1'),
+        agentRun(ids.employeeP, 'KOR-1', ids.pillika),
+      ]) {
+        expect(await asked(tx, context)).toEqual(NOTHING);
       }
     });
   });

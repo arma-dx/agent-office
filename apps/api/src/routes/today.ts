@@ -1,4 +1,5 @@
 import {
+  countPendingDecisions,
   listExpectedRequests,
   listNotifications,
   markNotificationsRead,
@@ -39,6 +40,11 @@ import { expectedKind, toNotification, type ExpectedKind } from '../today-view.t
  * GET /api/today is for every member: an external person has no request (the list is empty
  * without a question to the database) but reads their own notifications, such as a passkey reset.
  * The counts are for the founder and employees, like every route of a request.
+ *
+ * The two numbers come from two questions. Bugün is the length of the list, which looks at
+ * TODAY_REQUEST_LIMIT open requests at most. Onaylar is what GET /api/approvals lists, counted in
+ * the database by the desk's own rule and without that limit: a decision that waits is counted
+ * however many open requests the company has.
  */
 
 const MEMBERS = { founderOnly: false } as const;
@@ -61,7 +67,7 @@ const NOTHING_EXPECTED: Expected = { items: [], truncated: false };
 
 /**
  * What waits for the reader, the one that has not moved for longest first. With `named` false the
- * names of people are not read: the counts need none (whose turn it is does not depend on a name).
+ * names of people are not read: the count needs none (whose turn it is does not depend on a name).
  */
 async function expectedOf(context: CompanyContext, now: Date, named: boolean): Promise<Expected> {
   const { client } = context;
@@ -112,9 +118,10 @@ export function registerTodayRoutes(app: FastifyInstance, { runner }: RouteDeps)
   app.get('/api/today/counts', async (request, reply): Promise<SidebarCounts> =>
     runner.withCompany(request, reply, INSIDERS, async (context) => {
       const { items } = await expectedOf(context, new Date(), false);
+      const waiting = await countPendingDecisions(context.client);
       return sidebarCountsSchema.parse({
         today: items.length,
-        approvals: items.filter((item) => item.kind !== 'fallen').length,
+        approvals: waiting.approvals + waiting.acceptances,
       });
     }),
   );

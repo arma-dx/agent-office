@@ -13,7 +13,10 @@ import { requestSummarySchema } from './requests.ts';
  * ids; its sentence is the panel's, never a text from the database.
  */
 
-/** At most this many open requests are looked at for the list and the counts. */
+/**
+ * At most this many open requests are looked at for the list, and so for the Bugün number of the
+ * sidebar, which is its length. The Onaylar number is not cut by it.
+ */
 export const TODAY_REQUEST_LIMIT = 200;
 /** At most this many notifications are listed, the newest first. */
 export const NOTIFICATION_LIST_LIMIT = 100;
@@ -76,10 +79,12 @@ export const todaySchema = z.object({
 export type Today = z.output<typeof todaySchema>;
 
 /**
- * GET /api/today/counts: the two numbers of the sidebar. `today` is the length of `expected`;
- * `approvals` is the part of it that is a decision (a result the reader may decide, a result of
- * the reader's own request to accept), which is what the Onaylar screen lists. Notifications are
- * never counted.
+ * GET /api/today/counts: the two numbers of the sidebar. `today` is the length of `expected`, cut
+ * like it at TODAY_REQUEST_LIMIT open requests. `approvals` is the number of decisions the Onaylar
+ * screen lists (a result the reader may decide, a result of the reader's own request to accept),
+ * counted without that limit. While the list is not cut, `approvals` is the part of `today` that
+ * is a decision; once it is cut, `approvals` can be the greater number. Notifications are never
+ * counted.
  */
 export const sidebarCountsSchema = z.object({
   today: z.number().int().nonnegative(),
