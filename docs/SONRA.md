@@ -418,7 +418,7 @@ Projeler (8 Ekim, karar 11 ve 14-22) için türetilen yorumlar ve ön planda bil
 - P-b (karar 15 ve 16): bir çalışan yeni proje açarken müşteri ekleyebilir; müşterinin sözleşme izinleri (yapay zekâ, kodla otomatik işleme) kapalı başlar ve onları yalnızca kurucu işaretler ("izni yalnızca sen açarsın" sözünün müşteri düzeyine uygulanması).
 - P-c (karar 17): beş durumdan "tamamlandı" ve "iptal" projeyi kapatır (yeni talep açılmaz); öteki üçü açık projedir. Durumu proje üyeleri ve kurucu değiştirir.
 - P-d (karar 17): proje sayfasının öteki bölümleri (bütçe ve kilometre taşları, çalışmalar ve maliyet, onaylar, notlar, harcama sınırı) en küçük Projeler'den sonra, ayrı küçük adımlar olarak eklenir; sırası KALAN-ISLER 0.4c adım 3.
-- P-e (karar 18): ajanların kod yazması ayrı bir ön planla ele alınır; o güne kadar GitHub bağlantısı yalnızca okur (depo seçme, proje sayfasında değişiklikler, açık PR'lar ve iş kayıtları).
+- P-e (karar 18): kapandı. Ajanların kod yazması için ön planı kurucu onayladı (8 Ekim, karar 23-30); o iş kurulana kadar GitHub bağlantısı yalnızca okur.
 - P-f (karar 19): bağlantıyı kurucu kurar (Ayarlar; passkey ile, karar 22). "Herkes" proje açabilen kurucu ve çalışanlardır. Depo, proje açılırken ya da sonra proje üyelerince seçilir; bir üye bağlantının gördüğü her depoyu kendi projesine ekleyip öteki üyelere gösterebilir (bu sonuç soruda yazılmıştı).
 - P-g (karar 21): dosya ekleme penceresi tek cümleyle söyler: kişisel veri içeren dosya eklenmez. Kod bir dosyada kişisel veri olup olmadığını denetleyemez.
 - P-h: proje silinmez, kapatılır; kapalı projede yeni talep açılmaz, proje geri açılabilir.
@@ -474,6 +474,30 @@ Projeler adım 1 (en küçük Projeler) tasarlanırken ve yapılırken türetile
 - Ertelenen (teknik): iz kaydına yazılabilen olay adları ayrılmış değil; aşama türetimi artık iki olay adını (`run_refused`, `run_not_started`) okuyor. Bugün hiçbir uç bir kişinin serbest olay adı yazmasına izin vermiyor; olay adlarını veritabanında ayırmak Çalıştırıcının kalanı (KALAN-ISLER 1.1) işine bırakıldı.
 - Ertelenen (teknik): araçların girdi şemaları ve modele verilen araç cümleleri kodda duruyor; kart sürümü bunları sabitlemiyor. Her çalışmaya worker'ın derleme commit'ini yazmak 0.7 (yayın hattı) işine bırakıldı.
 - Ertelenen (teknik): worker durdurulurken süren çalışma hemen kapatılmıyor; kendi süre sınırı dolunca ve bir worker ayaktayken kapanıyor. O zamana kadar sayfa önce "çalışıyor", sonra "gecikti" der. Worker'ın servis olarak kurulması (0.7) işinde ele alınır.
+
+## Ajanların kod yazması (8 Ekim, karar 23-30)
+
+Ön planda "sormadan böyle yapacağım" diye bildirilen varsayımlar (itiraz gelmedi, açık onay da verilmedi; hepsi **kurucu onayı bekliyor**):
+
+- K-a: GitHub'a yazan hep sistemin sabit kodudur; ajanın elinde GitHub anahtarı hiç olmaz.
+- K-b: GitHub'a kısa ömürlü (1 saat), yalnızca o depo için alınan anahtarla yazılır. Onu üreten ana anahtar ve model anahtarı yalnızca worker ortamında durur; kapalı makineye ikisi de girmez.
+- K-c: Uygulamaya otomatik test dosyalarını değiştirme hakkı istenmez; otomatik test ve yayın ayar dosyalarına dokunan değişiklik kabul edilmez.
+- K-d: Dalın adını sistem talep numarasından üretir; ajan ad seçmez.
+- K-e: Onaylanan fark ile GitHub'a yazılan birebir aynıdır; arada depo değiştiyse ya da projenin izni kapandıysa yazılmaz, iş yeniden onaya gelir.
+- K-f: Kartta satır satır gösterilemeyen değişiklik (resim gibi dosyalar, çok büyük fark) kabul edilmez.
+- K-g: Talep, değişiklik isteği açılıp talep sahibi onaylayınca "Tamamlandı" olur; birleşme proje sayfasında yalnızca bilgi olarak görünür.
+- K-h: Talep sahibi "istediğim bu değil" derse düzeltme aynı değişiklik isteğine ek olarak, yeni onayla gider; değişiklik isteğini kapatmak insan işidir.
+- K-i: GitHub'daki yorumları ve iş kayıtlarını kod ajanı okumaz; yeni istek yeni taleptir.
+- K-j: Agent Office'in kendi deposu ajanlara kapalıdır.
+- K-k: Ajan dosya içeriğini okur; değişiklik geçmişindeki kişi adları ve e-postalar ajana verilmez.
+- K-l: Ajan web'de arama yapmaz; depodaki talimat dosyaları da veri sayılır.
+- K-m: Kodu bugünkü çalıştırıcı yeni araçlarla yazar; Claude Code gibi hazır bir program kullanılmaz (CLAUDE.md çalıştırıcıyı böyle tanımlıyor; her adım kayıt altında kalır).
+- K-n: Ajanlar önce yalnızca Arma DX'te açılır.
+- K-o: Yol 2'de makine ve içindeki kod iş bitince silinir; onaylanan fark bizde kalır.
+
+Bu iş için doğrulanmamış olanlar: şirketin GitHub kuruluşunda hangi depoların olduğu ve birleşince kendiliğinden yayına alan depo bulunup bulunmadığı; kuruluşun GitHub aboneliğinin özel depolarda ana dal kilidine izin verip vermediği (vermiyorsa karar 25'teki kilit kurulamaz); ikinci makinenin kirası; 30 dakika ve 5 dolar rakamları (ölçüme dayanmıyor).
+
+Karar 27 raporun bu ajanları 2. aşamaya koymasından ve 2 Ekim karar 6'daki sekiz birimden ayrılır; rapor değiştirilmez, ayrım karar dosyasında yazılıdır.
 
 ## Ponytail ve Yazılım Geliştirme birimi (8 Ekim)
 

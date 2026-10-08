@@ -428,10 +428,21 @@ Adım 6: ajanların proje dosyalarını okuması (karar 21)
 
 - [ ] İzin açık projede ajanın dosyaları okuması; dosya içeriğinin veri olarak verilmesi (kural 7)
 
-Adım 7: ajanların kod yazıp değişiklik isteği açması (karar 18)
+Adım 7: ajanların kod yazıp değişiklik isteği açması (karar 18 ve 23-30)
 
-- [ ] Ön plan: kodun çalıştırılacağı ortam, GitHub'a yazma yetkisi, onayın kapsamı, güvenlik (kurucu onayı gerekir)
-- [ ] (Ön plan onaylanınca maddeler buraya yazılır)
+Ön planı kurucu onayladı (8 Ekim, karar 23-30). Adım 1 ila 6'dan sonra yapılır (karar 30). Varsayımlar `docs/SONRA.md` içinde K-a ila K-o; Ponytail skill planı aynı dosyada PT-a ila PT-g.
+
+- [x] Ön plan: kodun çalıştırılacağı ortam, GitHub'a yazma yetkisi, onayın kapsamı, güvenlik
+- [ ] (Senden) Ajana açılacak depoların listesi; o depolarda ana dalın GitHub'da kilitlenmesi (karar 25); müşteri depoları için "sözleşme kaynak kodunu kapsıyor, depoda kişisel veri ve şifre yok" işareti (karar 26)
+- [ ] Yazılım Geliştirme biriminin açılması; YAZ-3 Kodlama Ajanı ve YAZ-4 Kod İnceleme Ajanı kartları ve skill'leri (karar 27)
+- [ ] Depoyu okuyan araçlar; depo içeriğinin veri olarak verilmesi (kural 7)
+- [ ] Onay Masası'nda fark kartı: dosya dosya eski ve yeni satırlar, test sonucu, risk notu, harcama, hedef depo ve dal
+- [ ] "Onaylananı onaydan sonra uygula" altyapısı: onaylanan farkın birebir aynısını sistemin yeni bir dala yazması ve değişiklik isteğini açması (karar 24)
+- [ ] GitHub uygulamasına iki yazma hakkının eklenmesi (kod ve değişiklik isteği); kısa ömürlü, yalnızca o depo için anahtar
+- [ ] Ajanın yapamayacakları: birleştirme, yayın, ana dal, ayarlar ve şifreler için araç yok; ana dalı kilitli olmayan depo ajana kapalı (karar 25)
+- [ ] Değişiklik başına süre ve harcama tavanı: 30 dakika ve 5 dolar ile başlar (karar 28)
+- [ ] Yol 2 (yayın ortamından sonra): şirketin AWS hesabında şifresiz, interneti kapalı ayrı makine; testlerin orada çalıştırılması (karar 23 ve 29)
+- [ ] Testler: onaydan önce GitHub'a hiçbir şey yazılmaması; onaylanan ile yazılanın aynı olması; depo içindeki talimat gibi yazılmış metnin araçları ve kuralları değiştirememesi
 
 ### 0.4b Görevler: ekip içi görevler (M2)
 
