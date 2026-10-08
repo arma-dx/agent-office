@@ -56,11 +56,9 @@ function ProjectRow({ project, company }: { project: ProjectSummary; company: st
       trailing={
         <>
           {/* Below 1280 px the customer and the member count give way to the name; both are on
-              the project's page and in the row's sentence. */}
-          <span
-            className="hidden w-40 truncate text-ink-secondary xl:block"
-            title={project.customer?.name}
-          >
+              the project's page and in the row's sentence. A long customer name is cut here and
+              has no title: the cell lies under the row's link, where a tooltip never shows. */}
+          <span className="hidden w-40 truncate text-ink-secondary xl:block">
             {project.customer?.name ?? ''}
           </span>
           <span className="hidden w-14 text-ink-secondary tabular-nums xl:block">

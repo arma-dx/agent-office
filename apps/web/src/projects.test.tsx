@@ -218,7 +218,9 @@ describe('projects: the list', () => {
     expect(tile).toHaveClass('bg-project-teal', 'size-6');
     expect(row.firstElementChild).toContainElement(tile as HTMLElement);
     expect(within(row).getByText('Depo otomasyonu')).toBeVisible();
-    expect(within(row).getByText('Beta Lojistik')).toBeInTheDocument();
+    // The cells lie under the row's link, where a tooltip of their own never shows (ListRow):
+    // the customer's name carries no title that would promise one.
+    expect(within(row).getByText('Beta Lojistik')).not.toHaveAttribute('title');
     expect(within(row).getByText('2 üye')).toBeInTheDocument();
     expect(within(row).getByText('Ajanlar çalışamaz')).toBeVisible();
     const date = within(row).getByText(formatDay('2026-11-20'));
