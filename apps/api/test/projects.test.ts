@@ -58,6 +58,9 @@ describe.skipIf(noDatabase)('projects', () => {
   const founderKey = new SoftwareAuthenticator(PANEL_ORIGIN);
   // A connection of the API's role that a test holds open itself, next to the server's own.
   const besidePool = createPool(database?.app ?? '', 'agent-office-api-test-beside', () => {});
+  // A connection of the privileged role that a test holds open itself, for a change of somebody
+  // else that commits while a request of the server is on its way.
+  const adminPool = createPool(database?.admin ?? '', 'agent-office-api-test-other', () => {});
 
   beforeAll(async () => {
     server = createTestServer();
@@ -87,6 +90,7 @@ describe.skipIf(noDatabase)('projects', () => {
   afterAll(async () => {
     await server.close();
     await besidePool.end();
+    await adminPool.end();
     await closeAdminPool();
   });
 
@@ -1083,6 +1087,47 @@ describe.skipIf(noDatabase)('projects', () => {
       memberCount: 1,
       members: [{ userId: ids.employee }],
     });
+    expect(await count('project_members', 'project_id = $1', [project.id])).toBe(1);
+  });
+
+  it('404 when the person is removed from the project while their add is on its way; nobody is added', async () => {
+    const project = await open(employee, { name: 'Eklerken çıkarılan', memberIds: [ids.holder] });
+    const members = `/api/projects/${project.id}/members`;
+    // Another person's removal that has not committed yet: the route still reads the project for
+    // the employee, its insert then waits for the table and meets the committed removal.
+    const admin = await adminPool.connect();
+    let adding: Promise<LightMyRequestResponse>;
+    try {
+      await admin.query('begin');
+      await admin.query('lock table office.project_members in exclusive mode');
+      const removed = await admin.query(
+        'delete from office.project_members where project_id = $1 and user_id = $2',
+        [project.id, ids.employee],
+      );
+      expect(removed.rowCount).toBe(1);
+      adding = call(employee, 'PUT', `${members}/${ids.founder}`);
+      await untilServerWaits();
+      await admin.query('commit');
+    } catch (error) {
+      await admin.query('rollback');
+      throw error;
+    } finally {
+      admin.release();
+    }
+    const res = await adding;
+    expect(res.statusCode, res.body).toBe(404);
+    expect(errorCode(res)).toBe('not_found');
+    // Exactly what a project the person cannot read answers.
+    const unknown = await call(
+      employee,
+      'PUT',
+      `/api/projects/${randomUUID()}/members/${ids.founder}`,
+    );
+    expect(res.json()).toEqual(unknown.json());
+    expect((await call(employee, 'GET', `/api/projects/${project.id}`)).statusCode).toBe(404);
+    expect((await read(founder, project.id)).members.map((member) => member.userId)).toEqual([
+      ids.holder,
+    ]);
     expect(await count('project_members', 'project_id = $1', [project.id])).toBe(1);
   });
 

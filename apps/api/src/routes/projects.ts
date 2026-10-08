@@ -480,6 +480,12 @@ export function registerProjectRoutes(app: FastifyInstance, { runner, config }: 
           // foreign_key_violation: not a member of the company. check_violation: an external
           // person or a deactivated account.
           if (code === '23503' || code === '23514') throw memberNotAllowed();
+          if (code === '42501') {
+            // insufficient_privilege: the row policy refused the insert. The person lost the
+            // project between the read above and the insert (they were removed, or their role
+            // changed): answered like a project they cannot read. Anything else stays an error.
+            await projectOf(context, projectId);
+          }
           throw error;
         }
         return detailOf(context, await projectOf(context, projectId));
