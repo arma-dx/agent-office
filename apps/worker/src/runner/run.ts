@@ -404,9 +404,14 @@ export async function runAgentJob(
     if (agentSwitch.rows[0]?.status !== 'enabled') {
       return { kind: 'refused', outcome: 'agent_not_enabled' };
     }
-    // Rule 12, said out loud: the request, and whether its project and customer allow AI. The row
-    // policies already hide such a record from every agent run; the explicit answer is for the
-    // reason code.
+    // Rule 12 (the runner checks at the start of every run). Today the row policies answer first:
+    // a project without AI permission, and with it its request, is hidden from every agent run,
+    // and a request in any project is hidden from a run whose context carries no project (the job
+    // has none yet). Both end here as "task_not_visible": no run, no model call. The ai_allowed
+    // column below is the runner's own guard behind the policies. It cannot be false while they
+    // hold (a request without a project always allows AI), so "ai_not_allowed" is not an answer
+    // anybody reads today; a distinct reason for the person has to come from a place that can see
+    // the project.
     const found = await client.query<TaskRow>(
       `select t.title, t.description, t.status, t.requester_user_id,
               (

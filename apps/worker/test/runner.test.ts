@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { agentStep } from '@agent-office/db';
+import { agentStep, withContext } from '@agent-office/db';
 import { afterAll, describe, expect, it } from 'vitest';
 import { closeLostRun, runAgentJob } from '../src/runner/run.ts';
 import {
@@ -1410,6 +1410,59 @@ describe.skipIf(noDatabase)('a run never leaves its company, its request or its 
     expect(model.requests).toHaveLength(0);
     expect(jobs.sent).toEqual([]);
     expect(await statusOf(taskId)).toBe('open');
+  });
+
+  it('no agent runs on a request of a project without AI permission (rule 12)', async () => {
+    // A project of Arma DX, and a founder's request inside it.
+    const [project] = await admin<{ id: string }>(
+      `insert into office.projects (company_id, name, ai_allowed) values ($1, 'Kural 12', true)
+       returning id`,
+      [ids.arma],
+    );
+    const projectId = project?.id ?? '';
+    const taskId = await withContext(
+      testPools().app,
+      { companyId: ids.arma, userId: ids.founder },
+      async (client) => {
+        const { rows } = await client.query<{ id: string }>(
+          `insert into office.tasks (company_id, project_id, kind, title, description)
+           values ($1, $2, 'request', 'Proje içinde talep', 'Gönderi yaz') returning id`,
+          [ids.arma, projectId],
+        );
+        return rows[0]?.id ?? '';
+      },
+    );
+    // What a run sees of the request when its context names the project: the row while the
+    // project allows AI, nothing at all once the permission is withdrawn. The row policies give
+    // the answer; the runner's own ai_allowed column never reads false.
+    const seenInProject = () =>
+      agentStep(
+        testPools().worker,
+        { companyId: ids.arma, userId: ids.founder, agentCode: 'KOR-1', projectId },
+        async (client) =>
+          (await client.query('select 1 from office.tasks where id = $1', [taskId])).rows.length,
+      );
+    expect(await seenInProject()).toBe(1);
+    await admin('update office.projects set ai_allowed = false where id = $1', [projectId]);
+    expect(await seenInProject()).toBe(0);
+
+    // The permission was withdrawn after the request was opened; its job is still on the queue.
+    const model = new ScriptedModel([]);
+    const { deps, jobs, log } = await runner(model);
+    const result = await runAgentJob(deps, job(taskId, 'KOR-1', ids.founder));
+    expect(result).toEqual({ outcome: 'task_not_visible', runId: null, modelCalls: 0 });
+    expect(await runCount(taskId)).toBe(0);
+    expect(model.requests).toHaveLength(0);
+    expect(jobs.sent).toEqual([]);
+    expect(log).toEqual([
+      {
+        event: 'run_refused',
+        fields: { reason: 'task_not_visible', task: taskId, agent: 'KOR-1' },
+      },
+    ]);
+    // Nor can a run be opened on it by hand with the worker's role.
+    await expect(leftOpen(taskId, 'KOR-1')).rejects.toThrow();
+    expect(await runCount(taskId)).toBe(0);
   });
 
   it('a routing a person made during the coordinator’s run stands: the late answer is not executed', async () => {
