@@ -539,7 +539,9 @@ export function AcceptanceCardView({
    * What "İstediğim bu değil" does this time, as the API says it: true, the work goes back to the
    * same agent (the requester has not asked for changes on this request before); false, it falls
    * to the founder (8 October decision 3). Not the round of the acceptance: a routing correction
-   * opens a new round without the requester having said anything.
+   * opens a new round without the requester having said anything. False is not "the second
+   * time" either: after the founder routes the request again the requester can be asked a third
+   * time, and the sentence names no number.
    */
   returnsToAgent: boolean;
 }) {
@@ -604,7 +606,7 @@ export function AcceptanceCardView({
           help={
             returnsToAgent
               ? 'Neyin eksik ya da yanlış olduğunu yazın. İş bu açıklamayla aynı ajana bir kez geri döner; yeni sonuç önce birim onayına, sonra size gelir.'
-              : 'Neyin eksik ya da yanlış olduğunu yazın. Bu ikinci isteğiniz: iş ajana kendiliğinden dönmez, kurucuya düşer.'
+              : 'Neyin eksik ya da yanlış olduğunu yazın. Daha önce düzeltme istediniz: iş ajana kendiliğinden dönmez, kurucuya düşer.'
           }
           confirmLabel="Gönder"
           askClass={false}

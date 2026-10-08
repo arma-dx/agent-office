@@ -710,12 +710,13 @@ describe('the page of a request', () => {
     const card = await screen.findByRole('region', { name: 'Sonuç hazır' });
     await userEvent.click(within(card).getByRole('button', { name: 'İstediğim bu değil' }));
     const dialog = await screen.findByRole('dialog', { name: 'İstediğim bu değil' });
-    // The second time the work does not go back to the agent: it falls to the founder (8 October
-    // decision 3), and the dialog says so.
+    // After the first time the work does not go back to the agent: it falls to the founder
+    // (8 October decision 3), and the dialog says so. No number: the same holds for a third
+    // answer, after the founder routed the request again.
     expect(dialog).toHaveTextContent(
-      'Bu ikinci isteğiniz: iş ajana kendiliğinden dönmez, kurucuya düşer.',
+      'Daha önce düzeltme istediniz: iş ajana kendiliğinden dönmez, kurucuya düşer.',
     );
-    expect(dialog).not.toHaveTextContent(/onaylayıcısına|geri döner/);
+    expect(dialog).not.toHaveTextContent(/onaylayıcısına|geri döner|ikinci/);
     await userEvent.type(within(dialog).getByRole('textbox', { name: 'Açıklama' }), 'Çok uzun.');
     await userEvent.click(within(dialog).getByRole('button', { name: 'Gönder' }));
     await waitFor(() => {
@@ -809,7 +810,7 @@ describe('the page of a request', () => {
     await userEvent.click(within(card).getByRole('button', { name: 'İstediğim bu değil' }));
     const dialog = await screen.findByRole('dialog', { name: 'İstediğim bu değil' });
     expect(dialog).toHaveTextContent('İş bu açıklamayla aynı ajana bir kez geri döner');
-    expect(dialog).not.toHaveTextContent(/ikinci isteğiniz|kurucuya düşer/);
+    expect(dialog).not.toHaveTextContent(/Daha önce düzeltme istediniz|kurucuya düşer/);
   });
 
   // The founder's own example: a KVKK text, routed to the legal unit, which has no agent. The
@@ -1726,6 +1727,118 @@ describe('the page of a request', () => {
     }
   });
 
+  it('keeps the requester’s open "İstediğim bu değil" dialog and its text when the result stops waiting meanwhile', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      const key = `GET /requests/${REQUEST_ID}`;
+      const api = mockApi({
+        'GET /session': sessionHandler(EMPLOYEE_SESSION),
+        [key]: () =>
+          json(
+            requestDetail({
+              stage: 'requester_approval',
+              turn: { kind: 'person', ...EMPLOYEE },
+              waitingForMe: true,
+              approval: null,
+              result: RESULT,
+              acceptance: { round: 1, returnsToAgent: true },
+              actions: { cancel: true, stop: false, reroute: false },
+            }),
+          ),
+      });
+      renderApp(`/c/armadx/requests/${REQUEST_ID}`);
+      const card = await screen.findByRole('region', { name: 'Sonuç hazır' });
+      await user.click(within(card).getByRole('button', { name: 'İstediğim bu değil' }));
+      const dialog = await screen.findByRole('dialog', { name: 'İstediğim bu değil' });
+      // The one dialog whose text is always required: losing it loses the requester's own words.
+      const note = within(dialog).getByRole('textbox', { name: 'Açıklama' });
+      await user.type(note, 'Çok uzun olmuş');
+      // The founder routes the request again meanwhile: the result no longer waits for an answer.
+      api.handle(key, () =>
+        json(
+          requestDetail({
+            status: 'in_progress',
+            stage: 'working',
+            turn: { kind: 'agent', code: 'SOS-2', name: 'Sosyal İçerik Yazım Ajanı' },
+            waitingForMe: false,
+            approval: null,
+            result: null,
+            acceptance: null,
+            actions: { cancel: true, stop: false, reroute: false },
+          }),
+        ),
+      );
+      const before = api.callsTo(key).length;
+      // Neither the timer nor coming back to the tab reads the request under the open dialog.
+      await vi.advanceTimersByTimeAsync(31_000);
+      focusManager.setFocused(false);
+      focusManager.setFocused(true);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(api.callsTo(key)).toHaveLength(before);
+      expect(screen.getByRole('dialog', { name: 'İstediğim bu değil' })).toBeVisible();
+      expect(note).toHaveValue('Çok uzun olmuş');
+      // Closing the dialog reads the page again: the card is gone and the page says where the
+      // request is now.
+      await user.click(within(dialog).getByRole('button', { name: 'Vazgeç' }));
+      await waitFor(() => {
+        expect(screen.queryByRole('region', { name: 'Sonuç hazır' })).toBeNull();
+      });
+      expect(screen.queryByRole('dialog')).toBeNull();
+      expect(stageLine()).toContain('Aşama: Ajan çalışıyor Sıra: SOS-2');
+      expect(api.callsTo(key)).toHaveLength(before + 1);
+      expect(api.unexpected).toEqual([]);
+    } finally {
+      focusManager.setFocused(undefined);
+      vi.useRealTimers();
+    }
+  });
+
+  it('starts another round of the acceptance clean: what the card of the round before showed is not carried over', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      const key = `GET /requests/${REQUEST_ID}`;
+      const refusal = 'Çok fazla istek gönderildi. Biraz sonra yeniden deneyin.';
+      const round = (number: number) =>
+        requestDetail({
+          stage: 'requester_approval',
+          turn: { kind: 'person', ...EMPLOYEE },
+          waitingForMe: true,
+          approval: null,
+          result: RESULT,
+          acceptance: { round: number, returnsToAgent: true },
+          actions: { cancel: true, stop: false, reroute: false },
+        });
+      const api = mockApi({
+        'GET /session': sessionHandler(EMPLOYEE_SESSION),
+        [key]: () => json(round(1)),
+        [`POST /requests/${REQUEST_ID}/acceptance`]: () => apiError(429, 'rate_limited', refusal),
+      });
+      renderApp(`/c/armadx/requests/${REQUEST_ID}`);
+      const card = await screen.findByRole('region', { name: 'Sonuç hazır' });
+      await user.click(within(card).getByRole('button', { name: 'Sonucu onayla' }));
+      expect(await within(card).findByRole('alert')).toHaveTextContent(refusal);
+      // The founder routed the request again and a new result was approved: the next refresh
+      // brings the acceptance of another round into the place of the card.
+      api.handle(key, () => json(round(2)));
+      const before = api.callsTo(key).length;
+      await vi.advanceTimersByTimeAsync(30_100);
+      await waitFor(() => {
+        expect(api.callsTo(key).length).toBeGreaterThan(before);
+      });
+      // The refusal was the answer to the round before; the new card does not show it.
+      await waitFor(() => {
+        expect(
+          within(screen.getByRole('region', { name: 'Sonuç hazır' })).queryByRole('alert'),
+        ).toBeNull();
+      });
+      expect(api.unexpected).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('links back to the list from the top bar', async () => {
     mockApi({
       'GET /session': sessionHandler(),
@@ -1839,7 +1952,10 @@ describe('Onaylar', () => {
     // The card says here too what "not what I asked for" does this time, as the API gave it.
     await userEvent.click(within(results).getByRole('button', { name: 'İstediğim bu değil' }));
     const asking = await screen.findByRole('dialog', { name: 'İstediğim bu değil' });
-    expect(asking).toHaveTextContent('iş ajana kendiliğinden dönmez, kurucuya düşer.');
+    expect(asking).toHaveTextContent(
+      'Daha önce düzeltme istediniz: iş ajana kendiliğinden dönmez, kurucuya düşer.',
+    );
+    expect(asking).not.toHaveTextContent(/ikinci/);
     await userEvent.click(within(asking).getByRole('button', { name: 'Vazgeç' }));
     await waitFor(() => {
       expect(screen.queryByRole('dialog')).toBeNull();
