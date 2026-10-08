@@ -214,6 +214,9 @@ export async function loadFixtures(client: pg.Client): Promise<void> {
       ('${ids.arma}', '${ids.customerANoAi}', 'Opportunity without AI permission'),
       ('${ids.pillika}', '${ids.customerP}', 'Opportunity P');
 
+    -- Projects are written without a person in the context: a person's project starts without AI
+    -- permission and makes its opener a member.
+    ${NO_CONTEXT_SQL}
     insert into office.projects (id, company_id, customer_id, name, ai_allowed) values
       ('${ids.projectA}', '${ids.arma}', '${ids.customerA}', 'Project A', true),
       ('${ids.projectANoAi}', '${ids.arma}', null, 'Project without AI permission', false),
@@ -225,6 +228,7 @@ export async function loadFixtures(client: pg.Client): Promise<void> {
       ('${ids.arma}', '${ids.projectA}', '${ids.employeeA}'),
       ('${ids.arma}', '${ids.projectANoAi}', '${ids.employeeA}'),
       ('${ids.pillika}', '${ids.projectP}', '${ids.employeeP}');
+    ${contextSql(ids.pillika, ids.founder)}
 
     insert into office.work_types (company_id, code, name, baseline_minutes) values
       ('${ids.arma}', 'proposal', 'Preparing a proposal', 240),
