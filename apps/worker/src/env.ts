@@ -15,6 +15,9 @@ export const workerEnvSchema = baseEnvSchema
     // Not the API's role: an agent run must not reach the identity tables.
     WORKER_DATABASE_URL: z.string().min(1),
     ANTHROPIC_API_KEY: z.preprocess(emptyAsMissing, z.string().min(20).optional()),
+    // Not a setting of the worker: the SDK reads this variable by itself and adds its headers to
+    // every model request, and no option switches that off. Read here only to refuse it.
+    ANTHROPIC_CUSTOM_HEADERS: z.preprocess(emptyAsMissing, z.string().optional()),
     WORKER_CONCURRENCY: z.preprocess(
       emptyAsMissing,
       z.coerce.number().int().min(1).max(8).default(2),
@@ -23,6 +26,10 @@ export const workerEnvSchema = baseEnvSchema
   .refine((env) => env.NODE_ENV !== 'production' || env.ANTHROPIC_API_KEY !== undefined, {
     path: ['ANTHROPIC_API_KEY'],
     message: 'Required in production',
+  })
+  .refine((env) => env.ANTHROPIC_CUSTOM_HEADERS === undefined, {
+    path: ['ANTHROPIC_CUSTOM_HEADERS'],
+    message: 'Must not be set: its headers would be added to every model request',
   });
 
 export type WorkerEnv = z.output<typeof workerEnvSchema>;

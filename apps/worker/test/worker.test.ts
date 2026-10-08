@@ -30,6 +30,27 @@ describe('the worker’s environment', () => {
     );
   });
 
+  it('refuses to start with headers the SDK would add to every model request', () => {
+    // No option of the SDK switches ANTHROPIC_CUSTOM_HEADERS off, so the worker does not start
+    // with it; the error names the variable and never its value.
+    let message = '';
+    try {
+      loadWorkerEnv({
+        WORKER_DATABASE_URL: DATABASE,
+        ANTHROPIC_API_KEY: KEY,
+        ANTHROPIC_CUSTOM_HEADERS: 'anthropic-beta: injected-by-env',
+      });
+    } catch (error) {
+      message = error instanceof Error ? error.message : '';
+    }
+    expect(message).toContain('ANTHROPIC_CUSTOM_HEADERS');
+    expect(message).not.toContain('injected-by-env');
+    // An empty value in .env is the same as no value.
+    expect(() =>
+      loadWorkerEnv({ WORKER_DATABASE_URL: DATABASE, ANTHROPIC_CUSTOM_HEADERS: '' }),
+    ).not.toThrow();
+  });
+
   it('never shows a value in an error', () => {
     let message = '';
     try {

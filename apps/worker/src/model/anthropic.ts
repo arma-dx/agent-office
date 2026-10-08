@@ -3,14 +3,30 @@ import { ModelCallError, type CallModel, type ModelErrorCode } from './client.ts
 
 /**
  * The Claude API client: the only file that loads the SDK as a value and the only place the key
- * is used. The key and the address are passed explicitly, so that another ANTHROPIC_* variable or
- * a signed-in profile on the machine cannot change where requests go or who pays for them.
+ * is used.
+ *
+ * The SDK reads the environment by itself. What it would take from there is switched off here,
+ * option by option, so that a variable or a signed-in profile on the machine cannot change where
+ * requests go, who pays for them or what is logged (7 October decision 12: model calls are paid
+ * with the API key only):
+ *   - the address is passed explicitly (ANTHROPIC_BASE_URL is not used);
+ *   - the key is passed explicitly and the bearer token is set to "none" (ANTHROPIC_AUTH_TOKEN is
+ *     not sent next to the key; with a key the SDK does not look for a profile either);
+ *   - the SDK's own logging is off (ANTHROPIC_LOG cannot turn on request logging: the worker's
+ *     log holds codes and ids only).
+ * One variable cannot be switched off by an option: ANTHROPIC_CUSTOM_HEADERS, whose headers the
+ * SDK adds to every request. The worker refuses to start when it is set (env.ts).
  *
  * The SDK retries by itself (408, 409, 429, 5xx and connection errors, with the server's
  * retry-after); the runner bounds everything with its own deadline through the signal.
  */
 const API_ADDRESS = 'https://api.anthropic.com';
 const MAX_RETRIES = 2;
+
+export interface AnthropicModelOptions {
+  // The fetch the client sends with; tests pass a stub, so no request leaves the machine.
+  fetch?: typeof globalThis.fetch;
+}
 
 /** The provider's own class of the error (billing_error, overloaded_error, ...): a code, never text. */
 export function errorType(error: unknown): string | null {
@@ -47,8 +63,18 @@ function codeOf(error: unknown): ModelErrorCode {
   return 'anthropic_error';
 }
 
-export function createAnthropicModel(apiKey: string): CallModel {
-  const client = new Anthropic({ apiKey, baseURL: API_ADDRESS, maxRetries: MAX_RETRIES });
+export function createAnthropicModel(
+  apiKey: string,
+  options: AnthropicModelOptions = {},
+): CallModel {
+  const client = new Anthropic({
+    apiKey,
+    authToken: null,
+    baseURL: API_ADDRESS,
+    maxRetries: MAX_RETRIES,
+    logLevel: 'off',
+    ...(options.fetch ? { fetch: options.fetch } : {}),
+  });
   return async (params, { signal, timeoutMs }) => {
     try {
       const { data, request_id } = await client.messages
