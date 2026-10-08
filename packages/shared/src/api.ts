@@ -742,8 +742,23 @@ export type OfficeResponse = z.output<typeof officeResponseSchema>;
  * PUT /api/agents/:agentCode/switch: the founder opens an agent for the company or stops it (rule:
  * every agent has a stop switch per company; the switch is the company_agents row). A stopped
  * agent takes no new work and its open run ends before its next step.
+ *
+ * With `onlyIfOpen` a stop changes the switch only where the agent is open ("Her yerde durdur",
+ * 8 October decision 9): an agent that is closed, stopped or was never opened in this company is
+ * left exactly as it is, nothing is written to the audit log, and the answer says what the switch
+ * is. Without it a stop also stops an agent that was never opened, as before.
  */
-export const agentSwitchRequestSchema = z.strictObject({
-  status: z.enum(['enabled', 'stopped']),
-});
+export const agentSwitchRequestSchema = z.discriminatedUnion('status', [
+  z.strictObject({ status: z.literal('enabled') }),
+  z.strictObject({ status: z.literal('stopped'), onlyIfOpen: z.boolean().optional() }),
+]);
 export type AgentSwitchRequest = z.input<typeof agentSwitchRequestSchema>;
+
+/**
+ * The answer of a stop with `onlyIfOpen`: the agent as the office lists it, with the switch as it
+ * is now, and whether this request is what stopped it. `changed` is false for an agent that was
+ * already stopped, closed or never opened here, so the panel can tell "durduruldu" from "zaten
+ * durdurulmuş" by the server's word and not by what it read a moment ago.
+ */
+export const agentStopIfOpenResponseSchema = officeAgentSchema.extend({ changed: z.boolean() });
+export type AgentStopIfOpenResponse = z.output<typeof agentStopIfOpenResponseSchema>;

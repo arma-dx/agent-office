@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  agentStopIfOpenResponseSchema,
+  agentSwitchRequestSchema,
   companyAgentStatusSchema,
   officeResponseSchema,
   officeWorkCountSchema,
@@ -225,5 +227,35 @@ describe('the office contract', () => {
     expect(
       officeResponseSchema.safeParse({ units: [], work: [], workTruncated: false }).success,
     ).toBe(true);
+  });
+
+  it('a switch is opened, stopped, or stopped only where it is open; nothing else is sent', () => {
+    const ok = (body: unknown) => agentSwitchRequestSchema.safeParse(body).success;
+    expect(ok({ status: 'enabled' })).toBe(true);
+    expect(ok({ status: 'stopped' })).toBe(true);
+    expect(ok({ status: 'stopped', onlyIfOpen: true })).toBe(true);
+    expect(ok({ status: 'stopped', onlyIfOpen: false })).toBe(true);
+    // The condition belongs to a stop alone.
+    expect(ok({ status: 'enabled', onlyIfOpen: true })).toBe(false);
+    expect(ok({ status: 'disabled' })).toBe(false);
+    expect(ok({ status: 'stopped', onlyIfOpen: 'yes' })).toBe(false);
+    expect(ok({ status: 'stopped', everywhere: true })).toBe(false);
+    expect(ok({})).toBe(false);
+  });
+
+  it('the answer of a stop "only if open" is the agent and whether this request stopped it', () => {
+    const agent = { code: 'KOR-1', name: 'Ofis Koordinatörü', status: 'stopped', ready: true };
+    expect(agentStopIfOpenResponseSchema.parse({ ...agent, changed: true })).toEqual({
+      ...agent,
+      changed: true,
+    });
+    expect(
+      agentStopIfOpenResponseSchema.safeParse({ ...agent, status: null, changed: false }).success,
+    ).toBe(true);
+    // Without the word of the server the panel could not tell a stop from "already stopped".
+    expect(agentStopIfOpenResponseSchema.safeParse(agent).success).toBe(false);
+    expect(agentStopIfOpenResponseSchema.safeParse({ ...agent, changed: 'yes' }).success).toBe(
+      false,
+    );
   });
 });

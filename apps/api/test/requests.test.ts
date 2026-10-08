@@ -6,6 +6,7 @@ import {
   COORDINATOR_AGENT_CODE,
   NOTIFICATION_LIST_LIMIT,
   TODAY_REQUEST_LIMIT,
+  agentStopIfOpenResponseSchema,
   apiErrorSchema,
   approvalDecisionDetails,
   approvalDeskSchema,
@@ -2537,6 +2538,21 @@ describe.skipIf(noDatabase)('requests', () => {
     describe('in two companies', () => {
       const switchIn = (company: string, payload: object) =>
         send(server, founder, 'PUT', '/api/agents/KOR-1/switch', { company, payload });
+      const stored = async (company: string): Promise<string | null> => {
+        const rows = await adminQuery<{ status: string }>(
+          `select status from office.company_agents where company_id = $1 and agent_code = 'KOR-1'`,
+          [company],
+        );
+        return rows[0]?.status ?? null;
+      };
+      const stops = async (): Promise<{ company_id: string; user_id: string }[]> =>
+        adminQuery(
+          `select l.company_id, l.user_id from office.audit_log l
+           join office.company_agents ca on ca.id = l.record_id
+           where l.event = 'agent_stopped' and l.record_type = 'company_agent'
+             and ca.agent_code = 'KOR-1'
+           order by l.id`,
+        );
 
       afterAll(async () => {
         // Other files read the office as the fixtures left it: KOR-1 open in Arma DX, no row in
@@ -2607,6 +2623,115 @@ describe.skipIf(noDatabase)('requests', () => {
           expect(closed.statusCode).toBe(200);
         }
         expect((await office(founder, ids.pillika)).body.work).toEqual([]);
+      });
+
+      it('a stop "only if open" stops the agent where it is open, one company per request, with one audit row each', async () => {
+        expect(await stored(ids.arma)).toBe('enabled');
+        expect(await stored(ids.pillika)).toBe('enabled');
+        const before = (await stops()).length;
+
+        const inArma = await switchIn(ids.arma, { status: 'stopped', onlyIfOpen: true });
+        expect(inArma.statusCode).toBe(200);
+        // The answer is the agent as the office lists it, and says that this request stopped it.
+        expect(officeAgentSchema.parse(inArma.json())).toEqual({
+          code: 'KOR-1',
+          name: 'Ofis Koordinatörü',
+          status: 'stopped',
+          ready: true,
+        });
+        expect(agentStopIfOpenResponseSchema.parse(inArma.json()).changed).toBe(true);
+        // One request, one company: Pillika's switch is untouched.
+        expect(await stored(ids.arma)).toBe('stopped');
+        expect(await stored(ids.pillika)).toBe('enabled');
+        const inPillika = await switchIn(ids.pillika, { status: 'stopped', onlyIfOpen: true });
+        expect(agentStopIfOpenResponseSchema.parse(inPillika.json())).toMatchObject({
+          status: 'stopped',
+          changed: true,
+        });
+        expect(await stored(ids.pillika)).toBe('stopped');
+        // One audit row per company, in the founder's name.
+        expect((await stops()).slice(before)).toEqual([
+          { company_id: ids.arma, user_id: ids.founder },
+          { company_id: ids.pillika, user_id: ids.founder },
+        ]);
+
+        // A second time nothing is open: nothing is written, the answer says what the switch is.
+        const again = await switchIn(ids.arma, { status: 'stopped', onlyIfOpen: true });
+        expect(again.statusCode).toBe(200);
+        // Already stopped: the switch reads the same, and the answer does not claim the stop.
+        expect(agentStopIfOpenResponseSchema.parse(again.json())).toMatchObject({
+          status: 'stopped',
+          changed: false,
+        });
+        expect(await stops()).toHaveLength(before + 2);
+      });
+
+      it('a stop "only if open" leaves a closed agent closed and makes no row for one that was never opened', async () => {
+        const audit = (await stops()).length;
+        // KOR-2 was never opened in Arma DX: no row, before and after.
+        const never = await send(server, founder, 'PUT', '/api/agents/KOR-2/switch', {
+          company: ids.arma,
+          payload: { status: 'stopped', onlyIfOpen: true },
+        });
+        expect(never.statusCode).toBe(200);
+        expect(agentStopIfOpenResponseSchema.parse(never.json())).toMatchObject({
+          code: 'KOR-2',
+          status: null,
+          changed: false,
+        });
+        expect(
+          await adminQuery(`select 1 from office.company_agents where agent_code = 'KOR-2'`),
+        ).toEqual([]);
+        // Closed in Pillika (the administrator's value): it stays closed.
+        await adminExec(`
+          update office.company_agents set status = 'disabled'
+            where company_id = '${ids.pillika}' and agent_code = 'KOR-1';
+        `);
+        const closed = await switchIn(ids.pillika, { status: 'stopped', onlyIfOpen: true });
+        expect(agentStopIfOpenResponseSchema.parse(closed.json())).toMatchObject({
+          status: 'disabled',
+          changed: false,
+        });
+        expect(await stored(ids.pillika)).toBe('disabled');
+        // An agent the card does not give to the company: nothing to stop, no refusal.
+        const foreign = await send(server, founder, 'PUT', '/api/agents/P-IST-1/switch', {
+          company: ids.arma,
+          payload: { status: 'stopped', onlyIfOpen: true },
+        });
+        expect(agentStopIfOpenResponseSchema.parse(foreign.json())).toMatchObject({
+          status: null,
+          changed: false,
+        });
+        expect(await stops()).toHaveLength(audit);
+        // An agent that does not exist, and a body that is not the contract's.
+        expect(
+          (
+            await send(server, founder, 'PUT', '/api/agents/XYZ-9/switch', {
+              company: ids.arma,
+              payload: { status: 'stopped', onlyIfOpen: true },
+            })
+          ).statusCode,
+        ).toBe(404);
+        expect((await switchIn(ids.arma, { status: 'enabled', onlyIfOpen: true })).statusCode).toBe(
+          400,
+        );
+        // Only the founder, as for every switch.
+        const byEmployee = await send(server, employee, 'PUT', '/api/agents/KOR-1/switch', {
+          company: ids.arma,
+          payload: { status: 'stopped', onlyIfOpen: true },
+        });
+        expect([byEmployee.statusCode, errorCode(byEmployee)]).toEqual([403, 'founder_only']);
+        // The plain stop keeps its meaning: it also stops an agent that is not open.
+        const plain = await switchIn(ids.pillika, { status: 'stopped' });
+        expect(officeAgentSchema.parse(plain.json()).status).toBe('stopped');
+        // Its answer is the agent alone, as before: the four fields of the office's agent.
+        expect(Object.keys(plain.json<object>()).sort()).toEqual([
+          'code',
+          'name',
+          'ready',
+          'status',
+        ]);
+        expect(await stored(ids.pillika)).toBe('stopped');
       });
     });
 
