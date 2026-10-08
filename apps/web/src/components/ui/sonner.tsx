@@ -10,7 +10,8 @@ import { useTheme } from '@/lib/theme';
 
 // sonner's default shortcut (Alt+T) moves the focus to the toast list. On a Turkish Q keyboard
 // that combination types the lira sign, so a person typing in a field lost the focus while a toast
-// was on screen. Toasts here have no buttons and are announced through the live region.
+// was on screen. Toasts are announced through the live region; the one kind that carries a
+// button (a notice that stays until it is closed) is reached with Tab.
 const NO_HOTKEY: string[] = [];
 
 const Toaster = ({ ...props }: ToasterProps) => {
@@ -40,12 +41,17 @@ const Toaster = ({ ...props }: ToasterProps) => {
         } as React.CSSProperties
       }
       toastOptions={{
+        // The name of the close button of a toast that stays until it is closed.
+        closeButtonAriaLabel: 'Bildirimi kapat',
         classNames: {
           // No shadow (CLAUDE.md design rules): the toast is set apart by its border. sonner draws
           // both its shadow and its focus ring as a box-shadow from an unlayered rule, hence the
           // important marks; the ring comes back as our outline.
           toast:
             'cn-toast shadow-none! focus-visible:outline-2! focus-visible:outline-offset-2! focus-visible:outline-ring!',
+          // The close button's focus ring is a box-shadow too.
+          closeButton:
+            'shadow-none! focus-visible:outline-2! focus-visible:outline-offset-2! focus-visible:outline-ring!',
         },
       }}
       {...props}

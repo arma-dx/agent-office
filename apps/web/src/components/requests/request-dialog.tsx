@@ -1,4 +1,4 @@
-import { REQUEST_TEXT_MAX, requestDueDateSchema } from '@agent-office/shared';
+import { REQUEST_TEXT_MAX, requestDueDateSchema, type CreateRequest } from '@agent-office/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
 import {
@@ -10,6 +10,7 @@ import {
   type SyntheticEvent,
   type ReactNode,
 } from 'react';
+import { toast } from 'sonner';
 import { z } from 'zod';
 import { Button } from '@/components/ui/button';
 import {
@@ -41,6 +42,11 @@ import { busyProps } from '@/lib/utils';
  * id, so a request is never opened twice. The text and the due day are kept as a draft in the tab
  * until they are sent or discarded.
  *
+ * A send whose answer was lost may have been stored all the same; the form stays open and can be
+ * changed before the next try. The API then answers the first record, and neither the text nor
+ * the due day of a sent request can be corrected: when the answer is not what was sent, a notice
+ * that stays until it is closed says that the change was not taken.
+ *
  * The due day cannot be changed after the send, so the form never lets one go that the person did
  * not mean: a day before today and a date that is only half typed are said at the field and
  * nothing is sent, and plain Enter in the date field sends nothing (as in the text box, only Ctrl
@@ -59,6 +65,9 @@ const draftSchema = z.object({
   text: z.string().max(REQUEST_TEXT_MAX),
   dueDate: z.union([requestDueDateSchema, z.literal('')]).catch(''),
 });
+
+const FIRST_RECORD_KEPT =
+  'Talep ilk gönderdiğiniz hâliyle kayıtlı; sonradan yaptığınız değişiklik alınmadı. Değiştirmek için bu talebi iptal edip yenisini gönderin.';
 
 /** What the date field holds is a real calendar day (the contract of the API). */
 function isDay(value: string): boolean {
@@ -131,15 +140,14 @@ function RequestDialog({
   const closedBecause = intake.data && !intake.data.open ? intake.data.reason : null;
 
   const send = useMutation({
-    mutationFn: () =>
-      createRequest(company.companyId, {
-        id: initial.id,
-        text,
-        // A request without a due day sends no key for it.
-        ...(dueDate === '' ? {} : { dueDate }),
-      }),
-    onSuccess: (detail) => {
+    mutationFn: (sent: CreateRequest) => createRequest(company.companyId, sent),
+    onSuccess: (detail, sent) => {
       saveDraft(key, null);
+      // The id was stored by an earlier try whose answer was lost, and the form was changed
+      // since: the record holds the first text and day. Said, never dropped in silence.
+      if (detail.text !== sent.text || detail.dueDate !== (sent.dueDate ?? null)) {
+        toast.warning(FIRST_RECORD_KEPT, { duration: Infinity, closeButton: true });
+      }
       queryClient.setQueryData(requestKey(company.companyId, detail.id), detail);
       void queryClient.invalidateQueries({ queryKey: ['company', company.companyId, 'requests'] });
       onClose();
@@ -179,7 +187,8 @@ function RequestDialog({
     if (unreadable) return;
     if (dueDate !== '' && (!isDay(dueDate) || dueDate < officeToday())) return;
     if (empty || tooLong || send.isPending || closedBecause !== null) return;
-    send.mutate();
+    // A request without a due day sends no key for it.
+    send.mutate({ id: initial.id, text, ...(dueDate === '' ? {} : { dueDate }) });
   }
 
   return (

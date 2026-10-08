@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { toast } from 'sonner';
 import { describe, expect, it } from 'vitest';
 import { Toaster } from './sonner.tsx';
@@ -40,5 +40,30 @@ describe('Toaster', () => {
       'focus-visible:outline-offset-2!',
       'focus-visible:outline-ring!',
     );
+  });
+
+  it('gives a toast that stays until it is closed a close button with a Turkish name', async () => {
+    render(<Toaster />);
+    act(() => {
+      toast.warning('Değişiklik alınmadı.', { duration: Infinity, closeButton: true });
+    });
+    await screen.findByText('Değişiklik alınmadı.');
+    const close = screen.getByRole('button', { name: 'Bildirimi kapat' });
+    // Its focus ring is a box-shadow in sonner too: ours is the outline.
+    expect(close).toHaveClass(
+      'shadow-none!',
+      'focus-visible:outline-2!',
+      'focus-visible:outline-offset-2!',
+      'focus-visible:outline-ring!',
+    );
+    // An ordinary toast carries no button.
+    act(() => {
+      toast.dismiss();
+      toast.success('Kaydedildi.');
+    });
+    await screen.findByText('Kaydedildi.');
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: 'Bildirimi kapat' })).toBeNull();
+    });
   });
 });

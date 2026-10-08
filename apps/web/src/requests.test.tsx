@@ -13,6 +13,8 @@ import {
   PILLIKA,
   sessionHandler,
   USER_ID,
+  type ApiCall,
+  type Handler,
 } from './test/mock-api.ts';
 import {
   APPROVAL_CARD,
@@ -87,6 +89,7 @@ describe('Yeni talep', () => {
       approval: null,
       requester: FOUNDER,
       actions: { cancel: true, stop: false, reroute: false },
+      text: 'LinkedIn için gönderi yaz',
     });
     const api = mockApi({
       'GET /session': sessionHandler(),
@@ -139,6 +142,9 @@ describe('Yeni talep', () => {
     // The page is the confirmation.
     expect(await screen.findByText('Yönlendiriliyor')).toBeVisible();
     expect(screen.getByRole('button', { name: 'Talebi iptal et' })).toBeVisible();
+    // The record is what was sent: nothing more is said.
+    expect(screen.queryByText(/ilk gönderdiğiniz hâliyle kayıtlı/)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Bildirimi kapat' })).toBeNull();
     expect(api.unexpected).toEqual([]);
   });
 
@@ -254,10 +260,15 @@ describe('Yeni talep', () => {
       requester: FOUNDER,
       actions: { cancel: true, stop: false, reroute: false },
     });
-    const handlers = () => ({
+    // The record the API answers holds what it was sent.
+    const storedFrom = (call: ApiCall) => {
+      const sent = call.body as { text: string; dueDate?: string };
+      return { ...created, text: sent.text, dueDate: sent.dueDate ?? null };
+    };
+    const handlers = (): Record<string, Handler> => ({
       'GET /session': sessionHandler(),
       'GET /requests': () => json({ requests: [], truncated: false }),
-      'POST /requests': () => json(created, 201),
+      'POST /requests': (call) => json(storedFrom(call), 201),
       [`GET /requests/${REQUEST_ID}`]: () => json(created),
     });
 
@@ -557,6 +568,131 @@ describe('Yeni talep', () => {
       dialog = await openForm();
       expect(within(dialog).getByRole('textbox')).toHaveValue('Bozuk günlü taslak');
       expect(dueField(dialog)).toHaveValue('');
+    });
+
+    // The answer of a send can be lost on the way (Wi-Fi, VPN, sleep) after the API stored the
+    // request. The form stays open and can be changed; the next try carries the same id and the
+    // API answers the first record. Neither the text nor the day can be corrected afterwards, so
+    // a change that was not taken is said, and the notice stays until the person closes it.
+    describe('after a send whose answer was lost', () => {
+      const NOT_TAKEN =
+        'Talep ilk gönderdiğiniz hâliyle kayıtlı; sonradan yaptığınız değişiklik alınmadı. Değiştirmek için bu talebi iptal edip yenisini gönderin.';
+      const soon = () => officeDay(Date.now() + 2 * DAY_MS);
+      const later = () => officeDay(Date.now() + 9 * DAY_MS);
+
+      /** The first send is stored and its answer lost; every later one answers that record. */
+      function lostAnswer() {
+        let stored: ReturnType<typeof storedFrom> | null = null;
+        return mockApi({
+          ...handlers(),
+          'POST /requests': (call) => {
+            if (stored === null) {
+              stored = storedFrom(call);
+              throw new TypeError('Failed to fetch');
+            }
+            return json(stored, 201);
+          },
+          [`GET /requests/${REQUEST_ID}`]: () => json(stored),
+        });
+      }
+
+      async function sendAndLose(dialog: HTMLElement, text: string, day: string): Promise<void> {
+        if (day !== '') fireEvent.change(dueField(dialog), { target: { value: day } });
+        await userEvent.type(within(dialog).getByRole('textbox'), text);
+        await userEvent.click(within(dialog).getByRole('button', { name: 'Talebi gönder' }));
+        expect(await within(dialog).findByRole('alert')).toHaveTextContent(
+          'Sunucuya ulaşılamadı. Bağlantınızı kontrol edip yeniden deneyin.',
+        );
+        // Nothing is lost and nothing is locked: the form can be changed before the next try.
+        expect(within(dialog).getByRole('textbox')).toHaveValue(text);
+        expect(dueField(dialog)).toHaveValue(day);
+      }
+
+      it.each([
+        { name: 'the day was changed', first: soon, second: later, more: '' },
+        { name: 'a day was added', first: () => '', second: later, more: '' },
+        { name: 'the day was cleared', first: soon, second: () => '', more: '' },
+        { name: 'the text was changed', first: soon, second: soon, more: ' ve bir görsel öner' },
+      ])('says that the change was not taken: $name', async ({ first, second, more }) => {
+        const api = lostAnswer();
+        await openList();
+        const dialog = await openForm();
+        await sendAndLose(dialog, 'Bir gönderi yaz', first());
+
+        fireEvent.change(dueField(dialog), { target: { value: second() } });
+        if (more !== '') await userEvent.type(within(dialog).getByRole('textbox'), more);
+        await userEvent.click(within(dialog).getByRole('button', { name: 'Talebi gönder' }));
+        // The page of the first record opens.
+        expect(await screen.findByText('Yönlendiriliyor')).toBeVisible();
+        expect(screen.queryByRole('dialog')).toBeNull();
+        const day = (value: string) => (value === '' ? {} : { dueDate: value });
+        const bodies = api.callsTo('POST /requests').map((call) => call.body);
+        expect(bodies).toEqual([
+          {
+            id: expect.stringMatching(/^[0-9a-f-]{36}$/) as string,
+            text: 'Bir gönderi yaz',
+            ...day(first()),
+          },
+          {
+            id: (bodies[0] as { id: string }).id,
+            text: `Bir gönderi yaz${more}`,
+            ...day(second()),
+          },
+        ]);
+
+        const notice = await screen.findByText(NOT_TAKEN);
+        expect(notice).toBeVisible();
+        expect(
+          within(screen.getByRole('region', { name: 'Anlık bildirimler' })).getByText(NOT_TAKEN),
+        ).toBe(notice);
+        // The draft went with the send: the form does not open with the change again.
+        expect(sessionStorage.getItem(draftKey(USER_ID, ARMADX.companyId, 'request'))).toBeNull();
+      });
+
+      it('keeps the notice on screen until the person closes it', async () => {
+        vi.useFakeTimers({ shouldAdvanceTime: true });
+        try {
+          const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+          lostAnswer();
+          await openList();
+          await user.click(sidebarButton());
+          const dialog = await screen.findByRole('dialog', { name: 'Yeni talep' });
+          fireEvent.change(dueField(dialog), { target: { value: soon() } });
+          await user.type(within(dialog).getByRole('textbox'), 'Bir gönderi yaz');
+          await user.click(within(dialog).getByRole('button', { name: 'Talebi gönder' }));
+          await within(dialog).findByRole('alert');
+          fireEvent.change(dueField(dialog), { target: { value: later() } });
+          await user.click(within(dialog).getByRole('button', { name: 'Talebi gönder' }));
+          expect(await screen.findByText(NOT_TAKEN)).toBeVisible();
+
+          // Long after another toast would have left.
+          await vi.advanceTimersByTimeAsync(60_000);
+          expect(screen.getByText(NOT_TAKEN)).toBeVisible();
+          // Closed with the keyboard: a button with a Turkish name, in the tab order.
+          const close = screen.getByRole('button', { name: 'Bildirimi kapat' });
+          expect(close).not.toHaveAttribute('tabindex', '-1');
+          close.focus();
+          await user.keyboard('{Enter}');
+          await waitFor(() => {
+            expect(screen.queryByText(NOT_TAKEN)).toBeNull();
+          });
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+
+      it('says nothing when the same request is sent again', async () => {
+        const api = lostAnswer();
+        await openList();
+        const dialog = await openForm();
+        await sendAndLose(dialog, 'Bir gönderi yaz', soon());
+        await userEvent.click(within(dialog).getByRole('button', { name: 'Talebi gönder' }));
+        expect(await screen.findByText('Yönlendiriliyor')).toBeVisible();
+        expect(api.callsTo('POST /requests')).toHaveLength(2);
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        expect(screen.queryByText(NOT_TAKEN)).toBeNull();
+        expect(screen.queryByRole('button', { name: 'Bildirimi kapat' })).toBeNull();
+      });
     });
   });
 });
@@ -2754,6 +2890,7 @@ describe('the page of a request', () => {
         approval: null,
         requester: FOUNDER,
         actions: { cancel: true, stop: false, reroute: false },
+        text: 'Kasım bülteni',
         comments: withComments([]),
       });
       const api = mockApi({
