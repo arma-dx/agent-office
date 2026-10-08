@@ -421,6 +421,105 @@ describe.skipIf(noDatabase)('a request from the first line to "done"', () => {
     expect(errors).toEqual([]);
   });
 
+  it('the founder’s own request: the same person gives two separate approvals', async () => {
+    // 8 October decision 4. In the pilot the founder approves every unit, so the founder's own
+    // request is exactly this case: approving the unit's result does not end the request, the
+    // result then waits for the same person as its requester.
+    const id = randomUUID();
+    const created = await post(founder, '/api/requests', { id, text: 'LinkedIn için gönderi yaz' });
+    expect(created.statusCode).toBe(201);
+    expect(await work(new ScriptedModel([toolUse('route_task', ROUTE_TO_SOS)]))).toEqual({
+      outcome: 'routed',
+      agent: 'KOR-1',
+    });
+    expect(await work(new ScriptedModel([toolUse('submit_for_approval', RESULT)]))).toEqual({
+      outcome: 'submitted',
+      agent: 'SOS-2',
+    });
+
+    // First the approver's approval: on the desk as an approval, not as an acceptance.
+    const waiting = await detail(founder, id);
+    expect(waiting).toMatchObject({
+      status: 'awaiting_approval',
+      stage: 'unit_approval',
+      turn: { kind: 'founder' },
+      waitingForMe: true,
+      requester: { userId: ids.founder },
+      approval: { attempt: 1, requester: { userId: ids.founder }, needsStepUp: true },
+      acceptance: null,
+      result: null,
+    });
+    expect(await waitingFor(founder, id)).toEqual({ approval: true, acceptance: false });
+    // The requester's answer cannot be given before the approver's, also by the same person.
+    const early = await post(founder, `/api/requests/${id}/acceptance`, { decision: 'approved' });
+    expect([early.statusCode, errorCode(early)]).toEqual([409, 'approval_closed']);
+
+    // Approved with the passkey: the request is not done. It waits for its requester, who is
+    // the same person, with the acceptance card and on the desk as an acceptance.
+    const approved = await approve(waiting.approval?.id ?? '', 'A');
+    expect(approved).toMatchObject({
+      status: 'awaiting_approval',
+      stage: 'requester_approval',
+      turn: { kind: 'person', userId: ids.founder },
+      waitingForMe: true,
+      approval: null,
+      acceptance: { round: 1 },
+      result: {
+        option: { code: 'A', text: 'İzmir ofisimiz açıldı.' },
+        approvedBy: { userId: ids.founder },
+      },
+    });
+    expect(await waitingFor(founder, id)).toEqual({ approval: false, acceptance: true });
+    expect((await desk(founder)).acceptances.find((card) => card.requestId === id)).toMatchObject({
+      round: 1,
+      result: { option: { code: 'A' }, agent: { code: 'SOS-2' } },
+    });
+    const [between] = await admin<{ status: string }>(
+      'select status from office.tasks where id = $1',
+      [id],
+    );
+    expect(between).toEqual({ status: 'awaiting_approval' });
+
+    // The second approval, the requester's, ends it.
+    const accepted = await post(founder, `/api/requests/${id}/acceptance`, {
+      decision: 'approved',
+    });
+    expect(accepted.statusCode).toBe(200);
+    const done = requestDetailSchema.parse(accepted.json());
+    expect(done).toMatchObject({
+      status: 'done',
+      stage: 'done',
+      turn: { kind: 'none' },
+      waitingForMe: false,
+      result: { option: { code: 'A' }, approvedBy: { userId: ids.founder } },
+    });
+    expect(journeyOf(done)).toEqual([
+      'run:completed',
+      'routing:',
+      'run:completed',
+      'approval:approved',
+      'acceptance:approved',
+    ]);
+    expect(await waitingFor(founder, id)).toEqual({ approval: false, acceptance: false });
+    // Two decisions of one person, each its own record.
+    expect(
+      await admin(
+        `select 'approval' as kind, status, decided_by_user_id as by from office.approvals
+         where task_id = $1
+         union all
+         select 'acceptance', status, requester_user_id from office.requester_approvals
+         where task_id = $1
+         order by kind desc`,
+        [id],
+      ),
+    ).toEqual([
+      { kind: 'approval', status: 'approved', by: ids.founder },
+      { kind: 'acceptance', status: 'approved', by: ids.founder },
+    ]);
+    expect(await workerQueue.fetch(AGENT_RUN_QUEUE)).toEqual([]);
+    expect(errors).toEqual([]);
+  });
+
   it('a request for a unit with no open agent is returned to its requester and closed', async () => {
     // 8 October decision 2, with the founder's own example: an employee asks for the KVKK texts.
     // The coordinator names the right unit, which has no agent yet.
