@@ -48,6 +48,7 @@ export const CAUSE_SHORT: Record<RequestCause, string> = {
   not_started: 'çalışma başlamadı',
   no_submission: 'ajan sonuç sunmadı',
   run_failed: 'çalışma tamamlanamadı',
+  run_interrupted: 'çalışma yarıda kesildi',
   limit_reached: 'sınıra takıldı',
   model_refused: 'model yanıt vermedi',
   model_unavailable: 'model bağlantısı yok',
@@ -78,6 +79,7 @@ export const CAUSE_SENTENCE: Record<RequestCause, string> = {
     'Ajanın çalışması başlatılamadı: iş verildiğinde ajan kapalıydı ya da çalışmaya hazır değildi. Ajan şimdi açık, ama iş kendiliğinden başlamaz.',
   no_submission: 'Ajan sonucu onaya sunmadan çalışmasını bitirdi.',
   run_failed: 'Ajanın çalışması bir hata nedeniyle tamamlanamadı.',
+  run_interrupted: 'Talep değiştiği için ajanın çalışması yarıda kesildi.',
   limit_reached: 'Ajan çalışma sınırına takıldı.',
   model_refused: 'Model bu isteği yanıtlamadı.',
   model_unavailable: 'Ajanlar şu an çalışamıyor: model hizmetine bağlanılamadı.',
@@ -124,6 +126,8 @@ export const CAUSE_NEXT: Partial<Record<RequestCause, string>> = {
   no_submission:
     '"Yönlendirmeyi düzelt" ile işi aynı ajana yeniden verebilir (yeni bir çalışma başlar) ya da talebi kapatabilirsiniz.',
   run_failed:
+    '"Yönlendirmeyi düzelt" ile işi aynı ajana yeniden verebilir (yeni bir çalışma başlar) ya da talebi kapatabilirsiniz.',
+  run_interrupted:
     '"Yönlendirmeyi düzelt" ile işi aynı ajana yeniden verebilir (yeni bir çalışma başlar) ya da talebi kapatabilirsiniz.',
   limit_reached:
     '"Yönlendirmeyi düzelt" ile işi aynı ajana yeniden verebilir (yeni bir çalışma başlar) ya da talebi kapatabilirsiniz.',

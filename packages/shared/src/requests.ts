@@ -104,6 +104,9 @@ export const requestCauseSchema = z.enum([
   'not_started',
   'no_submission',
   'run_failed',
+  // The run was stopped because the request changed under it (a result the database refused, a
+  // routing that moved), and nothing else took the work over.
+  'run_interrupted',
   'limit_reached',
   'model_refused',
   'model_unavailable',
@@ -210,7 +213,10 @@ export function runGraceMs(limitMinutes: number | null): number {
 
 function causeOfRun(run: NonNullable<RequestFacts['lastRun']>, coordinator: boolean): RequestCause {
   if (run.status === 'limit_reached') return 'limit_reached';
-  if (run.status === 'stopped') return 'agent_stopped';
+  if (run.status === 'stopped') {
+    // Only the stop switch stops an agent; every other stop is the request changing under the run.
+    return run.errorCode === 'agent_stopped' ? 'agent_stopped' : 'run_interrupted';
+  }
   if (run.status === 'completed') return coordinator ? 'no_routing' : 'no_submission';
   switch (run.errorCode) {
     case 'model_refusal':

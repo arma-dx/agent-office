@@ -288,6 +288,13 @@ describe('where a request is and whose turn it is', () => {
       'fell_to_person limit_reached approver on time',
     );
     expect(ended('stopped', 'agent_stopped')).toBe('fell_to_person agent_stopped approver on time');
+    // A run the request changed under was not stopped by anybody's switch.
+    expect(ended('stopped', 'request_changed')).toBe(
+      'fell_to_person run_interrupted approver on time',
+    );
+    expect(ended('stopped', 'routing_changed')).toBe(
+      'fell_to_person run_interrupted approver on time',
+    );
     expect(ended('failed', 'model_refusal')).toBe('fell_to_person model_refused approver on time');
     expect(ended('failed', 'anthropic_auth_failed')).toBe(
       'fell_to_person model_unavailable approver on time',
