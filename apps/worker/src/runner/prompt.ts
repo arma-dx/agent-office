@@ -15,6 +15,10 @@ import type { StoredCard } from '@agent-office/shared';
  *
  * The request text is data although a colleague typed it: it can hold pasted outside text, and
  * the requester orders work but does not set the agent's rules.
+ *
+ * Comments on a request are for people (8 October decision 13). Nothing here takes one: no block,
+ * no fact, no tool result. The database holds the same line: the worker's role is shown no
+ * comment of a request, with any context.
  */
 
 function list(title: string, items: readonly string[]): string {
@@ -89,6 +93,9 @@ export interface RunFacts {
   requesterRole: 'founder' | 'employee';
   today: string;
   agent: string;
+  // The due day the requester gave (YYYY-MM-DD, the office's day); absent when none. A fact of
+  // the request, given as data like the rest of this block: it orders nothing.
+  dueDate?: string;
 }
 
 export interface UnitForRouting {

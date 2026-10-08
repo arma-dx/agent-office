@@ -1,6 +1,7 @@
 import {
   agentRunJobSchema,
   agentStep,
+  dueDaySql,
   type AgentContext,
   type AgentRunJob,
   type AgentRunSender,
@@ -8,8 +9,8 @@ import {
 } from '@agent-office/db';
 import {
   COORDINATOR_AGENT_CODE,
-  OFFICE_TIME_ZONE,
   costOf,
+  officeDay,
   storedCardSchema,
   toolKindSchema,
   type ModelProfile,
@@ -175,6 +176,8 @@ interface TaskRow {
   description: string | null;
   status: string;
   requester_user_id: string;
+  // The due day of the request (YYYY-MM-DD, office time); null when the requester gave none.
+  due_date: string | null;
   ai_allowed: boolean;
   company_name: string;
   requester_role: string | null;
@@ -223,23 +226,6 @@ class ToolRefusal extends Error {
  * the first read and the insert of the run.
  */
 class StepMoved extends Error {}
-
-/**
- * The date the model is told as a fact: the office's day, not the UTC day (between midnight and
- * 03:00 in Türkiye the two differ, and "bugün" in a request means the office's).
- */
-const officeDay = new Intl.DateTimeFormat('en-CA', {
-  timeZone: OFFICE_TIME_ZONE,
-  year: 'numeric',
-  month: '2-digit',
-  day: '2-digit',
-});
-
-function officeDate(instant: number): string {
-  const parts = officeDay.formatToParts(new Date(instant));
-  const part = (type: string): string => parts.find((item) => item.type === type)?.value ?? '';
-  return `${part('year')}-${part('month')}-${part('day')}`;
-}
 
 function sqlState(error: unknown): string | undefined {
   if (error instanceof Error && 'code' in error && typeof error.code === 'string') {
@@ -455,6 +441,7 @@ export async function runAgentJob(
     // the project.
     const found = await client.query<TaskRow>(
       `select t.title, t.description, t.status, t.requester_user_id,
+              ${dueDaySql('t.due_at')} as due_date,
               (
                 t.project_id is null or exists (
                   select 1 from office.projects p
@@ -698,8 +685,14 @@ export async function runAgentJob(
         facts: {
           company: task.company_name,
           requesterRole: task.requester_role,
-          today: officeDate(now()),
+          // The date the model is told as a fact: the office's day, not the UTC day (between
+          // midnight and 03:00 in Türkiye the two differ, and "bugün" in a request means the
+          // office's).
+          today: officeDay(now()),
           agent: job.agentCode,
+          // The requester's due day, as a fact of the request: data like the rest, no instruction
+          // (docs/SONRA.md D-g). Left out when the request has none.
+          ...(task.due_date !== null ? { dueDate: task.due_date } : {}),
         },
         request: { title: task.title, text: task.description ?? '' },
         ...(units ? { units } : {}),

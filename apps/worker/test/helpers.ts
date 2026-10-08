@@ -85,17 +85,23 @@ export async function admin<T extends pg.QueryResultRow = Record<string, unknown
   return (await testPools().admin.query<T>(sql, values)).rows;
 }
 
-/** A person opens a request, as the API does it: with their own context and the API's role. */
+/**
+ * A person opens a request, as the API does it: with their own context and the API's role. The
+ * due day (YYYY-MM-DD) is stored as the API stores it: the last second of that day in Istanbul.
+ */
 export async function openRequest(
   userId: string,
   text: string,
   companyId: string = ids.arma,
+  dueDate: string | null = null,
 ): Promise<string> {
   return withContext(testPools().app, { companyId, userId }, async (client) => {
     const { rows } = await client.query<{ id: string }>(
-      `insert into office.tasks (company_id, kind, title, description)
-       values ($1, 'request', $2, $3) returning id`,
-      [companyId, text.split('\n')[0]?.slice(0, 80) ?? 'Talep', text],
+      `insert into office.tasks (company_id, kind, title, description, due_at)
+       values ($1, 'request', $2, $3,
+         (($4::date + time '23:59:59') at time zone 'Europe/Istanbul'))
+       returning id`,
+      [companyId, text.split('\n')[0]?.slice(0, 80) ?? 'Talep', text, dueDate],
     );
     return rows[0]?.id ?? '';
   });
