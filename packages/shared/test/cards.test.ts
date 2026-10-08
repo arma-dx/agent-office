@@ -89,9 +89,12 @@ describe('cardDefinitionSchema', () => {
 
 describe('office contract', () => {
   const agent = { code: 'KOR-1', name: 'Ofis Koordinatörü', status: null, ready: true };
+  // No open request is counted in these answers; the counts have tests of their own (office.test.ts).
+  const NO_WORK = { work: [], workTruncated: false };
 
   it('accepts units with agents, with and without a switch', () => {
     const parsed = officeResponseSchema.parse({
+      ...NO_WORK,
       units: [
         {
           code: 'KOR',
@@ -105,17 +108,26 @@ describe('office contract', () => {
     });
     expect(parsed.units[0]?.agents.map((a) => a.status)).toEqual([null, 'stopped']);
     expect(parsed.units[0]?.agents.map((a) => a.ready)).toEqual([true, false]);
-    expect(officeResponseSchema.parse({ units: [] })).toEqual({ units: [] });
+    expect(officeResponseSchema.parse({ units: [], ...NO_WORK })).toEqual({
+      units: [],
+      ...NO_WORK,
+    });
   });
 
   it('refuses a unit without agents', () => {
     expect(
-      officeResponseSchema.safeParse({ units: [{ code: 'KOR', name: 'K', agents: [] }] }).success,
+      officeResponseSchema.safeParse({
+        units: [{ code: 'KOR', name: 'K', agents: [] }],
+        ...NO_WORK,
+      }).success,
     ).toBe(false);
   });
 
   it('refuses an unknown status, a missing status and an agent that does not say whether it can run', () => {
-    const unit = (agents: unknown[]) => ({ units: [{ code: 'KOR', name: 'K', agents }] });
+    const unit = (agents: unknown[]) => ({
+      units: [{ code: 'KOR', name: 'K', agents }],
+      ...NO_WORK,
+    });
     expect(officeResponseSchema.safeParse(unit([agent])).success).toBe(true);
     expect(officeResponseSchema.safeParse(unit([{ ...agent, status: 'running' }])).success).toBe(
       false,

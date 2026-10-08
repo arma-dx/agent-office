@@ -725,8 +725,17 @@ export type OfficeAgentWork = z.output<typeof officeAgentWorkSchema>;
  * GET /api/office: the units and agents of the selected company, units shared by every company
  * first, each group by code. Founder or employee; 403 insiders_only for an external person. Never
  * carries another company's units, agents or switches.
+ *
+ * `work` lists the agents of `units` that have at least one open request to count, in the order of
+ * `units`; an agent that is not listed has none. It is computed for the reader: a request the
+ * reader may not read (another project's) is not counted. `workTruncated` is true when the company
+ * has more open requests than OFFICE_REQUEST_LIMIT, so the numbers may be too small.
  */
-export const officeResponseSchema = z.object({ units: z.array(officeUnitSchema) });
+export const officeResponseSchema = z.object({
+  units: z.array(officeUnitSchema),
+  work: z.array(officeAgentWorkSchema),
+  workTruncated: z.boolean(),
+});
 export type OfficeResponse = z.output<typeof officeResponseSchema>;
 
 /**

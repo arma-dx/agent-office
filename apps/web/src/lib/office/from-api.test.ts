@@ -24,6 +24,8 @@ const RESPONSE: OfficeResponse = {
       agents: [{ code: 'HAF-1', name: 'Bilgi Tabanı Ajanı', status: 'stopped', ready: true }],
     },
   ],
+  work: [],
+  workTruncated: false,
 };
 
 describe('toOfficeUnits', () => {
@@ -43,7 +45,7 @@ describe('toOfficeUnits', () => {
     const office = toOfficeUnits(RESPONSE);
     expect(office.map((unit) => unit.code)).toEqual(['KOR', 'A-KES', 'HAF']);
     expect(office[0]?.agents.map((agent) => agent.code)).toEqual(['KOR-10', 'KOR-2']);
-    expect(toOfficeUnits({ units: [] })).toEqual([]);
+    expect(toOfficeUnits({ units: [], work: [], workTruncated: false })).toEqual([]);
   });
 
   it('keeps the agents of a unit together, with the names as the cards write them', () => {

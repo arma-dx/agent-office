@@ -66,7 +66,7 @@ describe('app shell: regions and keyboard order', () => {
   it('pads the content of every page except one that fills the content area itself', async () => {
     mockApi({
       'GET /session': sessionHandler(),
-      'GET /office': () => json({ units: [] }),
+      'GET /office': () => json({ units: [], work: [], workTruncated: false }),
     });
     const { router } = renderApp('/c/armadx/tasks');
     await screen.findByRole('heading', { level: 1, name: 'Görevler' });
@@ -151,7 +151,7 @@ describe('top bar: location', () => {
       'GET /passkeys': () => json({ passkeys: [] }),
       'GET /members': () => json({ members: [] }),
       'GET /invitations': () => json({ invitations: [] }),
-      'GET /office': () => json({ units: [] }),
+      'GET /office': () => json({ units: [], work: [], workTruncated: false }),
       'GET /projects': () => json({ projects: [], truncated: false }),
     });
     renderApp(path);

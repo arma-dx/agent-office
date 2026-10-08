@@ -36,6 +36,8 @@ function officeBody(
   notReady: readonly string[] = [],
 ): OfficeResponse {
   return {
+    work: [],
+    workTruncated: false,
     units: units.map((unit) => ({
       code: unit.code,
       name: unit.name,
@@ -228,7 +230,7 @@ describe('office page', () => {
   });
 
   it('shows the first step when the company has no agent', async () => {
-    officeApi({ units: [] });
+    officeApi({ units: [], work: [], workTruncated: false });
     renderApp('/c/armadx/office');
     expect(
       await screen.findByRole('heading', { level: 2, name: 'Burada henüz ajan yok' }),

@@ -169,6 +169,9 @@ describe.skipIf(noDatabase)('office', () => {
           agents: [{ code: 'KOR-4', name: 'Yönetici Asistanı', status: null, ready: false }],
         },
       ],
+      // No request can be opened in the founder space: nothing is counted there.
+      work: [],
+      workTruncated: false,
     });
   });
 
@@ -248,7 +251,7 @@ describe.skipIf(noDatabase)('office', () => {
   it('gives a company without agents an empty office', async () => {
     const res = await request({ session: otherFounder, company: ids.otherCompany });
     expect(res.statusCode).toBe(200);
-    expect(res.json()).toEqual({ units: [] });
+    expect(res.json()).toEqual({ units: [], work: [], workTruncated: false });
   });
 
   it('needs a session and a company', async () => {
@@ -267,8 +270,16 @@ describe.skipIf(noDatabase)('office', () => {
 
   it('carries only the fields of the contract: no settings, no budget', async () => {
     const res = await request();
-    const body = res.json<{ units: Record<string, unknown>[] }>();
-    expect(Object.keys(body)).toEqual(['units']);
+    const body = res.json<{ units: Record<string, unknown>[]; work: Record<string, unknown>[] }>();
+    expect(Object.keys(body)).toEqual(['units', 'work', 'workTruncated']);
+    for (const entry of body.work) {
+      expect(Object.keys(entry).sort()).toEqual([
+        'agentCode',
+        'awaitingApproval',
+        'failed',
+        'running',
+      ]);
+    }
     for (const unit of body.units) {
       expect(Object.keys(unit).sort()).toEqual(['agents', 'code', 'name']);
       for (const agent of unit.agents as Record<string, unknown>[]) {

@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { companyAgentStatusSchema, officeWorkCountSchema } from '../src/api.ts';
+import {
+  companyAgentStatusSchema,
+  officeResponseSchema,
+  officeWorkCountSchema,
+} from '../src/api.ts';
 import {
   AGENT_FAILURE_CAUSES,
   OFFICE_AGENT_STATES,
@@ -214,5 +218,12 @@ describe('the office contract', () => {
     expect(officeWorkCountSchema.safeParse({ count: 2, requestId: REQUEST }).success).toBe(false);
     expect(officeWorkCountSchema.safeParse({ count: 0, requestId: REQUEST }).success).toBe(false);
     expect(officeWorkCountSchema.safeParse({ count: -1, requestId: null }).success).toBe(false);
+  });
+
+  it('the answer needs the units, the work and whether the work was cut', () => {
+    expect(officeResponseSchema.safeParse({ units: [] }).success).toBe(false);
+    expect(
+      officeResponseSchema.safeParse({ units: [], work: [], workTruncated: false }).success,
+    ).toBe(true);
   });
 });

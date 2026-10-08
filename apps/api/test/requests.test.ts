@@ -10,12 +10,14 @@ import {
   approvalDecisionDetails,
   approvalDeskSchema,
   officeAgentSchema,
+  officeResponseSchema,
   requestDetailSchema,
   requestIntakeSchema,
   requestListSchema,
   routingOptionsSchema,
   sidebarCountsSchema,
   todaySchema,
+  type OfficeAgentWork,
   type RequestDetail,
   type SidebarCounts,
   type Today,
@@ -2313,6 +2315,329 @@ describe.skipIf(noDatabase)('requests', () => {
       }
       // The same request made by the person counts as activity.
       expect((await get(session, '/api/today')).statusCode).toBe(200);
+      expect(await idle()).toBe(false);
+    });
+  });
+
+  describe('the office: live states and "Her yerde durdur"', () => {
+    // 8 October decisions 9 and 10. The requests of the whole file stay in the test database, so
+    // the counts of Arma DX are compared before and after, never as totals; Pillika has no other
+    // request, so its numbers are exact.
+
+    const NONE = { count: 0, requestId: null };
+
+    async function office(session: string, company: string = ids.arma) {
+      const res = await get(session, '/api/office', company);
+      expect(res.statusCode).toBe(200);
+      return { res, body: officeResponseSchema.parse(res.json()) };
+    }
+
+    /** The three numbers of an agent in the office answer; zeros when the agent is not listed. */
+    async function numbers(
+      session: string,
+      agentCode: string,
+      company: string = ids.arma,
+    ): Promise<[running: number, awaitingApproval: number, failed: number]> {
+      const { body } = await office(session, company);
+      const work = body.work.find((entry) => entry.agentCode === agentCode);
+      return [work?.running.count ?? 0, work?.awaitingApproval.count ?? 0, work?.failed.count ?? 0];
+    }
+
+    const plus = (
+      before: [number, number, number],
+      delta: [number, number, number],
+    ): [number, number, number] => [
+      before[0] + delta[0],
+      before[1] + delta[1],
+      before[2] + delta[2],
+    ];
+
+    /** A run of an agent on a request that has ended, as the runner writes it. */
+    async function endedRun(
+      taskId: string,
+      agent: 'KOR-1' | 'HAF-2',
+      status: 'completed' | 'failed' | 'limit_reached' | 'stopped',
+      errorCode: string | null = null,
+    ): Promise<void> {
+      await agentStep(
+        workerPool,
+        { companyId: ids.arma, userId: ids.employee, agentCode: agent },
+        async (client) => {
+          await client.query(
+            `insert into office.runs (company_id, task_id, agent_code, card_version_id,
+               trigger_type, model, status, finished_at, error_code)
+             values ($1, $2, $3, $4, $5, 'test-model', $6, now(), $7)`,
+            [
+              ids.arma,
+              taskId,
+              agent,
+              agent === 'KOR-1' ? CARD_KOR : CARD_HAF,
+              agent === 'KOR-1' ? 'request' : 'handoff',
+              status,
+              errorCode,
+            ],
+          );
+        },
+      );
+    }
+
+    it('puts each open request on the desk of its agent, as the request page reads it', async () => {
+      const kor = await numbers(founder, 'KOR-1');
+      const haf = await numbers(founder, 'HAF-2');
+
+      // Routing: the coordinator has the turn, also before its run has started.
+      const routing = await open(employee);
+      expect(await read(founder, routing.id)).toMatchObject({
+        stage: 'routing',
+        turn: { kind: 'agent', code: 'KOR-1' },
+      });
+      expect(await numbers(founder, 'KOR-1')).toEqual(plus(kor, [1, 0, 0]));
+
+      // Routed: the unit's agent has the turn.
+      const working = await open(employee);
+      await route(working.id, ids.employee);
+      expect((await read(founder, working.id)).stage).toBe('working');
+      expect(await numbers(founder, 'HAF-2')).toEqual(plus(haf, [1, 0, 0]));
+      // The coordinator's finished run keeps nothing on its desk.
+      expect(await numbers(founder, 'KOR-1')).toEqual(plus(kor, [1, 0, 0]));
+
+      // A result waits for the unit's approver.
+      const waiting = await open(employee);
+      await route(waiting.id, ids.employee);
+      const approvalId = await submit(waiting.id, ids.employee);
+      expect((await read(founder, waiting.id)).stage).toBe('unit_approval');
+      expect(await numbers(founder, 'HAF-2')).toEqual(plus(haf, [1, 1, 0]));
+
+      // Approved: the result waits for its requester and stands on no desk.
+      const decided = await post(founder, `/api/approvals/${approvalId}/decision`, {
+        decision: 'approved',
+        selectedOption: 'A',
+      });
+      expect(decided.statusCode).toBe(200);
+      expect((await read(founder, waiting.id)).stage).toBe('requester_approval');
+      expect(await numbers(founder, 'HAF-2')).toEqual(plus(haf, [1, 0, 0]));
+
+      // An employee who is nobody's approver reads the same numbers: the stage is no secret.
+      expect(await numbers(colleague, 'HAF-2')).toEqual(await numbers(founder, 'HAF-2'));
+      expect(await numbers(colleague, 'KOR-1')).toEqual(await numbers(founder, 'KOR-1'));
+    });
+
+    it('shows an error for the three causes decision 10 names, until the request is routed again or closed', async () => {
+      const kor = await numbers(founder, 'KOR-1');
+      const haf = await numbers(founder, 'HAF-2');
+      const fallen = async (
+        status: 'completed' | 'failed' | 'limit_reached' | 'stopped',
+        errorCode: string | null = null,
+      ): Promise<string> => {
+        const { id } = await open(employee);
+        await route(id, ids.employee);
+        await endedRun(id, 'HAF-2', status, errorCode);
+        return id;
+      };
+
+      const failed = await fallen('failed', 'tool_error');
+      expect(await read(founder, failed)).toMatchObject({
+        stage: 'fell_to_person',
+        cause: 'run_failed',
+      });
+      const limit = await fallen('limit_reached');
+      expect((await read(founder, limit)).cause).toBe('limit_reached');
+      const silent = await fallen('completed');
+      expect((await read(founder, silent)).cause).toBe('no_submission');
+      expect(await numbers(founder, 'HAF-2')).toEqual(plus(haf, [0, 0, 3]));
+
+      // The coordinator's own run failed before any routing: the error is on its desk.
+      const unrouted = await open(employee);
+      await endedRun(unrouted.id, 'KOR-1', 'failed', 'tool_error');
+      expect((await read(founder, unrouted.id)).cause).toBe('run_failed');
+      expect(await numbers(founder, 'KOR-1')).toEqual(plus(kor, [0, 0, 1]));
+
+      // Every other way a request falls to a person leaves the desks as they are.
+      const others: [string, string][] = [
+        [await fallen('failed', 'model_refusal'), 'model_refused'],
+        [await fallen('failed', 'model_unavailable'), 'model_unavailable'],
+        [await fallen('failed', 'anthropic_billing'), 'model_billing'],
+        [await fallen('failed', 'anthropic_model_not_found'), 'model_not_available'],
+        [await fallen('failed', 'card_not_runnable'), 'card_not_runnable'],
+        [await fallen('stopped', 'request_changed'), 'run_interrupted'],
+        [await fallen('stopped', 'agent_stopped'), 'agent_stopped'],
+      ];
+      for (const [id, cause] of others) {
+        expect(await read(founder, id), cause).toMatchObject({ stage: 'fell_to_person', cause });
+      }
+      const unroutable = await open(employee);
+      await endedRun(unroutable.id, 'KOR-1', 'completed');
+      expect((await read(founder, unroutable.id)).cause).toBe('no_routing');
+      expect(await numbers(founder, 'HAF-2')).toEqual(plus(haf, [0, 0, 3]));
+      expect(await numbers(founder, 'KOR-1')).toEqual(plus(kor, [0, 0, 1]));
+
+      // Routed again: the error leaves the desk and the agent has the turn.
+      const again = await post(founder, `/api/requests/${failed}/routing`, {
+        unitCode: 'HAF',
+        agentCode: 'HAF-2',
+      });
+      expect(again.statusCode).toBe(200);
+      expect(await numbers(founder, 'HAF-2')).toEqual(plus(haf, [1, 0, 2]));
+      // Closed: gone from the desk.
+      const closed = await post(founder, `/api/requests/${limit}/close`, {
+        reason: 'Gerek kalmadı.',
+      });
+      expect(closed.statusCode).toBe(200);
+      expect(await numbers(founder, 'HAF-2')).toEqual(plus(haf, [1, 0, 1]));
+      // The coordinator's failed request, routed by a person: its desk is clear again.
+      const byHand = await post(founder, `/api/requests/${unrouted.id}/routing`, {
+        unitCode: 'HAF',
+        agentCode: 'HAF-2',
+      });
+      expect(byHand.statusCode).toBe(200);
+      expect(await numbers(founder, 'KOR-1')).toEqual(kor);
+    });
+
+    it('counts for the reader: a request inside a project is counted only for its members and the founder', async () => {
+      const projectId = randomUUID();
+      const created = await post(employee, '/api/projects', { id: projectId, name: 'Ofis sayımı' });
+      expect(created.statusCode).toBe(201);
+      // Agents may work in the project (rule 12): the founder's passkey path has tests of its own.
+      await adminQuery('update office.projects set ai_allowed = true where id = $1', [projectId]);
+      const before = {
+        founder: await numbers(founder, 'KOR-1'),
+        employee: await numbers(employee, 'KOR-1'),
+        colleague: await numbers(colleague, 'KOR-1'),
+      };
+      // A request inside the project, opened by its member with the API's role (the form has no
+      // project field yet).
+      const requestId = randomUUID();
+      await withContext(besidePool, { companyId: ids.arma, userId: ids.employee }, (client) =>
+        client.query(
+          `insert into office.tasks (id, company_id, project_id, kind, title, description)
+           values ($1, $2, $3, 'request', 'Proje içinde talep', 'Proje içinde talep')`,
+          [requestId, ids.arma, projectId],
+        ),
+      );
+      expect((await read(employee, requestId)).stage).toBe('routing');
+      expect(await numbers(founder, 'KOR-1')).toEqual(plus(before.founder, [1, 0, 0]));
+      expect(await numbers(employee, 'KOR-1')).toEqual(plus(before.employee, [1, 0, 0]));
+      // An insider who is not a member of the project: the request does not exist for them.
+      expect((await get(colleague, `/api/requests/${requestId}`)).statusCode).toBe(404);
+      expect(await numbers(colleague, 'KOR-1')).toEqual(before.colleague);
+      expect((await office(colleague)).res.body).not.toContain(requestId);
+      // Made a member, the same person counts it.
+      const added = await send(
+        server,
+        employee,
+        'PUT',
+        `/api/projects/${projectId}/members/${ids.holder}`,
+        { company: ids.arma },
+      );
+      expect(added.statusCode).toBe(200);
+      expect(await numbers(colleague, 'KOR-1')).toEqual(plus(before.colleague, [1, 0, 0]));
+      await post(founder, `/api/requests/${requestId}/close`, { reason: 'Deneme bitti.' });
+    });
+
+    describe('in two companies', () => {
+      const switchIn = (company: string, payload: object) =>
+        send(server, founder, 'PUT', '/api/agents/KOR-1/switch', { company, payload });
+
+      afterAll(async () => {
+        // Other files read the office as the fixtures left it: KOR-1 open in Arma DX, no row in
+        // Pillika.
+        await adminExec(`
+          delete from office.company_agents
+            where company_id = '${ids.pillika}' and agent_code = 'KOR-1';
+          update office.company_agents set status = 'enabled'
+            where company_id = '${ids.arma}' and agent_code = 'KOR-1';
+        `);
+      });
+
+      it('an agent’s work in one company never shows in the other', async () => {
+        expect((await switchIn(ids.pillika, { status: 'enabled' })).statusCode).toBe(200);
+        const arma = await numbers(founder, 'KOR-1');
+        // Pillika has no open request yet: nothing is counted there.
+        expect((await office(founder, ids.pillika)).body.work).toEqual([]);
+
+        const first = randomUUID();
+        const sent = await post(
+          founder,
+          '/api/requests',
+          { id: first, text: 'Pillika için istasyon raporu' },
+          ids.pillika,
+        );
+        expect(sent.statusCode).toBe(201);
+        // One request: the answer carries it, so that the panel can lead to it.
+        const one: OfficeAgentWork[] = [
+          {
+            agentCode: 'KOR-1',
+            running: { count: 1, requestId: first },
+            awaitingApproval: NONE,
+            failed: NONE,
+          },
+        ];
+        expect((await office(founder, ids.pillika)).body.work).toEqual(one);
+        // Arma DX: the same numbers as before, and nothing of Pillika's request.
+        const armaOffice = await office(founder);
+        expect(await numbers(founder, 'KOR-1')).toEqual(arma);
+        expect(armaOffice.res.body).not.toContain(first);
+        // Arma DX's employee is not a member of Pillika.
+        const refused = await get(employee, '/api/office', ids.pillika);
+        expect([refused.statusCode, errorCode(refused)]).toEqual([403, 'forbidden']);
+
+        // Two requests: a number, and no request to lead to.
+        const second = randomUUID();
+        await post(founder, '/api/requests', { id: second, text: 'İkinci talep' }, ids.pillika);
+        const two = (await office(founder, ids.pillika)).body;
+        expect(two.work).toEqual([
+          {
+            agentCode: 'KOR-1',
+            running: { count: 2, requestId: null },
+            awaitingApproval: NONE,
+            failed: NONE,
+          },
+        ]);
+        expect(two.workTruncated).toBe(false);
+        // Nothing of Arma DX in Pillika's answer: no request of this file's other tests.
+        const { res } = await office(founder, ids.pillika);
+        for (const entry of armaOffice.body.work) {
+          for (const id of [entry.running, entry.awaitingApproval, entry.failed]) {
+            if (id.requestId !== null) expect(res.body).not.toContain(id.requestId);
+          }
+        }
+        // Closed again: the desks of Pillika are empty.
+        for (const id of [first, second]) {
+          const closed = await post(founder, `/api/requests/${id}/close`, {}, ids.pillika);
+          expect(closed.statusCode).toBe(200);
+        }
+        expect((await office(founder, ids.pillika)).body.work).toEqual([]);
+      });
+    });
+
+    it('the office answer is refreshed in the background without extending the session', async () => {
+      const session = await sessionOf(server, accounts.founder);
+      const [row] = await adminQuery<{ id: string }>(
+        'select id from office.sessions where key_hash = $1',
+        [hashSessionKey(session)],
+      );
+      const sessionId = row?.id ?? '';
+      const idle = async (): Promise<boolean> => {
+        const [seen] = await adminQuery<{ stale: boolean }>(
+          `select last_seen_at < now() - interval '24 minutes' as stale
+           from office.sessions where id = $1`,
+          [sessionId],
+        );
+        return seen?.stale ?? false;
+      };
+      await adminQuery(
+        `update office.sessions set last_seen_at = now() - interval '25 minutes' where id = $1`,
+        [sessionId],
+      );
+      const res = await server.app.inject({
+        method: 'GET',
+        url: '/api/office',
+        cookies: { [SESSION_COOKIE]: session },
+        headers: { ...SAME_ORIGIN, [COMPANY_HEADER]: ids.arma, [BACKGROUND_HEADER]: '1' },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(await idle()).toBe(true);
+      expect((await get(session, '/api/office')).statusCode).toBe(200);
       expect(await idle()).toBe(false);
     });
   });
