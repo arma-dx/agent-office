@@ -651,9 +651,11 @@ export function FellNotice({ request, isFounder }: { request: RequestDetail; isF
         ) : null}
         {forFounder ? <p>{forFounder}</p> : null}
         {next ? <p>{next}</p> : null}
+        {/* Every founder and employee of the company can read this page: the sentence does not
+            address the reader as the owner of the request. */}
         {!canAct ? (
           <p className="text-ink-secondary">
-            Talebiniz kayıtlı.{' '}
+            Talep kayıtlı.{' '}
             {turn && turn !== 'Sizde' ? `Sıradaki adımı ${turn} atacak.` : 'Bir kişi ilgilenecek.'}
           </p>
         ) : null}

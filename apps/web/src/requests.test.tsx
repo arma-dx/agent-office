@@ -556,8 +556,62 @@ describe('the page of a request', () => {
     });
     // The requester cannot act on it and is not told that they can.
     expect(screen.queryByRole('button', { name: 'Yönlendirmeyi düzelt' })).toBeNull();
-    expect(screen.getByText(/Talebiniz kayıtlı\. Sıradaki adımı Kurucu atacak\./)).toBeVisible();
+    expect(screen.getByText('Talep kayıtlı. Sıradaki adımı Kurucu atacak.')).toBeVisible();
     expect(screen.queryByText(/Yönlendirmeyi düzelt/)).toBeNull();
+  });
+
+  // Every founder and employee of the company can open the page: no sentence on it addresses the
+  // reader as the owner of the request.
+  it('does not call a request that fell to a person the reader’s own', async () => {
+    // A colleague who is neither the requester nor the approver.
+    mockApi({
+      'GET /session': sessionHandler({
+        user: { id: '99999999-9999-4999-8999-999999999999', name: 'Mehmet Demir' },
+        memberships: [{ ...ARMADX, role: 'employee' as const, canApprove: false }],
+      }),
+      [`GET /requests/${REQUEST_ID}`]: () =>
+        json(
+          requestDetail({
+            status: 'in_progress',
+            stage: 'fell_to_person',
+            cause: 'second_change_request',
+            turn: { kind: 'founder' },
+            waitingForMe: false,
+            approval: null,
+            actions: { cancel: false, stop: false, reroute: false },
+          }),
+        ),
+    });
+    renderApp(`/c/armadx/requests/${REQUEST_ID}`);
+    expect(await screen.findByText('Talep kayıtlı. Sıradaki adımı Kurucu atacak.')).toBeVisible();
+    expect(screen.getByText('Ayşe Yılmaz yazdı.')).toBeVisible();
+    expect(screen.getByRole('main')).not.toHaveTextContent(/Talebiniz/);
+  });
+
+  it('does not call a request that takes long the reader’s own', async () => {
+    // The founder reads an employee's request.
+    mockApi({
+      'GET /session': sessionHandler(),
+      [`GET /requests/${REQUEST_ID}`]: () =>
+        json(
+          requestDetail({
+            status: 'in_progress',
+            stage: 'working',
+            delayed: true,
+            turn: { kind: 'agent', code: 'SOS-2', name: 'Sosyal İçerik Yazım Ajanı' },
+            waitingForMe: false,
+            approval: null,
+          }),
+        ),
+    });
+    renderApp(`/c/armadx/requests/${REQUEST_ID}`);
+    expect(
+      await screen.findByText(
+        'Bu adım beklenenden uzun sürüyor. Talep kayıtlı. Çalıştırıcı çalışmıyor olabilir. Çalışma başlamadıysa "Yönlendirmeyi düzelt" ile işi yeniden verebilirsiniz.',
+      ),
+    ).toBeVisible();
+    expect(screen.getByText('Ayşe Yılmaz yazdı.')).toBeVisible();
+    expect(screen.getByRole('main')).not.toHaveTextContent(/Talebiniz/);
   });
 
   it('counts the requester’s own change requests, not the rounds of the acceptance', async () => {

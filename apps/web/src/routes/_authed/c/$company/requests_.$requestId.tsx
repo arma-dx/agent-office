@@ -139,7 +139,7 @@ function RequestScreen() {
           </p>
           {request.delayed ? (
             <p className="text-sm text-ink-secondary">
-              Bu adım beklenenden uzun sürüyor. Talebiniz kayıtlı.
+              Bu adım beklenenden uzun sürüyor. Talep kayıtlı.
               {company.role === 'founder' ? ' Çalıştırıcı çalışmıyor olabilir.' : ''}
               {request.actions.reroute
                 ? ' Çalışma başlamadıysa "Yönlendirmeyi düzelt" ile işi yeniden verebilirsiniz.'
