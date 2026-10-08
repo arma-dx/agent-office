@@ -1345,7 +1345,7 @@ describe.skipIf(noDatabase)('cancelling and stopping a request', () => {
     });
   });
 
-  it('the worker’s role cannot act as a person: no acceptance, close, correction, appointment or request', async () => {
+  it('the worker’s role cannot act as a person: no acceptance, close, correction, appointment, request, approval decision or agent switch', async () => {
     // The fixture request of Arma DX waits for its requester (employee A). The worker runs in that
     // person's name; none of a person's acts is reachable with its role, whatever the context says.
     await inWorkerTransaction(async (tx) => {
@@ -1395,6 +1395,73 @@ describe.skipIf(noDatabase)('cancelling and stopping a request', () => {
         ).message,
       ).toBe('A request is opened through the API');
       expect(await statusOf(tx, ids.requestA)).toBe('awaiting_approval');
+
+      // The approver's decision and what the decider reads, on a pending approval the founder may
+      // decide; the sent mark on an approved one; the agent's switch.
+      const decision = 'Only the approver of this work or the founder makes the approval decision';
+      for (const [change, message] of [
+        [`status = 'changes_requested', rejection_reason = 'incomplete'`, decision],
+        [`status = 'rejected', rejection_reason = 'out_of_scope'`, decision],
+        [
+          `summary = 'All fine', risk_note = null`,
+          'The approval summary is changed by an agent or by a person who may decide it',
+        ],
+      ] as const) {
+        expect(
+          await tx.expectError(`update office.approvals set ${change} where id = $1`, [
+            ids.approvalA,
+          ]),
+        ).toEqual({ code: '42501', message });
+      }
+      expect(
+        await tx.expectError(`update office.approvals set sent_at = now() where id = $1`, [
+          ids.approvalAApproved,
+        ]),
+      ).toEqual({ code: '42501', message: 'The sent mark is set by a person' });
+      expect(
+        await tx.rows(
+          `select status, summary is null as untouched, sent_at from office.approvals
+           where id in ($1, $2) order by id`,
+          [ids.approvalA, ids.approvalAApproved],
+        ),
+      ).toEqual([
+        { status: 'pending', untouched: true, sent_at: null },
+        { status: 'approved', untouched: true, sent_at: null },
+      ]);
+      for (const sql of [
+        `update office.company_agents set status = 'stopped' where agent_code = 'KOR-1'`,
+        `update office.company_agents set status = 'enabled' where agent_code = 'HAF-1'`,
+        `insert into office.company_agents (company_id, agent_code) values ('${ids.arma}', 'HAF-1')`,
+        `delete from office.company_agents where agent_code = 'KOR-1'`,
+      ]) {
+        expect((await tx.expectError(sql)).code).toBe('42501');
+      }
+    });
+    // The same acts with the API's role, in the same person's name: the role is what was refused.
+    await inTransaction(async (tx) => {
+      await tx.setContext(founderA);
+      expect(
+        await tx.exec(`update office.approvals set summary = 'All fine' where id = $1`, [
+          ids.approvalA,
+        ]),
+      ).toBe(1);
+      expect(
+        await tx.exec(
+          `update office.approvals set status = 'changes_requested', rejection_reason = 'incomplete'
+           where id = $1`,
+          [ids.approvalA],
+        ),
+      ).toBe(1);
+      expect(
+        await tx.exec(`update office.approvals set sent_at = now() where id = $1`, [
+          ids.approvalAApproved,
+        ]),
+      ).toBe(1);
+      expect(
+        await tx.exec(
+          `update office.company_agents set status = 'stopped' where agent_code = 'KOR-1'`,
+        ),
+      ).toBe(1);
     });
   });
 

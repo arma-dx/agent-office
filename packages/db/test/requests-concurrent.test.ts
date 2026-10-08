@@ -16,7 +16,9 @@ import {
 // Flow (A) when two transactions meet. The other request tests run every case inside one
 // transaction that is rolled back, which shows the rules in sequence only; here two connections
 // hold transactions open at once, with the restricted roles (the API's and the worker's), and the
-// order of the two is fixed by waiting until one of them is blocked by the other's lock.
+// order of the two is fixed by waiting until one of them is blocked by the other's lock. The last
+// case is here for another reason: it needs a request the API's role committed, to try the
+// worker's role on it.
 //
 // These tests commit, so each request is written for the test and removed again at the end. The
 // unit agent is KOR-1, as in the fixtures: the only agent that is open in Arma DX there.
@@ -41,7 +43,7 @@ function outcomeOf(statement: Promise<unknown>): Promise<string> {
   );
 }
 
-describe.skipIf(noDatabase)('a request when two transactions meet', () => {
+describe.skipIf(noDatabase)('a request across transactions', () => {
   const tasks: string[] = [];
   let mark = '0';
 
@@ -186,5 +188,43 @@ describe.skipIf(noDatabase)('a request when two transactions meet', () => {
     await withContext(workerPool(), coordinatorRun, (client) => client.query(SUBMIT, [task, next]));
     expect(await statusOf(task)).toBe('awaiting_approval');
     expect(await approvalsOf(task)).toEqual([{ status: 'pending', closed: false, step: 'active' }]);
+  });
+
+  it('the worker’s role decides nothing on the pending result of a request, in whose name ever', async () => {
+    // The worker cannot open a request in its own transaction, so this case needs committed rows:
+    // a result that waits for the founder (nobody is appointed for KOR in the fixtures).
+    const { task, run } = await requestWithOpenRun();
+    await withContext(workerPool(), coordinatorRun, (client) => client.query(SUBMIT, [task, run]));
+    const worker = await openTransaction('worker', founderA);
+    try {
+      for (const change of [
+        `status = 'rejected', rejection_reason = 'out_of_scope'`,
+        `status = 'changes_requested', rejection_reason = 'incomplete'`,
+        `status = 'approved'`,
+        `summary = 'All fine'`,
+      ]) {
+        expect(
+          (
+            await worker.tx.expectError(
+              `update office.approvals set ${change} where task_id = $1`,
+              [task],
+            )
+          ).code,
+        ).toBe('42501');
+      }
+    } finally {
+      await worker.rollback();
+    }
+    // A rejection would have closed the request.
+    expect(await statusOf(task)).toBe('awaiting_approval');
+    // The founder, through the API's role, decides it.
+    await withContext(appPool(), founderA, (client) =>
+      client.query(
+        `update office.approvals set status = 'rejected', rejection_reason = 'out_of_scope'
+         where task_id = $1`,
+        [task],
+      ),
+    );
+    expect(await statusOf(task)).toBe('cancelled');
   });
 });
