@@ -1,8 +1,14 @@
 import '@testing-library/jest-dom/vitest';
-import { cleanup } from '@testing-library/react';
+import { cleanup, configure } from '@testing-library/react';
 import { toast } from 'sonner';
 import { afterEach, beforeEach, vi } from 'vitest';
 import { clearDrafts } from './lib/drafts.ts';
+
+// The first render of a test file loads the whole app (router, route modules, query client). On a
+// busy machine that takes longer than the second Testing Library waits by default, and the first
+// findBy of a file failed although nothing was wrong. Three seconds stay under the five a test may
+// take, so a thing that really is missing is still reported by the query that looked for it.
+configure({ asyncUtilTimeout: 3000 });
 
 beforeEach(() => {
   // jsdom does not provide matchMedia; the theme and sonner call it.
