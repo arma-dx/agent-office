@@ -282,6 +282,24 @@ describe.skipIf(noDatabase)('the coordinator’s run', () => {
     expect(parsed.find((unit) => unit.unit === 'HUK')?.agents).toEqual([]);
   });
 
+  it('tells the model the office’s date, not the UTC date', async () => {
+    // 01:30 on 8 October in Istanbul is still 7 October in UTC.
+    const night = Date.parse('2026-10-07T22:30:00Z');
+    const taskId = await openRequest(ids.founder, 'Bugünkü açılış için gönderi yaz');
+    const model = new ScriptedModel([toolUse('route_task', ROUTE_TO_SOS)]);
+    const { deps } = await runner(model, { now: () => night });
+    expect((await runAgentJob(deps, job(taskId, 'KOR-1', ids.founder))).outcome).toBe('routed');
+    expect(firstUserText(model)).toContain('"today":"2026-10-08"');
+    // And in the afternoon the two agree.
+    const day = new ScriptedModel([toolUse('route_task', ROUTE_TO_SOS)]);
+    const later = await runner(day, { now: () => Date.parse('2026-10-08T12:00:00Z') });
+    await runAgentJob(
+      later.deps,
+      job(await openRequest(ids.founder, REQUEST), 'KOR-1', ids.founder),
+    );
+    expect(firstUserText(day)).toContain('"today":"2026-10-08"');
+  });
+
   it('names a unit without an agent: the request is returned to its requester and closed, and no job is sent', async () => {
     // 8 October decision 2, with the founder's own example: an employee asks for the KVKK texts,
     // and the legal unit has no agent yet.

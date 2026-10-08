@@ -8,6 +8,7 @@ import {
 } from '@agent-office/db';
 import {
   COORDINATOR_AGENT_CODE,
+  OFFICE_TIME_ZONE,
   costOf,
   storedCardSchema,
   toolKindSchema,
@@ -182,6 +183,23 @@ class ToolRefusal extends Error {
     this.code = code;
     this.problems = problems;
   }
+}
+
+/**
+ * The date the model is told as a fact: the office's day, not the UTC day (between midnight and
+ * 03:00 in Türkiye the two differ, and "bugün" in a request means the office's).
+ */
+const officeDay = new Intl.DateTimeFormat('en-CA', {
+  timeZone: OFFICE_TIME_ZONE,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+});
+
+function officeDate(instant: number): string {
+  const parts = officeDay.formatToParts(new Date(instant));
+  const part = (type: string): string => parts.find((item) => item.type === type)?.value ?? '';
+  return `${part('year')}-${part('month')}-${part('day')}`;
 }
 
 function sqlState(error: unknown): string | undefined {
@@ -609,7 +627,7 @@ export async function runAgentJob(
         facts: {
           company: task.company_name,
           requesterRole: task.requester_role,
-          today: new Date(now()).toISOString().slice(0, 10),
+          today: officeDate(now()),
           agent: job.agentCode,
         },
         request: { title: task.title, text: task.description ?? '' },
