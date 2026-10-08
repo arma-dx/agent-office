@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
+import { PROJECT_COLORS, PROJECT_ICONS, PROJECT_STATUSES } from '@agent-office/shared';
 import { afterAll, describe, expect, it } from 'vitest';
 import type { ContextInput } from '../src/context.ts';
 import { FOUNDER_PASSKEY, ids } from './fixtures.ts';
@@ -212,6 +213,42 @@ describe.skipIf(noDatabase)('project fields', () => {
         color: 'pink',
         icon: 'box',
       });
+    });
+  });
+
+  it('projects: the database accepts exactly the statuses, colours and icons of the shared contract', async () => {
+    await inAdminTransaction(async (tx) => {
+      const sets: [string, readonly string[], string[]][] = [
+        ['status', PROJECT_STATUSES, ['open', 'closed', 'done']],
+        ['color', PROJECT_COLORS, ['grey', 'yellow']],
+        ['icon', PROJECT_ICONS, ['rocket', 'star']],
+      ];
+      for (const [column, accepted, refused] of sets) {
+        for (const value of accepted) {
+          await adminProject(tx, { [column]: value });
+        }
+        for (const value of refused) {
+          expect(
+            (
+              await tx.expectError(
+                `insert into office.projects (company_id, name, ${column}) values ($1, 'x', $2)`,
+                [ids.arma, value],
+              )
+            ).code,
+            `${column} ${value}`,
+          ).toBe('23514');
+        }
+        // And nothing the contract does not know: the check lists the same number of values.
+        const [row] = await tx.rows<{ definition: string }>(
+          `select pg_catalog.pg_get_constraintdef(c.oid) as definition
+           from pg_catalog.pg_constraint c
+           where c.conrelid = 'office.projects'::regclass and c.conname = $1`,
+          [`projects_${column}_check`],
+        );
+        expect(row?.definition.match(/'[a-z_]+'/g)?.map((quoted) => quoted.slice(1, -1))).toEqual([
+          ...accepted,
+        ]);
+      }
     });
   });
 

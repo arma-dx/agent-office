@@ -72,6 +72,14 @@ export const apiErrorCodeSchema = z.enum([
   'requests_not_open',
   'reason_required',
   'routing_not_possible',
+  // Projects and customers (8 October decisions 14 to 22).
+  'customer_exists',
+  'customer_not_found',
+  'member_not_allowed',
+  'own_project_membership',
+  'project_customer_locked',
+  // The project is not what the founder confirmed with the passkey; the page is read again.
+  'project_changed',
 ]);
 export type ApiErrorCode = z.output<typeof apiErrorCodeSchema>;
 
@@ -154,8 +162,9 @@ export type InvitationFields = z.output<typeof invitationFieldsSchema>;
 
 /*
  * Approvals that involve money, leave the company or change a source of truth note, membership
- * changes, passkey changes, a founder's reset of a person's passkeys and opening a task or a note
- * to an external person need a re-verification with a passkey (WebAuthn). The panel asks for a
+ * changes, passkey changes, a founder's reset of a person's passkeys, opening a task or a note to
+ * an external person, and opening the AI permission of a project or of a customer (8 October
+ * decision 22) need a re-verification with a passkey (WebAuthn). The panel asks for a
  * challenge (POST /api/step-up/options), lets the browser sign it (startAuthentication of
  * @simplewebauthn/browser) and sends the result as `stepUp` in the body of the action it confirms.
  * The API recomputes what was confirmed from the action's own request and refuses anything else.
@@ -217,6 +226,9 @@ export const stepUpPurposeSchema = z.enum([
   // 5 October decisions 3 and 4.
   'passkey_reset',
   'access_grant',
+  // 8 October decision 22.
+  'project_ai_permission',
+  'customer_ai_permission',
 ]);
 export type StepUpPurpose = z.output<typeof stepUpPurposeSchema>;
 
@@ -227,6 +239,8 @@ const COMPANY_STEP_UP_PURPOSES: readonly StepUpPurpose[] = [
   'invitation',
   'passkey_reset',
   'access_grant',
+  'project_ai_permission',
+  'customer_ai_permission',
 ];
 
 const STEP_UP_DETAIL_LIMIT = 20;
@@ -324,6 +338,67 @@ export function accessGrantDetails(record: {
 }
 
 /**
+ * What a project_ai_permission re-verification confirms beyond the project (the subject): that its
+ * AI permission is opened, and for which customer. Rule 12 reads which customer a project has, so
+ * the founder confirms the project WITH the customer it had on the page (null: no customer); the
+ * opening is refused when the project has another one by then. Closing needs no re-verification,
+ * so there is one action.
+ */
+export const projectAiPermissionDetailsSchema = z.strictObject({
+  action: z.literal('open'),
+  customerId: z.uuid().nullable(),
+});
+export type ProjectAiPermissionDetails = z.output<typeof projectAiPermissionDetailsSchema>;
+
+/** The details of opening a project's AI permission; the API builds the same. */
+export function projectAiPermissionDetails(customerId: string | null): ProjectAiPermissionDetails {
+  return { action: 'open', customerId };
+}
+
+/**
+ * What a customer_ai_permission re-verification confirms beyond the customer (the subject): the
+ * permissions exactly as the request carries them. "create": a customer added with a new project
+ * (POST /api/projects), by its name. "update": PATCH /api/customers/:customerId/permissions.
+ */
+export const customerPermissionDetailsSchema = z.discriminatedUnion('action', [
+  z.strictObject({
+    action: z.literal('create'),
+    name: z.string().max(120),
+    aiAllowed: z.literal(true),
+    automatedProcessingAllowed: z.boolean(),
+  }),
+  z.strictObject({
+    action: z.literal('update'),
+    aiAllowed: z.literal(true),
+    automatedProcessingAllowed: z.boolean().optional(),
+  }),
+]);
+export type CustomerPermissionDetails = z.output<typeof customerPermissionDetailsSchema>;
+
+/** The details of opening a customer's AI permission; the API builds the same. */
+export function customerPermissionDetails(
+  change:
+    | { name: string; automatedProcessingAllowed: boolean }
+    | { automatedProcessingAllowed?: boolean | undefined },
+): CustomerPermissionDetails {
+  if ('name' in change) {
+    return {
+      action: 'create',
+      name: change.name,
+      aiAllowed: true,
+      automatedProcessingAllowed: change.automatedProcessingAllowed,
+    };
+  }
+  return {
+    action: 'update',
+    aiAllowed: true,
+    ...(change.automatedProcessingAllowed !== undefined
+      ? { automatedProcessingAllowed: change.automatedProcessingAllowed }
+      : {}),
+  };
+}
+
+/**
  * POST /api/step-up/options: a challenge for one re-verification, bound to what it confirms.
  *   approve            companyId, subjectId (the approval), details (the decision)
  *   membership_change  companyId, subjectId (the member), details (memberChangeDetails)
@@ -335,6 +410,11 @@ export function accessGrantDetails(record: {
  *                      POST /api/members/:userId/passkeys/reset
  *   access_grant       companyId, subjectId (the person the record is opened to), details
  *                      (accessGrantDetails: the task or the note)
+ *   project_ai_permission   companyId, subjectId (the project), details
+ *                           (projectAiPermissionDetails: the project's customer on the page);
+ *                           then PUT /api/projects/:projectId/ai-permission
+ *   customer_ai_permission  companyId, subjectId (the customer; a new one's id is chosen by the
+ *                           panel), details (customerPermissionDetails)
  * 409 no_passkey when the person has no passkey.
  */
 export const stepUpOptionsRequestSchema = z
@@ -380,6 +460,26 @@ export const stepUpOptionsRequestSchema = z
       ctx.addIssue({ code: 'custom', path: ['details'], message: 'Must be an access grant' });
     }
     if (
+      body.purpose === 'project_ai_permission' &&
+      !projectAiPermissionDetailsSchema.safeParse(body.details).success
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['details'],
+        message: 'Must open a project AI permission',
+      });
+    }
+    if (
+      body.purpose === 'customer_ai_permission' &&
+      !customerPermissionDetailsSchema.safeParse(body.details).success
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['details'],
+        message: 'Must open a customer AI permission',
+      });
+    }
+    if (
       (body.purpose === 'passkey_add' ||
         body.purpose === 'passkey_revoke' ||
         body.purpose === 'passkey_reset') &&
@@ -407,7 +507,7 @@ export type StepUpOptionsResponse = z.output<typeof stepUpOptionsResponseSchema>
 
 // Control characters, line and paragraph separators and bidirectional overrides; the database
 // refuses them too.
-function hasHiddenCharacter(value: string): boolean {
+export function hasHiddenCharacter(value: string): boolean {
   for (let index = 0; index < value.length; index += 1) {
     const code = value.charCodeAt(index);
     if (
