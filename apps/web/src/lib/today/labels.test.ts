@@ -1,3 +1,4 @@
+import { requestCauseSchema, type RequestCause } from '@agent-office/shared';
 import { describe, expect, it } from 'vitest';
 import {
   REJECTED_NOTE,
@@ -5,6 +6,7 @@ import {
   RETURNED_NOTE,
   STOPPED_NOTE,
 } from '../../test/request-fixtures.ts';
+import { textWidth } from '../../test/text-width.ts';
 import {
   expectationText,
   notificationLabel,
@@ -33,6 +35,36 @@ describe('the words of the Bugün screen', () => {
       waitingForMe: false,
     };
     expect(expectationText(appointed)).toBe('Onayınız bekleniyor');
+  });
+
+  it('keeps every expectation inside its column of the row', () => {
+    // The column of the Bugün row is 336 px wide (w-84 in components/today/expected-section.tsx)
+    // and cuts what does not fit. The cut part could be read nowhere on the screen, because a
+    // tooltip under the row's link is never shown. A reason that fails here needs a shorter
+    // wording in CAUSE_SHORT or a wider column, and then a new number here.
+    const COLUMN = 336;
+    // A closed request waits for nobody and is never on the list; every other cause, and so
+    // every cause that is added later, is one a request can fall to a person with.
+    const closed: readonly RequestCause[] = [
+      'returned_no_agent',
+      'cancelled_by_requester',
+      'stopped',
+      'closed_after_delivery',
+      'rejected',
+    ];
+    const fallen = requestCauseSchema.options.filter((cause) => !closed.includes(cause));
+    expect(fallen).toHaveLength(14);
+    const texts = [
+      expectationText({ stage: 'unit_approval', cause: null, delayed: false }),
+      expectationText({ stage: 'requester_approval', cause: null, delayed: false }),
+      // A request that fell to a person is never "gecikti": nothing runs that could be late.
+      ...fallen.map((cause) => expectationText({ stage: 'fell_to_person', cause, delayed: false })),
+    ];
+    expect(texts.filter((text) => textWidth(text) > COLUMN)).toEqual([]);
+    // The widest today, and the measure itself: 320.6 px without kerning, 320.4 px in a browser.
+    const widest = texts.reduce((a, b) => (textWidth(a) >= textWidth(b) ? a : b));
+    expect(widest).toBe('Sizden bekleniyor: model hesabında ödeme sorunu');
+    expect(textWidth(widest)).toBeCloseTo(320.6, 1);
   });
 
   it('says to a screen reader only what is above zero', () => {

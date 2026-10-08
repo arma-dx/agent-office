@@ -141,6 +141,13 @@ describe('Bugün: Sizden beklenenler', () => {
         .getAllByRole('listitem')
         .map((row) => row.querySelector('time')?.getAttribute('datetime')),
     ).toEqual([DECIDE.updatedAt, ACCEPT.updatedAt, FALLEN.updatedAt]);
+    // Nothing of a row hides behind a tooltip: under the row's link only the title's own could
+    // ever be shown, so the expectation and the time carry none.
+    expect(
+      within(region)
+        .getAllByRole('listitem')
+        .map((row) => Array.from(row.querySelectorAll('[title]'), (part) => part.textContent)),
+    ).toEqual([[DECIDE.title], [ACCEPT.title], [FALLEN.title]]);
     // The person opened the screen: a request of theirs, for the selected company.
     const [first] = api.callsTo('GET /today');
     expect(first?.headers.get(COMPANY_HEADER)).toBe(ARMADX.companyId);
@@ -164,6 +171,20 @@ describe('Bugün: Sizden beklenenler', () => {
     expect(
       within(region).getByRole('link', { name: 'LinkedIn için gönderi yaz, Onayınız bekleniyor' }),
     ).toBeVisible();
+  });
+
+  it('gives the longest reason of a fallen request a column that holds it whole', async () => {
+    mockApi({
+      'GET /session': sessionHandler(),
+      'GET /today': () => json(todayBody({ expected: [{ ...FALLEN, cause: 'model_billing' }] })),
+    });
+    renderApp('/c/armadx');
+    const region = await screen.findByRole('region', { name: 'Sizden beklenenler 1' });
+    // jsdom lays nothing out: the width is pinned by its class, 336 px, and the texts are held
+    // inside it by the width test of lib/today/labels.ts. The two change together.
+    const expectation = within(region).getByText('Sizden bekleniyor: model hesabında ödeme sorunu');
+    expect(expectation).toHaveClass('w-84');
+    expect(expectation).not.toHaveAttribute('title');
   });
 
   it('refreshes every half minute in the background and keeps the rows where they are', async () => {
@@ -351,6 +372,15 @@ describe('Bugün: Bildirimler', () => {
       REJECTED_NOTE.createdAt,
       STOPPED_NOTE.createdAt,
       RESET_NOTE.createdAt,
+    ]);
+    // The time carries no tooltip: under the row's link it could never be shown.
+    expect(
+      rows.map((row) => Array.from(row.querySelectorAll('[title]'), (part) => part.textContent)),
+    ).toEqual([
+      ['KVKK metni'],
+      ['Ekim duyurusu'],
+      ['Fuar davetiyesi'],
+      ["Passkey'leriniz sıfırlandı"],
     ]);
     // A read notification stays listed, without the mark and without the button.
     const quiet = rows[2];

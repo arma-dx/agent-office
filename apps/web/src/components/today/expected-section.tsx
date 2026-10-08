@@ -5,7 +5,7 @@ import { ListRow } from '@/components/list-row';
 import { EmptyState } from '@/components/states';
 import { StatusIcon } from '@/components/status';
 import { Button } from '@/components/ui/button';
-import { formatFull, formatWhen } from '@/lib/dates';
+import { formatWhen } from '@/lib/dates';
 import { useOpenRequestDialog } from '@/lib/requests/dialog';
 import { useCompany } from '@/lib/session';
 import { useRowFocus } from '@/lib/today/focus';
@@ -30,12 +30,13 @@ function ExpectedRow({ request, company }: { request: RequestSummary; company: s
       })}
       trailing={
         <>
-          <span className="w-64 truncate" title={expectation}>
-            {expectation}
-          </span>
+          {/* 336 px holds the longest expectation whole ("Sizden bekleniyor: model hesabında ödeme
+              sorunu", 321 px); the width test of lib/today/labels.ts keeps a new reason inside
+              it. No title attribute here or on the time: both lie under the cover of the row's
+              link, where a tooltip is never shown. */}
+          <span className="w-84 truncate">{expectation}</span>
           <time
             dateTime={request.updatedAt}
-            title={formatFull(request.updatedAt)}
             className="w-20 text-right text-xs text-ink-secondary tabular-nums"
           >
             {formatWhen(request.updatedAt)}

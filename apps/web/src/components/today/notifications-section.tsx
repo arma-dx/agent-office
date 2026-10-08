@@ -4,7 +4,7 @@ import { linkOptions } from '@tanstack/react-router';
 import { useId } from 'react';
 import { ListRow } from '@/components/list-row';
 import { Button } from '@/components/ui/button';
-import { formatFull, formatWhen } from '@/lib/dates';
+import { formatWhen } from '@/lib/dates';
 import { notifyError } from '@/lib/notify';
 import { useCompany } from '@/lib/session';
 import { useRowFocus } from '@/lib/today/focus';
@@ -95,7 +95,6 @@ function NotificationRow({
           )}
           <time
             dateTime={notification.createdAt}
-            title={formatFull(notification.createdAt)}
             className="w-20 text-right text-xs font-normal text-ink-secondary tabular-nums"
           >
             {formatWhen(notification.createdAt)}

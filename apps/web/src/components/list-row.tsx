@@ -17,7 +17,9 @@ import { cn } from '@/lib/utils';
  * their own click, so a row can hold controls (change the status, Onayla); a row with a 28 px
  * button takes className="py-1" to stay 36 px high. A second link inside the row needs
  * `relative z-10` on itself. `meta` sits right after the title, `trailing` is pinned to the right
- * edge; give time and number columns a fixed width and tabular figures.
+ * edge; give time and number columns a fixed width and tabular figures. Plain text in `meta` and
+ * `trailing` lies under the cover: a `title` attribute on it is never shown, so a column must be
+ * wide enough for its text.
  */
 export function ListRow({
   leading,
