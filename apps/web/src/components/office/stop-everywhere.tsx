@@ -156,20 +156,21 @@ function StopEverywhereDialog({
       }
       setOutcomes((previous) => new Map(previous).set(company.companyId, outcome));
     }
-    // The office of every company that was asked is read again: the scene behind the dialog, and
-    // the other company's office when the person goes there.
-    await Promise.all(
-      list.map((company) =>
-        queryClient.invalidateQueries({ queryKey: officeKey(company.companyId) }),
-      ),
-    );
-    // The button that was pressed is gone when nothing is left to try: the focus goes to the one
-    // that closes. A retry that failed again keeps its button and the focus on it.
+    // The result is shown as soon as the last place answered. The button that was pressed is gone
+    // when nothing is left to try: the focus goes to the one that closes. A retry that failed
+    // again keeps its button and the focus on it.
     flushSync(() => {
       setPhase('done');
     });
     if (retryButton.current === null || document.activeElement !== retryButton.current) {
       closeButton.current?.focus();
+    }
+    // Then the office of every place that was asked is read again: the scene behind the dialog,
+    // and the other places' offices when the person goes there. Not waited for: the result must
+    // not depend on a read that may take long or fail. A retry reads the offices of the first
+    // send too, because their read after it may have failed with the stop that is tried again.
+    for (const company of sent.length > 0 ? sent : list) {
+      void queryClient.invalidateQueries({ queryKey: officeKey(company.companyId) });
     }
   };
 

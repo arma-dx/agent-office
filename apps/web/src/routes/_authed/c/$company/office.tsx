@@ -8,7 +8,7 @@ import { OfficeView, type OfficeViewHandle } from '@/components/office/office-vi
 import { PropertiesPanel } from '@/components/shell/properties-panel';
 import { EmptyState, ErrorMessage } from '@/components/states';
 import { Skeleton } from '@/components/ui/skeleton';
-import { userMessage } from '@/lib/api';
+import { ApiError, userMessage } from '@/lib/api';
 import { toOfficeUnits } from '@/lib/office/from-api';
 import { CENTRE_UNIT, selectionOf } from '@/lib/office/model';
 import { officeDialogOpen } from '@/lib/office/hold';
@@ -40,6 +40,11 @@ function OfficeScreen() {
     );
   }
   return <OfficeForCompany company={company} />;
+}
+
+/** The API answered that the reader may not have this: no session, no right, no such record. */
+function isRefusal(error: unknown): boolean {
+  return error instanceof ApiError && [401, 403, 404].includes(error.status);
 }
 
 function OfficeForCompany({ company }: { company: MembershipSummary }) {
@@ -86,7 +91,12 @@ function OfficeForCompany({ company }: { company: MembershipSummary }) {
     );
   }
 
-  if (query.isError) {
+  // A read that fails takes the scene away only when there is nothing to show, or when the API
+  // refused the reader: what the person may no longer read does not stay on screen (as
+  // lib/refresh.ts drops it). After a failure on the way (the network, a 5xx) what was read last
+  // stays, with the panel and a dialog that is telling a result ("Her yerde durdur"); the
+  // background refresh brings it up to date when the server answers again.
+  if (query.data === undefined || isRefusal(query.error)) {
     return (
       <div className="p-6">
         <ErrorMessage

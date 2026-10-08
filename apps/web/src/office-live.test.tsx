@@ -260,6 +260,54 @@ describe('office page: live states', () => {
     }
   });
 
+  it('keeps the scene when reading it again fails on the way, and takes it away when the API refuses the reader', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      wide();
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      const api = mockApi({
+        'GET /session': sessionHandler(),
+        'GET /office': () => json(officeBody(ARMADX_OFFICE, OPEN)),
+      });
+      renderApp('/c/armadx/office');
+      await user.click(await label('SOS-2'));
+      expect(desk('SOS-2')).toHaveAttribute('data-state', 'idle');
+
+      // The server is gone when the person comes back to the tab: the read fails after its
+      // retries. What was read last stays, with the selection and its panel; no error page.
+      api.handle('GET /office', () => new Response('bad gateway', { status: 502 }));
+      focusManager.setFocused(false);
+      focusManager.setFocused(true);
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(api.callsTo('GET /office')).toHaveLength(5);
+      expect(screen.getByRole('figure')).toBeInTheDocument();
+      expect(
+        screen.getByRole('button', { name: /^SOS-2 .*, Boşta$/, pressed: true }),
+      ).toBeVisible();
+      expect(within(panel()).getByRole('heading', { name: 'Açık talepleri' })).toBeVisible();
+      expect(screen.queryByRole('alert')).toBeNull();
+
+      // The server is back: the next refresh in the background brings the scene up to date.
+      api.handle('GET /office', () =>
+        json(officeBody(ARMADX_OFFICE, { ...OPEN, 'SOS-2': 'stopped' })),
+      );
+      await vi.advanceTimersByTimeAsync(30_100);
+      await waitFor(() => {
+        expect(desk('SOS-2')).toHaveAttribute('data-state', 'stopped');
+      });
+
+      // A refusal is not a failure on the way: what the API no longer shows does not stay.
+      api.handle('GET /office', () => apiError(403, 'forbidden', 'Bu işlem için yetkiniz yok.'));
+      focusManager.setFocused(false);
+      focusManager.setFocused(true);
+      expect(await screen.findByRole('alert')).toHaveTextContent('Bu işlem için yetkiniz yok.');
+      expect(screen.queryByRole('figure')).toBeNull();
+    } finally {
+      focusManager.setFocused(undefined);
+      vi.useRealTimers();
+    }
+  });
+
   it('keeps the keyboard focus on a desk whose state changes by itself', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
@@ -315,7 +363,7 @@ describe('office page: "Her yerde durdur"', () => {
       'GET /office': bodyOf,
       [switchKey]: put,
     });
-    return { api, state };
+    return { api, state, office: bodyOf };
   }
 
   /** The answer of a conditional stop: the switch as it is now, and whether this request set it. */
@@ -688,6 +736,114 @@ describe('office page: "Her yerde durdur"', () => {
       PILLIKA.companyId,
     ]);
     expect(api.unexpected).toEqual([]);
+  });
+
+  it('keeps the result of every place on screen when the office cannot be read again after the stops', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      wide();
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      let serverGone = false;
+      const { api, state, office } = twoCompanies(
+        { arma: 'enabled', pillika: 'enabled' },
+        (call) => {
+          if (call.headers.get(COMPANY_HEADER) === ARMADX.companyId) {
+            state.arma = 'stopped';
+            // Arma DX was the last thing the server answered.
+            serverGone = true;
+            return stopped();
+          }
+          if (serverGone) return badGateway();
+          state.pillika = 'stopped';
+          return stopped();
+        },
+      );
+      api.handle('GET /office', (call) => (serverGone ? badGateway() : office(call)));
+      const { dialog } = await confirmStop(user);
+      await waitFor(() => {
+        expect(api.callsTo(switchKey)).toHaveLength(2);
+      });
+      // Long enough for the read of the office to give up (it is tried again three times).
+      const readsBefore = api.callsTo('GET /office').length;
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(api.callsTo('GET /office').length).toBeGreaterThan(readsBefore);
+      expect(state.pillika).toBe('enabled');
+      // The dialog is the same one and says where the agent still runs, with a way to try again.
+      expect(screen.getByRole('alertdialog', { name: 'SOS-2 için sonuç' })).toBe(dialog);
+      expect(items(within(dialog).getByRole('list', { name: 'Sonuç' }))).toEqual([
+        'Arma DX: durduruldu.',
+        `Pillika: ${FAILED}`,
+      ]);
+      expect(buttons(dialog)).toEqual(['Kapat', 'Yeniden dene']);
+      // The scene behind is the one last read, not an error page in its place.
+      expect(desk('SOS-2')).toHaveAttribute('data-state', 'idle');
+
+      // The server is back: only Pillika is asked again, and the office is read again.
+      serverGone = false;
+      await user.click(within(dialog).getByRole('button', { name: 'Yeniden dene' }));
+      await waitFor(() => {
+        expect(items(within(dialog).getByRole('list', { name: 'Sonuç' }))).toEqual([
+          'Arma DX: durduruldu.',
+          'Pillika: durduruldu.',
+        ]);
+      });
+      expect(sentTo(api.callsTo(switchKey))).toEqual([
+        ARMADX.companyId,
+        PILLIKA.companyId,
+        PILLIKA.companyId,
+      ]);
+      await user.click(within(dialog).getByRole('button', { name: 'Kapat' }));
+      await waitFor(() => {
+        expect(screen.queryByRole('alertdialog')).toBeNull();
+      });
+      // The office of Arma DX, whose first read after the stop failed, was read again as well.
+      await waitFor(() => {
+        expect(desk('SOS-2')).toHaveAttribute('data-state', 'stopped');
+      });
+      expect(api.unexpected).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('shows the result as soon as every place answered, before the office is read again', async () => {
+    wide();
+    let hold = false;
+    let release: (() => void) | undefined;
+    const { api, state, office } = twoCompanies({ arma: 'enabled', pillika: 'enabled' }, (call) => {
+      if (call.headers.get(COMPANY_HEADER) === ARMADX.companyId) {
+        state.arma = 'stopped';
+        return stopped();
+      }
+      // From the last answer on, the office does not answer until the test lets it.
+      hold = true;
+      return badGateway();
+    });
+    api.handle('GET /office', (call) =>
+      hold
+        ? new Promise<Response>((resolve) => {
+            release = () => {
+              resolve(office(call));
+            };
+          })
+        : office(call),
+    );
+    const { dialog, results } = await confirmStop();
+    await waitFor(() => {
+      expect(items(results)).toEqual(['Arma DX: durduruldu.', `Pillika: ${FAILED}`]);
+    });
+    expect(buttons(dialog)).toEqual(['Kapat', 'Yeniden dene']);
+    expect(within(dialog).getByRole('button', { name: 'Kapat' })).toHaveFocus();
+    // The read of the office is still on its way: the desk behind shows what was last read.
+    await waitFor(() => {
+      expect(release).toBeDefined();
+    });
+    expect(desk('SOS-2')).toHaveAttribute('data-state', 'idle');
+    release?.();
+    await waitFor(() => {
+      expect(desk('SOS-2')).toHaveAttribute('data-state', 'stopped');
+    });
+    expect(buttons(dialog)).toEqual(['Kapat', 'Yeniden dene']);
   });
 
   it('says that a place could not be stopped as soon as it answered, while the next one is still asked', async () => {
