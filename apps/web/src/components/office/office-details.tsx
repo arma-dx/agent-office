@@ -20,6 +20,7 @@ import {
   AGENT_STATE_LABEL,
   AGENT_STATE_SENTENCE,
   agentId,
+  isOpen,
   unitId,
   type OfficeAgent,
   type OfficeSelection,
@@ -85,7 +86,7 @@ function UnitDetails({ unit, onSelect }: { unit: OfficeUnit; onSelect: (id: stri
  * (the button stays, with its new label).
  */
 function AgentSwitch({ agent }: { agent: OfficeAgent }) {
-  if (agent.state !== 'enabled' && !agent.ready) {
+  if (!isOpen(agent.state) && !agent.ready) {
     return <p className="text-ink-secondary">{AGENT_NOT_READY_SENTENCE}</p>;
   }
   return <AgentSwitchButton agent={agent} />;
@@ -97,7 +98,7 @@ function AgentSwitchButton({ agent }: { agent: OfficeAgent }) {
   const [confirming, setConfirming] = useState(false);
   // The dialog is opened from state and has no trigger: the focus goes back to the button here.
   const focus = useReturnFocus();
-  const next = agent.state === 'enabled' ? 'stopped' : 'enabled';
+  const next = isOpen(agent.state) ? 'stopped' : 'enabled';
   const change = useMutation({
     mutationFn: () => setAgentSwitch(company.companyId, agent.code, next),
     onSuccess: async () => {
@@ -107,12 +108,11 @@ function AgentSwitchButton({ agent }: { agent: OfficeAgent }) {
       setConfirming(false);
     },
   });
-  const label =
-    agent.state === 'enabled'
-      ? 'Ajanı durdur'
-      : agent.state === 'stopped'
-        ? 'Ajanı yeniden aç'
-        : 'Ajanı aç';
+  const label = isOpen(agent.state)
+    ? 'Ajanı durdur'
+    : agent.state === 'stopped'
+      ? 'Ajanı yeniden aç'
+      : 'Ajanı aç';
   return (
     <>
       <Button

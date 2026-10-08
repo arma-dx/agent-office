@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { OfficeView, type OfficeViewHandle } from '@/components/office/office-view';
 import { byDepth, project } from '@/lib/office/iso';
 import { layoutOffice } from '@/lib/office/layout';
-import { agentId, unitId, type OfficeUnit } from '@/lib/office/model';
+import { agentId, NO_WORK, unitId, type OfficeUnit } from '@/lib/office/model';
 import { extentOf, OVERLAY, overlayAnchors, overlayBoxes, sceneBounds } from '@/lib/office/overlay';
 import { fitView, ZOOM, type Size } from '@/lib/office/view';
 
@@ -14,21 +14,29 @@ const UNITS: OfficeUnit[] = [
     code: 'KOR',
     name: 'Koordinasyon Katmanı',
     agents: [
-      { code: 'KOR-1', name: 'Ofis Koordinatörü', state: 'stopped', ready: true },
-      { code: 'KOR-2', name: 'Görev Takip Ajanı', state: 'enabled', ready: true },
+      { code: 'KOR-1', name: 'Ofis Koordinatörü', state: 'stopped', ready: true, work: NO_WORK },
+      { code: 'KOR-2', name: 'Görev Takip Ajanı', state: 'idle', ready: true, work: NO_WORK },
     ],
   },
   {
     code: 'P-IST',
     name: 'İstasyon Verisi ve Şarj Operasyonları',
     agents: [
-      { code: 'P-IST-1', name: 'İstasyon Veri Toplama Ajanı', state: 'closed', ready: true },
+      {
+        code: 'P-IST-1',
+        name: 'İstasyon Veri Toplama Ajanı',
+        state: 'closed',
+        ready: true,
+        work: NO_WORK,
+      },
     ],
   },
   {
     code: 'HAF',
     name: 'Kurumsal Hafıza',
-    agents: [{ code: 'HAF-1', name: 'Bilgi Tabanı Ajanı', state: 'closed', ready: true }],
+    agents: [
+      { code: 'HAF-1', name: 'Bilgi Tabanı Ajanı', state: 'closed', ready: true, work: NO_WORK },
+    ],
   },
 ];
 
@@ -279,7 +287,7 @@ describe('OfficeView structure', () => {
     expect(labels().map((button) => button.getAttribute('aria-label'))).toEqual([
       'Koordinasyon Katmanı, KOR, 2 ajan',
       'KOR-1 Ofis Koordinatörü, Koordinasyon Katmanı, Durduruldu',
-      'KOR-2 Görev Takip Ajanı, Koordinasyon Katmanı, Etkin',
+      'KOR-2 Görev Takip Ajanı, Koordinasyon Katmanı, Boşta',
       'İstasyon Verisi ve Şarj Operasyonları, P-IST, 1 ajan',
       'P-IST-1 İstasyon Veri Toplama Ajanı, İstasyon Verisi ve Şarj Operasyonları, Kapalı',
       'Kurumsal Hafıza, HAF, 1 ajan',
@@ -402,22 +410,40 @@ describe('OfficeView structure', () => {
     );
   });
 
-  it('carries the state of an agent on its desk and on its label, with a glyph only for a stopped one', () => {
+  it('carries the state of an agent on its desk and on its label, with one mark of one size for every state', () => {
     const { world } = renderOffice();
     const stateOf = (code: string) => [
       world.querySelector(`[data-office-id="agent:${code}"]`)?.getAttribute('data-state'),
       screen.getByRole('button', { name: new RegExp(`^${code} `) }).getAttribute('data-state'),
     ];
     expect(stateOf('KOR-1')).toEqual(['stopped', 'stopped']);
-    expect(stateOf('KOR-2')).toEqual(['enabled', 'enabled']);
+    expect(stateOf('KOR-2')).toEqual(['idle', 'idle']);
     expect(stateOf('HAF-1')).toEqual(['closed', 'closed']);
-    const stopped = screen.getByRole('button', { name: /^KOR-1 / });
-    expect(stopped.querySelector('svg.office-glyph')).toHaveAttribute('aria-hidden', 'true');
-    // Enabled and closed differ by the figure alone: no glyph on either label.
-    expect(screen.getByRole('button', { name: /^KOR-2 / }).querySelector('svg')).toBeNull();
-    expect(screen.getByRole('button', { name: /^HAF-1 / }).querySelector('svg')).toBeNull();
+    // Every label has exactly one mark, hidden from assistive technology: the word is in the name.
+    // The marks share one class and so one size: a label is as wide in one state as in another,
+    // and a state that changes by itself moves nothing.
+    for (const code of ['KOR-1', 'KOR-2', 'HAF-1']) {
+      const marks = screen
+        .getByRole('button', { name: new RegExp(`^${code} `) })
+        .querySelectorAll('svg');
+      expect(marks, code).toHaveLength(1);
+      expect(marks[0], code).toHaveClass('office-glyph');
+      expect(marks[0], code).toHaveAttribute('aria-hidden', 'true');
+    }
+    // Closed and idle are the figure of the desk: an outline, and the same figure filled.
+    const figure = (code: string) =>
+      screen
+        .getByRole('button', { name: new RegExp(`^${code} `) })
+        .querySelector('svg')
+        ?.getAttribute('fill');
+    expect(figure('HAF-1')).toBe('none');
+    expect(figure('KOR-2')).toBe('currentColor');
     // The drawing itself says nothing about a state except through the attribute.
     expect(world.querySelectorAll('[fill], [stroke], [style]')).toHaveLength(0);
+    // Every desk carries the two marks of its screen; the stylesheet shows the one of its state.
+    for (const desk of world.querySelectorAll('.office-agent')) {
+      expect(desk.querySelectorAll('.office-screen-dot, .office-screen-cross')).toHaveLength(2);
+    }
   });
 
   it('lists in the legend only the states that an agent of this office has, in a fixed order', () => {
@@ -426,18 +452,43 @@ describe('OfficeView structure', () => {
       within(screen.getByRole('list', { name: 'Durumlar' }))
         .getAllByRole('listitem')
         .map((item) => item.textContent);
-    expect(rows()).toEqual(['Kapalı', 'Etkin', 'Durduruldu']);
-    // The stopped row carries the glyph of the label; the other two a small figure.
+    expect(rows()).toEqual(['Kapalı', 'Boşta', 'Durduruldu']);
+    // Every row carries the mark of the label, one per row.
     const legend = screen.getByRole('list', { name: 'Durumlar' });
-    expect(legend.querySelectorAll('svg.office-glyph')).toHaveLength(1);
+    expect(legend.querySelectorAll('svg.office-glyph')).toHaveLength(3);
     expect(legend.querySelectorAll('svg')).toHaveLength(3);
-    // The mark is the figure it explains: an outline for a closed agent, filled for an enabled
-    // one. The filled figure never stands for an agent the company has not opened.
+    // The mark is the figure it explains: an outline for a closed agent, filled for an open one
+    // without work. The filled figure never stands for an agent the company has not opened.
     const mark = (state: string) =>
       legend.querySelector(`li[data-state="${state}"] svg`)?.getAttribute('fill');
     expect(mark('closed')).toBe('none');
-    expect(mark('enabled')).toBe('currentColor');
-    expect(legend.querySelector('li[data-state="stopped"] svg')).toHaveClass('office-glyph');
+    expect(mark('idle')).toBe('currentColor');
+
+    // The six states in their fixed order: what takes no work, what an open agent can show, what
+    // a person has stopped.
+    const six = ['running', 'stopped', 'error', 'closed', 'awaiting_approval', 'idle'] as const;
+    rerender(
+      <OfficeView
+        companyName="Arma DX"
+        units={[
+          {
+            code: 'KOR',
+            name: 'Koordinasyon Katmanı',
+            agents: six.map((state, index) => ({
+              code: `KOR-${String(index + 1)}`,
+              name: `Ajan ${String(index + 1)}`,
+              state,
+              ready: true,
+              work: NO_WORK,
+            })),
+          },
+        ]}
+        selectedId={null}
+        onSelect={vi.fn()}
+      />,
+    );
+    expect(rows()).toEqual(['Kapalı', 'Boşta', 'Çalışıyor', 'Onay bekliyor', 'Hata', 'Durduruldu']);
+    expect(legend.querySelectorAll('svg.office-glyph')).toHaveLength(6);
 
     // The pilot data of today: nobody has opened an agent.
     rerender(

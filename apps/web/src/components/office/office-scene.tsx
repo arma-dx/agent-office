@@ -36,12 +36,17 @@ function Slab({ box }: { box: Box }) {
 /**
  * Desk, monitor, figure and chair, seen from the front. The sprite is not projected: it stands
  * upright on a point of the floor, so one drawing serves every room. Coordinates are scene pixels
- * from the foot of the sprite (bottom centre); parts are painted far to near.
+ * from the foot of the sprite (bottom centre); parts are painted far to near. Every desk carries
+ * the two marks of the screen; which one shows is the stylesheet's, by the state of the desk.
  */
 function DeskSprite({ foot }: { foot: ScenePoint }) {
   return (
     <g className="office-sprite" transform={`translate(${foot.x} ${foot.y})`}>
       <rect className="office-monitor" x={-10} y={-44} width={20} height={13} rx={2} />
+      {/* What the screen shows for a result that waits for approval (a dot) and for an error (a
+          cross); office.css paints the one the state of the desk asks for. */}
+      <circle className="office-screen-dot" cx={0} cy={-37.5} r={2.5} />
+      <path className="office-screen-cross" d="M-3 -40.5 L3 -34.5 M3 -40.5 L-3 -34.5" />
       <rect className="office-stand" x={-1} y={-31} width={2} height={9} />
       <rect className="office-leg" x={-22} y={-17} width={3} height={13} />
       <rect className="office-leg" x={19} y={-17} width={3} height={13} />

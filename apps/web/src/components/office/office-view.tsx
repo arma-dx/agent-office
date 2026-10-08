@@ -46,7 +46,7 @@ import {
 import { nextItem, type RovingItem } from '@/lib/office/roving';
 import { useOfficeView } from '@/lib/office/use-office-view';
 import type { Size } from '@/lib/office/view';
-import { RUN_STATUS } from '@/lib/status';
+import { RUN_STATUS, TASK_STATUS } from '@/lib/status';
 import './office.css';
 
 const NO_SIZES: ReadonlyMap<string, Size> = new Map();
@@ -103,13 +103,40 @@ function anchorStyle(anchor: OverlayAnchor | undefined): CSSProperties {
   return { '--sx': anchor?.x ?? 0, '--sy': anchor?.y ?? 0 } as CSSProperties;
 }
 
-// A stopped agent and a stopped run share one glyph and one tone (the status language).
-const StoppedIcon = RUN_STATUS.stopped.icon;
+/** The small figure that marks the two states without a status glyph: an outline or a filled one. */
+function FigureMark({ filled }: { filled: boolean }) {
+  return (
+    <svg
+      aria-hidden="true"
+      className="office-glyph"
+      viewBox="0 0 14 14"
+      fill={filled ? 'currentColor' : 'none'}
+    >
+      <circle cx={7} cy={4} r={2.5} stroke="currentColor" />
+      <rect x={3.5} y={7.5} width={7} height={6} rx={2} stroke="currentColor" />
+    </svg>
+  );
+}
 
-/** The glyph of a state. Closed and enabled have none: the figure alone tells them apart. */
+// The live states and the stop take the icon the status language has for the same condition of a
+// run or a task (lib/status.ts); office.css gives it the tone of that status.
+const STATE_ICON = {
+  running: RUN_STATUS.running.icon,
+  awaiting_approval: TASK_STATUS.awaiting_approval.icon,
+  error: RUN_STATUS.failed.icon,
+  stopped: RUN_STATUS.stopped.icon,
+} as const;
+
+/**
+ * The mark of a state, on a label and in the legend. Every state has one and they are all the
+ * same size, so a label is as wide in one state as in another: a state that changes while the
+ * person is looking moves nothing. Closed and idle are the figure of the desk, an outline or a
+ * filled one; the other four are the icons of the status language.
+ */
 function StateGlyph({ state }: { state: AgentState }) {
-  if (state !== 'stopped') return null;
-  return <StoppedIcon aria-hidden="true" className="office-glyph" />;
+  if (state === 'closed' || state === 'idle') return <FigureMark filled={state === 'idle'} />;
+  const Icon = STATE_ICON[state];
+  return <Icon aria-hidden="true" className="office-glyph" />;
 }
 
 interface OfficeLabelsProps {
@@ -201,18 +228,15 @@ const OfficeLabels = memo(function OfficeLabels({
   );
 });
 
-/** Order of the legend: what takes no work, what takes work, what a person has stopped. */
-const LEGEND_ORDER: readonly AgentState[] = ['closed', 'enabled', 'stopped'];
-
-/** The small figure of the legend for the two states that have no glyph: outline or filled. */
-function FigureMark({ filled }: { filled: boolean }) {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 14 14" fill={filled ? 'currentColor' : 'none'}>
-      <circle cx={7} cy={4} r={2.5} stroke="currentColor" />
-      <rect x={3.5} y={7.5} width={7} height={6} rx={2} stroke="currentColor" />
-    </svg>
-  );
-}
+/** Order of the legend: what takes no work, what an open agent can show, what a person has stopped. */
+const LEGEND_ORDER: readonly AgentState[] = [
+  'closed',
+  'idle',
+  'running',
+  'awaiting_approval',
+  'error',
+  'stopped',
+];
 
 /** One row per state that an agent of this office has; a state nobody has is not listed. */
 function OfficeLegend({ states }: { states: ReadonlySet<AgentState> }) {
@@ -220,11 +244,7 @@ function OfficeLegend({ states }: { states: ReadonlySet<AgentState> }) {
     <ul role="list" aria-label="Durumlar" className="office-legend">
       {LEGEND_ORDER.filter((state) => states.has(state)).map((state) => (
         <li key={state} data-state={state}>
-          {state === 'stopped' ? (
-            <StateGlyph state={state} />
-          ) : (
-            <FigureMark filled={state === 'enabled'} />
-          )}
+          <StateGlyph state={state} />
           {AGENT_STATE_LABEL[state]}
         </li>
       ))}

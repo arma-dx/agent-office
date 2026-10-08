@@ -3,7 +3,9 @@ import { ARMADX_OFFICE, FOUNDER_OFFICE, PILLIKA_OFFICE } from '@/test/office-fix
 import {
   AGENT_STATE_LABEL,
   AGENT_STATE_SENTENCE,
+  NO_WORK,
   agentId,
+  isOpen,
   selectionOf,
   shortName,
   stateOf,
@@ -56,15 +58,38 @@ describe('stateOf', () => {
     expect(stateOf('disabled')).toBe('closed');
   });
 
-  it('keeps the two switches that say more', () => {
-    expect(stateOf('enabled')).toBe('enabled');
+  it('keeps the switch that says more, and reads an open agent without work as idle', () => {
+    expect(stateOf('enabled')).toBe('idle');
+    expect(stateOf('enabled', NO_WORK)).toBe('idle');
     expect(stateOf('stopped')).toBe('stopped');
+  });
+
+  it('shows what the open requests of an open agent say, by the shared rule', () => {
+    const one = { count: 1, requestId: '00000000-0000-4000-8000-000000000001' };
+    const two = { count: 2, requestId: null };
+    expect(stateOf('enabled', { ...NO_WORK, running: one })).toBe('running');
+    expect(stateOf('enabled', { ...NO_WORK, running: two, awaitingApproval: one })).toBe(
+      'awaiting_approval',
+    );
+    expect(stateOf('enabled', { running: two, awaitingApproval: one, failed: one })).toBe('error');
+    // The switch comes first.
+    expect(stateOf('stopped', { ...NO_WORK, failed: one })).toBe('stopped');
+    expect(stateOf(null, { ...NO_WORK, awaitingApproval: one })).toBe('closed');
+  });
+
+  it('knows an open agent from one that takes no work', () => {
+    expect(
+      (['closed', 'idle', 'running', 'awaiting_approval', 'error', 'stopped'] as const).map(isOpen),
+    ).toEqual([false, true, true, true, true, false]);
   });
 
   it('has a Turkish word for every state', () => {
     expect(AGENT_STATE_LABEL).toEqual({
       closed: 'Kapalı',
-      enabled: 'Etkin',
+      idle: 'Boşta',
+      running: 'Çalışıyor',
+      awaiting_approval: 'Onay bekliyor',
+      error: 'Hata',
       stopped: 'Durduruldu',
     });
   });
@@ -72,7 +97,10 @@ describe('stateOf', () => {
   it('has a sentence for every state that claims no history and names no company', () => {
     expect(AGENT_STATE_SENTENCE).toEqual({
       closed: 'Bu ajan kapalı.',
-      enabled: 'Bu ajan etkin.',
+      idle: 'Bu ajan açık ve boşta.',
+      running: 'Bu ajan çalışıyor.',
+      awaiting_approval: 'Bu ajanın sonucu onay bekliyor.',
+      error: 'Bu ajanın yürüttüğü bir talep insana düştü.',
       stopped: 'Bu ajan durduruldu, yeni iş almaz.',
     });
   });
@@ -97,7 +125,13 @@ describe('selectionOf', () => {
     expect(selection).toEqual({
       kind: 'agent',
       unit: ARMADX_OFFICE[1],
-      agent: { code: 'KOR-3', name: 'Onay Masası Ajanı', state: 'closed', ready: true },
+      agent: {
+        code: 'KOR-3',
+        name: 'Onay Masası Ajanı',
+        state: 'closed',
+        ready: true,
+        work: NO_WORK,
+      },
     });
   });
 

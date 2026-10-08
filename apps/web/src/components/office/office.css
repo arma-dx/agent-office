@@ -125,12 +125,27 @@
 }
 
 /*
- * States. Closed and enabled share one tone and differ by shape: an outline figure takes no work,
- * a filled one does. A stopped agent is an outline figure on a mat, in the tone of a stopped run.
+ * States. Every state has a shape of its own in the drawing, so that none is told by its tone
+ * alone: closed is an outline figure, idle a filled one; an open agent with work stands on a mat
+ * and its screen says which work (lit: running, a dot: a result waits for approval, a cross: an
+ * error); a stopped agent is an outline figure on a mat. The tones are those of the status
+ * language.
  */
 .office-agent {
   --state: var(--ink-secondary);
   --state-fill: transparent;
+}
+.office-agent[data-state='running'] {
+  --state: var(--status-in-progress);
+  --state-fill: var(--status-in-progress-fill);
+}
+.office-agent[data-state='awaiting_approval'] {
+  --state: var(--status-awaiting-approval);
+  --state-fill: var(--status-awaiting-approval-fill);
+}
+.office-agent[data-state='error'] {
+  --state: var(--status-error);
+  --state-fill: var(--status-error-fill);
 }
 .office-agent[data-state='stopped'] {
   --state: var(--status-cancelled);
@@ -140,12 +155,37 @@
   fill: var(--state);
   stroke: var(--state);
 }
-/* Closed and stopped: the figure is an outline. Enabled is the same tone, filled. */
+/* Closed and stopped: the figure is an outline. Every open agent is the same figure, filled. */
 .office-agent:is([data-state='closed'], [data-state='stopped']) .office-figure {
   fill: var(--surface);
 }
-.office-agent[data-state='stopped'] > .office-mat {
+.office-agent:is(
+    [data-state='running'],
+    [data-state='awaiting_approval'],
+    [data-state='error'],
+    [data-state='stopped']
+  )
+  > .office-mat {
   fill: var(--state-fill);
+  stroke: var(--state);
+}
+/* The screen of the desk: lit while the agent runs; a dot or a cross is drawn on a dark one. */
+.office-agent[data-state='running'] .office-monitor {
+  fill: var(--state-fill);
+  stroke: var(--state);
+}
+.office-screen-dot {
+  fill: none;
+}
+.office-screen-cross {
+  fill: none;
+  stroke: none;
+  stroke-width: 1.5;
+}
+.office-agent[data-state='awaiting_approval'] .office-screen-dot {
+  fill: var(--state);
+}
+.office-agent[data-state='error'] .office-screen-cross {
   stroke: var(--state);
 }
 
@@ -259,10 +299,21 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* The mark of a state, on a label and in the legend: one size for every state. */
 .office-glyph {
   width: 0.875rem;
   height: 0.875rem;
   flex: none;
+  color: var(--ink-secondary);
+}
+:is(.office-label, .office-legend li)[data-state='running'] .office-glyph {
+  color: var(--status-in-progress);
+}
+:is(.office-label, .office-legend li)[data-state='awaiting_approval'] .office-glyph {
+  color: var(--status-awaiting-approval);
+}
+:is(.office-label, .office-legend li)[data-state='error'] .office-glyph {
+  color: var(--status-error);
 }
 :is(.office-label, .office-legend li)[data-state='stopped'] .office-glyph {
   color: var(--status-cancelled);
@@ -357,11 +408,6 @@
   display: flex;
   align-items: center;
   gap: 6px;
-}
-.office-legend svg {
-  width: 0.875rem;
-  height: 0.875rem;
-  flex: none;
 }
 /*
  * In the top right corner, which a fitted scene leaves free (its rooms form a diamond): at the

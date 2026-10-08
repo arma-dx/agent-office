@@ -2,13 +2,36 @@
  * What the office view draws: units with their agents, and the state of each agent. The API's
  * answer (officeResponseSchema in packages/shared) is turned into this shape by from-api.ts.
  */
-import type { CompanyAgentStatus } from '@agent-office/shared';
+import {
+  officeAgentState,
+  type CompanyAgentStatus,
+  type OfficeAgentState,
+  type OfficeAgentWork,
+  type OfficeWorkCount,
+} from '@agent-office/shared';
 
 /**
- * What version 1 knows about an agent: the company's switch. The live states (idle, running,
- * awaiting approval, error) join this union when they are connected.
+ * What a desk shows: the company's switch (closed, stopped) and, for an open agent, what its
+ * open requests say (idle, running, awaiting approval, error). The rule is the shared one
+ * (officeAgentState); the panel only gives it words.
  */
-export type AgentState = 'closed' | 'enabled' | 'stopped';
+export type AgentState = OfficeAgentState;
+
+/**
+ * The open requests of an agent in this company, as the reader may see them: how many it is
+ * working on, how many of its results wait for approval, how many fell to a person because of
+ * its run. A count of one carries the request, so that the panel can lead to it.
+ */
+export type AgentWork = Pick<OfficeAgentWork, 'running' | 'awaitingApproval' | 'failed'>;
+
+const NO_COUNT: OfficeWorkCount = { count: 0, requestId: null };
+
+/** An agent the office answer lists no work for. One object, so equal data stays equal. */
+export const NO_WORK: AgentWork = {
+  running: NO_COUNT,
+  awaitingApproval: NO_COUNT,
+  failed: NO_COUNT,
+};
 
 export interface OfficeAgent {
   readonly code: string;
@@ -19,6 +42,7 @@ export interface OfficeAgent {
    * it), so the panel does not offer to. It says nothing about the card's own status field.
    */
   readonly ready: boolean;
+  readonly work: AgentWork;
 }
 
 export interface OfficeUnit {
@@ -30,7 +54,10 @@ export interface OfficeUnit {
 /** Turkish label of each state; the same words go into the accessible name and the legend. */
 export const AGENT_STATE_LABEL: Record<AgentState, string> = {
   closed: 'Kapalı',
-  enabled: 'Etkin',
+  idle: 'Boşta',
+  running: 'Çalışıyor',
+  awaiting_approval: 'Onay bekliyor',
+  error: 'Hata',
   stopped: 'Durduruldu',
 };
 
@@ -41,9 +68,19 @@ export const AGENT_STATE_LABEL: Record<AgentState, string> = {
  */
 export const AGENT_STATE_SENTENCE: Record<AgentState, string> = {
   closed: 'Bu ajan kapalı.',
-  enabled: 'Bu ajan etkin.',
+  idle: 'Bu ajan açık ve boşta.',
+  running: 'Bu ajan çalışıyor.',
+  awaiting_approval: 'Bu ajanın sonucu onay bekliyor.',
+  error: 'Bu ajanın yürüttüğü bir talep insana düştü.',
   stopped: 'Bu ajan durduruldu, yeni iş almaz.',
 };
+
+/** The three counts of the selected agent's panel, in the order they are listed. */
+export const WORK_ROWS = [
+  { key: 'running', label: AGENT_STATE_LABEL.running },
+  { key: 'awaitingApproval', label: AGENT_STATE_LABEL.awaiting_approval },
+  { key: 'failed', label: AGENT_STATE_LABEL.error },
+] as const satisfies readonly { key: keyof AgentWork; label: string }[];
 
 /**
  * What the founder reads in place of the button that would open an agent whose card has no version
@@ -52,12 +89,20 @@ export const AGENT_STATE_SENTENCE: Record<AgentState, string> = {
 export const AGENT_NOT_READY_SENTENCE = 'Bu ajan henüz açılamaz: kartının çalışacak sürümü yok.';
 
 /**
- * The state drawn for a company's switch. No row and `disabled` look the same: for this company
- * the agent is closed. Why, the data does not say.
+ * The state drawn for a company's switch and the agent's open requests. No row and `disabled`
+ * look the same: for this company the agent is closed. Why, the data does not say.
  */
-export function stateOf(status: CompanyAgentStatus | null): AgentState {
-  if (status === 'stopped') return 'stopped';
-  return status === 'enabled' ? 'enabled' : 'closed';
+export function stateOf(status: CompanyAgentStatus | null, work: AgentWork = NO_WORK): AgentState {
+  return officeAgentState(status, {
+    running: work.running.count,
+    awaitingApproval: work.awaitingApproval.count,
+    failed: work.failed.count,
+  });
+}
+
+/** The company's switch is on for the agent: every state but closed and stopped. */
+export function isOpen(state: AgentState): boolean {
+  return state !== 'closed' && state !== 'stopped';
 }
 
 /** The unit that stands in the middle of the office when the company has it: Kurumsal Hafıza. */

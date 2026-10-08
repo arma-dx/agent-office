@@ -1,4 +1,4 @@
-import type { AgentState, OfficeUnit } from '@/lib/office/model';
+import { NO_WORK, type AgentState, type OfficeUnit } from '@/lib/office/model';
 
 function unit(
   code: string,
@@ -14,6 +14,7 @@ function unit(
       name: agentName,
       state,
       ready: true,
+      work: NO_WORK,
     })),
   };
 }
@@ -58,7 +59,7 @@ const REPORT_COUNTS = [
   5, 3, 4, 5, 8, 9, 6, 5, 5, 9, 7, 4, 4, 4, 8, 6, 4, 4, 4, 5, 3, 3, 5, 4, 4, 4, 5, 4, 5, 4, 3, 3, 6,
   3, 2, 2, 4,
 ];
-const MIXED_STATES: AgentState[] = ['enabled', 'closed', 'enabled', 'stopped', 'closed'];
+const MIXED_STATES: AgentState[] = ['idle', 'closed', 'running', 'stopped', 'closed'];
 
 /** The upper bound of the scene: every unit of the report, with a mix of states. */
 export const REPORT_OFFICE: OfficeUnit[] = REPORT_COUNTS.map((count, index) => ({
@@ -69,6 +70,7 @@ export const REPORT_OFFICE: OfficeUnit[] = REPORT_COUNTS.map((count, index) => (
     name: `Örnek ajan ${i + 1}`,
     state: MIXED_STATES[(index + i) % MIXED_STATES.length] ?? 'closed',
     ready: true,
+    work: NO_WORK,
   })),
 }));
 

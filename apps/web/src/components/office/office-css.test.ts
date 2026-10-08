@@ -328,16 +328,29 @@ describe('office.css', () => {
     );
   });
 
-  it('tells closed from enabled by shape and stopped by its own tone, never by color alone', () => {
+  it('gives every state a shape of its own in the drawing, never a color alone', () => {
     expect(Object.fromEntries(rule('.office-agent').declarations)).toEqual({
       '--state': 'var(--ink-secondary)',
       '--state-fill': 'transparent',
     });
-    expect(Object.fromEntries(rule(".office-agent[data-state='stopped']").declarations)).toEqual({
-      '--state': 'var(--status-cancelled)',
-      '--state-fill': 'var(--status-cancelled-fill)',
-    });
-    // The outline figure: closed and stopped. The filled one is the base rule.
+    // The tones are those of the status language: a tone and its fill, measured together
+    // (tokens.test.ts).
+    const tones = {
+      running: 'in-progress',
+      awaiting_approval: 'awaiting-approval',
+      error: 'error',
+      stopped: 'cancelled',
+    };
+    for (const [state, tone] of Object.entries(tones)) {
+      expect(
+        Object.fromEntries(rule(`.office-agent[data-state='${state}']`).declarations),
+        state,
+      ).toEqual({
+        '--state': `var(--status-${tone})`,
+        '--state-fill': `var(--status-${tone}-fill)`,
+      });
+    }
+    // The outline figure: closed and stopped. The filled one is the base rule: every open agent.
     expect(Object.fromEntries(rule('.office-figure').declarations)).toEqual({
       fill: 'var(--state)',
       stroke: 'var(--state)',
@@ -355,22 +368,58 @@ describe('office.css', () => {
       '.office-figure',
       ".office-agent:is([data-state='closed'], [data-state='stopped']) .office-figure",
     ]);
-    // The mat is what tells a stopped desk from a closed one in the drawing; their tones are
-    // nearly the same.
+    // The mat: an agent with work, and a stopped one (it tells a stopped desk from a closed one;
+    // their tones are nearly the same). Closed and idle stand on the bare floor.
     expect(
-      Object.fromEntries(rule(".office-agent[data-state='stopped'] > .office-mat").declarations),
+      Object.fromEntries(
+        rule(
+          ".office-agent:is( [data-state='running'], [data-state='awaiting_approval'], [data-state='error'], [data-state='stopped'] ) > .office-mat",
+        ).declarations,
+      ),
     ).toEqual({ fill: 'var(--state-fill)', stroke: 'var(--state)' });
     expect(rule('.office-mat').declarations.get('fill')).toBe('transparent');
-    // Only these states exist in version 1.
+    // The screen tells the three kinds of work apart without their tones: lit while the agent
+    // runs, a dot for a result that waits for approval, a cross for an error.
+    expect(
+      Object.fromEntries(rule(".office-agent[data-state='running'] .office-monitor").declarations),
+    ).toEqual({ fill: 'var(--state-fill)', stroke: 'var(--state)' });
+    expect(Object.fromEntries(rule('.office-screen-dot').declarations)).toEqual({ fill: 'none' });
+    expect(Object.fromEntries(rule('.office-screen-cross').declarations)).toEqual({
+      fill: 'none',
+      stroke: 'none',
+      'stroke-width': '1.5',
+    });
+    expect(
+      Object.fromEntries(
+        rule(".office-agent[data-state='awaiting_approval'] .office-screen-dot").declarations,
+      ),
+    ).toEqual({ fill: 'var(--state)' });
+    expect(
+      Object.fromEntries(
+        rule(".office-agent[data-state='error'] .office-screen-cross").declarations,
+      ),
+    ).toEqual({ stroke: 'var(--state)' });
+    // Idle has no rule of its own: it is the base look. No other state is named.
     const states = [...source.matchAll(/data-state='([a-z_]+)'/g)].map((match) => match[1]);
-    expect([...new Set(states)].sort()).toEqual(['closed', 'stopped']);
+    expect([...new Set(states)].sort()).toEqual([
+      'awaiting_approval',
+      'closed',
+      'error',
+      'running',
+      'stopped',
+    ]);
   });
 
   // tokens.test.ts measures every token in the role it has in the shell: a text token on the
   // surfaces, a line token as a line. These lists keep each token of the scene in its role.
-  it('colors text with the two text tokens only, and the stop glyph with its status tone', () => {
+  it('colors text with the two text tokens only, and the mark of a state with its status tone', () => {
     expect(listed('color')).toEqual([
       '.office-anchor { var(--ink) }',
+      // Closed and idle: the tone of the figure on the desk.
+      '.office-glyph { var(--ink-secondary) }',
+      ":is(.office-label, .office-legend li)[data-state='running'] .office-glyph { var(--status-in-progress) }",
+      ":is(.office-label, .office-legend li)[data-state='awaiting_approval'] .office-glyph { var(--status-awaiting-approval) }",
+      ":is(.office-label, .office-legend li)[data-state='error'] .office-glyph { var(--status-error) }",
       ":is(.office-label, .office-legend li)[data-state='stopped'] .office-glyph { var(--status-cancelled) }",
       '.office-card-meta { var(--ink-secondary) }',
       '.office-tag { var(--ink) }',

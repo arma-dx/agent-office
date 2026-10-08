@@ -301,14 +301,14 @@ describe('office page', () => {
     expect(document.querySelector('svg [data-selected]')).toBeNull();
   });
 
-  it('reads the switch of the company: enabled is "Etkin", stopped is "Durduruldu"', async () => {
+  it('reads the switch of the company: an open agent without work is "Boşta", stopped is "Durduruldu"', async () => {
     officeApi(
       officeBody(ARMADX_OFFICE, { 'KOR-1': 'enabled', 'HAF-1': 'stopped', 'HAF-2': 'disabled' }),
     );
     renderApp('/c/armadx/office');
     expect(
       await screen.findByRole('button', {
-        name: 'KOR-1 Ofis Koordinatörü, Koordinasyon Katmanı, Etkin',
+        name: 'KOR-1 Ofis Koordinatörü, Koordinasyon Katmanı, Boşta',
       }),
     ).toBeVisible();
     expect(
@@ -318,14 +318,14 @@ describe('office page', () => {
     expect(
       screen.getByRole('button', { name: 'HAF-2 Kurumsal Arama Ajanı, Kurumsal Hafıza, Kapalı' }),
     ).toBeVisible();
-    expect(desk('KOR-1')).toHaveAttribute('data-state', 'enabled');
+    expect(desk('KOR-1')).toHaveAttribute('data-state', 'idle');
     expect(desk('HAF-1')).toHaveAttribute('data-state', 'stopped');
     expect(desk('HAF-2')).toHaveAttribute('data-state', 'closed');
     expect(
       within(screen.getByRole('list', { name: 'Durumlar' }))
         .getAllByRole('listitem')
         .map((item) => item.textContent),
-    ).toEqual(['Kapalı', 'Etkin', 'Durduruldu']);
+    ).toEqual(['Kapalı', 'Boşta', 'Durduruldu']);
   });
 });
 
@@ -545,8 +545,8 @@ describe('office page: the selection in the properties panel', () => {
     ]);
 
     await userEvent.click(screen.getByRole('button', { name: /^KOR-1 / }));
-    expect(field('Durum')).toHaveTextContent('Etkin');
-    expect(within(panel).getByText('Bu ajan etkin.')).toBeVisible();
+    expect(field('Durum')).toHaveTextContent('Boşta');
+    expect(within(panel).getByText('Bu ajan açık ve boşta.')).toBeVisible();
   });
 
   it('offers no button to open an agent whose card has no version to run with, and says why', async () => {
@@ -704,8 +704,8 @@ describe('office page: the agent switch', () => {
       'aria-disabled',
       'true',
     );
-    expect(stateBehindDialog(panel)).toHaveTextContent('Etkin');
-    expect(desk('KOR-1')).toHaveAttribute('data-state', 'enabled');
+    expect(stateBehindDialog(panel)).toHaveTextContent('Boşta');
+    expect(desk('KOR-1')).toHaveAttribute('data-state', 'idle');
     expect(api.callsTo('GET /office')).toHaveLength(1);
     // A second press while it is on its way sends nothing more.
     await userEvent.click(within(dialog).getByRole('button', { name: 'Ajanı durdur' }));
@@ -757,15 +757,15 @@ describe('office page: the agent switch', () => {
         { status: 'enabled' },
       ]);
     });
-    expect(stateBehindDialog(panel)).not.toHaveTextContent('Etkin');
+    expect(stateBehindDialog(panel)).not.toHaveTextContent('Boşta');
 
     store('enabled');
     await waitFor(() => {
       expect(screen.queryByRole('alertdialog')).toBeNull();
     });
-    expect(field('Durum')).toHaveTextContent('Etkin');
-    expect(within(panel).getByText('Bu ajan etkin.')).toBeVisible();
-    expect(desk('KOR-1')).toHaveAttribute('data-state', 'enabled');
+    expect(field('Durum')).toHaveTextContent('Boşta');
+    expect(within(panel).getByText('Bu ajan açık ve boşta.')).toBeVisible();
+    expect(desk('KOR-1')).toHaveAttribute('data-state', 'idle');
     // The switch now offers the stop.
     await waitFor(() => {
       expect(within(panel).getByRole('button', { name: 'Ajanı durdur' })).toHaveFocus();
