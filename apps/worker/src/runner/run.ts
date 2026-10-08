@@ -1008,18 +1008,23 @@ export async function runAgentJob(
           agent: string | null;
           task: string;
           step: string | null;
+          routed: boolean;
         }>(
           `select (select ca.status from office.company_agents ca where ca.agent_code = $2) as agent,
                   t.status as task,
                   (select s.id from office.task_routings s
-                   where s.task_id = t.id and s.status = 'active' and s.agent_code = $2) as step
+                   where s.task_id = t.id and s.status = 'active' and s.agent_code = $2) as step,
+                  exists (select 1 from office.task_routings r where r.task_id = t.id) as routed
            from office.tasks t where t.id = $1`,
           [job.taskId, job.agentCode],
         );
         const row = state.rows[0];
         if (!row || row.task === 'done' || row.task === 'cancelled') return 'request_closed';
         if (row.agent !== 'enabled') return 'agent_stopped';
-        if (coordinator) return null;
+        // The coordinator routes a request nobody has routed yet. Once a person gave it to a unit
+        // while this run was open (7 October decision 7), the run has nothing left to decide: it
+        // stops here, before its answer is looked at. The database refuses such a routing too.
+        if (coordinator) return row.routed ? 'routing_changed' : null;
         // A unit agent works for the step its run was opened for, not for whichever step names
         // its code now: a new routing to the same agent is a new step, with a note this run never
         // read.

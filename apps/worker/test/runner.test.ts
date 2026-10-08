@@ -1256,6 +1256,65 @@ describe.skipIf(noDatabase)('a run never leaves its company, its request or its 
     expect(await statusOf(taskId)).toBe('open');
   });
 
+  it('a routing a person made during the coordinator’s run stands: the late answer is not executed', async () => {
+    const NOTE = 'Kurucunun notu: tek paragraf.';
+    const answers = [
+      // The coordinator names a unit without an agent: this would return and close the request.
+      { unit_code: 'HUK', agent_code: '', reason: 'Hukuk işi.' },
+      // The coordinator names the same agent: this would replace the person's step and its note.
+      ROUTE_TO_SOS,
+    ];
+    for (const answer of answers) {
+      const taskId = await openRequest(ids.founder, REQUEST);
+      // While the coordinator's model call is open the founder gives the request to SOS-2.
+      const model = new ScriptedModel([
+        async () => {
+          await correctToSameAgent(taskId, NOTE);
+          return toolUse('route_task', answer, { input: 300, output: 40 });
+        },
+      ]);
+      const { deps, jobs } = await runner(model);
+      const result = await runAgentJob(deps, job(taskId, 'KOR-1', ids.founder));
+      expect(result).toMatchObject({ outcome: 'stopped', modelCalls: 1 });
+      // Stopped before the tool call was looked at; the call it paid for is recorded.
+      expect(await runRow(result.runId)).toMatchObject({
+        status: 'stopped',
+        error_code: 'routing_changed',
+        tool_call_count: 0,
+        input_tokens: 300,
+      });
+      // The person's step is the only one and is still active; the request is not closed and no
+      // second job was sent.
+      expect(
+        await admin(
+          `select round, unit_code, agent_code, status, routed_by_user_id, routed_by_agent_code
+           from office.task_routings where task_id = $1`,
+          [taskId],
+        ),
+      ).toEqual([
+        {
+          round: 1,
+          unit_code: 'SOS',
+          agent_code: 'SOS-2',
+          status: 'active',
+          routed_by_user_id: ids.founder,
+          routed_by_agent_code: null,
+        },
+      ]);
+      expect(await statusOf(taskId)).toBe('in_progress');
+      expect(jobs.sent).toEqual([]);
+      // The unit agent then works with the person's note.
+      const unit = new ScriptedModel([toolUse('submit_for_approval', RESULT)]);
+      const submitted = await runAgentJob(
+        (await runner(unit)).deps,
+        job(taskId, 'SOS-2', ids.founder),
+      );
+      expect(submitted.outcome).toBe('submitted');
+      expect(firstUserText(unit)).toContain('<routing_note>');
+      expect(firstUserText(unit)).toContain(NOTE);
+    }
+  });
+
   it('routes once: a second job for the same request does nothing and leaves a trace', async () => {
     const taskId = await routedRequest();
     const model = new ScriptedModel([]);
