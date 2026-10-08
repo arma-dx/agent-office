@@ -695,7 +695,10 @@ export async function runAgentJob(
     },
     Math.max(deadline - now(), 0),
   );
-  const system = systemText(version.stored);
+  const system = systemText(
+    version.stored,
+    offered.map((tool) => tool.name),
+  );
   const messages: ModelTurn[] = [
     { role: 'user', content: [{ type: 'text', text: dataText(opened.data) }] },
   ];

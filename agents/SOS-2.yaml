@@ -12,7 +12,7 @@ purpose: >
 
 triggers:
   - type: request
-    description: Kurucunun içerik isteği
+    description: Panelde açılan içerik talebi
   - type: handoff
     description: İçerik takviminden gelen iş
 

@@ -257,6 +257,25 @@ describe.skipIf(noDatabase)('the coordinator’s run', () => {
     expect(system).toContain('# Görev kartın: KOR-1 Ofis Koordinatörü');
     expect(system).toContain('# Talep yönlendirme');
     expect(system).not.toContain('İzmir');
+    // The card is rendered as it is written and promises ways of working the runner does not
+    // have yet (a question to the requester, sub-tasks, a status message). Right after the card
+    // the runner says what is really offered, built from the one tool it gives.
+    expect(system).toContain('- Şirket ya da birim net değilse talep sahibine tek bir soru sorar');
+    const caveat = /## Bu sürümde elindekiler\n\n(.*)\n/.exec(system)?.[1] ?? '';
+    expect(caveat).toMatch(/^Bu çalışmada elinde yalnızca şu araç var: `route_task`\. /);
+    expect(caveat).toContain(
+      'Kartında adı geçen öteki araçlar (`search_tasks`, `read_task`, `create_task`, `suggest_task`, `update_task`, `list_agents`, `list_users`, `search_notes`, `send_notification`) henüz açık değil.',
+    );
+    expect(caveat).toMatch(
+      /Soru soramaz, alt görev açamaz, görev önerisi bırakamaz, bildirim ya da mesaj gönderemezsin; kartının bunlardan söz eden satırları henüz yürürlükte değil\.$/,
+    );
+    // After the card's own lines, before the skills.
+    expect(system.indexOf('## Bu sürümde elindekiler')).toBeGreaterThan(
+      system.indexOf('## Sınırlar'),
+    );
+    expect(system.indexOf('## Bu sürümde elindekiler')).toBeLessThan(
+      system.indexOf('# Talep yönlendirme'),
+    );
     // The common rules ask the agent to note a customer's name for the approver. They do not tell
     // it to leave out what the requester wrote about a person: what may be written in a request
     // (8 October decision 5), the agent must be able to use.
@@ -636,6 +655,14 @@ describe.skipIf(noDatabase)('the unit agent’s run', () => {
       output_config: { effort: 'medium' },
     });
     expect(toolNames(model)).toEqual(['submit_for_approval']);
+    // The card speaks of asking for missing information and of a brief left as a task
+    // suggestion; the runner's caveat after it says that only the closing tool is offered.
+    const system = systemOf(model);
+    expect(system).toContain('eksik bilgiyi sorar');
+    expect(system).toContain('görev önerisi olarak');
+    expect(system).toContain(
+      'Bu çalışmada elinde yalnızca şu araç var: `submit_for_approval`. Kartında adı geçen öteki araçlar (`search_notes`, `read_note`, `write_note`, `suggest_task`) henüz açık değil. Soru soramaz, alt görev açamaz, görev önerisi bırakamaz, bildirim ya da mesaj gönderemezsin; kartının bunlardan söz eden satırları henüz yürürlükte değil.',
+    );
     const [approval] = await admin(
       `select id, status, attempt, tool_name, title, summary, agent_rationale, risk_note, payload,
               options, basis_type, basis_id, involves_money, goes_external, approver_user_id,

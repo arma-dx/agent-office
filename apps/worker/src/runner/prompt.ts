@@ -5,9 +5,10 @@ import type { StoredCard } from '@agent-office/shared';
  *
  * Three places, three kinds of content:
  *   system   INSTRUCTIONS only, from the card version: the common rules, the card rendered field
- *            by field, the text of its skills. Nothing a person typed and nothing a tool returned
- *            is ever put here, so two runs of one card version send the same bytes (which is also
- *            what lets the provider cache it).
+ *            by field with the runner's caveat about what is offered in this version, the text of
+ *            its skills. Nothing a person typed and nothing a tool returned is ever put here, so
+ *            two runs of one card version send the same bytes (which is also what lets the
+ *            provider cache it).
  *   tools    the runner's own definitions (tools.ts).
  *   user     DATA only, in marked blocks: what was asked, the facts of the run, and for the
  *            coordinator the units and agents of the company.
@@ -22,8 +23,33 @@ function list(title: string, items: readonly string[]): string {
     : `\n\n## ${title}\n\n${items.map((item) => `- ${item}`).join('\n')}`;
 }
 
-/** The instruction part: the same text for every run of a card version. */
-export function systemText(stored: StoredCard): string {
+/**
+ * What the runner really offers, said once after the card. The card is rendered as it is written,
+ * and it describes the agent as it will be: tools the runner has no handler for yet, and ways of
+ * working that need them (asking a question, opening a sub-task, leaving a task suggestion,
+ * sending a message). Without this caveat the prompt would promise abilities the run does not
+ * have. Built from the tools that are offered; the sentence about the four ways must be shortened
+ * when a handler for one of them arrives.
+ */
+function offeredCaveat(cardTools: readonly string[], offered: readonly string[]): string {
+  const code = (names: readonly string[]): string => names.map((name) => `\`${name}\``).join(', ');
+  const missing = cardTools.filter((name) => !offered.includes(name));
+  const have =
+    offered.length === 0
+      ? 'Bu çalışmada elinde hiçbir araç yok.'
+      : `Bu çalışmada elinde yalnızca şu ${offered.length === 1 ? 'araç' : 'araçlar'} var: ${code(offered)}.`;
+  const lack =
+    missing.length === 0
+      ? ''
+      : ` Kartında adı geçen öteki araçlar (${code(missing)}) henüz açık değil.`;
+  return `\n\n## Bu sürümde elindekiler\n\n${have}${lack} Soru soramaz, alt görev açamaz, görev önerisi bırakamaz, bildirim ya da mesaj gönderemezsin; kartının bunlardan söz eden satırları henüz yürürlükte değil.`;
+}
+
+/**
+ * The instruction part: the same text for every run of a card version. `offered` are the names of
+ * the tools the model is given with it (the card's tools the runner has a handler for).
+ */
+export function systemText(stored: StoredCard, offered: readonly string[]): string {
   const { card } = stored;
   const head = `# Görev kartın: ${card.code} ${card.name}\n\n${card.purpose}`;
   const limits = `\n\n## Sınırlar\n\nBu çalışmada en çok ${String(card.limits.tool_calls)} araç çağrısı yapabilirsin ve çalışma en çok ${String(card.limits.duration_minutes)} dakika sürebilir.`;
@@ -40,7 +66,8 @@ export function systemText(stored: StoredCard): string {
       list('Takıldığında', card.escalation) +
       list('Yapmayacakların', card.prohibitions) +
       sources +
-      limits,
+      limits +
+      offeredCaveat(card.tools, offered),
     skills,
   ]
     .filter((part) => part !== '')
