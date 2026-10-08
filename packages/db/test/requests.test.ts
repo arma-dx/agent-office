@@ -2285,4 +2285,33 @@ describe.skipIf(noDatabase)('the requester is told when a request closes behind 
       expect(await tx.exec(WRITE, values('approval_pending'))).toBe(1);
     });
   });
+
+  it('the read mark is written through the API’s role alone, by the recipient', async () => {
+    // The fixtures hold one notification of employee A in Arma DX.
+    const MARK = `update office.notifications set read_at = now() where recipient_user_id = $1`;
+    // The worker carries no session of the person: whatever its context says, it marks nothing.
+    await inWorkerTransaction(async (tx) => {
+      await tx.setContext(employeeA);
+      expect(await tx.count('notifications', 'recipient_user_id = $1', [ids.employeeA])).toBe(1);
+      expect((await tx.expectError(MARK, [ids.employeeA])).code).toBe('42501');
+      await tx.setContext(agentRun(ids.employeeA, 'KOR-1'));
+      expect((await tx.expectError(MARK, [ids.employeeA])).code).toBe('42501');
+    });
+    await inTransaction(async (tx) => {
+      // Somebody else's notification: not the approver's, and not the founder's although the
+      // founder reads the company's log.
+      for (const context of [approverA, founderA, agentRun(ids.employeeA, 'KOR-1')]) {
+        await tx.setContext(context);
+        expect(await tx.exec(MARK, [ids.employeeA]), JSON.stringify(context)).toBe(0);
+      }
+      await tx.setContext(employeeA);
+      expect(await tx.exec(MARK, [ids.employeeA])).toBe(1);
+      expect(
+        await tx.rows(
+          `select read_at = now() as read from office.notifications where recipient_user_id = $1`,
+          [ids.employeeA],
+        ),
+      ).toEqual([{ read: true }]);
+    });
+  });
 });
