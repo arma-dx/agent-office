@@ -1,11 +1,13 @@
 import {
   approvalCardSchema,
   requestDetailSchema,
+  todayNotificationSchema,
   todaySchema,
   type ApprovalCard,
   type RequestDetail,
   type RequestSummary,
   type Today,
+  type TodayNotification,
 } from '@agent-office/shared';
 import { USER_ID } from './mock-api.ts';
 
@@ -168,3 +170,36 @@ export function todayBody(overrides: Partial<Today> = {}): Today {
     ...overrides,
   });
 }
+
+/**
+ * The four notifications the panel has a sentence for, unread, in the order the API lists them
+ * (the newest first). A template and ids: the sentence is the panel's.
+ */
+export const RETURNED_NOTE: TodayNotification = todayNotificationSchema.parse({
+  id: 'b1111111-1111-4111-8111-111111111111',
+  template: 'request_returned',
+  createdAt: '2026-10-08T09:00:00.000Z',
+  read: false,
+  request: { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', title: 'KVKK metni' },
+  unit: { code: 'HUK', name: 'Hukuk ve Uyum' },
+});
+export const REJECTED_NOTE: TodayNotification = todayNotificationSchema.parse({
+  id: 'b2222222-2222-4222-8222-222222222222',
+  template: 'request_rejected',
+  createdAt: '2026-10-07T15:00:00.000Z',
+  read: false,
+  request: { id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', title: 'Ekim duyurusu' },
+});
+export const STOPPED_NOTE: TodayNotification = todayNotificationSchema.parse({
+  id: 'b3333333-3333-4333-8333-333333333333',
+  template: 'request_stopped',
+  createdAt: '2026-10-07T11:00:00.000Z',
+  read: false,
+  request: { id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', title: 'Fuar davetiyesi' },
+});
+export const RESET_NOTE: TodayNotification = todayNotificationSchema.parse({
+  id: 'b4444444-4444-4444-8444-444444444444',
+  template: 'passkeys_reset',
+  createdAt: '2026-10-06T10:00:00.000Z',
+  read: false,
+});

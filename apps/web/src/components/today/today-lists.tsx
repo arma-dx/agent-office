@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { ExpectedSection } from '@/components/today/expected-section';
+import { NotificationsSection } from '@/components/today/notifications-section';
 import { ErrorMessage, LoadingRows } from '@/components/states';
 import { userMessage } from '@/lib/api';
 import { useBackgroundRefresh } from '@/lib/refresh';
@@ -8,8 +9,8 @@ import { statusLine } from '@/lib/today/labels';
 import { fetchToday, todayKey, todayQueryOptions } from '@/lib/today/query';
 
 /**
- * The Bugün screen, from one answer of the API, refreshed every half minute in the background.
- * Nothing here can be paused by a dialog: the screen has none.
+ * The two parts of the Bugün screen, from one answer of the API, refreshed every half minute in
+ * the background. Nothing here can be paused by a dialog: the screen has none.
  */
 export function TodayLists() {
   const company = useCompany();
@@ -29,13 +30,15 @@ export function TodayLists() {
       />
     );
   }
-  const { expected, expectedTruncated } = today.data;
+  const { expected, expectedTruncated, notifications, notificationsTruncated } = today.data;
+  const unread = notifications.filter((notification) => !notification.read).length;
   return (
     <>
       <p role="status" className="sr-only">
-        {statusLine(expected.length, 0)}
+        {statusLine(expected.length, unread)}
       </p>
       <ExpectedSection requests={expected} truncated={expectedTruncated} />
+      <NotificationsSection notifications={notifications} truncated={notificationsTruncated} />
     </>
   );
 }

@@ -21,7 +21,8 @@ const Toaster = ({ ...props }: ToasterProps) => {
       theme={theme}
       className="toaster group"
       // The name of the region, in Turkish and without the shortcut sonner appends to its default.
-      customAriaLabel="Bildirimler"
+      // Not "Bildirimler": that is the list of a person's notifications on the Bugün screen.
+      customAriaLabel="Anlık bildirimler"
       hotkey={NO_HOTKEY}
       icons={{
         success: <CircleCheckIcon className="size-4" />,

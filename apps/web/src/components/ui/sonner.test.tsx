@@ -6,7 +6,7 @@ import { Toaster } from './sonner.tsx';
 describe('Toaster', () => {
   it('names its region in Turkish, without a shortcut', () => {
     render(<Toaster />);
-    expect(screen.getByRole('region', { name: 'Bildirimler' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Anlık bildirimler' })).toBeInTheDocument();
   });
 
   it('leaves the focus in a field when Alt+T is pressed while a toast is on screen', async () => {

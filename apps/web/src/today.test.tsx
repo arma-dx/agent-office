@@ -2,16 +2,20 @@ import { BACKGROUND_HEADER, COMPANY_HEADER } from '@agent-office/shared';
 import { cleanup, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ARMADX, json, mockApi, sessionHandler } from './test/mock-api.ts';
+import { ARMADX, json, mockApi, noContent, sessionHandler } from './test/mock-api.ts';
 import {
   EMPLOYEE,
   FOUNDER,
+  REJECTED_NOTE,
   REQUEST_ID,
+  RESET_NOTE,
+  RETURNED_NOTE,
+  STOPPED_NOTE,
   requestDetail,
   summaryOf,
   todayBody,
 } from './test/request-fixtures.ts';
-import { renderApp } from './test/render-app.tsx';
+import { currentLocation, renderApp } from './test/render-app.tsx';
 
 // The Bugün screen (8 October decisions 7 and 8) and the two counts of the sidebar. Everything on
 // screen is what the API answered: the list is a list of links, a notification is a fixed sentence
@@ -312,5 +316,268 @@ describe('Bugün: Sizden beklenenler', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+const RETURNED_SENTENCE =
+  'Talebiniz geri çevrildi: Hukuk ve Uyum biriminde bu işi alabilecek açık ajan yok.';
+const RETURNED_REQUEST = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+
+describe('Bugün: Bildirimler', () => {
+  it('lists the notifications newest first with their fixed sentences, the request as a link and the time', async () => {
+    const read = { ...STOPPED_NOTE, read: true };
+    mockApi({
+      'GET /session': sessionHandler(),
+      'GET /today': () =>
+        json(todayBody({ notifications: [RETURNED_NOTE, REJECTED_NOTE, read, RESET_NOTE] })),
+    });
+    renderApp('/c/armadx');
+    const region = await screen.findByRole('region', { name: 'Bildirimler' });
+    const rows = within(region).getAllByRole('listitem');
+    // The API's order, the title of the request (or of the reset) and the fixed sentence.
+    expect(rows.map((row) => row.textContent)).toEqual([
+      expect.stringContaining(`KVKK metni${RETURNED_SENTENCE}`),
+      expect.stringContaining('Ekim duyurusuTalebinizin sonucu reddedildi.'),
+      expect.stringContaining('Fuar davetiyesiTalebiniz durduruldu.'),
+      expect.stringContaining(
+        "Passkey'leriniz sıfırlandıGüvenlik sayfasından yeni bir passkey ekleyin.",
+      ),
+    ]);
+    expect(
+      within(region).getByRole('link', { name: `Okunmadı. KVKK metni, ${RETURNED_SENTENCE}` }),
+    ).toHaveAttribute('href', `/c/armadx/requests/${RETURNED_REQUEST}`);
+    expect(rows.map((row) => row.querySelector('time')?.getAttribute('datetime'))).toEqual([
+      RETURNED_NOTE.createdAt,
+      REJECTED_NOTE.createdAt,
+      STOPPED_NOTE.createdAt,
+      RESET_NOTE.createdAt,
+    ]);
+    // A read notification stays listed, without the mark and without the button.
+    const quiet = rows[2];
+    if (!quiet) throw new Error('No row for the read notification');
+    expect(within(quiet).queryByRole('button')).toBeNull();
+    expect(
+      within(quiet).getByRole('link', { name: 'Fuar davetiyesi, Talebiniz durduruldu.' }),
+    ).toBeVisible();
+    expect(within(region).getAllByRole('button', { name: /^Okundu: / })).toHaveLength(3);
+    // Nothing of a notification is a decision.
+    expect(within(region).queryAllByRole('combobox')).toEqual([]);
+  });
+
+  it('"Okundu" marks one notification read, keeps it listed and leaves the keyboard on its row', async () => {
+    const api = mockApi({
+      'GET /session': sessionHandler(),
+      'GET /today': () => json(todayBody({ notifications: [RETURNED_NOTE, REJECTED_NOTE] })),
+      'POST /notifications/read': () => noContent(),
+    });
+    renderApp('/c/armadx');
+    const region = await screen.findByRole('region', { name: 'Bildirimler' });
+    await userEvent.click(within(region).getByRole('button', { name: 'Okundu: KVKK metni' }));
+    const link = await within(region).findByRole('link', {
+      name: `KVKK metni, ${RETURNED_SENTENCE}`,
+    });
+    const [call, ...others] = api.callsTo('POST /notifications/read');
+    expect(others).toEqual([]);
+    expect(call?.body).toEqual({ ids: [RETURNED_NOTE.id] });
+    expect(call?.headers.get(COMPANY_HEADER)).toBe(ARMADX.companyId);
+    // A person's act: it counts as activity.
+    expect(call?.headers.get(BACKGROUND_HEADER)).toBeNull();
+    // Still listed, quieter, and the keyboard is where the button was.
+    expect(within(region).getAllByRole('listitem')).toHaveLength(2);
+    expect(within(region).queryByRole('button', { name: 'Okundu: KVKK metni' })).toBeNull();
+    expect(within(region).queryByRole('link', { name: /^Okunmadı\. KVKK metni/ })).toBeNull();
+    expect(link).toHaveFocus();
+    expect(within(region).getByRole('button', { name: 'Okundu: Ekim duyurusu' })).toBeVisible();
+  });
+
+  it('"Tümünü okundu say" marks every unread notification on screen and moves the focus to the heading', async () => {
+    const read = { ...REJECTED_NOTE, read: true };
+    const api = mockApi({
+      'GET /session': sessionHandler(),
+      'GET /today': () => json(todayBody({ notifications: [RETURNED_NOTE, read, RESET_NOTE] })),
+      'POST /notifications/read': () => noContent(),
+    });
+    renderApp('/c/armadx');
+    const region = await screen.findByRole('region', { name: 'Bildirimler' });
+    await userEvent.click(within(region).getByRole('button', { name: 'Tümünü okundu say' }));
+    await waitFor(() => {
+      expect(within(region).queryByRole('button', { name: 'Tümünü okundu say' })).toBeNull();
+    });
+    // The ids of the unread ones that are on screen, never an "everything" flag.
+    expect(api.callsTo('POST /notifications/read').map((call) => call.body)).toEqual([
+      { ids: [RETURNED_NOTE.id, RESET_NOTE.id] },
+    ]);
+    expect(within(region).queryAllByRole('button')).toEqual([]);
+    expect(within(region).getAllByRole('listitem')).toHaveLength(3);
+    expect(within(region).queryByRole('link', { name: /^Okunmadı/ })).toBeNull();
+    expect(within(region).getByRole('heading', { name: 'Bildirimler' })).toHaveFocus();
+  });
+
+  it('opening the request from a notification marks it read', async () => {
+    const read = { ...STOPPED_NOTE, read: true };
+    const api = mockApi({
+      'GET /session': sessionHandler(),
+      'GET /today': () => json(todayBody({ notifications: [RETURNED_NOTE, read] })),
+      'POST /notifications/read': () => noContent(),
+      [`GET /requests/${RETURNED_REQUEST}`]: () =>
+        json(
+          requestDetail({
+            id: RETURNED_REQUEST,
+            title: 'KVKK metni',
+            status: 'cancelled',
+            stage: 'cancelled',
+            cause: 'returned_no_agent',
+            turn: { kind: 'none' },
+            waitingForMe: false,
+            unit: { code: 'HUK', name: 'Hukuk ve Uyum' },
+            requester: FOUNDER,
+            approval: null,
+            actions: { cancel: false, stop: false, reroute: false },
+          }),
+        ),
+    });
+    const { router, queryClient } = renderApp('/c/armadx');
+    const region = await screen.findByRole('region', { name: 'Bildirimler' });
+    // A read one: opening it sends nothing. (Its page is not what this test is about.)
+    await userEvent.click(
+      within(region).getByRole('link', { name: 'Fuar davetiyesi, Talebiniz durduruldu.' }),
+    );
+    await waitFor(() => {
+      expect(currentLocation(router).pathname).toBe(
+        '/c/armadx/requests/cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+      );
+    });
+    expect(api.callsTo('POST /notifications/read')).toEqual([]);
+
+    await router.navigate({ to: '/c/$company', params: { company: 'armadx' } });
+    const again = await screen.findByRole('region', { name: 'Bildirimler' });
+    await userEvent.click(
+      within(again).getByRole('link', { name: `Okunmadı. KVKK metni, ${RETURNED_SENTENCE}` }),
+    );
+    await waitFor(() => {
+      expect(currentLocation(router).pathname).toBe(`/c/armadx/requests/${RETURNED_REQUEST}`);
+    });
+    await waitFor(() => {
+      expect(api.callsTo('POST /notifications/read').map((call) => call.body)).toEqual([
+        { ids: [RETURNED_NOTE.id] },
+      ]);
+    });
+    // The mark is kept although the person has left the screen that sent it.
+    await waitFor(() => {
+      expect(
+        queryClient
+          .getQueryData<ReturnType<typeof todayBody>>(['company', ARMADX.companyId, 'today'])
+          ?.notifications.map((notification) => notification.read),
+      ).toEqual([true, true]);
+    });
+  });
+
+  it('says so when a mark could not be saved and shows nothing as read', async () => {
+    const api = mockApi({
+      'GET /session': sessionHandler(),
+      'GET /today': () => json(todayBody({ notifications: [RETURNED_NOTE] })),
+      'POST /notifications/read': () => new Response(null, { status: 500 }),
+    });
+    renderApp('/c/armadx');
+    const region = await screen.findByRole('region', { name: 'Bildirimler' });
+    await userEvent.click(within(region).getByRole('button', { name: 'Okundu: KVKK metni' }));
+    expect(
+      await screen.findByText('Sunucuda bir sorun oluştu. Biraz sonra yeniden deneyin.'),
+    ).toBeVisible();
+    expect(api.callsTo('POST /notifications/read')).toHaveLength(1);
+    expect(within(region).getByRole('button', { name: 'Okundu: KVKK metni' })).toBeVisible();
+    expect(
+      within(region).getByRole('link', { name: `Okunmadı. KVKK metni, ${RETURNED_SENTENCE}` }),
+    ).toBeVisible();
+  });
+
+  it('says that there is no notification and what would bring one', async () => {
+    mockApi({ 'GET /session': sessionHandler() });
+    renderApp('/c/armadx');
+    const region = await screen.findByRole('region', { name: 'Bildirimler' });
+    expect(
+      within(region).getByText(
+        'Bildiriminiz yok. Talebiniz siz bir şey yapmadan kapanırsa burada haber verilir.',
+      ),
+    ).toBeVisible();
+    expect(within(region).queryByRole('button', { name: 'Tümünü okundu say' })).toBeNull();
+    expect(within(region).queryAllByRole('listitem')).toEqual([]);
+  });
+
+  it('tells a screen reader how many things wait and how many notifications are unread', async () => {
+    mockApi({
+      'GET /session': sessionHandler(),
+      'GET /today': () =>
+        json(
+          todayBody({
+            expected: [DECIDE, ACCEPT, FALLEN],
+            notifications: [RETURNED_NOTE, { ...REJECTED_NOTE, read: true }, RESET_NOTE],
+          }),
+        ),
+    });
+    renderApp('/c/armadx');
+    await screen.findByRole('region', { name: 'Bildirimler' });
+    expect(
+      within(screen.getByRole('main'))
+        .getAllByRole('status')
+        .map((status) => status.textContent),
+    ).toEqual(['3 iş sizden bekleniyor. 2 okunmamış bildirim var.']);
+  });
+
+  it('an external person reads their own notification and can open Güvenlik from it', async () => {
+    const api = mockApi({
+      'GET /session': sessionHandler(EXTERNAL_SESSION),
+      'GET /today': () => json(todayBody({ notifications: [RESET_NOTE] })),
+      'POST /notifications/read': () => noContent(),
+      'GET /passkeys': () => json({ passkeys: [] }),
+    });
+    const { router } = renderApp('/c/armadx');
+    const region = await screen.findByRole('region', { name: 'Bildirimler' });
+    const link = within(region).getByRole('link', {
+      name: "Okunmadı. Passkey'leriniz sıfırlandı. Güvenlik sayfasından yeni bir passkey ekleyin.",
+    });
+    expect(link).toHaveAttribute('href', '/c/armadx/settings/security');
+    expect(within(region).queryByText(/Bildiriminiz yok/)).toBeNull();
+    // Opening Güvenlik from it is reading it, as opening the request is for the others.
+    await userEvent.click(link);
+    await waitFor(() => {
+      expect(currentLocation(router).pathname).toBe('/c/armadx/settings/security');
+    });
+    await waitFor(() => {
+      expect(api.callsTo('POST /notifications/read').map((call) => call.body)).toEqual([
+        { ids: [RESET_NOTE.id] },
+      ]);
+    });
+
+    // Without a notification the section says so, and nothing about requests that are not theirs.
+    cleanup();
+    mockApi({ 'GET /session': sessionHandler(EXTERNAL_SESSION) });
+    renderApp('/c/armadx');
+    const empty = await screen.findByRole('region', { name: 'Bildirimler' });
+    expect(within(empty).getByText('Bildiriminiz yok.')).toBeVisible();
+    expect(empty).not.toHaveTextContent(/talep/i);
+  });
+
+  it('says so when a list was cut at its limit', async () => {
+    mockApi({
+      'GET /session': sessionHandler(),
+      'GET /today': () =>
+        json(
+          todayBody({
+            expected: [DECIDE],
+            expectedTruncated: true,
+            notifications: [RETURNED_NOTE],
+            notificationsTruncated: true,
+          }),
+        ),
+    });
+    renderApp('/c/armadx');
+    const region = await screen.findByRole('region', { name: 'Bildirimler' });
+    expect(within(region).getByText('Liste en yeni 100 bildirimi gösteriyor.')).toBeVisible();
+    expect(
+      within(expectedRegion()).getByText(
+        'Liste en uzun süredir bekleyen 200 açık talepten kuruldu; daha yeni bir iş burada görünmeyebilir.',
+      ),
+    ).toBeVisible();
   });
 });
