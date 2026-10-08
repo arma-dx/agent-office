@@ -645,6 +645,19 @@ describe.skipIf(noDatabase)('requests', () => {
     });
     expect(server.jobs.sent).toHaveLength(jobs);
     expect((await read(founder, id)).actions).toEqual({ cancel: false, stop: true, reroute: true });
+    // The founder gives the work to an agent again. That step starts fresh: nobody asked it for
+    // changes, so the page says the agent is working, not correcting.
+    const routedAgain = await post(founder, `/api/requests/${id}/routing`, {
+      unitCode: 'HAF',
+      agentCode: 'HAF-2',
+    });
+    expect(requestDetailSchema.parse(routedAgain.json())).toMatchObject({
+      status: 'in_progress',
+      stage: 'working',
+      cause: null,
+      turn: { kind: 'agent', code: 'HAF-2' },
+    });
+    expect((await read(employee, id)).stage).toBe('working');
   });
 
   it('a rejected result closes the request and tells the requester who, why and in which words', async () => {

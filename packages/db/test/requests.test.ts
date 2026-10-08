@@ -1812,6 +1812,39 @@ describe.skipIf(noDatabase)('what a reader may know about approvals they cannot 
     });
   });
 
+  it('counts a change request of the requester for the step it was about: a step routed later starts fresh', async () => {
+    await inTransaction(async (tx) => {
+      const { task, run, approval } = await submittedRequest(tx);
+      const changesRequested = async (): Promise<boolean> => {
+        await tx.setContext(employeeA);
+        return (await one<{ changes_requested: boolean }>(tx, FACTS, [task])).changes_requested;
+      };
+      const approveThenAskAgain = async (id: string, words: string): Promise<void> => {
+        await tx.setContext(founderA);
+        await tx.exec(`update office.approvals set status = 'approved' where id = $1`, [id]);
+        await tx.setContext(employeeA);
+        await tx.exec(
+          `update office.requester_approvals set status = 'changes_requested',
+             decision_reason = $2 where task_id = $1 and status = 'pending'`,
+          [task, words],
+        );
+      };
+      expect(await changesRequested()).toBe(false);
+      // The first time the same step is active again: its agent is correcting.
+      await approveThenAskAgain(approval, 'Shorter');
+      expect(await changesRequested()).toBe(true);
+      await tx.setContext(agentRun(ids.employeeA, 'HAF-1'));
+      const second = (await one<{ id: string }>(tx, SUBMIT, [task, run, null])).id;
+      // The second time no step is active; then a person routes the request to another agent.
+      await approveThenAskAgain(second, 'Still not it');
+      expect(await changesRequested()).toBe(false);
+      await tx.setContext(founderA);
+      await tx.rows(CORRECT, [task, JSON.stringify([{ unit: 'KOR', agent: 'KOR-1' }])]);
+      // Nobody asked the new step for changes.
+      expect(await changesRequested()).toBe(false);
+    });
+  });
+
   it('a rejection tells the requester who, which reason and the approver’s words, never the output', async () => {
     const CLOSING = `select rejected_by_user_id, rejected_reason, rejected_note
       from office.request_flow_facts(array[$1::uuid])`;
