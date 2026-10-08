@@ -684,6 +684,44 @@ export const officeUnitSchema = z.object({
 export type OfficeUnit = z.output<typeof officeUnitSchema>;
 
 /**
+ * At most this many open requests are looked at for the live states of the office, the one that
+ * has not moved for longest first (the order of the Bugün list).
+ */
+export const OFFICE_REQUEST_LIMIT = 200;
+
+/**
+ * How many open requests an agent has in one condition. `requestId` is the request itself when
+ * exactly one is counted, so that the panel can lead to it; null for none and for several.
+ */
+export const officeWorkCountSchema = z
+  .object({
+    count: z.number().int().nonnegative(),
+    requestId: z.uuid().nullable(),
+  })
+  .refine((value) => (value.requestId !== null) === (value.count === 1), {
+    message: 'requestId is set exactly when one request is counted',
+  });
+export type OfficeWorkCount = z.output<typeof officeWorkCountSchema>;
+
+/**
+ * The open requests of one agent as the reader may see them (8 October decision 10; docs/SONRA.md
+ * W-d and W-e), counted by where each request is (deriveStage):
+ *   running           the agent has the turn: the coordinator routes, the unit's agent works or
+ *                     revises (also while its run waits on the queue);
+ *   awaitingApproval  the agent's result waits for the decision of the unit's approver;
+ *   failed            the request fell to a person because of the agent's run: it failed, hit its
+ *                     limit, or ended without submitting a result.
+ * Ids and numbers only: nothing an agent wrote and no title.
+ */
+export const officeAgentWorkSchema = z.object({
+  agentCode: agentCodeSchema,
+  running: officeWorkCountSchema,
+  awaitingApproval: officeWorkCountSchema,
+  failed: officeWorkCountSchema,
+});
+export type OfficeAgentWork = z.output<typeof officeAgentWorkSchema>;
+
+/**
  * GET /api/office: the units and agents of the selected company, units shared by every company
  * first, each group by code. Founder or employee; 403 insiders_only for an external person. Never
  * carries another company's units, agents or switches.

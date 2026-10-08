@@ -5,5 +5,6 @@ export * from './cards.ts';
 export * from './tasks.ts';
 export * from './requests.ts';
 export * from './today.ts';
+export * from './office.ts';
 export * from './projects.ts';
 export * from './models.ts';
