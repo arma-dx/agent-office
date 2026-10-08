@@ -196,6 +196,41 @@ export async function readRequest(
   return rows[0] ?? null;
 }
 
+/**
+ * The open requests that may expect something of the calling person, the one that has not moved
+ * for longest first: their own (the result may wait for their acceptance), every open request for
+ * the founder, and for a person with the approval right those whose active step names them as the
+ * approver. The stage decides afterwards which of them really wait for the person
+ * (apps/api: expectedKind); this pick only leaves out what never can. What the person may read is
+ * decided by the row policy, as everywhere. Served by the index tasks_requests_open.
+ */
+export async function listExpectedRequests(
+  client: Queryable,
+  options: { coordinator: string; limit: number },
+): Promise<RequestRow[]> {
+  const { rows } = await client.query<RequestRow>(
+    `${requestSql(`and x.status not in ('done', 'cancelled')
+      and office.ctx_agent_code() is null
+      and (
+        x.requester_user_id = office.ctx_user_id()
+        or office.is_founder()
+        or (
+          office.can_approve()
+          and exists (
+            select 1 from office.task_routings s
+            where s.task_id = x.id and s.status = 'active'
+              and s.approver_user_id = office.ctx_user_id()
+          )
+        )
+      )
+      order by x.updated_at, x.id
+      limit $2`)}
+     order by t.updated_at, t.id`,
+    [options.coordinator, options.limit],
+  );
+  return rows;
+}
+
 /** Did this person already open a request with this id (a repeated send). */
 export async function ownRequestExists(client: Queryable, requestId: string): Promise<boolean> {
   const { rows } = await client.query(

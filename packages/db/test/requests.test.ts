@@ -6,7 +6,7 @@ import {
   markNotificationsRead,
   type NotificationRow,
 } from '../src/notifications.ts';
-import { listRequests, readRequest } from '../src/requests.ts';
+import { listExpectedRequests, listRequests, readRequest } from '../src/requests.ts';
 import { ids } from './fixtures.ts';
 import {
   closePools,
@@ -2567,6 +2567,192 @@ describe.skipIf(noDatabase)('the requester is told when a request closes behind 
       await tx.setContext(employeeA);
       expect(await tx.count('tasks', 'id = $1', [task])).toBe(0);
       expect(await listNotifications(tx.client, LISTED)).toEqual([]);
+    });
+  });
+
+  // The pick of the list "Sizden beklenenler" ----------------------------------------------------
+
+  const PICK = { coordinator: 'KOR-1', limit: 50 };
+
+  async function pick(tx: Tx, context: ContextInput): Promise<string[]> {
+    await tx.setContext(context);
+    return (await listExpectedRequests(tx.client, PICK)).map((row) => row.id);
+  }
+
+  it('picks the open requests that may expect something of the reader, the longest wait first', async () => {
+    await inTransaction(async (tx) => {
+      // w1 waits for the founder's decision; w2 was approved and waits for employee A; one request
+      // is closed, one is done and one was only opened.
+      const { task: w1 } = await submittedRequest(tx);
+      const second = await submittedRequest(tx);
+      const w2 = second.task;
+      await tx.setContext(founderA);
+      await tx.exec(`update office.approvals set status = 'approved' where id = $1`, [
+        second.approval,
+      ]);
+      const closed = await stoppedRequest(tx);
+      const third = await submittedRequest(tx);
+      await tx.setContext(founderA);
+      await tx.exec(`update office.approvals set status = 'approved' where id = $1`, [
+        third.approval,
+      ]);
+      await tx.setContext(employeeA);
+      await tx.exec(
+        `update office.requester_approvals set status = 'approved' where task_id = $1`,
+        [third.task],
+      );
+      expect(await statusOf(tx, third.task)).toBe('done');
+      await tx.setContext(colleagueA);
+      const colleagues = await openRequest(tx);
+
+      // The founder: every open request of the company, and no closed one.
+      await tx.setContext(founderA);
+      const founders = await listExpectedRequests(tx.client, PICK);
+      expect(founders.map((row) => row.id).sort()).toEqual(
+        [w1, w2, colleagues, ids.requestA].sort(),
+      );
+      for (const row of founders) {
+        expect(['done', 'cancelled']).not.toContain(row.status);
+      }
+      expect(founders.map((row) => row.id)).not.toContain(closed);
+      // The one that has not moved for longest first: the fixture's request moved before this
+      // transaction began, the others in one instant (then the id decides).
+      expect(founders[0]?.id).toBe(ids.requestA);
+      expect(founders.slice(1).map((row) => row.id)).toEqual([w1, w2, colleagues].sort());
+      const moved = founders.map((row) => row.updated_at.getTime());
+      expect(moved).toEqual([...moved].sort((a, b) => a - b));
+      // Each row carries the facts the stage is derived from.
+      expect(founders.find((row) => row.id === w1)).toMatchObject({
+        pending_result: true,
+        pending_acceptance: false,
+        reader_may_decide: true,
+      });
+      // The limit cuts after the order.
+      expect(
+        (await listExpectedRequests(tx.client, { coordinator: 'KOR-1', limit: 1 })).map(
+          (row) => row.id,
+        ),
+      ).toEqual([ids.requestA]);
+
+      // A requester: their own open requests, whatever they wait for.
+      await tx.setContext(employeeA);
+      const own = await listExpectedRequests(tx.client, PICK);
+      expect(own.map((row) => row.id).sort()).toEqual([w1, w2, ids.requestA].sort());
+      for (const row of own) {
+        expect(row.requester_user_id).toBe(ids.employeeA);
+      }
+      expect(own.find((row) => row.id === w2)).toMatchObject({
+        pending_acceptance: true,
+        reader_may_decide: false,
+      });
+      expect(await pick(tx, colleagueA)).toEqual([colleagues]);
+
+      // A person who holds the approval right and is appointed nowhere: nothing.
+      expect(await pick(tx, approverA)).toEqual([]);
+      // Appointed for the unit: the requests routed there from now on, and nothing else (the
+      // steps routed before keep the approver they were given).
+      await tx.setContext(founderA);
+      await tx.exec(
+        `update office.approvers set user_id = $2 where company_id = $1 and unit_code = 'HAF'`,
+        [ids.arma, ids.approverA],
+      );
+      const { task: appointed } = await submittedRequest(tx);
+      await tx.setContext(approverA);
+      const approvers = await listExpectedRequests(tx.client, PICK);
+      expect(approvers.map((row) => row.id)).toEqual([appointed]);
+      expect(approvers[0]).toMatchObject({
+        step_approver_user_id: ids.approverA,
+        pending_result: true,
+        reader_may_decide: true,
+      });
+      // The right is asked every time: without it the appointment gives nothing.
+      await stepUp(tx, founderA, 'membership_change', ids.approverA);
+      await tx.setContext(founderA);
+      await tx.exec(
+        `update office.memberships set can_approve = false where company_id = $1 and user_id = $2`,
+        [ids.arma, ids.approverA],
+      );
+      expect(await pick(tx, approverA)).toEqual([]);
+    });
+  });
+
+  it('the pick gives nothing of another company, without a context, to an agent run, to an external person or outside the project', async () => {
+    await inTransaction(async (tx) => {
+      const { task } = await submittedRequest(tx);
+      expect(await pick(tx, founderA)).toContain(task);
+      // Another company's founder and employee get their own company's requests.
+      expect(await pick(tx, founderP)).toEqual([ids.requestP]);
+      expect(await pick(tx, employeeP)).toEqual([ids.requestP]);
+      // The same people in a company they are not a member of, and no context at all.
+      expect(await pick(tx, { companyId: ids.pillika, userId: ids.employeeA })).toEqual([]);
+      expect(await pick(tx, { companyId: ids.arma, userId: ids.employeeP })).toEqual([]);
+      expect(await pick(tx, { userId: ids.founder })).toEqual([]);
+      expect(await pick(tx, { companyId: ids.arma })).toEqual([]);
+      expect(await pick(tx, {})).toEqual([]);
+      // Nothing is expected of an agent run, also when it goes in the founder's or the requester's
+      // name.
+      expect(await pick(tx, agentRun(ids.founder, 'KOR-1'))).toEqual([]);
+      expect(await pick(tx, agentRun(ids.employeeA, 'HAF-1'))).toEqual([]);
+      // An external person has no request and decides none.
+      expect(await pick(tx, externalA)).toEqual([]);
+
+      // A request inside a project: its requester (a member) and the founder.
+      await tx.setContext(founderA);
+      await tx.exec(
+        `insert into office.approvers (company_id, unit_code, user_id) values ($1, 'KOR', $2)`,
+        [ids.arma, ids.approverA],
+      );
+      await tx.exec(
+        `insert into office.project_members (company_id, project_id, user_id) values ($1, $2, $3)`,
+        [ids.arma, ids.projectA, ids.approverA],
+      );
+      await tx.setContext(employeeA);
+      const inProject = await openRequest(tx, ids.projectA);
+      await tx.setContext(founderA);
+      await tx.rows(CORRECT, [inProject, JSON.stringify([{ unit: 'KOR', agent: 'KOR-1' }])]);
+      expect(await pick(tx, employeeA)).toContain(inProject);
+      expect(await pick(tx, founderA)).toContain(inProject);
+      // An insider who is not a member of the project.
+      expect(await pick(tx, colleagueA)).toEqual([]);
+      // The appointed approver of its active step is a member of the project and gets it; taken
+      // out of the project, the same person no longer does: the row policy of the request decides
+      // before the pick asks whose turn it is.
+      await tx.setContext(founderA);
+      expect(
+        await one(
+          tx,
+          `select approver_user_id from office.task_routings where task_id = $1 and status = 'active'`,
+          [inProject],
+        ),
+      ).toEqual({ approver_user_id: ids.approverA });
+      expect(await pick(tx, approverA)).toEqual([inProject]);
+      await tx.setContext(founderA);
+      expect(
+        await tx.exec('delete from office.project_members where project_id = $1 and user_id = $2', [
+          ids.projectA,
+          ids.approverA,
+        ]),
+      ).toBe(1);
+      // The step still names the person; the request itself is what they no longer read.
+      expect(
+        await tx.count(
+          'task_routings',
+          `task_id = $1 and status = 'active' and approver_user_id = $2`,
+          [inProject, ids.approverA],
+        ),
+      ).toBe(1);
+      expect(await pick(tx, approverA)).toEqual([]);
+    });
+    // The worker's role cannot ask at all: the facts of a request's flow are the API's alone.
+    await inWorkerTransaction(async (tx) => {
+      for (const context of [agentRun(ids.founder, 'KOR-1'), founderA]) {
+        await tx.setContext(context);
+        await tx.client.query('savepoint pick');
+        await expect(listExpectedRequests(tx.client, PICK)).rejects.toMatchObject({
+          code: '42501',
+        });
+        await tx.client.query('rollback to savepoint pick');
+      }
     });
   });
 });
