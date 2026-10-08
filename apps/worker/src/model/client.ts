@@ -15,6 +15,8 @@ export type ToolResult = Anthropic.ToolResultBlockParam;
 export interface ModelCallOptions {
   // Fires at the run's deadline and when the run is stopped.
   signal: AbortSignal;
+  // The longest this one call may take. A call that reaches it fails as a timeout and is not sent
+  // again: an answer that was too slow once will be too slow again.
   timeoutMs: number;
 }
 
@@ -22,6 +24,9 @@ export interface ModelAnswer {
   message: ModelMessage;
   // The provider's id of the request, kept with the run for support questions.
   requestId: string | null;
+  // How often the request was sent for this one answer: 1, or more after the client's retries
+  // (rate limit, a server error, a dead connection). Kept with the run (rule 5).
+  sends: number;
 }
 
 export type CallModel = (params: ModelRequest, options: ModelCallOptions) => Promise<ModelAnswer>;
@@ -46,12 +51,15 @@ export class ModelCallError extends Error {
   readonly requestId: string | null;
   // The provider's own class of the error (a short code such as billing_error), for the smoke run.
   readonly providerType: string | null;
+  // How often the request was sent before the call failed.
+  readonly sends: number;
 
   constructor(
     code: ModelErrorCode,
     status: number | null = null,
     requestId: string | null = null,
     providerType: string | null = null,
+    sends = 0,
   ) {
     // The message is the code: a provider's error text can quote the prompt and is never logged.
     super(code);
@@ -60,5 +68,6 @@ export class ModelCallError extends Error {
     this.status = status;
     this.requestId = requestId;
     this.providerType = providerType;
+    this.sends = sends;
   }
 }

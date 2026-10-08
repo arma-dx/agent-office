@@ -107,6 +107,34 @@ describe('the Claude API client', () => {
     expect(result.requestId).toBe('req_ok');
     expect(result.message).toMatchObject({ id: 'msg_stub', stop_reason: 'end_turn' });
     expect(sent).toHaveLength(1);
+    expect(result.sends).toBe(1);
+  });
+
+  it('a call that reaches its time limit is sent once, and says how often it was sent', async () => {
+    // The provider never answers. The SDK would send a request that timed out two more times.
+    const slow = await failureOf(silence, { timeoutMs: 80 });
+    expect({ code: slow.error.code, sends: slow.sends, counted: slow.error.sends }).toEqual({
+      code: 'anthropic_timeout',
+      sends: 1,
+      counted: 1,
+    });
+    // What is sent again is counted with the error: three sends for a rate limit.
+    const limited = await failureOf(failure(429, 'rate_limit_error'));
+    expect(limited.error.sends).toBe(3);
+    // And with the answer: a server error, then the answer.
+    let first = true;
+    const { fetch } = stub((init) => {
+      if (first) {
+        first = false;
+        return failure(500, 'api_error')(init);
+      }
+      return answer(init);
+    });
+    const result = await createAnthropicModel(KEY, { fetch })(PARAMS, {
+      signal: new AbortController().signal,
+      timeoutMs: 5000,
+    });
+    expect(result.sends).toBe(2);
   });
 
   it('turns each failure into its code, and sends again only what may succeed', async () => {

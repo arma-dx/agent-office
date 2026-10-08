@@ -18,10 +18,15 @@ import { ModelCallError, type CallModel, type ModelErrorCode } from './client.ts
  * SDK adds to every request. The worker refuses to start when it is set (env.ts).
  *
  * The SDK retries by itself (408, 409, 429, 5xx and connection errors, with the server's
- * retry-after); the runner bounds everything with its own deadline through the signal.
+ * retry-after); the runner bounds everything with its own deadline through the signal. One thing
+ * it would retry is kept from it: a call that reached its time limit. The limit is held here with
+ * a signal of its own, which ends the call without a retry (the SDK would send the same request
+ * two more times, each as slow as the first, and none of it would be recorded). Every send is
+ * counted and returned with the answer or the error.
  */
 const API_ADDRESS = 'https://api.anthropic.com';
 const MAX_RETRIES = 2;
+const SDK_TIMEOUT_SLACK_MS = 30_000;
 
 export interface AnthropicModelOptions {
   // The fetch the client sends with; tests pass a stub, so no request leaves the machine.
@@ -76,19 +81,36 @@ export function createAnthropicModel(
     ...(options.fetch ? { fetch: options.fetch } : {}),
   });
   return async (params, { signal, timeoutMs }) => {
+    let sends = 0;
+    // A client of this one call: the same options, and a fetch that counts.
+    const counting = client.withOptions({
+      fetch: (input, init) => {
+        sends += 1;
+        return (options.fetch ?? globalThis.fetch)(input, init);
+      },
+    });
+    const limit = AbortSignal.timeout(Math.max(1, Math.ceil(timeoutMs)));
     try {
-      const { data, request_id } = await client.messages
-        .create(params, { signal, timeout: timeoutMs, maxRetries: MAX_RETRIES })
+      const { data, request_id } = await counting.messages
+        .create(params, {
+          signal: AbortSignal.any([signal, limit]),
+          // The SDK's own timeout is only a backstop behind the signal above.
+          timeout: timeoutMs + SDK_TIMEOUT_SLACK_MS,
+          maxRetries: MAX_RETRIES,
+        })
         .withResponse();
-      return { message: data, requestId: request_id ?? null };
+      return { message: data, requestId: request_id ?? null, sends };
     } catch (error) {
       const status: unknown = error instanceof Anthropic.APIError ? error.status : null;
       const requestId: unknown = error instanceof Anthropic.APIError ? error.requestID : null;
+      // Ended by a signal: the runner's (its deadline, a stop) or the call's own time limit.
+      const timedOut = error instanceof Anthropic.APIUserAbortError && !signal.aborted;
       throw new ModelCallError(
-        codeOf(error),
+        timedOut ? 'anthropic_timeout' : codeOf(error),
         typeof status === 'number' ? status : null,
         typeof requestId === 'string' ? requestId : null,
         errorType(error),
+        sends,
       );
     }
   };

@@ -1310,6 +1310,42 @@ describe.skipIf(noDatabase)('what stops a run or keeps it from starting', () => 
     });
   });
 
+  it('records every request that was sent, also for a call that failed in the end', async () => {
+    // A call the client sent three times before it gave up: no answer, no tokens, and still three
+    // requests the provider received.
+    const taskId = await openRequest(ids.founder, REQUEST);
+    const failing = await runner(new ScriptedModel([apiError('anthropic_overloaded', 529, 3)]));
+    const failed = await runAgentJob(failing.deps, job(taskId, 'KOR-1', ids.founder));
+    expect(failed).toMatchObject({ outcome: 'failed', modelCalls: 0 });
+    expect((await runRow(failed.runId)).output).toMatchObject({
+      model_calls: 0,
+      model_sends: 3,
+      request_ids: ['req_test'],
+    });
+    // A run that ends with its tool: one answer, one send.
+    const other = await openRequest(ids.founder, REQUEST);
+    const routing = await runner(new ScriptedModel([toolUse('route_task', ROUTE_TO_SOS)]));
+    const routed = await runAgentJob(routing.deps, job(other, 'KOR-1', ids.founder));
+    expect((await runRow(routed.runId)).output).toMatchObject({ model_calls: 1, model_sends: 1 });
+  });
+
+  it('a model call gets the time the run has left, not a shorter limit of its own', async () => {
+    // KOR-1's card allows two minutes. A cap below that would cut a slow answer and send the
+    // request again; the call is given the run's remaining time and ends with the run.
+    const taskId = await openRequest(ids.founder, REQUEST);
+    const model = new ScriptedModel([toolUse('route_task', ROUTE_TO_SOS)]);
+    const { deps } = await runner(model);
+    const limits: number[] = [];
+    const callModel: typeof model.call = (params, options) => {
+      limits.push(options.timeoutMs);
+      return model.call(params, options);
+    };
+    await runAgentJob({ ...deps, callModel }, job(taskId, 'KOR-1', ids.founder));
+    expect(limits).toHaveLength(1);
+    expect(limits[0]).toBeGreaterThan(115_000);
+    expect(limits[0]).toBeLessThanOrEqual(120_000);
+  });
+
   it('a failed, refused or truncated model call ends the run with its code and executes nothing', async () => {
     const cases = [
       { step: apiError('anthropic_auth_failed', 401), code: 'anthropic_auth_failed', calls: 0 },

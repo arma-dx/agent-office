@@ -121,8 +121,12 @@ export function truncated(name: string): ModelMessage {
   );
 }
 
-export function apiError(code: ModelErrorCode, status: number | null = null): ModelCallError {
-  return new ModelCallError(code, status, 'req_test');
+export function apiError(
+  code: ModelErrorCode,
+  status: number | null = null,
+  sends = 1,
+): ModelCallError {
+  return new ModelCallError(code, status, 'req_test', null, sends);
 }
 
 export class ScriptedModel {
@@ -154,14 +158,15 @@ export class ScriptedModel {
           step(params),
           new Promise<never>((_, reject) => {
             signal.addEventListener('abort', () => {
-              reject(new ModelCallError('aborted'));
+              reject(new ModelCallError('aborted', null, null, null, 1));
             });
           }),
         ]),
         requestId: null,
+        sends: 1,
       };
     }
-    return { message: step, requestId: `req_${step.id}` };
+    return { message: step, requestId: `req_${step.id}`, sends: 1 };
   };
 }
 

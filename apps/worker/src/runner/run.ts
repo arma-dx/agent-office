@@ -103,10 +103,12 @@ export interface RunnerDeps {
   // Codes and ids only: never a prompt, an answer or a key (rule 6).
   log: (event: string, fields: Record<string, string | number | null>) => void;
   now?: () => number;
+  // A shorter limit for one model call than the time the run has left. Not set by the worker: a
+  // call gets the run's remaining time, so that a slow answer is waited for once, until the run's
+  // own deadline, instead of being cut and sent again.
   perCallTimeoutMs?: number;
 }
 
-const PER_CALL_TIMEOUT_MS = 120_000;
 // What a model wrote when it ended without its tool is kept with the run's raw content
 // (runs.output, under the retention period), up to this size.
 const FINAL_TEXT_MAX = 20_000;
@@ -703,6 +705,9 @@ export async function runAgentJob(
     { role: 'user', content: [{ type: 'text', text: dataText(opened.data) }] },
   ];
   const requestIds: string[] = [];
+  // Every request that was sent to the provider, also the ones of a call that failed in the end
+  // and the client's retries: model_calls counts answers, this counts sends.
+  let modelSends = 0;
   let modelCalls = 0;
   let toolCalls = 0;
   let reminded = false;
@@ -733,6 +738,7 @@ export async function runAgentJob(
             outcome,
             stop_reason: fields.stopReason ?? null,
             model_calls: modelCalls,
+            model_sends: modelSends,
             request_ids: requestIds,
             ...(fields.finalText ? { final_text: fields.finalText } : {}),
           }),
@@ -927,7 +933,12 @@ export async function runAgentJob(
           [
             runId,
             summary,
-            JSON.stringify({ outcome, model_calls: modelCalls, request_ids: requestIds }),
+            JSON.stringify({
+              outcome,
+              model_calls: modelCalls,
+              model_sends: modelSends,
+              request_ids: requestIds,
+            }),
           ],
         );
         await audit(client, 'tool_called', {
@@ -1007,12 +1018,15 @@ export async function runAgentJob(
       try {
         const answer = await callModel(params, {
           signal: controller.signal,
-          timeoutMs: Math.min(left, deps.perCallTimeoutMs ?? PER_CALL_TIMEOUT_MS),
+          timeoutMs:
+            deps.perCallTimeoutMs === undefined ? left : Math.min(left, deps.perCallTimeoutMs),
         });
         message = answer.message;
+        modelSends += answer.sends;
         if (answer.requestId !== null) requestIds.push(answer.requestId);
       } catch (error) {
         if (!(error instanceof ModelCallError)) throw error;
+        modelSends += error.sends;
         if (error.requestId !== null) requestIds.push(error.requestId);
         if (error.code === 'aborted' || now() >= deadline) {
           return await finish('limit_reached', 'limit_reached', { errorCode: 'time_limit' });
