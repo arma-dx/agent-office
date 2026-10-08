@@ -1,0 +1,32 @@
+import { describe, expect, it } from 'vitest';
+import { expectationText, statusLine } from './labels.ts';
+
+describe('the words of the Bugün screen', () => {
+  it('says what is expected in the words of the request page', () => {
+    expect(expectationText({ stage: 'unit_approval', cause: null, delayed: false })).toBe(
+      'Onayınız bekleniyor',
+    );
+    expect(expectationText({ stage: 'requester_approval', cause: null, delayed: false })).toBe(
+      'Sonucu onaylamanız bekleniyor',
+    );
+    expect(
+      expectationText({ stage: 'fell_to_person', cause: 'no_submission', delayed: false }),
+    ).toBe('Sizden bekleniyor: ajan sonuç sunmadı');
+    // Also for a summary that names somebody else as the one whose turn it is: a result the
+    // founder may decide while another person is appointed is still expected of the founder.
+    const appointed = {
+      stage: 'unit_approval' as const,
+      cause: null,
+      delayed: false,
+      waitingForMe: false,
+    };
+    expect(expectationText(appointed)).toBe('Onayınız bekleniyor');
+  });
+
+  it('says to a screen reader only what is above zero', () => {
+    expect(statusLine(3, 2)).toBe('3 iş sizden bekleniyor. 2 okunmamış bildirim var.');
+    expect(statusLine(0, 1)).toBe('1 okunmamış bildirim var.');
+    expect(statusLine(2, 0)).toBe('2 iş sizden bekleniyor.');
+    expect(statusLine(0, 0)).toBe('');
+  });
+});

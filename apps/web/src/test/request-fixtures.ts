@@ -1,9 +1,11 @@
 import {
   approvalCardSchema,
   requestDetailSchema,
+  todaySchema,
   type ApprovalCard,
   type RequestDetail,
   type RequestSummary,
+  type Today,
 } from '@agent-office/shared';
 import { USER_ID } from './mock-api.ts';
 
@@ -154,4 +156,15 @@ export function summaryOf(detail: RequestDetail): RequestSummary {
     createdAt,
     updatedAt,
   };
+}
+
+/** GET /today as the API answers it; the default is a person nothing waits for. */
+export function todayBody(overrides: Partial<Today> = {}): Today {
+  return todaySchema.parse({
+    expected: [],
+    expectedTruncated: false,
+    notifications: [],
+    notificationsTruncated: false,
+    ...overrides,
+  });
 }

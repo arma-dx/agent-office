@@ -20,7 +20,9 @@ describe('app layout', () => {
     mockApi({ 'GET /session': sessionHandler() });
     renderApp('/c/armadx');
     expect(await screen.findByRole('heading', { level: 1, name: 'Bugün' })).toBeInTheDocument();
-    expect(screen.getByText('Bugün listesi henüz kurulmadı')).toBeInTheDocument();
+    expect(
+      await screen.findByRole('heading', { name: 'Sizden beklenen iş yok' }),
+    ).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'İçeriğe geç' })).toHaveAttribute('href', '#content');
   });
 
