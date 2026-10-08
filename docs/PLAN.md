@@ -65,9 +65,9 @@ Pilotta panel internete açık; ileride yalnızca ofis ağından, dışarıdan V
 | note_links | Notlardaki `[[...]]` bağlantıları; geri bağlantılar ve grafik görünümü buradan |
 | documents | Drive'dan gelen kaynak dosyalar; her biri bir kaynak notuna bağlı |
 | station_candidates | Pillika için toplanan istasyon verisi: kaynak, konum, operatör, soket tipleri, güç, erişim, tarih, doğrulama durumu, eşleşen kayıt |
-| customers, opportunities | Basit müşteri listesi: kurum, kişi, fırsat, aşama, değer, sonraki adım; müşteri düzeyinde AI izni (izni olmayan müşteriye bağlı bütün kayıtlar ajan çalışmalarına kapalı) ve sözleşmenin kodla otomatik işlemeye izin verip vermediği; müşteri adı şirket içinde tekildir; sözleşme izinlerini yalnızca kurucu işaretler, AI iznini passkey ile açar |
-| projects | Proje: ad, açıklama, müşteri (isteğe bağlı), beş durum, renk ve simge, hedef tarih, açan kişi, bütçe, kilometre taşları, AI izni (müşteri sözleşmesi AI kullanımına izin vermiyorsa o projede ajan çalışmaz; izni yalnızca kurucu, passkey ile açar; izin açıkken projenin müşterisi değişmez). Proje silinmez, kapatılır |
-| project_members | Projenin üyeleri (o şirketin kurucusu ve çalışanları); projeyi açan kişi üyesidir; proje kapsamlı satırları yalnızca üyeler ve kurucu görür |
+| customers, opportunities | Basit müşteri listesi: kurum, kişi, fırsat, aşama, değer, sonraki adım; müşteri düzeyinde AI izni (izni olmayan müşteriye bağlı bütün kayıtlar ajan çalışmalarına kapalı) ve sözleşmenin kodla otomatik işlemeye izin verip vermediği; müşteri adı şirket içinde tekildir; sözleşme izinlerini yalnızca kurucu işaretler, AI iznini passkey ile açar (bu üçü kurucu onayı bekliyor, `docs/SONRA.md` P1-f, P-b, P1-c) |
+| projects | Proje: ad, açıklama, müşteri (isteğe bağlı), beş durum, renk ve simge, hedef tarih, açan kişi, bütçe, kilometre taşları, AI izni (müşteri sözleşmesi AI kullanımına izin vermiyorsa o projede ajan çalışmaz); izni yalnızca kurucu, passkey ile açar (8 Ekim, karar 15 ve 22). İzin kapalı başlar; izin açıkken projenin müşterisi değişmez; proje silinmez, kapatılır (bu üçü kurucu onayı bekliyor, `docs/SONRA.md` W-i, P1-t, P-h) |
+| project_members | Projenin üyeleri (o şirketin kurucusu ve çalışanları); projeyi açan kişi üyesidir (ikisi de kurucu onayı bekliyor, `docs/SONRA.md` P-j, P-a); proje kapsamlı satırları yalnızca üyeler ve kurucu görür |
 | integrations | Bağlantı ayarları ve yetkileri, şirket bazında; Google bağlantı token'ları şifreli, yalnızca worker kullanır |
 
 ## Durumlar ve roller
@@ -81,7 +81,7 @@ Onaylandı. Arayüzde Türkçe adlar, veritabanında parantez içindeki değerle
 | Rol | Yetki |
 | --- | --- |
 | Kurucu (`founder`) | Bütün şirketleri görür, bütün onayları verir, kullanıcı ve ajan ayarlarını yönetir; iki şirketi birlikte yalnızca holding görünümünde (salt okunur) görür; Kurucu özel alanının tek üyesidir |
-| Çalışan (`employee`) | Üyesi olduğu şirketin görev ve notlarıyla çalışır; proje kapsamlı kayıtları yalnızca üyesi olduğu projelerde görür; proje açar ve üyesi olduğu projenin üyelerini yönetir (8 Ekim, karar 15); onay yetkisi kurucu verirse açılır |
+| Çalışan (`employee`) | Üyesi olduğu şirketin görev ve notlarıyla çalışır; proje kapsamlı kayıtları yalnızca üyesi olduğu projelerde görür; proje açar ve üye ekler (8 Ekim, karar 15); yalnızca üyesi olduğu projede ekler ve çıkarır (kurucu onayı bekliyor, `docs/SONRA.md` P-a); onay yetkisi kurucu verirse açılır |
 | Dış kişi (`external`) | Mali müşavir ve avukat gibi; kendi Google hesabıyla davetle girer; yalnızca kendisine açılan görev ve notları görür |
 
 ## Yetki seviyeleri
