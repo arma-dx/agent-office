@@ -326,7 +326,7 @@ Sunucu:
 - [x] Araç çağrısı ve süre sınırı; durdurma düğmesi; AI izni denetimi (kural 12)
 - [x] Claude istemcisi tek dosyada; model adı ve fiyatı yapılandırmadan; maliyet kaydı
 - [ ] (Senden) Anthropic API anahtarı ve geliştirme için düşük harcama sınırı (karar 12)
-- [ ] Gerçek modelle tek deneme çağrısı
+- [x] Gerçek modelle tek deneme çağrısı (8 Ekim: kurucunun makinesinde `smoke:claude` iki modelle de geçti; maliyet hesabı fiyat tablosuyla tuttu)
 
 Arayüz:
 
