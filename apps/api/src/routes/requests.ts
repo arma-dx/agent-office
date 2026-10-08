@@ -5,9 +5,11 @@ import {
   decideAcceptance,
   decideApproval,
   insertRequest,
+  insertRequestComment,
   listAcceptances,
   listPendingAcceptances,
   listPendingApprovals,
+  listRequestComments,
   listRequests,
   listResultApprovals,
   listRoutingOptions,
@@ -16,6 +18,8 @@ import {
   listSteps,
   lockRequest,
   lockResultApproval,
+  mayCommentOnRequest,
+  ownRequestCommentExists,
   ownRequestExists,
   peopleNames,
   readIntake,
@@ -28,6 +32,7 @@ import {
 } from '@agent-office/db';
 import {
   COORDINATOR_AGENT_CODE,
+  REQUEST_COMMENT_LIMIT,
   REQUEST_LIST_LIMIT,
   acceptanceDecisionSchema,
   approvalDecisionDetails,
@@ -35,6 +40,7 @@ import {
   approvalDeskSchema,
   closeRequestSchema,
   correctRoutingSchema,
+  createRequestCommentSchema,
   createRequestSchema,
   deriveRequestTitle,
   isClosedTaskStatus,
@@ -62,6 +68,7 @@ import {
   peopleOf,
   peopleOfJourney,
   toApprovalCard,
+  toComments,
   toJourney,
   toResult,
   toSummary,
@@ -79,6 +86,7 @@ import type { RouteDeps } from '../services.ts';
  *   GET  /api/requests                       the requests the person may read, with stage and turn
  *   GET  /api/requests/:requestId            one answer for the whole page
  *   POST /api/requests/:requestId/close      the requester cancels; the approver or founder stops
+ *   POST /api/requests/:requestId/comments   a comment of the requester, the approver or the founder
  *   GET  /api/requests/:requestId/routing-options  where it can be routed to now
  *   POST /api/requests/:requestId/routing    the founder or the approver corrects the routing; the
  *                                            agent's run is put on the queue in the same transaction
@@ -93,6 +101,8 @@ import type { RouteDeps } from '../services.ts';
  * approver of the new step itself. A person always names an agent there: only the coordinator's
  * routing can find that a unit has no open agent, and such a request is returned to its requester
  * and closed (8 October decision 2), with no act left for anybody.
+ * A comment (8 October decision 13) changes nothing of a request; it is people's text for people
+ * and no statement of the runner reads it.
  * What a person reads is decided by the row policies; a record the person cannot see answers 404
  * exactly like one that does not exist, and so does the id of a task between people.
  *
@@ -156,6 +166,13 @@ const dueDatePast = (): ApiError =>
     409,
     'due_date_past',
     'Son tarih bugünden önce olamaz. Tarihi düzeltip yeniden gönderin.',
+  );
+
+const commentNotAllowed = (): ApiError =>
+  new ApiError(
+    403,
+    'comment_not_allowed',
+    'Bu talebe yalnızca talep sahibi, birimin onaylayıcısı ve kurucu yorum yazabilir.',
   );
 
 const routingNotPossible = (): ApiError =>
@@ -248,7 +265,14 @@ async function detailOf(context: CompanyContext, row: RequestRow): Promise<Reque
     runs.map((run) => run.id),
   );
   const journeyRows = { routings, runs, steps, approvals, acceptances };
-  const names = await peopleNames(client, [...peopleOf(row), ...peopleOfJourney(journeyRows)]);
+  // One more than the page carries: that is how it knows that older comments exist.
+  const commentRows = await listRequestComments(client, row.id, REQUEST_COMMENT_LIMIT + 1);
+  const mayComment = await mayCommentOnRequest(client, row.id);
+  const names = await peopleNames(client, [
+    ...peopleOf(row),
+    ...peopleOfJourney(journeyRows),
+    ...commentRows.map((comment) => comment.author_user_id),
+  ]);
   const summary = toSummary(row, reader, names, now);
   const pending = approvals.find(
     (approval) => approval.status === 'pending' && approval.invalidated_at === null,
@@ -287,6 +311,7 @@ async function detailOf(context: CompanyContext, row: RequestRow): Promise<Reque
       stop: open && !isRequester && row.reader_may_decide,
       reroute: open && row.reader_may_decide,
     },
+    comments: toComments(commentRows, names, mayComment),
     serverTime: now.toISOString(),
   });
 }
@@ -432,6 +457,61 @@ export function registerRequestRoutes(
       if (!row) {
         throw notFound();
       }
+      return detailOf(context, row);
+    }),
+  );
+
+  /**
+   * A comment (8 October decision 13): the requester, the approver of the request and the founder
+   * write, on an open and on a closed request; everybody who reads the request reads it; no agent
+   * does. The database decides who may write (office.check_task_comment) and writes the trace.
+   * Nothing of the request is touched and nothing is put on the queue: a comment is not a way to
+   * change a request and not a decision. The route takes no lock of its own; the comment's
+   * foreign key holds the request row against a concurrent act for the length of this
+   * transaction, and takes nothing else, so the two can wait for each other but never deadlock.
+   */
+  app.post('/api/requests/:requestId/comments', async (request, reply): Promise<RequestDetail> =>
+    runner.withCompany(request, reply, INSIDERS, async (context) => {
+      const requestId = requestIdOf(request);
+      const body = createRequestCommentSchema.safeParse(request.body);
+      if (!body.success) {
+        throw invalidRequest();
+      }
+      const { client } = context;
+      // Hidden and missing are the same answer; the database's own check comes after.
+      if (!(await readRequest(client, COORDINATOR_AGENT_CODE, requestId))) {
+        throw notFound();
+      }
+      // A send that is repeated answers the page as it is and writes nothing a second time,
+      // also when the person may not comment any more.
+      let added = false;
+      if (!(await ownRequestCommentExists(client, body.data.id, requestId))) {
+        await client.query('savepoint add_comment');
+        try {
+          added = await insertRequestComment(client, {
+            id: body.data.id,
+            requestId,
+            body: body.data.body,
+          });
+        } catch (error) {
+          await client.query('rollback to savepoint add_comment');
+          const code = databaseErrorCode(error);
+          if (code === '42501') throw commentNotAllowed();
+          // foreign_key_violation: the request stopped being readable meanwhile.
+          if (code === '23503') throw notFound();
+          throw error;
+        }
+        // The id is taken: by this person's own send that was still in flight (answered below),
+        // or by a row that is not theirs (refused).
+        if (!added && !(await ownRequestCommentExists(client, body.data.id, requestId))) {
+          throw invalidRequest();
+        }
+      }
+      const row = await readRequest(client, COORDINATOR_AGENT_CODE, requestId);
+      if (!row) {
+        throw notFound();
+      }
+      reply.code(added ? 201 : 200);
       return detailOf(context, row);
     }),
   );

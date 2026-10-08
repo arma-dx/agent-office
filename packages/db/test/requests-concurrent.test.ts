@@ -1,5 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { randomUUID } from 'node:crypto';
 import { withContext, type ContextInput } from '../src/context.ts';
+import type { Queryable } from '../src/queryable.ts';
+import { insertRequestComment } from '../src/requests.ts';
 import { ids } from './fixtures.ts';
 import {
   adminQuery,
@@ -194,8 +197,8 @@ describe.skipIf(noDatabase)('a request across transactions', () => {
     // A comment takes no lock of its own, but its foreign key holds the request row against a
     // change, and every act of a person locks that row first: the two wait for each other. The
     // comment holds nothing else an act needs, so neither order can end in a deadlock.
-    const COMMENT = `insert into office.task_comments (company_id, task_id, body)
-      values (office.ctx_company_id(), $1, $2)`;
+    const comment = (tx: { client: Queryable }, task: string, body: string): Promise<boolean> =>
+      insertRequestComment(tx.client, { id: randomUUID(), requestId: task, body });
     const CLOSE = 'select office.close_request($1)';
     const commentsOf = (task: string): Promise<Record<string, unknown>[]> =>
       adminQuery(
@@ -209,10 +212,11 @@ describe.skipIf(noDatabase)('a request across transactions', () => {
     const founder = await openTransaction('app', founderA);
     try {
       await requester.tx.rows(CLOSE, [closedFirst]);
-      const commented = outcomeOf(founder.tx.rows(COMMENT, [closedFirst, 'After the close']));
+      const commented = comment(founder.tx, closedFirst, 'After the close');
       await untilBlocked(founder.pid);
       await requester.commit();
-      expect(await commented).toBe('ok');
+      // Stored, not refused and not skipped as a row that is there already.
+      expect(await commented).toBe(true);
       await founder.commit();
     } finally {
       await requester.rollback();
@@ -228,7 +232,7 @@ describe.skipIf(noDatabase)('a request across transactions', () => {
     const writer = await openTransaction('app', founderA);
     const closer = await openTransaction('app', employeeA);
     try {
-      await writer.tx.rows(COMMENT, [commentedFirst, 'Before the close']);
+      expect(await comment(writer.tx, commentedFirst, 'Before the close')).toBe(true);
       const closed = outcomeOf(closer.tx.rows(CLOSE, [commentedFirst]));
       await untilBlocked(closer.pid);
       await writer.commit();

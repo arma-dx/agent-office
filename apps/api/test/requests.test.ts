@@ -6,6 +6,7 @@ import {
   COORDINATOR_AGENT_CODE,
   NOTIFICATION_LIST_LIMIT,
   OFFICE_REQUEST_LIMIT,
+  REQUEST_COMMENT_MAX,
   TODAY_REQUEST_LIMIT,
   agentStopIfOpenResponseSchema,
   apiErrorSchema,
@@ -2952,6 +2953,427 @@ describe.skipIf(noDatabase)('requests', () => {
         });
       }
       expect(await listed(founder, id)).toMatchObject({ dueDate: passed, overdue: false });
+    });
+
+    // Comments (8 October decision 13).
+    const comment = (
+      session: string,
+      id: string,
+      body: string,
+      commentId: string = randomUUID(),
+      company: string = ids.arma,
+    ) => post(session, `/api/requests/${id}/comments`, { id: commentId, body }, company);
+    const commentRows = (id: string) =>
+      adminQuery<{ id: string; author_user_id: string | null; body: string }>(
+        `select id, author_user_id, body from office.task_comments
+         where task_id = $1 order by created_at, id`,
+        [id],
+      );
+    const founderContext = { companyId: ids.arma, userId: ids.founder };
+    /** Runs the work with the right holder of this file appointed as the approver of HAF. */
+    async function withApprover(work: () => Promise<void>): Promise<void> {
+      await withContext(besidePool, founderContext, (client) =>
+        client.query(
+          `insert into office.approvers (company_id, unit_code, user_id) values ($1, 'HAF', $2)`,
+          [ids.arma, RIGHT_HOLDER],
+        ),
+      );
+      try {
+        await work();
+      } finally {
+        await withContext(besidePool, founderContext, (client) =>
+          client.query(
+            `delete from office.approvers
+             where company_id = $1 and unit_code = 'HAF' and user_id = $2`,
+            [ids.arma, RIGHT_HOLDER],
+          ),
+        );
+      }
+    }
+    const NOT_ALLOWED =
+      'Bu talebe yalnızca talep sahibi, birimin onaylayıcısı ve kurucu yorum yazabilir.';
+
+    it('the requester, the founder and the appointed approver comment; everybody who reads the request reads the comments', async () => {
+      await withApprover(async () => {
+        const { id } = await open(employee);
+        expect((await read(employee, id)).comments).toEqual({
+          items: [],
+          truncated: false,
+          mayWrite: true,
+        });
+        await route(id, ids.employee);
+        const written: [string, string, string][] = [
+          [employee, ids.employee, 'Cuma gününe yetişir mi?'],
+          [founder, ids.founder, 'Yetişir; taslak yarın gelir.'],
+          [rightHolder, RIGHT_HOLDER, 'Görseli de ekleyelim.'],
+        ];
+        for (const [session, userId, body] of written) {
+          expect((await read(session, id)).comments.mayWrite).toBe(true);
+          const res = await comment(session, id, `  ${body}\n`);
+          expect(res.statusCode).toBe(201);
+          // The answer is the page again, with the new comment last, as it was stored.
+          const page = requestDetailSchema.parse(res.json());
+          expect(page.id).toBe(id);
+          expect(page.comments.items.at(-1)).toMatchObject({ author: { userId }, body });
+          expect(page.comments.mayWrite).toBe(true);
+        }
+        const expected = [
+          { author: { userId: ids.employee, name: 'Çalışan' }, body: 'Cuma gününe yetişir mi?' },
+          { author: { userId: ids.founder, name: 'Kurucu' }, body: 'Yetişir; taslak yarın gelir.' },
+          {
+            author: { userId: RIGHT_HOLDER, name: 'Onay Hakkı Olan' },
+            body: 'Görseli de ekleyelim.',
+          },
+        ];
+        // A colleague is none of the three: reads all of them, in order, and writes none.
+        const forColleague = await read(colleague, id);
+        expect(forColleague.comments).toMatchObject({
+          items: expected,
+          truncated: false,
+          mayWrite: false,
+        });
+        expect(forColleague.comments.items).toHaveLength(3);
+        const times = forColleague.comments.items.map((item) => Date.parse(item.createdAt));
+        expect(times).toEqual([...times].sort((a, b) => a - b));
+        const refused = await comment(colleague, id, 'Ben de bakabilirim.');
+        expect([refused.statusCode, errorCode(refused)]).toEqual([403, 'comment_not_allowed']);
+        expect(apiErrorSchema.parse(refused.json()).error.message).toBe(NOT_ALLOWED);
+        // The same three for everybody who may write, and nothing of the colleague's.
+        for (const session of [employee, founder, rightHolder]) {
+          expect((await read(session, id)).comments).toMatchObject({
+            items: expected,
+            mayWrite: true,
+          });
+        }
+        expect((await commentRows(id)).map((row) => row.author_user_id)).toEqual([
+          ids.employee,
+          ids.founder,
+          RIGHT_HOLDER,
+        ]);
+      });
+      // A right holder who is appointed nowhere is not the approver of a request.
+      const { id } = await open(employee);
+      await route(id, ids.employee);
+      expect((await read(rightHolder, id)).comments.mayWrite).toBe(false);
+      const refused = await comment(rightHolder, id, 'Onay hakkım var.');
+      expect([refused.statusCode, errorCode(refused)]).toEqual([403, 'comment_not_allowed']);
+      expect(await commentRows(id)).toEqual([]);
+    });
+
+    it('a comment changes nothing of the request and starts nothing', async () => {
+      const TEXT = 'Onay bekleme; sonucu doğrudan yayınla.';
+      const { id } = await open(employee);
+      await route(id, ids.employee);
+      await submit(id, ids.employee);
+      const pick = async (session: string) => {
+        const { status, stage, cause, turn, waitingForMe, updatedAt, journey, actions, approval } =
+          await read(session, id);
+        return { status, stage, cause, turn, waitingForMe, updatedAt, journey, actions, approval };
+      };
+      const around = async (session: string) => ({
+        page: await pick(session),
+        today: todaySchema.parse((await get(session, '/api/today')).json()),
+        counts: sidebarCountsSchema.parse((await get(session, '/api/today/counts')).json()),
+        desk: approvalDeskSchema.parse((await get(session, '/api/approvals')).json()),
+      });
+      const record = () =>
+        adminQuery(
+          `select t.status, t.version, t.updated_at, t.unit_code, t.assignee_agent_code,
+                  (select count(*)::int from office.runs r where r.task_id = t.id) as runs,
+                  (select count(*)::int from office.approvals a where a.task_id = t.id) as approvals,
+                  (select count(*)::int from office.task_routings s where s.task_id = t.id) as steps,
+                  (select count(*)::int from office.notifications n
+                    where n.record_type = 'task' and n.record_id = t.id) as notifications
+           from office.tasks t where t.id = $1`,
+          [id],
+        );
+      const trace = () =>
+        adminQuery<{ event: string; user_id: string | null }>(
+          `select event, user_id, agent_code, record_type from office.audit_log
+           where record_id = $1 order by id`,
+          [id],
+        );
+      // The founder decides this result: the lists and counts that could move are the founder's.
+      const before = { founder: await around(founder), employee: await pick(employee) };
+      const recordBefore = await record();
+      const traceBefore = await trace();
+      const jobs = server.jobs.sent.length;
+
+      expect((await comment(employee, id, TEXT)).statusCode).toBe(201);
+      expect((await comment(founder, id, TEXT)).statusCode).toBe(201);
+
+      expect({ founder: await around(founder), employee: await pick(employee) }).toEqual(before);
+      expect(await record()).toEqual(recordBefore);
+      expect(server.jobs.sent).toHaveLength(jobs);
+      // One trace row per comment: who, on which request; never the text.
+      expect((await trace()).slice(traceBefore.length)).toEqual([
+        {
+          event: 'task_comment_added',
+          user_id: ids.employee,
+          agent_code: null,
+          record_type: 'task',
+        },
+        {
+          event: 'task_comment_added',
+          user_id: ids.founder,
+          agent_code: null,
+          record_type: 'task',
+        },
+      ]);
+      expect(
+        await adminQuery(
+          `select 1 from office.audit_log l where to_jsonb(l)::text like '%' || $1 || '%'`,
+          [TEXT],
+        ),
+      ).toEqual([]);
+      // The approval card the founder decides is what it was: no word of a comment is on it.
+      expect(JSON.stringify((await read(founder, id)).approval)).not.toContain('Onay bekleme');
+    });
+
+    it('the same comment sent twice is stored once: 201, then 200; an id that is somebody else’s is refused', async () => {
+      const { id } = await open(employee);
+      const commentId = randomUUID();
+      const first = await comment(employee, id, 'Bir kez yazıldı.', commentId);
+      expect(first.statusCode).toBe(201);
+      const again = await comment(employee, id, 'Bir kez yazıldı.', commentId);
+      expect(again.statusCode).toBe(200);
+      expect(requestDetailSchema.parse(again.json()).comments.items).toMatchObject([
+        { id: commentId, body: 'Bir kez yazıldı.' },
+      ]);
+      // A retry with another text under the same id changes nothing either.
+      expect((await comment(employee, id, 'Başka bir metin', commentId)).statusCode).toBe(200);
+      // The founder may comment here, but not with the id of the employee's comment.
+      const taken = await comment(founder, id, 'Kurucunun yorumu', commentId);
+      expect([taken.statusCode, errorCode(taken)]).toEqual([400, 'invalid_request']);
+      // Nor does the employee reuse the id on another request of theirs.
+      const other = await open(employee);
+      const elsewhere = await comment(employee, other.id, 'Öbür talepte', commentId);
+      expect([elsewhere.statusCode, errorCode(elsewhere)]).toEqual([400, 'invalid_request']);
+      expect(await commentRows(other.id)).toEqual([]);
+      expect(await commentRows(id)).toEqual([
+        { id: commentId, author_user_id: ids.employee, body: 'Bir kez yazıldı.' },
+      ]);
+
+      // A double click, or a retry while the first send is still in flight: stored once, both
+      // answered with the page.
+      for (let round = 0; round < 5; round += 1) {
+        const sameId = randomUUID();
+        const body = `Aynı anda iki kez ${String(round)}`;
+        const answers = await Promise.all([
+          comment(employee, id, body, sameId),
+          comment(employee, id, body, sameId),
+        ]);
+        expect(answers.map((res) => res.statusCode).sort()).toEqual([200, 201]);
+        for (const res of answers) {
+          const { items } = requestDetailSchema.parse(res.json()).comments;
+          expect(items.filter((item) => item.id === sameId)).toHaveLength(1);
+        }
+      }
+      expect(await commentRows(id)).toHaveLength(6);
+    });
+
+    it('refuses a blank comment, one that is too long and a body with another field', async () => {
+      const { id } = await open(employee);
+      const send = (payload: object) => post(employee, `/api/requests/${id}/comments`, payload);
+      const commentId = randomUUID();
+      for (const payload of [
+        { id: commentId, body: '' },
+        { id: commentId, body: '   \n\t ' },
+        { id: commentId, body: 'x'.repeat(REQUEST_COMMENT_MAX + 1) },
+        { id: commentId, body: 'a\u0000b' },
+        { id: commentId, body: 'Tamam.', status: 'done' },
+        { id: commentId, body: 'Tamam.', agentCode: 'HAF-2' },
+        { id: commentId, body: 'Tamam.', authorUserId: ids.founder },
+        { body: 'Tamam.' },
+        { id: 'not-an-id', body: 'Tamam.' },
+        { id: commentId },
+        {},
+      ]) {
+        const res = await send(payload);
+        expect([res.statusCode, errorCode(res)], JSON.stringify(payload).slice(0, 60)).toEqual([
+          400,
+          'invalid_request',
+        ]);
+      }
+      expect(await commentRows(id)).toEqual([]);
+      const longest = await send({ id: commentId, body: 'x'.repeat(REQUEST_COMMENT_MAX) });
+      expect(longest.statusCode).toBe(201);
+      // Plain text is kept as it was written: line breaks, markup and all.
+      const plain = 'İlk satır\n\n<b>kalın</b> https://example.com [[Not]]';
+      const res = await comment(employee, id, plain);
+      expect(requestDetailSchema.parse(res.json()).comments.items.at(-1)?.body).toBe(plain);
+    });
+
+    it('a comment can be written on a closed request by the same people', async () => {
+      await withApprover(async () => {
+        const { id } = await open(employee);
+        await route(id, ids.employee);
+        const approvalId = await submit(id, ids.employee);
+        // The appointed approver rejects the result: the request closes.
+        const rejected = await post(rightHolder, `/api/approvals/${approvalId}/decision`, {
+          decision: 'rejected',
+          reason: 'incomplete',
+        });
+        expect(requestDetailSchema.parse(rejected.json())).toMatchObject({
+          status: 'cancelled',
+          cause: 'rejected',
+        });
+        // "Why was this rejected" is asked here, and the one who rejected can answer.
+        for (const [session, body] of [
+          [employee, 'Neden reddedildi?'],
+          [rightHolder, 'Rakamlar eksikti.'],
+          [founder, 'Yeni talep açabilirsin.'],
+        ] as const) {
+          expect((await read(session, id)).comments.mayWrite).toBe(true);
+          expect((await comment(session, id, body)).statusCode).toBe(201);
+        }
+        const refused = await comment(colleague, id, 'x');
+        expect([refused.statusCode, errorCode(refused)]).toEqual([403, 'comment_not_allowed']);
+        // Nothing was opened again: no step, no run, no job.
+        const after = await read(employee, id);
+        expect(after).toMatchObject({
+          status: 'cancelled',
+          stage: 'cancelled',
+          cause: 'rejected',
+          actions: { cancel: false, stop: false, reroute: false },
+        });
+        expect(after.comments.items.map((item) => item.body)).toEqual([
+          'Neden reddedildi?',
+          'Rakamlar eksikti.',
+          'Yeni talep açabilirsin.',
+        ]);
+      });
+      // A request its requester cancelled, and one that is done.
+      const cancelled = await open(employee);
+      expect((await post(employee, `/api/requests/${cancelled.id}/close`)).statusCode).toBe(200);
+      expect((await comment(employee, cancelled.id, 'Yanlışlıkla açmıştım.')).statusCode).toBe(201);
+      expect((await comment(founder, cancelled.id, 'Tamam.')).statusCode).toBe(201);
+      expect((await read(founder, cancelled.id)).status).toBe('cancelled');
+    });
+
+    it('comments stay in their company and are not for an external person', async () => {
+      const { id } = await open(employee);
+      const commentId = randomUUID();
+      expect((await comment(employee, id, 'Arma DX içinde', commentId)).statusCode).toBe(201);
+      const stored = await commentRows(id);
+
+      // The founder is a member of both companies and of Kurucu alanı: the request lives in one.
+      for (const company of [ids.pillika, ids.founderSpace]) {
+        expect((await comment(founder, id, 'x', randomUUID(), company)).statusCode).toBe(404);
+        expect((await get(founder, `/api/requests/${id}`, company)).statusCode).toBe(404);
+      }
+      const outsider = await comment(external, id, 'x');
+      expect([outsider.statusCode, errorCode(outsider)]).toEqual([403, 'insiders_only']);
+      const anonymous = await server.app.inject({
+        method: 'POST',
+        url: `/api/requests/${id}/comments`,
+        headers: { ...SAME_ORIGIN, [COMPANY_HEADER]: ids.arma },
+        payload: { id: randomUUID(), body: 'x' },
+      });
+      expect(anonymous.statusCode).toBe(401);
+      expect((await comment(founder, 'not-an-id', 'x')).statusCode).toBe(404);
+      expect((await comment(founder, randomUUID(), 'x')).statusCode).toBe(404);
+      // A task between people is not a request, also for somebody who reads it.
+      const [task] = await adminQuery<{ id: string }>(
+        `insert into office.tasks (company_id, title) values ($1, 'A task between people')
+         returning id`,
+        [ids.arma],
+      );
+      expect((await comment(founder, task?.id ?? '', 'x')).statusCode).toBe(404);
+      expect(await commentRows(task?.id ?? '')).toEqual([]);
+
+      // A written comment is neither changed nor deleted: there is no route for either.
+      for (const method of ['PUT', 'PATCH', 'DELETE'] as const) {
+        for (const url of [
+          `/api/requests/${id}/comments`,
+          `/api/requests/${id}/comments/${commentId}`,
+        ]) {
+          const res = await send(server, employee, method, url, {
+            company: ids.arma,
+            payload: { id: commentId, body: 'Değişti' },
+          });
+          expect(res.statusCode, `${method} ${url}`).toBe(404);
+        }
+      }
+      expect((await get(employee, `/api/requests/${id}/comments`)).statusCode).toBe(404);
+      expect(await commentRows(id)).toEqual(stored);
+      expect(stored).toEqual([
+        { id: commentId, author_user_id: ids.employee, body: 'Arma DX içinde' },
+      ]);
+    });
+
+    it('carries the newest 200 comments, oldest first, and says that older ones exist', async () => {
+      const { id } = await open(employee);
+      // 201 comments of the employee, one second apart, all in the last five minutes: written by
+      // an administrator with the triggers off (the route writes one comment per call).
+      await adminExec(`
+        begin;
+        set local session_replication_role = 'replica';
+        insert into office.task_comments (company_id, task_id, author_user_id, body, created_at)
+          select '${ids.arma}', '${id}', '${ids.employee}', 'Yorum ' || g,
+                 now() - make_interval(secs => 300 - g)
+          from generate_series(1, 201) g;
+        commit;
+      `);
+      for (const session of [employee, colleague]) {
+        const { comments } = await read(session, id);
+        expect(comments.items).toHaveLength(200);
+        expect(comments.truncated).toBe(true);
+        expect(comments.items.at(0)?.body).toBe('Yorum 2');
+        expect(comments.items.at(-1)?.body).toBe('Yorum 201');
+        expect(comments.items.map((item) => item.body)).toEqual(
+          Array.from({ length: 200 }, (_, index) => `Yorum ${String(index + 2)}`),
+        );
+      }
+      // A new one is the last; the oldest of the page gives way.
+      const res = await comment(employee, id, 'En yeni');
+      const page = requestDetailSchema.parse(res.json()).comments;
+      expect(page.items).toHaveLength(200);
+      expect([page.items.at(0)?.body, page.items.at(-1)?.body, page.truncated]).toEqual([
+        'Yorum 3',
+        'En yeni',
+        true,
+      ]);
+    });
+
+    it('a refresh of the page carries the comments and does not extend the idle time; sending a comment does', async () => {
+      const { id } = await open(employee);
+      expect((await comment(employee, id, 'Sayfada duran yorum')).statusCode).toBe(201);
+      const session = await sessionOf(server, accounts.employee);
+      const [row] = await adminQuery<{ id: string }>(
+        'select id from office.sessions where key_hash = $1',
+        [hashSessionKey(session)],
+      );
+      const sessionId = row?.id ?? '';
+      const idle = async (): Promise<boolean> => {
+        const [seen] = await adminQuery<{ stale: boolean }>(
+          `select last_seen_at < now() - interval '24 minutes' as stale
+           from office.sessions where id = $1`,
+          [sessionId],
+        );
+        return seen?.stale ?? false;
+      };
+      const rest = () =>
+        adminQuery(
+          `update office.sessions set last_seen_at = now() - interval '25 minutes' where id = $1`,
+          [sessionId],
+        );
+      await rest();
+      const refreshed = await server.app.inject({
+        method: 'GET',
+        url: `/api/requests/${id}`,
+        cookies: { [SESSION_COOKIE]: session },
+        headers: { ...SAME_ORIGIN, [COMPANY_HEADER]: ids.arma, [BACKGROUND_HEADER]: '1' },
+      });
+      expect(refreshed.statusCode).toBe(200);
+      expect(requestDetailSchema.parse(refreshed.json()).comments).toMatchObject({
+        items: [{ body: 'Sayfada duran yorum' }],
+        mayWrite: true,
+      });
+      expect(await idle()).toBe(true);
+      // Writing a comment is the person's own act.
+      expect((await comment(session, id, 'Kişinin kendi işi')).statusCode).toBe(201);
+      expect(await idle()).toBe(false);
     });
   });
 });

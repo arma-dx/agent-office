@@ -11,11 +11,15 @@ import {
   countPendingDecisions,
   dueDaySql,
   insertRequest,
+  insertRequestComment,
   listExpectedRequests,
   listOpenRequests,
   listPendingAcceptances,
   listPendingApprovals,
+  listRequestComments,
   listRequests,
+  mayCommentOnRequest,
+  ownRequestCommentExists,
   readAgentSwitch,
   readRequest,
   readResultApprovals,
@@ -3852,6 +3856,90 @@ describe.skipIf(noDatabase)(
         // The question about requests is not about tasks between people.
         await tx.setContext(founderA);
         expect((await one<{ may: boolean }>(tx, MAY_COMMENT, [ids.taskA])).may).toBe(false);
+      });
+    });
+
+    it('lists the newest comments of a request and adds one once', async () => {
+      const add = (tx: Tx, id: string, body: string, requestId: string = ids.requestA) =>
+        insertRequestComment(tx.client, { id, requestId, body });
+      /** How the statement ends for this context: stored or not, or the code it was refused with. */
+      const outcome = async (tx: Tx, context: ContextInput): Promise<boolean | string> => {
+        await tx.setContext(context);
+        await tx.client.query('savepoint add_comment');
+        try {
+          return await add(tx, randomUUID(), 'x');
+        } catch (error) {
+          await tx.client.query('rollback to savepoint add_comment');
+          return (error as { code?: string }).code ?? 'error';
+        }
+      };
+      await inTransaction(async (tx) => {
+        await tx.setContext(employeeA);
+        const first = randomUUID();
+        expect(await add(tx, first, 'One')).toBe(true);
+        // The same id again adds nothing and changes nothing.
+        expect(await add(tx, first, 'One, sent again')).toBe(false);
+        expect(await ownRequestCommentExists(tx.client, first, ids.requestA)).toBe(true);
+        // It is this person's comment on this request, and on no other.
+        expect(await ownRequestCommentExists(tx.client, first, ids.taskA)).toBe(false);
+        expect(await ownRequestCommentExists(tx.client, randomUUID(), ids.requestA)).toBe(false);
+        await tx.setContext(founderA);
+        expect(await ownRequestCommentExists(tx.client, first, ids.requestA)).toBe(false);
+        // An id that is somebody else's stores nothing either.
+        expect(await add(tx, first, 'With the id of another person')).toBe(false);
+        const [second, third] = [randomUUID(), randomUUID()];
+        expect(await add(tx, second, 'Two')).toBe(true);
+        expect(await add(tx, third, 'Three')).toBe(true);
+
+        const all = await listRequestComments(tx.client, ids.requestA, 10);
+        expect(all.map((row) => ({ ...row, created_at: row.created_at instanceof Date }))).toEqual(
+          // Written in one transaction they carry one time: the id then decides, descending.
+          [
+            { id: first, author_user_id: ids.employeeA, body: 'One', created_at: true },
+            { id: second, author_user_id: ids.founder, body: 'Two', created_at: true },
+            { id: third, author_user_id: ids.founder, body: 'Three', created_at: true },
+          ].sort((a, b) => (a.id < b.id ? 1 : -1)),
+        );
+        expect(await listRequestComments(tx.client, ids.requestA, 2)).toEqual(all.slice(0, 2));
+        // A task between people has comments in the fixtures; they are not a request's.
+        expect(await tx.count('task_comments', 'task_id = $1', [ids.taskA])).toBe(1);
+        expect(await listRequestComments(tx.client, ids.taskA, 10)).toEqual([]);
+
+        expect(await mayCommentOnRequest(tx.client, ids.requestA)).toBe(true);
+        expect(await mayCommentOnRequest(tx.client, ids.taskA)).toBe(false);
+        expect(await mayCommentOnRequest(tx.client, randomUUID())).toBe(false);
+        await tx.setContext(employeeA);
+        expect(await mayCommentOnRequest(tx.client, ids.requestA)).toBe(true);
+        await tx.setContext(colleagueA);
+        expect(await mayCommentOnRequest(tx.client, ids.requestA)).toBe(false);
+        // Not one of the three, and still a reader.
+        expect(await listRequestComments(tx.client, ids.requestA, 10)).toEqual(all);
+        expect(await outcome(tx, colleagueA)).toBe('42501');
+
+        // Another company, no context and an agent run: nothing is read and nothing is written.
+        for (const [context, refusal] of [
+          [founderP, '23503'],
+          [employeeP, '23503'],
+          [{}, '23503'],
+          [agentRun(ids.employeeA, 'KOR-1'), '42501'],
+          [agentRun(ids.founder, 'HAF-1'), '42501'],
+        ] as const) {
+          await tx.setContext(context);
+          expect(await listRequestComments(tx.client, ids.requestA, 10)).toEqual([]);
+          expect(await ownRequestCommentExists(tx.client, first, ids.requestA)).toBe(false);
+          expect(await mayCommentOnRequest(tx.client, ids.requestA)).toBe(false);
+          expect(await outcome(tx, context)).toBe(refusal);
+        }
+        await tx.setContext(founderA);
+        expect(await listRequestComments(tx.client, ids.requestA, 10)).toEqual(all);
+      });
+      // The worker's role, with the person alone in its context: the statements read nothing and
+      // write nothing.
+      await inWorkerTransaction(async (tx) => {
+        for (const person of [employeeA, founderA]) {
+          expect(await outcome(tx, person)).toBe('42501');
+          expect(await listRequestComments(tx.client, ids.requestA, 10)).toEqual([]);
+        }
       });
     });
   },

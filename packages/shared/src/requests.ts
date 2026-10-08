@@ -610,6 +610,15 @@ export const requestDetailSchema = requestSummarySchema.extend({
     .nullable(),
   // The acts the reader may use (7 October decision 7). The server refuses the rest anyway.
   actions: z.object({ cancel: z.boolean(), stop: z.boolean(), reroute: z.boolean() }),
+  // The comments of the request, for everybody who may read it: the newest REQUEST_COMMENT_LIMIT,
+  // oldest first. `truncated`: older ones exist and are not carried. `mayWrite`: the reader is
+  // the requester, the approver of the request or the founder (the server refuses the rest
+  // anyway). People's text only; nothing of it is ever given to an agent.
+  comments: z.object({
+    items: z.array(requestCommentSchema),
+    truncated: z.boolean(),
+    mayWrite: z.boolean(),
+  }),
   // The clock the stage and the durations were read on.
   serverTime: instantSchema,
 });

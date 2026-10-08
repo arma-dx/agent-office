@@ -13,6 +13,7 @@ import {
   deriveStage,
   requestCauseSchema,
   requestCommentSchema,
+  requestDetailSchema,
   requestSummarySchema,
   runGraceMs,
   type RequestFacts,
@@ -185,23 +186,30 @@ describe('the due day and the comments in an answer', () => {
     expect(officeDay(new Date('2026-12-31T21:00:00Z'))).toBe('2027-01-01');
   });
 
+  const summary = {
+    id,
+    title: 'LinkedIn için gönderi yaz',
+    status: 'in_progress',
+    stage: 'working',
+    cause: null,
+    delayed: false,
+    turn: { kind: 'agent', code: 'SOS-2', name: 'Sosyal İçerik Yazım Ajanı' },
+    waitingForMe: false,
+    unit: { code: 'SOS', name: 'Sosyal Medya' },
+    requester: { userId: id, name: 'Çalışan A' },
+    createdAt: '2026-10-08T10:00:00+03:00',
+    updatedAt: '2026-10-08T10:00:00+03:00',
+    dueDate: '2026-10-20',
+    overdue: false,
+  };
+  const comment = {
+    id,
+    author: { userId: id, name: 'Çalışan A' },
+    body: 'Neden B seçildi?',
+    createdAt: '2026-10-08T10:00:00+03:00',
+  };
+
   it('a summary says the due day and whether it has passed', () => {
-    const summary = {
-      id,
-      title: 'LinkedIn için gönderi yaz',
-      status: 'in_progress',
-      stage: 'working',
-      cause: null,
-      delayed: false,
-      turn: { kind: 'agent', code: 'SOS-2', name: 'Sosyal İçerik Yazım Ajanı' },
-      waitingForMe: false,
-      unit: { code: 'SOS', name: 'Sosyal Medya' },
-      requester: { userId: id, name: 'Çalışan A' },
-      createdAt: '2026-10-08T10:00:00+03:00',
-      updatedAt: '2026-10-08T10:00:00+03:00',
-      dueDate: '2026-10-20',
-      overdue: false,
-    };
     const parse = (value: unknown): boolean => requestSummarySchema.safeParse(value).success;
     expect(requestSummarySchema.parse(summary)).toEqual(summary);
     expect(parse({ ...summary, dueDate: null })).toBe(true);
@@ -216,13 +224,40 @@ describe('the due day and the comments in an answer', () => {
     expect(parse({ ...summary, overdue: null })).toBe(false);
   });
 
-  it('a comment in an answer is always a person’s', () => {
-    const comment = {
-      id,
-      author: { userId: id, name: 'Çalışan A' },
-      body: 'Neden B seçildi?',
-      createdAt: '2026-10-08T10:00:00+03:00',
+  it('a detail carries its comments, and whether the reader may write one', () => {
+    const detail = {
+      ...summary,
+      text: 'LinkedIn için gönderi yaz',
+      agent: { code: 'SOS-2', name: 'Sosyal İçerik Yazım Ajanı' },
+      approver: null,
+      closure: null,
+      journey: [],
+      approval: null,
+      result: null,
+      acceptance: null,
+      actions: { cancel: true, stop: false, reroute: false },
+      comments: { items: [comment], truncated: false, mayWrite: true },
+      serverTime: '2026-10-08T10:00:00+03:00',
     };
+    const parse = (value: unknown): boolean => requestDetailSchema.safeParse(value).success;
+    expect(requestDetailSchema.parse(detail)).toEqual(detail);
+    expect(parse({ ...detail, comments: { items: [], truncated: true, mayWrite: false } })).toBe(
+      true,
+    );
+    // The page is never left to guess: no comments is an empty list, not a missing field.
+    const { comments, ...withoutComments } = detail;
+    expect(parse(withoutComments)).toBe(false);
+    expect(parse({ ...detail, comments: [comment] })).toBe(false);
+    for (const field of ['items', 'truncated', 'mayWrite']) {
+      const rest = Object.fromEntries(Object.entries(comments).filter(([key]) => key !== field));
+      expect(parse({ ...detail, comments: rest }), field).toBe(false);
+    }
+    // An agent could not be written as an author.
+    const byAgent = { ...comment, author: { code: 'SOS-2', name: 'Sosyal İçerik Yazım Ajanı' } };
+    expect(parse({ ...detail, comments: { ...comments, items: [byAgent] } })).toBe(false);
+  });
+
+  it('a comment in an answer is always a person’s', () => {
     expect(requestCommentSchema.safeParse(comment).success).toBe(true);
     // A former member has no name any more.
     expect(

@@ -477,6 +477,84 @@ export async function listSteps(client: Queryable, runIds: string[]): Promise<St
   return rows;
 }
 
+// Comments -----------------------------------------------------------------------------------------
+
+export interface RequestCommentRow {
+  id: string;
+  author_user_id: string;
+  body: string;
+  created_at: Date;
+}
+
+/**
+ * The newest `limit` comments of a request, the newest first (the caller turns them round). Who
+ * reads them is decided by the row policies: whoever reads the request, as a person through the
+ * API's role; an agent run and the worker's role are shown none. A comment of a request is
+ * always a person's (the database refuses an agent's); the condition on the author keeps the
+ * answer's shape true whatever a row holds.
+ */
+export async function listRequestComments(
+  client: Queryable,
+  requestId: string,
+  limit: number,
+): Promise<RequestCommentRow[]> {
+  const { rows } = await client.query<RequestCommentRow>(
+    `select k.id, k.author_user_id, k.body, k.created_at
+     from office.task_comments k
+     join office.tasks t on t.id = k.task_id and t.kind = 'request'
+     where k.task_id = $1 and k.company_id = office.ctx_company_id()
+       and k.author_user_id is not null
+     order by k.created_at desc, k.id desc
+     limit $2`,
+    [requestId, limit],
+  );
+  return rows;
+}
+
+/**
+ * Adds a comment in the name of the context person (the database sets the author and the time,
+ * copies the request's project and decides who may write). False when a row with this id exists
+ * already. SQLSTATE 42501: not the requester, the approver of the request or the founder, or not
+ * a person's act through the API; 23503: the person cannot read the request.
+ */
+export async function insertRequestComment(
+  client: Queryable,
+  comment: { id: string; requestId: string; body: string },
+): Promise<boolean> {
+  const { rows } = await client.query(
+    `insert into office.task_comments (id, company_id, task_id, body)
+     values ($1, office.ctx_company_id(), $2, $3)
+     on conflict (id) do nothing
+     returning id`,
+    [comment.id, comment.requestId, comment.body],
+  );
+  return rows.length > 0;
+}
+
+/** Is the comment with this id the context person's own comment on this request (a repeated send). */
+export async function ownRequestCommentExists(
+  client: Queryable,
+  commentId: string,
+  requestId: string,
+): Promise<boolean> {
+  const { rows } = await client.query(
+    `select 1 from office.task_comments k
+     where k.id = $1 and k.task_id = $2 and k.company_id = office.ctx_company_id()
+       and k.author_user_id = office.ctx_user_id()`,
+    [commentId, requestId],
+  );
+  return rows.length > 0;
+}
+
+/** May the context person write a comment on this request (the database's own rule, asked). */
+export async function mayCommentOnRequest(client: Queryable, requestId: string): Promise<boolean> {
+  const { rows } = await client.query<{ may: boolean }>(
+    'select office.may_comment_on_request($1) as may',
+    [requestId],
+  );
+  return rows[0]?.may === true;
+}
+
 export interface ResultApprovalRow {
   id: string;
   task_id: string;

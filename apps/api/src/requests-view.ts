@@ -1,5 +1,6 @@
 import type {
   AcceptanceRow,
+  RequestCommentRow,
   RequestRow,
   ResultApprovalRow,
   RoutingRow,
@@ -8,6 +9,7 @@ import type {
 } from '@agent-office/db';
 import {
   COORDINATOR_AGENT_CODE,
+  REQUEST_COMMENT_LIMIT,
   deriveStage,
   isClosedTaskStatus,
   officeDay,
@@ -18,6 +20,7 @@ import {
   type ApprovalCard,
   type DerivedStage,
   type JourneyItem,
+  type RequestComment,
   type RequestDetail,
   type RequestFacts,
   type RequestResult,
@@ -386,4 +389,25 @@ function approvalStatus(status: string): 'pending' | 'approved' | 'changes_reque
 
 function acceptanceStatus(status: string): 'pending' | 'approved' | 'changes_requested' {
   return status === 'approved' || status === 'changes_requested' ? status : 'pending';
+}
+
+/**
+ * The comments as the page shows them: the statement gave the newest first and one more than the
+ * limit; the page gets the newest REQUEST_COMMENT_LIMIT, oldest first.
+ */
+export function toComments(
+  rows: RequestCommentRow[],
+  names: Names,
+  mayWrite: boolean,
+): RequestDetail['comments'] {
+  const items: RequestComment[] = rows
+    .slice(0, REQUEST_COMMENT_LIMIT)
+    .reverse()
+    .map((row) => ({
+      id: row.id,
+      author: person(names, row.author_user_id),
+      body: row.body,
+      createdAt: row.created_at.toISOString(),
+    }));
+  return { items, truncated: rows.length > REQUEST_COMMENT_LIMIT, mayWrite };
 }

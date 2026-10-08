@@ -114,6 +114,7 @@ export function requestDetail(overrides: Partial<RequestDetail> = {}): RequestDe
     result: null,
     acceptance: null,
     actions: { cancel: false, stop: true, reroute: true },
+    comments: { items: [], truncated: false, mayWrite: false },
     serverTime: AT,
     ...overrides,
   });
