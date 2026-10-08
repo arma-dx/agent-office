@@ -204,6 +204,11 @@ describe('settings, users: members', () => {
     const dialog = await screen.findByRole('alertdialog', {
       name: 'Ayşe Demir dış kişi olsun mu?',
     });
+    // The confirmation says what the change takes away: the person's project memberships in this
+    // company go with the role and do not come back.
+    expect(dialog).toHaveTextContent(
+      'Dış kişi yalnızca kendisine açılan görev ve notları görür. Bu şirketteki proje üyelikleri kalkar; üyelikler geri gelmez.',
+    );
     // Nothing changes before the confirmation; the control keeps the saved value.
     expect(select).toHaveValue('employee');
     expect(api.callsTo(`PATCH /members/${EMPLOYEE.userId}`)).toEqual([]);
@@ -233,6 +238,25 @@ describe('settings, users: members', () => {
     await waitFor(() => {
       expect(within(row('Ayşe Demir')).getByRole('combobox', { name: 'Rol' })).toHaveFocus();
     });
+  });
+
+  it('says that the approval right goes too when a member who has it becomes external', async () => {
+    founderApi({
+      'GET /members': () => json({ members: [FOUNDER, { ...EMPLOYEE, canApprove: true }] }),
+      'POST /step-up/options': stepUpIssuer().handler,
+    });
+    renderApp('/c/armadx/settings/users');
+    await screen.findByText('Çalışan, onay yetkisi var, etkin');
+    await userEvent.selectOptions(
+      within(row('Ayşe Demir')).getByRole('combobox', { name: 'Rol' }),
+      'external',
+    );
+    const dialog = await screen.findByRole('alertdialog', {
+      name: 'Ayşe Demir dış kişi olsun mu?',
+    });
+    expect(dialog).toHaveTextContent(
+      'Dış kişi yalnızca kendisine açılan görev ve notları görür. Onay yetkisi ve bu şirketteki proje üyelikleri kalkar; üyelikler geri gelmez.',
+    );
   });
 
   it('turns approval rights on for an employee after a passkey confirmation', async () => {

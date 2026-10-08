@@ -87,9 +87,12 @@ function changeText(
   if (change.role === 'external') {
     return {
       title: `${member.name} dış kişi olsun mu?`,
+      // The database takes the person off every project of this company with the role (an
+      // external person is no project member), and a later change back does not restore them: the
+      // founder confirms that too.
       description: member.canApprove
-        ? 'Dış kişi yalnızca kendisine açılan görev ve notları görür. Onay yetkisi de kalkar.'
-        : 'Dış kişi yalnızca kendisine açılan görev ve notları görür.',
+        ? 'Dış kişi yalnızca kendisine açılan görev ve notları görür. Onay yetkisi ve bu şirketteki proje üyelikleri kalkar; üyelikler geri gelmez.'
+        : 'Dış kişi yalnızca kendisine açılan görev ve notları görür. Bu şirketteki proje üyelikleri kalkar; üyelikler geri gelmez.',
       confirmLabel: 'Rolü değiştir',
     };
   }

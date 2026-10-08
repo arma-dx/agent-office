@@ -17,6 +17,8 @@ import {
 } from './test/mock-api.ts';
 import {
   AYSE,
+  CAGAN,
+  CANDIDATES,
   CUSTOMER_ID,
   EMPLOYEE_AT_ARMADX,
   EXTERNAL_AT_ARMADX,
@@ -415,36 +417,6 @@ describe('projects: the page', () => {
     });
   });
 
-  it("page: lists the members by name with their role, the reader's own row marked", async () => {
-    mockApi(
-      projectHandlers(
-        projectDetail({
-          members: [
-            FOUNDER_MEMBER,
-            { ...AYSE, active: false },
-            {
-              userId: '55555555-5555-4555-8555-555555555555',
-              name: null,
-              role: null,
-              active: false,
-            },
-          ],
-        }),
-      ),
-    );
-    renderApp(PAGE);
-    const members = await screen.findByRole('region', { name: 'Üyeler 3' });
-    expect(
-      within(members)
-        .getAllByRole('group')
-        .map((row) => row.textContent),
-    ).toEqual([
-      'Ayşe YılmazÇalışan, devre dışı',
-      'Ömer Kadıoğlu (siz)Kurucu',
-      'Eski üyedevre dışı',
-    ]);
-  });
-
   it('page: Proje bulunamadı for a 404 and for an id that is not a UUID, with the way back', async () => {
     const api = mockApi(
       projectHandlers(projectDetail(), {
@@ -550,6 +522,257 @@ describe('projects: the page', () => {
     // The automated processing permission is not an employee's to read.
     expect(within(contract).queryByText('Kodla otomatik işleme')).toBeNull();
     expect(within(contract).getByText('İzinleri yalnızca kurucu değiştirir.')).toBeVisible();
+  });
+});
+
+describe('projects: members', () => {
+  const DENIZ = { userId: '66666666-6666-4666-8666-666666666666', name: 'Deniz Öz' };
+  // The signed-in person as an employee who is a member (the session's user id is the same).
+  const ME = { ...FOUNDER_MEMBER, role: 'employee' as const };
+  const row = (name: string) => screen.getByRole('group', { name });
+
+  it("members: names, roles and the reader's own row; adds a person and says so", async () => {
+    const before = projectDetail({
+      members: [
+        FOUNDER_MEMBER,
+        { ...AYSE, active: false },
+        { userId: '55555555-5555-4555-8555-555555555555', name: null, role: null, active: false },
+      ],
+    });
+    const api = mockApi(
+      projectHandlers(before, {
+        'GET /projects/member-candidates': () =>
+          json({ people: [...CANDIDATES, { ...DENIZ, role: 'founder' }] }),
+        [`PUT /projects/${PROJECT_ID}/members/${CAGAN.userId}`]: () =>
+          json(projectDetail({ members: [...before.members, CAGAN] })),
+      }),
+    );
+    renderApp(PAGE);
+    const section = await screen.findByRole('region', { name: 'Üyeler 3' });
+    // By name in Turkish order; a person whose name could not be read comes last.
+    expect(
+      within(section)
+        .getAllByRole('group')
+        .map((group) => group.firstElementChild?.textContent),
+    ).toEqual([
+      'Ayşe YılmazÇalışan, devre dışı',
+      'Ömer Kadıoğlu (siz)Kurucu',
+      'Eski üyedevre dışı',
+    ]);
+
+    const select = await within(section).findByRole('combobox', { name: 'Eklenecek kişi' });
+    await waitFor(() => {
+      expect(within(select).getAllByRole('option')).toHaveLength(3);
+    });
+    // Only the people who are not members yet; a founder is marked.
+    expect(
+      within(select)
+        .getAllByRole('option')
+        .map((option) => option.textContent),
+    ).toEqual(['Kişi seçin', 'Çağan Ünal', 'Deniz Öz, kurucu']);
+    await userEvent.selectOptions(select, CAGAN.userId);
+    const add = within(section).getByRole('button', { name: 'Üye ekle' });
+    await userEvent.click(add);
+    expect(await screen.findByText('Çağan Ünal projeye eklendi.')).toBeVisible();
+    expect(await screen.findByRole('region', { name: 'Üyeler 4' })).toBeVisible();
+    expect(within(row('Çağan Ünal')).getByText('Çalışan')).toBeVisible();
+    // The request names the project and the person, and carries nothing else: no passkey.
+    const [call] = api.callsTo(`PUT /projects/${PROJECT_ID}/members/${CAGAN.userId}`);
+    expect(call?.body).toBeUndefined();
+    expect(api.callsTo('POST /step-up/options')).toEqual([]);
+    // Ready for the next person: the select is back at its first option, the focus on the button.
+    expect(select).toHaveValue('');
+    expect(add).toHaveFocus();
+    expect(api.unexpected).toEqual([]);
+  });
+
+  it('members: removes after a plain confirmation; no passkey is asked; the focus goes to the heading', async () => {
+    const remove = `DELETE /projects/${PROJECT_ID}/members/${AYSE.userId}`;
+    const api = mockApi(
+      projectHandlers(projectDetail(), {
+        [remove]: () => apiError(404, 'not_found', 'Bu kişi artık projenin üyesi değil.'),
+      }),
+    );
+    renderApp(PAGE);
+    await screen.findByRole('region', { name: 'Üyeler 2' });
+    const button = within(row('Ayşe Yılmaz')).getByRole('button', { name: 'Projeden çıkar' });
+    await userEvent.click(button);
+    let dialog = await screen.findByRole('alertdialog', {
+      name: 'Ayşe Yılmaz projeden çıkarılsın mı?',
+    });
+    expect(dialog).toHaveTextContent(
+      'Bu projeyi ve projeye bağlı kayıtları artık göremez. Gerekirse yeniden ekleyebilirsiniz.',
+    );
+    // The safe button has the focus; giving up sends nothing and returns the focus.
+    const cancel = within(dialog).getByRole('button', { name: 'Vazgeç' });
+    expect(cancel).toHaveFocus();
+    await userEvent.click(cancel);
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(api.callsTo(remove)).toEqual([]);
+    await waitFor(() => {
+      expect(button).toHaveFocus();
+    });
+
+    // A refusal is read in the dialog, which stays.
+    await userEvent.click(button);
+    dialog = await screen.findByRole('alertdialog');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Projeden çıkar' }));
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(
+      'Bu kişi artık projenin üyesi değil.',
+    );
+    expect(screen.getByRole('alertdialog')).toBeVisible();
+
+    api.handle(remove, () => json(projectDetail({ members: [FOUNDER_MEMBER] })));
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Projeden çıkar' }));
+    expect(await screen.findByText('Ayşe Yılmaz projeden çıkarıldı.')).toBeVisible();
+    const section = await screen.findByRole('region', { name: 'Üyeler 1' });
+    expect(screen.queryByRole('group', { name: 'Ayşe Yılmaz' })).toBeNull();
+    expect(api.callsTo(remove)).toHaveLength(2);
+    expect(api.callsTo(remove)[1]?.body).toBeUndefined();
+    // No passkey (5 October decision 4).
+    expect(api.callsTo('POST /step-up/options')).toEqual([]);
+    // The row took its button with it; the keyboard stays in the section.
+    await waitFor(() => {
+      expect(within(section).getByRole('heading', { level: 3 })).toHaveFocus();
+    });
+  });
+
+  it('members: an employee has no button on their own row; the founder has one', async () => {
+    mockApi(
+      projectHandlers(projectForEmployee({ members: [ME, AYSE] }), {
+        'GET /session': sessionAs(EMPLOYEE_AT_ARMADX),
+      }),
+    );
+    const first = renderApp(PAGE);
+    await screen.findByRole('region', { name: 'Üyeler 2' });
+    expect(within(row('Ömer Kadıoğlu (siz)')).queryByRole('button')).toBeNull();
+    expect(
+      within(row('Ayşe Yılmaz')).getByRole('button', { name: 'Projeden çıkar' }),
+    ).toBeVisible();
+    first.queryClient.clear();
+    document.body.innerHTML = '';
+
+    // The founder may take themselves off: they see every project anyway, and the dialog says so.
+    mockApi(projectHandlers());
+    renderApp(PAGE);
+    await screen.findByRole('region', { name: 'Üyeler 2' });
+    await userEvent.click(
+      within(row('Ömer Kadıoğlu (siz)')).getByRole('button', { name: 'Projeden çıkar' }),
+    );
+    const dialog = await screen.findByRole('alertdialog', {
+      name: 'Ömer Kadıoğlu projeden çıkarılsın mı?',
+    });
+    expect(dialog).toHaveTextContent('Kurucu, üye olmasa da bütün projeleri görür.');
+    expect(dialog).not.toHaveTextContent('artık göremez');
+  });
+
+  it('members: says so when everybody is a member already', async () => {
+    const full = projectDetail({ members: [FOUNDER_MEMBER, AYSE, CAGAN] });
+    const api = mockApi(
+      projectHandlers(projectDetail({ members: [FOUNDER_MEMBER, AYSE] }), {
+        [`PUT /projects/${PROJECT_ID}/members/${CAGAN.userId}`]: () => json(full),
+      }),
+    );
+    renderApp(PAGE);
+    const section = await screen.findByRole('region', { name: 'Üyeler 2' });
+    const select = await within(section).findByRole('combobox', { name: 'Eklenecek kişi' });
+    await waitFor(() => {
+      expect(within(select).getAllByRole('option')).toHaveLength(2);
+    });
+    await userEvent.selectOptions(select, CAGAN.userId);
+    await userEvent.click(within(section).getByRole('button', { name: 'Üye ekle' }));
+    expect(
+      await screen.findByText('Şirketteki bütün kurucu ve çalışanlar bu projenin üyesi.'),
+    ).toBeVisible();
+    // The controls went away with the last person: the focus is on the heading, not lost.
+    expect(screen.queryByRole('combobox', { name: 'Eklenecek kişi' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Üye ekle' })).toBeNull();
+    expect(
+      within(screen.getByRole('region', { name: 'Üyeler 3' })).getByRole('heading', { level: 3 }),
+    ).toHaveFocus();
+    expect(api.unexpected).toEqual([]);
+  });
+
+  it('members: the button reads Üye ekle and says to choose a person when none is chosen; a people list that fails offers Yeniden dene', async () => {
+    let release: (response: Response) => void = () => undefined;
+    const api = mockApi(
+      projectHandlers(projectDetail(), {
+        'GET /projects/member-candidates': () =>
+          new Promise<Response>((resolve) => {
+            release = resolve;
+          }),
+      }),
+    );
+    renderApp(PAGE);
+    const section = await screen.findByRole('region', { name: 'Üyeler 2' });
+    // While the people are read the select says so and nothing can be chosen.
+    const select = within(section).getByRole('combobox', { name: 'Eklenecek kişi' });
+    expect(select).toHaveAttribute('aria-disabled', 'true');
+    expect(
+      within(select)
+        .getAllByRole('option')
+        .map((option) => option.textContent),
+    ).toEqual(['Kişiler yükleniyor']);
+    await waitFor(() => {
+      expect(api.callsTo('GET /projects/member-candidates')).toHaveLength(1);
+    });
+    release(apiError(409, 'invalid_request', 'Okunamadı.'));
+    expect(await within(section).findByRole('alert')).toHaveTextContent('Kişi listesi alınamadı.');
+    expect(within(section).queryByRole('combobox')).toBeNull();
+
+    api.handle('GET /projects/member-candidates', () => json({ people: CANDIDATES }));
+    await userEvent.click(within(section).getByRole('button', { name: 'Yeniden dene' }));
+    const ready = await within(section).findByRole('combobox', { name: 'Eklenecek kişi' });
+    expect(ready).not.toHaveAttribute('aria-disabled');
+
+    // The button says what it does when it is heard alone, and stays reachable without a choice.
+    const add = within(section).getByRole('button', { name: 'Üye ekle' });
+    expect(add).toHaveAttribute('aria-disabled', 'true');
+    expect(add).not.toBeDisabled();
+    await userEvent.click(add);
+    const problem = within(section).getByRole('alert');
+    expect(problem).toHaveTextContent('Önce bir kişi seçin.');
+    expect(ready).toHaveAttribute('aria-invalid', 'true');
+    expect(ready).toHaveAttribute('aria-describedby', problem.id);
+    expect(api.calls.filter((call) => call.method === 'PUT')).toEqual([]);
+    // Choosing a person takes the sentence away.
+    await userEvent.selectOptions(ready, CAGAN.userId);
+    expect(within(section).queryByRole('alert')).toBeNull();
+    expect(add).not.toHaveAttribute('aria-disabled');
+  });
+
+  it('members: a refused person is said in a message and the people are read again', async () => {
+    const api = mockApi(
+      projectHandlers(projectDetail(), {
+        [`PUT /projects/${PROJECT_ID}/members/${CAGAN.userId}`]: () =>
+          apiError(
+            409,
+            'member_not_allowed',
+            'Seçilen kişi projeye üye olamaz: projeye yalnızca şirketin kurucusu ve çalışanları üye olur. Kişiyi listeden yeniden seçin.',
+          ),
+      }),
+    );
+    renderApp(PAGE);
+    const section = await screen.findByRole('region', { name: 'Üyeler 2' });
+    const select = await within(section).findByRole('combobox', { name: 'Eklenecek kişi' });
+    await waitFor(() => {
+      expect(within(select).getAllByRole('option')).toHaveLength(2);
+    });
+    // The person became an external person meanwhile: the list the choice came from is stale.
+    api.handle('GET /projects/member-candidates', () =>
+      json({ people: CANDIDATES.filter((person) => person.userId !== CAGAN.userId) }),
+    );
+    await userEvent.selectOptions(select, CAGAN.userId);
+    await userEvent.click(within(section).getByRole('button', { name: 'Üye ekle' }));
+    expect(await screen.findByText(/Seçilen kişi projeye üye olamaz/)).toBeVisible();
+    // Nothing is shown as added, and the stale list was read again by the panel itself.
+    expect(screen.getByRole('region', { name: 'Üyeler 2' })).toBeVisible();
+    await waitFor(() => {
+      expect(api.callsTo('GET /projects/member-candidates')).toHaveLength(2);
+    });
+    expect(
+      await screen.findByText('Şirketteki bütün kurucu ve çalışanlar bu projenin üyesi.'),
+    ).toBeVisible();
   });
 });
 
