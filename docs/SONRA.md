@@ -393,12 +393,19 @@ Talep akışının kalanı (0.4a) için sormadan yapılan varsayımlar (ön plan
 - W-k: Soruyu ve yanıtı talep sahibi, birimin onaylayıcısı ve kurucu okur.
 - W-l: Yanıt metni de talep metni gibi modele gider; kişisel veri yazılabilir, uyarı çıkmaz (8 Ekim karar 5'in yanıta genişletilmesi).
 - W-m: Yarım kalan talep, yorum ve yanıt metni yalnızca o sekmede durur.
+- W-n: Bugün ekranında karar verilmez: "Sizden beklenenler" satırı talebin sayfasını açar, onay ve yanıt orada verilir; kart tek yerde durur. 5 Ekim karar 10 onayın Bugün'den de verilebileceğini söyler; şimdilik Bugün talep sayfasına tek tıkla götürür.
+- W-o: Bildirim, kişi talebini o bildirimden açana ya da "Okundu"ya basana kadar okunmamış sayılır; "Tümünü okundu say" ekrandaki okunmamışların hepsini işaretler. Okunan bildirim 30 gün boyunca soluk biçimde listede kalır, daha eskisi gösterilmez; okunmamış bildirim kaç günlük olursa olsun görünür. İşaret geri alınmaz.
 - W-p: Bir birim onayı, karar verebilen herkesin "Sizden beklenenler" listesinde görünür: atanmış onaylayıcının ve kurucunun (Onaylar ekranındaki kural). Kurucunun satırı da "Onayınız bekleniyor" der. Öbür okuma: başkası atanmışsa onay yalnızca o kişinin listesine girer.
 - W-q: W-b'nin iki ayrıntısı: onaylayıcı aynı zamanda talep sahibiyse ve sonucu kendisi reddederse bildirim çıkmaz; talep geri çevrildiğinde bildirim her zaman çıkar, çünkü geri çeviren koordinasyon merkezidir (çalışma talep sahibinin adına koşsa da).
 - W-r: Talebini artık göremeyen kişiye (projeden çıkarılmış ya da dış kişi yapılmış talep sahibi) o talebin bildirimi gösterilmez; şirketten ayrılmış talep sahibine bildirim hiç yazılmaz, talep yine de kapanır.
 - W-s: "Sizden beklenenler" en uzun süredir bekleyen 200 açık talepten kurulur; bildirim listesi en yeni 100 bildirimi gösterir; sınır aşılırsa ekran bunu söyler, sayfalama yoktur. Bugün yalnızca dört bildirim şablonunu gösterir (geri çevrildi, reddedildi, durduruldu, passkey sıfırlandı); tabloya başka şablonla yazılan satır, cümlesi eklenene kadar görünmez.
 - W-t: Geciken talepler (işi hiçbir çalışmanın almadığı ya da çalışması süresini çok aşan) bu adımda kimsenin listesinde değildir; talep sayfası ve Talepler "gecikti" der.
+- W-u: İnsana düşen talebin Bugün satırı, Talepler'in ve talep sayfasının sırası gelen kişi için kullandığı sözle yazılır: "Sizden bekleniyor: <neden>". Öbür okuma: "İnsana düştü: <neden>".
+- W-v: Bugün'de "ne zamandan beri" talebin son hareket anıdır (Talepler'deki zaman). İnsana düşen talepte bu, işin düştüğü an değil talebin son durum değişikliğidir; çalışma sonradan hata verdiyse süre biraz uzun görünür.
+- W-w: Passkey sıfırlama bildirimi Güvenlik sayfasına bağlanır; kişi o bağlantıyı açınca bildirim okunmuş sayılır. Bildirim, sıfırlamanın yapıldığı şirket seçiliyken görünür.
+- W-x: Kurucu alanında Bugün yalnızca taleplerin şirketlerde açıldığını söyler ve liste sormaz. Dış kişi "Sizden beklenen iş yok" cümlesini ve kendi bildirimlerini görür; menüde sayı görmez.
 - W-y: İnsana düşen talep, adımın atanmış onaylayıcısı onay hakkını sonradan yitirmişse kimsenin "Sizden beklenenler" listesinde görünmez: talep sayfası sırayı o kişide gösterir, liste ise onay hakkını arar. Kurucu talebi Talepler'de görür ve yönlendirmeyi düzeltebilir. Öbür okuma: böyle bir talep kurucunun listesine girer.
+- W-z: Bilinen bir kenar durumu, kural değil: talep sahibi aynı zamanda o adımın atanmış onaylayıcısıysa ve talep kapatılırken tam o anda bu kişi şirketten çıkarılıyorsa, veritabanı iki işlemden birini sonlandırır; kapatma isteği "talep değişti" yanıtını alır ve kişi yeniden dener. Veri bozulmaz. Şimdilik böyle bırakıldı.
 
 8 Ekim karar 7-13 ile kapananlar: U26'nın "neye hata denir" kısmı (karar 10), U32 (karar 9: açık olduğu şirketlerde durdurulur), 5 Ekim karar 10'un Bugün yarısı ve karar 11'in belirli aralıklarla yenileme kısmı (karar 7). Açılan: Projeler bölümünün kapsamı (karar 11; ön plan hazırlanıyor).
 

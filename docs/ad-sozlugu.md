@@ -373,6 +373,8 @@ Skill klasörü: `skills/<ad>/SKILL.md` ve yanında `templates/`, `examples/`, `
 - API yanıt alanları: `expected`, `expectedTruncated`, `notifications`, `notificationsTruncated`; bildirimde `template`, `read`, `request`, `unit`; sayılarda `today` (Bugün satırı), `approvals` (Onaylar satırı)
 - Sabitler: `TODAY_REQUEST_LIMIT` (200), `NOTIFICATION_LIST_LIMIT` (100), `NOTIFICATION_KEEP_DAYS` (30)
 - Kodda beklenen iş türleri: `approval` (karar verilecek sonuç), `acceptance` (talep sahibinin onaylayacağı sonuç), `fallen` (insana düşen talep)
+- Panel: sorgu anahtarları `today` (Bugün yanıtı) ve `sidebar-counts` (kenar çubuğundaki iki sayı); klasörler `lib/today` ve `components/today`; `SidebarNavItem` özelliği `countNoun` (sayının neyi saydığı: "bekleyen iş"); `stableOrder` (yenilemede satırların yerinde kalması)
+- Ekran okuyucu bölge adları: Bugün'deki liste "Bildirimler"; ekranın köşesinde beliren kısa iletilerin kutusu "Anlık bildirimler" (önceki adı "Bildirimler" idi)
 
 ## Notlar
 

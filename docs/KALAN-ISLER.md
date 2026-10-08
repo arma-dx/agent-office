@@ -352,11 +352,11 @@ Dilimde bilerek olmayanlar. Dilimden hemen sonra yapılır (8 Ekim, karar 6). S�
 
 Adım 1: Bugün listesi ve bildirimler (karar 7 ve 8)
 
-- [ ] Bugün ekranında "Sizden beklenenler" listesi: birim onayı bekleyen sonuçlar, talep sahibinin onayını bekleyen sonuçlar, insana düşen talepler
-- [ ] Kenar çubuğunda Bugün satırında bekleyen iş sayısı
-- [ ] Bildirim: kişinin talebi kendisi bir şey yapmadan kapandığında (geri çevrildi, reddedildi, durduruldu); sabit cümleyle, yalnızca panelde
-- [ ] Listenin ve bildirimlerin yarım dakikada bir yenilenmesi (oturumun hareketsizlik süresini uzatmadan)
-- [ ] Passkey sıfırlama bildiriminin kişiye gösterilmesi (5 Ekim, karar 3)
+- [x] Bugün ekranında "Sizden beklenenler" listesi: birim onayı bekleyen sonuçlar, talep sahibinin onayını bekleyen sonuçlar, insana düşen talepler
+- [x] Kenar çubuğunda Bugün satırında bekleyen iş sayısı
+- [x] Bildirim: kişinin talebi kendisi bir şey yapmadan kapandığında (geri çevrildi, reddedildi, durduruldu); sabit cümleyle, yalnızca panelde
+- [x] Listenin ve bildirimlerin yarım dakikada bir yenilenmesi (oturumun hareketsizlik süresini uzatmadan)
+- [x] Passkey sıfırlama bildiriminin kişiye gösterilmesi (5 Ekim, karar 3)
 
 Adım 2: Ofiste canlı durumlar ve "Her yerde durdur" (karar 9 ve 10)
 
