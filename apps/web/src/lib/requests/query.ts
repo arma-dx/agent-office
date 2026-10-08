@@ -9,6 +9,7 @@ import {
   type ApprovalDecision,
   type ApprovalDesk,
   type CorrectRouting,
+  type CreateRequest,
   type OfficeAgent,
   type RequestDetail,
   type RequestIntake,
@@ -22,8 +23,8 @@ import { decisionDialogOpen } from './hold.ts';
 /**
  * Flow (A), "Talepler": the requests agents carry out. Every answer is validated with the shared
  * contract. Nothing here sets a status or an approver; the only things the panel sends are a
- * request text, a decision, a close and, for the founder and the approver of the request, a
- * correction of the routing.
+ * request text with its optional due day, a decision, a close and, for the founder and the approver
+ * of the request, a correction of the routing.
  *
  * Each query has a twin that sends the same request as a background request, for the periodic
  * refresh (lib/refresh.ts): such a request does not extend the session's idle time (rule 3).
@@ -124,10 +125,7 @@ export function routingOptionsQueryOptions(companyId: string, requestId: string)
 }
 
 /** The id is chosen here, so a send that is repeated answers the first record. */
-export function createRequest(
-  companyId: string,
-  request: { id: string; text: string },
-): Promise<RequestDetail> {
+export function createRequest(companyId: string, request: CreateRequest): Promise<RequestDetail> {
   return apiRequest('/requests', {
     method: 'POST',
     body: request,

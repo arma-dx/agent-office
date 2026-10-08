@@ -1,7 +1,7 @@
-import { COMPANY_HEADER, BACKGROUND_HEADER } from '@agent-office/shared';
+import { COMPANY_HEADER, BACKGROUND_HEADER, officeDay } from '@agent-office/shared';
 import { startAuthentication } from '@simplewebauthn/browser';
 import { focusManager } from '@tanstack/react-query';
-import { screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -27,6 +27,7 @@ import {
 } from './test/request-fixtures.ts';
 import { ASSERTION, challengeId, signed, STEP_UP_OPTIONS, stepUpIssuer } from './test/passkeys.ts';
 import { currentLocation, renderApp } from './test/render-app.tsx';
+import { clearDrafts, draftKey } from './lib/drafts.ts';
 
 // The browser's passkey prompt: the person confirms, unless a test says otherwise.
 vi.mock('@simplewebauthn/browser', () => ({
@@ -45,6 +46,8 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  // Also a draft that still waits to be written: it must not open in the next test's box.
+  clearDrafts();
   sessionStorage.clear();
 });
 
@@ -96,7 +99,8 @@ describe('Yeni talep', () => {
       }),
     );
     const dialog = await screen.findByRole('dialog', { name: 'Yeni talep' });
-    // One box, and no control that would choose a unit, an agent or an approver.
+    // One text box (the optional due day is a date field, not a text box), and no control that
+    // would choose a unit, an agent or an approver.
     expect(within(dialog).getAllByRole('textbox')).toHaveLength(1);
     expect(within(dialog).queryByRole('combobox')).toBeNull();
     // What the form says before anything is sent: where the text goes and who will be able to
@@ -227,6 +231,266 @@ describe('Yeni talep', () => {
     expect(within(menu).queryByRole('link', { name: 'Talepler' })).toBeNull();
     // Tasks between people stay a row of their own.
     expect(within(menu).getByRole('link', { name: 'Görevler' })).toBeVisible();
+  });
+
+  // The due day (docs/SONRA.md W-h): a day, optional, information only. It cannot be changed
+  // after the send, so the form lets none go that the person did not mean.
+  describe('the due day', () => {
+    const DAY_MS = 86_400_000;
+    const DUE_HELP =
+      'Yalnızca bilgidir: talebi görenler ve ajanlar görür. Gönderdikten sonra değiştirilemez; günü geçince hatırlatma gönderilmez.';
+    const created = requestDetail({
+      status: 'open',
+      stage: 'routing',
+      turn: { kind: 'agent', code: 'KOR-1', name: 'Ofis Koordinatörü' },
+      waitingForMe: false,
+      unit: null,
+      agent: null,
+      journey: [],
+      approval: null,
+      requester: FOUNDER,
+      actions: { cancel: true, stop: false, reroute: false },
+    });
+    const handlers = () => ({
+      'GET /session': sessionHandler(),
+      'GET /requests': () => json({ requests: [], truncated: false }),
+      'POST /requests': () => json(created, 201),
+      [`GET /requests/${REQUEST_ID}`]: () => json(created),
+    });
+
+    async function openForm(): Promise<HTMLElement> {
+      await userEvent.click(sidebarButton());
+      return screen.findByRole('dialog', { name: 'Yeni talep' });
+    }
+
+    async function openList(): Promise<void> {
+      renderApp('/c/armadx/requests');
+      await screen.findByRole('heading', { name: 'Henüz talep yok' });
+    }
+
+    function dueField(dialog: HTMLElement): HTMLInputElement {
+      return within(dialog).getByLabelText('Son tarih (isteğe bağlı)');
+    }
+
+    /** What a browser says of a date field with a part missing: it has no value and cannot be read. */
+    function setHalfTyped(field: HTMLElement, halfTyped: boolean): void {
+      Object.defineProperty(field, 'validity', {
+        configurable: true,
+        value: { badInput: halfTyped },
+      });
+    }
+
+    it('offers an optional due day that cannot lie before today and sends it with the request', async () => {
+      const api = mockApi(handlers());
+      await openList();
+      const dialog = await openForm();
+      const due = dueField(dialog);
+      expect(due).toHaveAttribute('type', 'date');
+      expect(due).toHaveAttribute('min', officeDay(Date.now()));
+      expect(due).toHaveValue('');
+      expect(due).toHaveAccessibleDescription(DUE_HELP);
+      expect(due).toHaveAttribute('aria-invalid', 'false');
+
+      const day = officeDay(Date.now() + 3 * DAY_MS);
+      fireEvent.change(due, { target: { value: day } });
+      expect(within(dialog).queryByRole('alert')).toBeNull();
+      await userEvent.type(
+        within(dialog).getByRole('textbox', { name: 'Ne istiyorsunuz?' }),
+        'LinkedIn için gönderi yaz',
+      );
+      await userEvent.click(within(dialog).getByRole('button', { name: 'Talebi gönder' }));
+      expect(await screen.findByText('Yönlendiriliyor')).toBeVisible();
+      expect(api.callsTo('POST /requests').map((call) => call.body)).toEqual([
+        {
+          id: expect.stringMatching(/^[0-9a-f-]{36}$/) as string,
+          text: 'LinkedIn için gönderi yaz',
+          dueDate: day,
+        },
+      ]);
+      expect(api.unexpected).toEqual([]);
+    });
+
+    it('says so and sends nothing for a day that has passed', async () => {
+      const api = mockApi(handlers());
+      await openList();
+      const dialog = await openForm();
+      const due = dueField(dialog);
+      await userEvent.type(within(dialog).getByRole('textbox'), 'Bir gönderi yaz');
+
+      fireEvent.change(due, { target: { value: officeDay(Date.now() - DAY_MS) } });
+      const alert = within(dialog).getByRole('alert');
+      expect(alert).toHaveTextContent('Son tarih bugünden önce olamaz.');
+      // The problem is tied to the field, with the help.
+      expect(due).toHaveAttribute('aria-invalid', 'true');
+      expect(due).toHaveAccessibleDescription(`${DUE_HELP} Son tarih bugünden önce olamaz.`);
+      await userEvent.click(within(dialog).getByRole('button', { name: 'Talebi gönder' }));
+      due.focus();
+      await userEvent.keyboard('{Control>}{Enter}{/Control}');
+      expect(api.callsTo('POST /requests')).toHaveLength(0);
+
+      // A date typed half way: the browser gives no value and says that it cannot read it.
+      setHalfTyped(due, true);
+      fireEvent.change(due, { target: { value: '' } });
+      expect(within(dialog).getByRole('alert')).toHaveTextContent('Geçerli bir tarih seçin.');
+      expect(due).toHaveAccessibleDescription(`${DUE_HELP} Geçerli bir tarih seçin.`);
+      await userEvent.click(within(dialog).getByRole('button', { name: 'Talebi gönder' }));
+      expect(api.callsTo('POST /requests')).toHaveLength(0);
+
+      // A value that is no calendar day of the contract is not sent either.
+      setHalfTyped(due, false);
+      fireEvent.change(due, { target: { value: '12026-10-20' } });
+      expect(within(dialog).getByRole('alert')).toHaveTextContent('Geçerli bir tarih seçin.');
+      await userEvent.click(within(dialog).getByRole('button', { name: 'Talebi gönder' }));
+      expect(api.callsTo('POST /requests')).toHaveLength(0);
+
+      // Today is a due day; and a field that was cleared has no problem.
+      fireEvent.change(due, { target: { value: officeDay(Date.now()) } });
+      expect(within(dialog).queryByRole('alert')).toBeNull();
+      fireEvent.change(due, { target: { value: '' } });
+      expect(within(dialog).queryByRole('alert')).toBeNull();
+      expect(due).toHaveAttribute('aria-invalid', 'false');
+      expect(due).toHaveAccessibleDescription(DUE_HELP);
+    });
+
+    it('does not send a request whose date is only half typed', async () => {
+      const api = mockApi(handlers());
+      await openList();
+      const dialog = await openForm();
+      const due = dueField(dialog);
+      await userEvent.type(within(dialog).getByRole('textbox'), 'Bir gönderi yaz');
+
+      // The field says so when it loses the focus. No change event was fired: the value of a
+      // half typed date stays empty, as in a browser.
+      setHalfTyped(due, true);
+      fireEvent.blur(due);
+      expect(within(dialog).getByRole('alert')).toHaveTextContent('Geçerli bir tarih seçin.');
+      expect(due).toHaveAccessibleDescription(`${DUE_HELP} Geçerli bir tarih seçin.`);
+      setHalfTyped(due, false);
+      fireEvent.blur(due);
+      expect(within(dialog).queryByRole('alert')).toBeNull();
+
+      // And the send asks the field itself, also when the focus never left it.
+      setHalfTyped(due, true);
+      await userEvent.click(within(dialog).getByRole('button', { name: 'Talebi gönder' }));
+      expect(within(dialog).getByRole('alert')).toHaveTextContent('Geçerli bir tarih seçin.');
+      expect(due).toHaveAttribute('aria-invalid', 'true');
+      expect(api.callsTo('POST /requests')).toHaveLength(0);
+      expect(screen.getByRole('dialog', { name: 'Yeni talep' })).toBeVisible();
+
+      // The person empties the field: the request goes without a day.
+      setHalfTyped(due, false);
+      await userEvent.click(within(dialog).getByRole('button', { name: 'Talebi gönder' }));
+      expect(await screen.findByText('Yönlendiriliyor')).toBeVisible();
+      expect(api.callsTo('POST /requests').map((call) => call.body)).toEqual([
+        { id: expect.stringMatching(/^[0-9a-f-]{36}$/) as string, text: 'Bir gönderi yaz' },
+      ]);
+    });
+
+    it('Enter in the date field sends nothing; Ctrl+Enter sends', async () => {
+      const api = mockApi(handlers());
+      await openList();
+      const dialog = await openForm();
+      const due = dueField(dialog);
+      await userEvent.type(within(dialog).getByRole('textbox'), 'Bir gönderi yaz');
+      const day = officeDay(Date.now() + DAY_MS);
+      fireEvent.change(due, { target: { value: day } });
+      due.focus();
+      // A sent request cannot be corrected: a person who types a date and presses Enter means
+      // the date, not the send.
+      await userEvent.keyboard('{Enter}');
+      expect(api.callsTo('POST /requests')).toHaveLength(0);
+      expect(screen.getByRole('dialog', { name: 'Yeni talep' })).toBeVisible();
+      expect(due).toHaveValue(day);
+
+      await userEvent.keyboard('{Control>}{Enter}{/Control}');
+      expect(await screen.findByText('Yönlendiriliyor')).toBeVisible();
+      expect(api.callsTo('POST /requests').map((call) => call.body)).toEqual([
+        {
+          id: expect.stringMatching(/^[0-9a-f-]{36}$/) as string,
+          text: 'Bir gönderi yaz',
+          dueDate: day,
+        },
+      ]);
+    });
+
+    it('shows the API’s own words when the day ended between the form and the send', async () => {
+      const refusal = 'Son tarih bugünden önce olamaz. Tarihi düzeltip yeniden gönderin.';
+      const api = mockApi({
+        ...handlers(),
+        'POST /requests': () => apiError(409, 'due_date_past', refusal),
+      });
+      await openList();
+      const dialog = await openForm();
+      const due = dueField(dialog);
+      const day = officeDay(Date.now());
+      fireEvent.change(due, { target: { value: day } });
+      await userEvent.type(within(dialog).getByRole('textbox'), 'Bir gönderi yaz');
+      await userEvent.click(within(dialog).getByRole('button', { name: 'Talebi gönder' }));
+      expect(await within(dialog).findByRole('alert')).toHaveTextContent(refusal);
+      expect(api.callsTo('POST /requests')).toHaveLength(1);
+      // Nothing is lost: the form is open with the text and the day.
+      expect(screen.getByRole('dialog', { name: 'Yeni talep' })).toBeVisible();
+      expect(within(dialog).getByRole('textbox')).toHaveValue('Bir gönderi yaz');
+      expect(due).toHaveValue(day);
+    });
+
+    it('keeps the day with the text in the draft of the tab and forgets both with "Taslağı at"', async () => {
+      mockApi(handlers());
+      await openList();
+      let dialog = await openForm();
+      const day = officeDay(Date.now() + 2 * DAY_MS);
+      fireEvent.change(dueField(dialog), { target: { value: day } });
+      await userEvent.type(within(dialog).getByRole('textbox'), 'Bir gönderi yaz');
+      await userEvent.keyboard('{Escape}');
+      await waitFor(() => {
+        expect(screen.queryByRole('dialog')).toBeNull();
+      });
+
+      dialog = await openForm();
+      expect(within(dialog).getByRole('textbox')).toHaveValue('Bir gönderi yaz');
+      expect(dueField(dialog)).toHaveValue(day);
+      // A change of the day alone is kept too, with the text.
+      const later = officeDay(Date.now() + 5 * DAY_MS);
+      fireEvent.change(dueField(dialog), { target: { value: later } });
+      await userEvent.keyboard('{Escape}');
+      await waitFor(() => {
+        expect(screen.queryByRole('dialog')).toBeNull();
+      });
+      dialog = await openForm();
+      expect(within(dialog).getByRole('textbox')).toHaveValue('Bir gönderi yaz');
+      expect(dueField(dialog)).toHaveValue(later);
+
+      await userEvent.click(within(dialog).getByRole('button', { name: 'Taslağı at' }));
+      await waitFor(() => {
+        expect(screen.queryByRole('dialog')).toBeNull();
+      });
+      dialog = await openForm();
+      expect(within(dialog).getByRole('textbox')).toHaveValue('');
+      expect(dueField(dialog)).toHaveValue('');
+      await userEvent.keyboard('{Escape}');
+      await waitFor(() => {
+        expect(screen.queryByRole('dialog')).toBeNull();
+      });
+
+      // A draft written before the form had a due day opens with its text and no day; and one
+      // whose day cannot be read keeps its text.
+      const key = draftKey(USER_ID, ARMADX.companyId, 'request');
+      sessionStorage.setItem(key, JSON.stringify({ id: REQUEST_ID, text: 'Eski taslak' }));
+      dialog = await openForm();
+      expect(within(dialog).getByRole('textbox')).toHaveValue('Eski taslak');
+      expect(dueField(dialog)).toHaveValue('');
+      await userEvent.keyboard('{Escape}');
+      await waitFor(() => {
+        expect(screen.queryByRole('dialog')).toBeNull();
+      });
+      sessionStorage.setItem(
+        key,
+        JSON.stringify({ id: REQUEST_ID, text: 'Bozuk günlü taslak', dueDate: '20.10.2026' }),
+      );
+      dialog = await openForm();
+      expect(within(dialog).getByRole('textbox')).toHaveValue('Bozuk günlü taslak');
+      expect(dueField(dialog)).toHaveValue('');
+    });
   });
 });
 
