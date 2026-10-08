@@ -9,9 +9,11 @@ import {
   ownProjectExists,
   peopleNames,
   readCompanyKind,
+  readCustomer,
   readProject,
   removeProjectMember,
   setCustomerPermissions,
+  setProjectAiPermission,
   updateProject,
   type ProjectChanges,
   type ProjectRow,
@@ -21,11 +23,16 @@ import {
   createProjectSchema,
   customerListSchema,
   customerPermissionDetails,
+  customerPermissionsSchema,
+  customerSchema,
+  projectAiPermissionDetails,
+  projectAiPermissionSchema,
   projectDetailSchema,
   projectListSchema,
   projectMemberCandidatesSchema,
   projectSummarySchema,
   updateProjectSchema,
+  type Customer,
   type CustomerList,
   type ProjectDetail,
   type ProjectList,
@@ -55,7 +62,11 @@ import type { RouteDeps } from '../services.ts';
  *   PATCH /api/projects/:projectId         a member or the founder changes its fields
  *   PUT    /api/projects/:projectId/members/:userId  a member or the founder adds a member
  *   DELETE /api/projects/:projectId/members/:userId  ... and removes one
+ *   PUT   /api/projects/:projectId/ai-permission      the founder opens (with a passkey) or
+ *                                                     closes the AI permission of a project
  *   GET   /api/customers                   the customers of the company to choose from, by name
+ *   PATCH /api/customers/:customerId/permissions      the founder sets the contract permissions
+ *                                                     of a customer (the AI one with a passkey)
  *
  * No route here has a field for the AI permission of a project except the one made for it, and
  * none sets a contract permission of a customer except the founder's two (a customer added with a
@@ -68,13 +79,16 @@ import type { RouteDeps } from '../services.ts';
  * same way; there is no route that deletes a project or a customer.
  *
  * An external person is no project member and opens none: every route is for the founder and
- * employees.
+ * employees. The two permission routes are the founder's; they pass the same door first, so an
+ * external person gets the same answer on every route of the section, and an employee is told
+ * that the act is the founder's.
  */
 
 const INSIDERS = { founderOnly: false, insidersOnly: true } as const;
 
 const projectParams = z.object({ projectId: z.uuid() });
 const memberParams = z.object({ projectId: z.uuid(), userId: z.uuid() });
+const customerParams = z.object({ customerId: z.uuid() });
 
 const privateSpace = (): ApiError =>
   new ApiError(409, 'private_space', 'Kurucu alanında proje açılamaz. Bir şirket seçin.');
@@ -108,6 +122,15 @@ const customerLocked = (): ApiError =>
     409,
     'project_customer_locked',
     'Yapay zekâ izni açıkken projenin müşterisi değiştirilemez. Kurucu önce izni kapatır; müşteri değişince izni yeniden açar.',
+  );
+
+// The project is not what the founder confirmed with the passkey: a member changed its customer
+// meanwhile. The panel reads the project again; the founder looks and confirms anew.
+const projectChanged = (): ApiError =>
+  new ApiError(
+    409,
+    'project_changed',
+    'Bu projenin müşterisi az önce değişti. Projeye yeniden bakın; izni açmak için yeniden onaylayın.',
   );
 
 // The key that keeps a customer's name unique in its company, and the link of a project to its
@@ -212,6 +235,12 @@ async function projectOf(context: CompanyContext, projectId: string): Promise<Pr
     throw notFound();
   }
   return row;
+}
+
+function requireFounder(context: CompanyContext): void {
+  if (context.role !== 'founder') {
+    throw founderOnly();
+  }
 }
 
 /** Empty text means "no description". */
@@ -479,6 +508,65 @@ export function registerProjectRoutes(app: FastifyInstance, { runner, config }: 
   );
 
   /**
+   * The AI permission of a project: the contract's word (rule 12), set by the founder alone
+   * (decision 15). Opening it asks for a passkey (decision 22): the re-verification is signed for
+   * this project, this act and the customer the project had on the founder's page, the route
+   * recomputes that from its own request, and the database uses it up once, in this transaction.
+   * If the project has another customer by now (a member changed it), nothing is opened and the
+   * answer tells the panel to read the project again. Closing needs no passkey: it only stops
+   * agents. Asking for the value the project already has changes nothing and uses nothing.
+   */
+  app.put(
+    '/api/projects/:projectId/ai-permission',
+    async (request, reply): Promise<ProjectDetail> =>
+      runner.withCompany(request, reply, INSIDERS, async (context) => {
+        requireFounder(context);
+        const projectId = projectIdOf(request);
+        const body = projectAiPermissionSchema.safeParse(request.body);
+        if (!body.success) {
+          throw invalidRequest();
+        }
+        const { client, session, companyId } = context;
+        const row = await projectOf(context, projectId);
+        if (row.ai_allowed === body.data.allowed) {
+          return detailOf(context, row);
+        }
+        // The customer the founder confirmed the opening for; not read when closing.
+        let customerId: string | null = null;
+        if (body.data.allowed) {
+          customerId = body.data.customerId;
+          // Said before the passkey is checked: the page the founder confirmed on is out of date.
+          if (customerId !== row.customer_id) {
+            throw projectChanged();
+          }
+          await verifyStepUp({ client, session }, relyingParty, body.data.stepUp, {
+            purpose: 'project_ai_permission',
+            companyId,
+            subjectId: projectId,
+            details: projectAiPermissionDetails(customerId),
+          });
+        }
+        await client.query('savepoint set_ai_permission');
+        try {
+          await setProjectAiPermission(client, projectId, body.data.allowed, customerId);
+        } catch (error) {
+          await client.query('rollback to savepoint set_ai_permission');
+          const code = databaseErrorCode(error);
+          // invalid_authorization_specification: no re-verification for this project.
+          if (code === '28000') throw stepUpRequired();
+          // insufficient_privilege: the person is no longer the founder.
+          if (code === '42501') throw founderOnly();
+          if (code === 'P0002') throw notFound();
+          // object_not_in_prerequisite_state: the customer changed between the read above and
+          // the opening.
+          if (code === '55000') throw projectChanged();
+          throw error;
+        }
+        return detailOf(context, await projectOf(context, projectId));
+      }),
+  );
+
+  /**
    * The customers of the company to choose from. An employee gets the names only; the founder
    * also the two contract permissions. Nothing else of a customer leaves through this section.
    */
@@ -493,6 +581,64 @@ export function registerProjectRoutes(app: FastifyInstance, { runner, config }: 
           aiAllowed: founder ? row.ai_allowed : null,
           automatedProcessingAllowed: founder ? row.automated_processing_allowed : null,
         })),
+      });
+    }),
+  );
+
+  /**
+   * The contract permissions of a customer (decision 16), set by the founder alone. Opening the AI
+   * permission asks for a passkey for exactly this customer and this body; closing it, and the
+   * automated processing permission either way, ask for none. A permission left out stays.
+   */
+  app.patch('/api/customers/:customerId/permissions', async (request, reply): Promise<Customer> =>
+    runner.withCompany(request, reply, INSIDERS, async (context) => {
+      requireFounder(context);
+      const params = customerParams.safeParse(request.params);
+      if (!params.success) {
+        throw notFound();
+      }
+      const { customerId } = params.data;
+      const body = customerPermissionsSchema.safeParse(request.body);
+      if (!body.success) {
+        throw invalidRequest();
+      }
+      const { client, session, companyId } = context;
+      const row = await readCustomer(client, customerId);
+      if (!row) {
+        throw notFound();
+      }
+      const { aiAllowed, automatedProcessingAllowed } = body.data;
+      if (aiAllowed === true && !row.ai_allowed) {
+        await verifyStepUp({ client, session }, relyingParty, body.data.stepUp, {
+          purpose: 'customer_ai_permission',
+          companyId,
+          subjectId: customerId,
+          details: customerPermissionDetails({ automatedProcessingAllowed }),
+        });
+      }
+      await client.query('savepoint set_customer_permissions');
+      try {
+        await setCustomerPermissions(client, customerId, {
+          aiAllowed,
+          automatedProcessingAllowed,
+        });
+      } catch (error) {
+        await client.query('rollback to savepoint set_customer_permissions');
+        const code = databaseErrorCode(error);
+        if (code === '28000') throw stepUpRequired();
+        if (code === '42501') throw founderOnly();
+        if (code === 'P0002') throw notFound();
+        throw error;
+      }
+      const now = await readCustomer(client, customerId);
+      if (!now) {
+        throw notFound();
+      }
+      return customerSchema.parse({
+        id: now.id,
+        name: now.name,
+        aiAllowed: now.ai_allowed,
+        automatedProcessingAllowed: now.automated_processing_allowed,
       });
     }),
   );

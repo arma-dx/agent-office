@@ -1,13 +1,19 @@
 import { randomUUID } from 'node:crypto';
+import { createPool, withContext } from '@agent-office/db';
 import {
   customerListSchema,
   customerPermissionDetails,
+  customerSchema,
+  memberChangeDetails,
+  projectAiPermissionDetails,
   projectDetailSchema,
   projectListSchema,
   projectMemberCandidatesSchema,
   type ProjectDetail,
+  type StepUp,
 } from '@agent-office/shared';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { LightMyRequestResponse } from 'fastify';
+import { afterAll, beforeAll, beforeEach, describe, expect, inject, it } from 'vitest';
 import { SoftwareAuthenticator } from './authenticator.ts';
 import { accounts, ids } from './fixtures.ts';
 import {
@@ -20,10 +26,18 @@ import {
   sessionOf,
   type TestServer,
 } from './helpers.ts';
-import { errorCode, freshPasskey, send, signStepUp, type Method } from './passkey-helpers.ts';
+import {
+  challengeState,
+  errorCode,
+  freshPasskey,
+  send,
+  signStepUp,
+  type Method,
+} from './passkey-helpers.ts';
 
 // The Projects section through the API (8 October decisions 14 to 22): the list, a new project
-// with its customer and members, the project page and its edit. Tests commit, so each uses ids
+// with its customer and members, the project page and its edit, the members, and the two
+// permissions only the founder sets. Tests commit, so each uses ids
 // and names of its own; a project is never deleted, so what a test opens stays in the database.
 
 // Records of the other company, a customer of Arma DX and a deactivated employee of it, written
@@ -33,6 +47,8 @@ const PILLIKA_PROJECT = '00000000-0000-4000-8000-000000000952';
 const ARMA_CUSTOMER = '00000000-0000-4000-8000-000000000953';
 const DEACTIVATED = '00000000-0000-4000-8000-000000000954';
 
+const database = inject('database');
+
 describe.skipIf(noDatabase)('projects', () => {
   let server: TestServer;
   let founder: string;
@@ -40,6 +56,8 @@ describe.skipIf(noDatabase)('projects', () => {
   let colleague: string;
   let external: string;
   const founderKey = new SoftwareAuthenticator(PANEL_ORIGIN);
+  // A connection of the API's role that a test holds open itself, next to the server's own.
+  const besidePool = createPool(database?.app ?? '', 'agent-office-api-test-beside', () => {});
 
   beforeAll(async () => {
     server = createTestServer();
@@ -60,8 +78,15 @@ describe.skipIf(noDatabase)('projects', () => {
     `);
   });
 
+  // A session holds ten open passkey challenges at most, and a test leaves the ones it signed for
+  // something else open: the founder signs in anew for every test (the passkey is the person's).
+  beforeEach(async () => {
+    founder = await sessionOf(server, accounts.founder);
+  });
+
   afterAll(async () => {
     await server.close();
+    await besidePool.end();
     await closeAdminPool();
   });
 
@@ -107,6 +132,80 @@ describe.skipIf(noDatabase)('projects', () => {
   /** The AI permission of a project, opened as an administrator would. */
   async function openAiByHand(projectId: string): Promise<void> {
     await adminQuery('update office.projects set ai_allowed = true where id = $1', [projectId]);
+  }
+
+  const setAi = (session: string, projectId: string, body: object, company: string = ids.arma) =>
+    call(session, 'PUT', `/api/projects/${projectId}/ai-permission`, body, company);
+
+  /** The founder's passkey confirms opening the project's AI permission for that customer. */
+  const confirmProject = (projectId: string, customerId: string | null): Promise<StepUp> =>
+    signStepUp(server, founder, founderKey, {
+      purpose: 'project_ai_permission',
+      companyId: ids.arma,
+      subjectId: projectId,
+      details: projectAiPermissionDetails(customerId),
+    });
+
+  /** The founder opens the AI permission of a project, with the passkey. */
+  async function openAi(projectId: string, customerId: string | null = null) {
+    const stepUp = await confirmProject(projectId, customerId);
+    const res = await setAi(founder, projectId, { allowed: true, customerId, stepUp });
+    expect(res.statusCode, res.body).toBe(200);
+    return projectDetailSchema.parse(res.json());
+  }
+
+  const setCustomer = (
+    session: string,
+    customerId: string,
+    body: object,
+    company: string = ids.arma,
+  ) => call(session, 'PATCH', `/api/customers/${customerId}/permissions`, body, company);
+
+  /** The founder's passkey confirms opening the customer's AI permission with that body. */
+  const confirmCustomer = (
+    customerId: string,
+    automatedProcessingAllowed?: boolean,
+  ): Promise<StepUp> =>
+    signStepUp(server, founder, founderKey, {
+      purpose: 'customer_ai_permission',
+      companyId: ids.arma,
+      subjectId: customerId,
+      details: customerPermissionDetails({ automatedProcessingAllowed }),
+    });
+
+  /** A customer of Arma DX with both permissions closed, added with a project of the founder. */
+  async function newCustomer(name: string): Promise<{ customerId: string; projectId: string }> {
+    const customerId = randomUUID();
+    const project = await open(founder, {
+      name: `${name} projesi`,
+      customer: { kind: 'new', id: customerId, name },
+    });
+    return { customerId, projectId: project.id };
+  }
+
+  async function events(recordId: string): Promise<{ event: string; user_id: string | null }[]> {
+    return adminQuery(
+      `select event, user_id from office.audit_log
+       where record_id = $1 and event ~ '_(ai_permission|automated_processing)_'
+       order by id`,
+      [recordId],
+    );
+  }
+
+  /** Resolves when a request the server is handling waits for a lock another transaction holds. */
+  async function untilServerWaits(): Promise<void> {
+    for (let attempt = 0; attempt < 500; attempt += 1) {
+      const waiting = await adminQuery(
+        `select 1 from pg_catalog.pg_stat_activity
+         where application_name = 'agent-office-api-test' and wait_event_type = 'Lock'
+           and state = 'active'`,
+      );
+      if (waiting.length > 0) {
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    throw new Error('No request of the server waited for a lock');
   }
 
   // List, create, read ---------------------------------------------------------------------------
@@ -215,7 +314,9 @@ describe.skipIf(noDatabase)('projects', () => {
       ['PATCH', `/api/projects/${project.id}`, { name: 'Dış kişi' }],
       ['PUT', `/api/projects/${project.id}/members/${ids.external}`],
       ['DELETE', `/api/projects/${project.id}/members/${ids.employee}`],
+      ['PUT', `/api/projects/${project.id}/ai-permission`, { allowed: false }],
       ['GET', '/api/customers'],
+      ['PATCH', `/api/customers/${ARMA_CUSTOMER}/permissions`, { aiAllowed: false }],
     ];
     for (const [method, url, payload] of routes) {
       const res = await call(external, method, url, payload);
@@ -328,6 +429,20 @@ describe.skipIf(noDatabase)('projects', () => {
     for (const method of ['PUT', 'DELETE'] as const) {
       const res = await call(employee, method, `/api/projects/${project.id}/members/not-an-id`);
       expect(res.statusCode).toBe(404);
+    }
+    // The permission route is the founder's: the other company's project, with either company
+    // selected, an id nobody has and an id that is not one.
+    for (const [id, company] of [
+      [project.id, ids.pillika],
+      [PILLIKA_PROJECT, ids.arma],
+      [randomUUID(), ids.arma],
+      ['not-an-id', ids.arma],
+    ] as const) {
+      for (const body of [{ allowed: false }, { allowed: true, customerId: null }]) {
+        const res = await setAi(founder, id, body, company);
+        expect(res.statusCode, id).toBe(404);
+        expect(errorCode(res)).toBe('not_found');
+      }
     }
   });
 
@@ -998,5 +1113,448 @@ describe.skipIf(noDatabase)('projects', () => {
     });
     expect(taken.statusCode).toBe(409);
     expect(errorCode(taken)).toBe('project_customer_locked');
+  });
+
+  // AI permission ---------------------------------------------------------------------------------
+
+  it('403 founder_only for an employee, member or not', async () => {
+    const project = await open(employee, { name: 'Çalışanın açamadığı izin' });
+    const open_ = await open(employee, { name: 'Çalışanın kapatamadığı izin' });
+    await openAiByHand(open_.id);
+    for (const session of [employee, colleague]) {
+      for (const [id, body] of [
+        [project.id, { allowed: true, customerId: null }],
+        [open_.id, { allowed: false }],
+        // A project that does not exist says the same: the act is not theirs anywhere.
+        [randomUUID(), { allowed: false }],
+      ] as const) {
+        const res = await setAi(session, id, body);
+        expect(res.statusCode).toBe(403);
+        expect(errorCode(res)).toBe('founder_only');
+      }
+    }
+    expect((await read(employee, project.id)).aiAllowed).toBe(false);
+    expect((await read(employee, open_.id)).aiAllowed).toBe(true);
+    // The body is checked for the founder.
+    for (const body of [{}, { allowed: 'yes' }, { allowed: true }, { allowed: false, x: 1 }]) {
+      const res = await setAi(founder, project.id, body);
+      expect(res.statusCode, JSON.stringify(body)).toBe(400);
+    }
+  });
+
+  it('403 step_up_required without a passkey; the permission stays closed', async () => {
+    const project = await open(employee, { name: 'Passkey bekleyen izin' });
+    const res = await setAi(founder, project.id, { allowed: true, customerId: null });
+    expect(res.statusCode).toBe(403);
+    expect(errorCode(res)).toBe('step_up_required');
+    expect((await read(founder, project.id)).aiAllowed).toBe(false);
+    expect(await events(project.id)).toEqual([]);
+  });
+
+  it('opens with a passkey bound to this project; the same signed answer opens no other project and nothing a second time', async () => {
+    const project = await open(employee, { name: 'Passkey ile açılan izin' });
+    const other = await open(employee, { name: 'Aynı imzayla açılmayan' });
+    const stepUp = await confirmProject(project.id, null);
+    const opened = await setAi(founder, project.id, { allowed: true, customerId: null, stepUp });
+    expect(opened.statusCode, opened.body).toBe(200);
+    expect(projectDetailSchema.parse(opened.json())).toMatchObject({
+      id: project.id,
+      aiAllowed: true,
+      // No customer: the project's own permission decides.
+      agentsMayWork: true,
+    });
+    expect(await challengeState(stepUp.challengeId)).toMatchObject({ consumed: true });
+    // The member reads the new state.
+    expect(await read(employee, project.id)).toMatchObject({
+      aiAllowed: true,
+      agentsMayWork: true,
+    });
+
+    const elsewhere = await setAi(founder, other.id, { allowed: true, customerId: null, stepUp });
+    expect(elsewhere.statusCode).toBe(403);
+    expect(errorCode(elsewhere)).toBe('step_up_failed');
+    expect((await read(founder, other.id)).aiAllowed).toBe(false);
+
+    const closed = await setAi(founder, project.id, { allowed: false });
+    expect(closed.statusCode).toBe(200);
+    const again = await setAi(founder, project.id, { allowed: true, customerId: null, stepUp });
+    expect(again.statusCode).toBe(403);
+    expect(errorCode(again)).toBe('step_up_failed');
+    expect((await read(founder, project.id)).aiAllowed).toBe(false);
+  });
+
+  it('a passkey signed for a customer or for a membership change does not open a project', async () => {
+    const project = await open(employee, { name: 'Başka iş için imzalanan' });
+    const wrong: StepUp[] = [
+      await signStepUp(server, founder, founderKey, {
+        purpose: 'customer_ai_permission',
+        companyId: ids.arma,
+        subjectId: project.id,
+        details: customerPermissionDetails({}),
+      }),
+      await signStepUp(server, founder, founderKey, {
+        purpose: 'membership_change',
+        companyId: ids.arma,
+        subjectId: project.id,
+        details: memberChangeDetails('remove'),
+      }),
+      // The same project id confirmed in the other company.
+      await signStepUp(server, founder, founderKey, {
+        purpose: 'project_ai_permission',
+        companyId: ids.pillika,
+        subjectId: project.id,
+        details: projectAiPermissionDetails(null),
+      }),
+      // Another project.
+      await confirmProject(randomUUID(), null),
+    ];
+    for (const stepUp of wrong) {
+      const res = await setAi(founder, project.id, { allowed: true, customerId: null, stepUp });
+      expect(res.statusCode).toBe(403);
+      expect(errorCode(res)).toBe('step_up_failed');
+    }
+    expect((await read(founder, project.id)).aiAllowed).toBe(false);
+    expect(await events(project.id)).toEqual([]);
+  });
+
+  it('closes without a passkey; asking for the value the project has answers 200 and uses nothing', async () => {
+    const project = await open(employee, { name: 'Passkey olmadan kapanan izin' });
+    // Closed already.
+    const still = await setAi(founder, project.id, { allowed: false });
+    expect(still.statusCode).toBe(200);
+    expect(projectDetailSchema.parse(still.json()).aiAllowed).toBe(false);
+
+    await openAi(project.id);
+    // Open already: the signed answer is not looked at and stays unused.
+    const unused = await confirmProject(project.id, null);
+    const already = await setAi(founder, project.id, {
+      allowed: true,
+      customerId: null,
+      stepUp: unused,
+    });
+    expect(already.statusCode).toBe(200);
+    expect(projectDetailSchema.parse(already.json()).aiAllowed).toBe(true);
+    expect(await challengeState(unused.challengeId)).toEqual({
+      failed_attempts: 0,
+      consumed: false,
+    });
+    // Open already, without any passkey.
+    expect((await setAi(founder, project.id, { allowed: true, customerId: null })).statusCode).toBe(
+      200,
+    );
+
+    const closed = await setAi(founder, project.id, { allowed: false });
+    expect(closed.statusCode, closed.body).toBe(200);
+    expect(projectDetailSchema.parse(closed.json())).toMatchObject({
+      aiAllowed: false,
+      agentsMayWork: false,
+    });
+    expect((await read(employee, project.id)).aiAllowed).toBe(false);
+  });
+
+  it('the audit log holds project_ai_permission_opened and project_ai_permission_closed with the founder as actor', async () => {
+    const project = await open(employee, { name: 'İzi tutulan izin' });
+    await openAi(project.id);
+    await setAi(founder, project.id, { allowed: false });
+    // Nothing for a request that changed nothing or was refused.
+    await setAi(founder, project.id, { allowed: false });
+    await setAi(founder, project.id, { allowed: true, customerId: null });
+    await openAi(project.id);
+    expect(await events(project.id)).toEqual([
+      { event: 'project_ai_permission_opened', user_id: ids.founder },
+      { event: 'project_ai_permission_closed', user_id: ids.founder },
+      { event: 'project_ai_permission_opened', user_id: ids.founder },
+    ]);
+  });
+
+  it('409 project_changed when the project has another customer than the one the founder confirmed; nothing is opened and the passkey is not used up', async () => {
+    const project = await open(employee, { name: 'Onaydan sonra müşterisi değişen' });
+    // The founder looks at a project without a customer and confirms with the passkey.
+    const confirmed = await confirmProject(project.id, null);
+    // A member changes the customer before the opening arrives.
+    const changed = await call(employee, 'PATCH', `/api/projects/${project.id}`, {
+      customer: { kind: 'existing', customerId: ARMA_CUSTOMER },
+    });
+    expect(changed.statusCode).toBe(200);
+
+    const stale = await setAi(founder, project.id, {
+      allowed: true,
+      customerId: null,
+      stepUp: confirmed,
+    });
+    expect(stale.statusCode).toBe(409);
+    expect(errorCode(stale)).toBe('project_changed');
+    expect(await challengeState(confirmed.challengeId)).toEqual({
+      failed_attempts: 0,
+      consumed: false,
+    });
+    // Naming the new customer with the old signature is another act than the one signed.
+    const forged = await setAi(founder, project.id, {
+      allowed: true,
+      customerId: ARMA_CUSTOMER,
+      stepUp: confirmed,
+    });
+    expect(forged.statusCode).toBe(403);
+    expect(errorCode(forged)).toBe('step_up_failed');
+    // Without a passkey the stale page is told first, too.
+    const bare = await setAi(founder, project.id, { allowed: true, customerId: null });
+    expect(bare.statusCode).toBe(409);
+    expect(errorCode(bare)).toBe('project_changed');
+    expect(await read(founder, project.id)).toMatchObject({
+      aiAllowed: false,
+      customer: { id: ARMA_CUSTOMER },
+    });
+    expect(await events(project.id)).toEqual([]);
+
+    // The founder reads the project again and confirms for the customer it has now.
+    expect(await openAi(project.id, ARMA_CUSTOMER)).toMatchObject({
+      aiAllowed: true,
+      customer: { id: ARMA_CUSTOMER },
+    });
+  });
+
+  it('409 project_changed when the customer changes while the opening is on its way: the database refuses it', async () => {
+    const project = await open(employee, { name: 'Açılırken müşterisi değişen' });
+    const confirmed = await confirmProject(project.id, null);
+    // A member's change that has not committed yet: the route still reads the old customer, the
+    // opening then waits for the row and meets the new one.
+    let opening: Promise<LightMyRequestResponse> | undefined;
+    await withContext(besidePool, { companyId: ids.arma, userId: ids.employee }, async (member) => {
+      const result = await member.query(
+        'update office.projects set customer_id = $2 where id = $1',
+        [project.id, ARMA_CUSTOMER],
+      );
+      expect(result.rowCount).toBe(1);
+      opening = setAi(founder, project.id, { allowed: true, customerId: null, stepUp: confirmed });
+      await untilServerWaits();
+    });
+    const res = await opening;
+    expect(res?.statusCode).toBe(409);
+    expect(res ? errorCode(res) : '').toBe('project_changed');
+    expect(await read(founder, project.id)).toMatchObject({
+      aiAllowed: false,
+      customer: { id: ARMA_CUSTOMER },
+    });
+    // The refused request left nothing: the confirmation is neither used nor counted as failed.
+    expect(await challengeState(confirmed.challengeId)).toEqual({
+      failed_attempts: 0,
+      consumed: false,
+    });
+    expect(await events(project.id)).toEqual([]);
+  });
+
+  it('the customer changes once the founder closed the AI permission, and opening the permission again needs a new passkey', async () => {
+    const project = await open(employee, {
+      name: 'İzni kapatılıp müşterisi değişen',
+      customer: { kind: 'existing', customerId: ARMA_CUSTOMER },
+    });
+    const first = await confirmProject(project.id, ARMA_CUSTOMER);
+    const opened = await setAi(founder, project.id, {
+      allowed: true,
+      customerId: ARMA_CUSTOMER,
+      stepUp: first,
+    });
+    expect(opened.statusCode, opened.body).toBe(200);
+    const remove = { customer: { kind: 'none' } };
+    const locked = await call(employee, 'PATCH', `/api/projects/${project.id}`, remove);
+    expect(locked.statusCode).toBe(409);
+    expect(errorCode(locked)).toBe('project_customer_locked');
+
+    expect((await setAi(founder, project.id, { allowed: false })).statusCode).toBe(200);
+    const freed = await call(employee, 'PATCH', `/api/projects/${project.id}`, remove);
+    expect(freed.statusCode, freed.body).toBe(200);
+    expect(projectDetailSchema.parse(freed.json())).toMatchObject({
+      customer: null,
+      aiAllowed: false,
+    });
+
+    const without = await setAi(founder, project.id, { allowed: true, customerId: null });
+    expect(without.statusCode).toBe(403);
+    expect(errorCode(without)).toBe('step_up_required');
+    const used = await setAi(founder, project.id, {
+      allowed: true,
+      customerId: null,
+      stepUp: first,
+    });
+    expect(used.statusCode).toBe(403);
+    expect(errorCode(used)).toBe('step_up_failed');
+    expect((await read(founder, project.id)).aiAllowed).toBe(false);
+    expect((await openAi(project.id, null)).aiAllowed).toBe(true);
+  });
+
+  // Customer permissions -------------------------------------------------------------------------
+
+  it('PATCH /api/customers/:customerId/permissions is for the founder; 404 for a customer of the other company', async () => {
+    for (const session of [employee, colleague]) {
+      for (const body of [
+        { aiAllowed: true },
+        { aiAllowed: false },
+        { automatedProcessingAllowed: true },
+      ]) {
+        const res = await setCustomer(session, ARMA_CUSTOMER, body);
+        expect(res.statusCode).toBe(403);
+        expect(errorCode(res)).toBe('founder_only');
+      }
+    }
+    for (const [id, company] of [
+      [PILLIKA_CUSTOMER, ids.arma],
+      [ARMA_CUSTOMER, ids.pillika],
+      [randomUUID(), ids.arma],
+      ['not-an-id', ids.arma],
+    ] as const) {
+      const res = await setCustomer(founder, id, { automatedProcessingAllowed: true }, company);
+      expect(res.statusCode, id).toBe(404);
+      expect(errorCode(res)).toBe('not_found');
+    }
+    for (const body of [
+      {},
+      { aiAllowed: 'yes' },
+      { name: 'Yeni ad' },
+      { aiAllowed: true, name: 'x' },
+    ]) {
+      const res = await setCustomer(founder, ARMA_CUSTOMER, body);
+      expect(res.statusCode, JSON.stringify(body)).toBe(400);
+    }
+    expect(
+      await adminQuery(
+        `select name, ai_allowed, automated_processing_allowed from office.customers
+         where id = any ($1::uuid[]) order by name`,
+        [[ARMA_CUSTOMER, PILLIKA_CUSTOMER]],
+      ),
+    ).toEqual([
+      { name: 'Arma Müşterisi', ai_allowed: false, automated_processing_allowed: false },
+      { name: 'Pillika Müşterisi', ai_allowed: false, automated_processing_allowed: false },
+    ]);
+  });
+
+  it('the AI permission needs a passkey when it is turned on and none when it is turned off; automated processing needs none', async () => {
+    const { customerId } = await newCustomer('İzinleri değişen müşteri');
+    const { customerId: otherId } = await newCustomer('Başka izinli müşteri');
+    const state = (res: LightMyRequestResponse) => {
+      expect(res.statusCode, res.body).toBe(200);
+      const { aiAllowed, automatedProcessingAllowed } = customerSchema.parse(res.json());
+      return { aiAllowed, automatedProcessingAllowed };
+    };
+
+    // Automated processing: on and off, no passkey.
+    expect(
+      state(await setCustomer(founder, customerId, { automatedProcessingAllowed: true })),
+    ).toEqual({ aiAllowed: false, automatedProcessingAllowed: true });
+    expect(
+      state(await setCustomer(founder, customerId, { automatedProcessingAllowed: false })),
+    ).toEqual({ aiAllowed: false, automatedProcessingAllowed: false });
+
+    // The AI permission: not without a passkey, and not with one for something else.
+    const without = await setCustomer(founder, customerId, { aiAllowed: true });
+    expect(without.statusCode).toBe(403);
+    expect(errorCode(without)).toBe('step_up_required');
+    const wrong: [object, StepUp][] = [
+      // Another customer.
+      [{ aiAllowed: true }, await confirmCustomer(otherId)],
+      // Another body than the one signed.
+      [{ aiAllowed: true }, await confirmCustomer(customerId, true)],
+      [{ aiAllowed: true, automatedProcessingAllowed: true }, await confirmCustomer(customerId)],
+      // A project's permission, naming the customer's id.
+      [{ aiAllowed: true }, await confirmProject(customerId, null)],
+    ];
+    for (const [body, stepUp] of wrong) {
+      const res = await setCustomer(founder, customerId, { ...body, stepUp });
+      expect(res.statusCode).toBe(403);
+      expect(errorCode(res)).toBe('step_up_failed');
+    }
+    expect(await events(customerId)).toEqual([
+      { event: 'customer_automated_processing_opened', user_id: ids.founder },
+      { event: 'customer_automated_processing_closed', user_id: ids.founder },
+    ]);
+
+    const stepUp = await confirmCustomer(customerId, true);
+    expect(
+      state(
+        await setCustomer(founder, customerId, {
+          aiAllowed: true,
+          automatedProcessingAllowed: true,
+          stepUp,
+        }),
+      ),
+    ).toEqual({ aiAllowed: true, automatedProcessingAllowed: true });
+    // The signed answer opens no other customer.
+    const reused = await setCustomer(founder, otherId, {
+      aiAllowed: true,
+      automatedProcessingAllowed: true,
+      stepUp,
+    });
+    expect(reused.statusCode).toBe(403);
+    expect(errorCode(reused)).toBe('step_up_failed');
+
+    // Open already: no passkey is asked for. Off: none either. A permission left out stays.
+    expect(state(await setCustomer(founder, customerId, { aiAllowed: true }))).toEqual({
+      aiAllowed: true,
+      automatedProcessingAllowed: true,
+    });
+    expect(state(await setCustomer(founder, customerId, { aiAllowed: false }))).toEqual({
+      aiAllowed: false,
+      automatedProcessingAllowed: true,
+    });
+    // On again: a new passkey.
+    const again = await setCustomer(founder, customerId, { aiAllowed: true, stepUp });
+    expect(again.statusCode).toBe(403);
+    expect((await customers(founder)).find((customer) => customer.id === customerId)).toMatchObject(
+      {
+        aiAllowed: false,
+        automatedProcessingAllowed: true,
+      },
+    );
+    expect((await customers(founder)).find((customer) => customer.id === otherId)).toMatchObject({
+      aiAllowed: false,
+      automatedProcessingAllowed: false,
+    });
+    expect((await events(customerId)).slice(2)).toEqual([
+      { event: 'customer_ai_permission_opened', user_id: ids.founder },
+      { event: 'customer_automated_processing_opened', user_id: ids.founder },
+      { event: 'customer_ai_permission_closed', user_id: ids.founder },
+    ]);
+  });
+
+  it("a project's answer says agents may not work while its customer's AI permission is closed, and may once both are open", async () => {
+    const { customerId, projectId } = await newCustomer('Sözleşmesi izin vermeyen müşteri');
+    await call(founder, 'PUT', `/api/projects/${projectId}/members/${ids.employee}`);
+    // The founder may open the project's permission; the customer's contract still decides.
+    expect(await openAi(projectId, customerId)).toMatchObject({
+      aiAllowed: true,
+      agentsMayWork: false,
+      customer: { id: customerId, aiAllowed: false },
+    });
+    const list = async () => {
+      const res = await call(employee, 'GET', '/api/projects');
+      return projectListSchema.parse(res.json()).projects.find((row) => row.id === projectId);
+    };
+    expect(await list()).toMatchObject({ aiAllowed: true, agentsMayWork: false });
+
+    const stepUp = await confirmCustomer(customerId);
+    const opened = await setCustomer(founder, customerId, { aiAllowed: true, stepUp });
+    expect(opened.statusCode, opened.body).toBe(200);
+    // A member reads it too: the customer's permission as a word, never the other permission.
+    expect(await read(employee, projectId)).toMatchObject({
+      aiAllowed: true,
+      agentsMayWork: true,
+      customer: { id: customerId, aiAllowed: true, automatedProcessingAllowed: null },
+    });
+    expect(await list()).toMatchObject({ aiAllowed: true, agentsMayWork: true });
+
+    // Either permission closed again closes the project to agents.
+    await setCustomer(founder, customerId, { aiAllowed: false });
+    expect(await read(employee, projectId)).toMatchObject({
+      aiAllowed: true,
+      agentsMayWork: false,
+    });
+    await setCustomer(founder, customerId, {
+      aiAllowed: true,
+      stepUp: await confirmCustomer(customerId),
+    });
+    await setAi(founder, projectId, { allowed: false });
+    expect(await read(employee, projectId)).toMatchObject({
+      aiAllowed: false,
+      agentsMayWork: false,
+    });
   });
 });
