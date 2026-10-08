@@ -31,6 +31,8 @@ Henüz olmayanlar: veritabanı (göç dosyası yok), giriş, işlevli ekran (yal
 
 8 Ekim 2026: kurucu dilimin altı sorusunu yanıtladı (`docs/kararlar/2026-10-08.md`, karar 1-6): ajanlar herkesin talebi için çalışır; birimde açık ajan yoksa talep nedeniyle talep sahibine geri çevrilir ve kapanır; talep sahibi sonucu kabul etmezse iş aynı ajana bir kez döner; iki onay ayrı alınır; talep metnine kişisel veri ve müşteri bilgisi yazılabilir; dilimden sonra önce talep akışının kalanı (0.4a), sonra Görevler (0.4b) yapılır.
 
+8 Ekim 2026 (devam): talep akışının ince dilimi kuruldu (0.4) ve bağımsız incelemeden geçirildi; doğrulanan bulgular düzeltildi. Açık kalan iki madde API anahtarını bekliyor: anahtar ve gerçek modelle ilk deneme çağrısı. Sıradaki iş talep akışının kalanı (0.4a); ön planı kurucunun onayını bekliyor.
+
 ## Sprint 0
 
 ### 0.1 Arayüz temeli
@@ -291,54 +293,54 @@ Testler:
 
 Veri ve kurallar:
 
-- [ ] `tasks` tablosunda iki tür: `request` (talep) ve `task` (görev); talep açıldıktan sonra elle değişmez
-- [ ] Yönlendirme kaydı (birim, ajan, onaylayıcı, gerekçe); düzeltilebilir (PLAN M8)
-- [ ] Birim ve ajan onaylayıcısı tablosu; kimse atanmamışsa kurucu (karar 5)
-- [ ] Talep sahibinin onayı: ayrı kayıt, her işin sonunda (karar 6); onaylayıcı ile talep sahibi aynı kişi olsa da ayrı alınır (8 Ekim, karar 4)
-- [ ] Talep sahibi sonucu kabul etmezse işin aynı ajana bir kez dönmesi; ikincide kurucuya düşmesi (8 Ekim, karar 3)
-- [ ] Yönlendirilen birimde açık ajan yoksa talebin nedeniyle talep sahibine geri çevrilip kapanması (8 Ekim, karar 2)
-- [ ] Durumun kayıtları izlemesi: yönlendirme, çalışma, onay, talep sahibinin onayı, iptal ve durdurma
-- [ ] Talebin, yönlendirmenin ve onay kararlarının `audit_log`'a yazılması
-- [ ] Her yeni tablo ve yol için şirket ayrımı testi (kısıtlı rollerle)
-- [ ] Bir kişinin işlemlerinin (talep açma, onay, iptal, yönlendirmeyi düzeltme) yalnızca API rolüyle yapılabilmesi
+- [x] `tasks` tablosunda iki tür: `request` (talep) ve `task` (görev); talep açıldıktan sonra elle değişmez
+- [x] Yönlendirme kaydı (birim, ajan, onaylayıcı, gerekçe); düzeltilebilir (PLAN M8)
+- [x] Birim ve ajan onaylayıcısı tablosu; kimse atanmamışsa kurucu (karar 5)
+- [x] Talep sahibinin onayı: ayrı kayıt, her işin sonunda (karar 6); onaylayıcı ile talep sahibi aynı kişi olsa da ayrı alınır (8 Ekim, karar 4)
+- [x] Talep sahibi sonucu kabul etmezse işin aynı ajana bir kez dönmesi; ikincide kurucuya düşmesi (8 Ekim, karar 3)
+- [x] Yönlendirilen birimde açık ajan yoksa talebin nedeniyle talep sahibine geri çevrilip kapanması (8 Ekim, karar 2)
+- [x] Durumun kayıtları izlemesi: yönlendirme, çalışma, onay, talep sahibinin onayı, iptal ve durdurma
+- [x] Talebin, yönlendirmenin ve onay kararlarının `audit_log`'a yazılması
+- [x] Her yeni tablo ve yol için şirket ayrımı testi (kısıtlı rollerle)
+- [x] Bir kişinin işlemlerinin (talep açma, onay, iptal, yönlendirmeyi düzeltme) yalnızca API rolüyle yapılabilmesi
 
 Sunucu:
 
-- [ ] Talep açma, listeleme ve ayrıntı uçları; koordinatörün işinin aynı işlemde kuyruğa konması (yalnızca kimlikler, kural 10)
-- [ ] Onay kararı ucu (onayla, düzeltme iste, reddet); önemli onayda passkey
-- [ ] Talep sahibinin onayı ucu
-- [ ] Talebi iptal etme ve işi durdurma; yönlendirmeyi düzeltme (karar 7)
-- [ ] Ajanı şirket için açma ve durdurma (durdurma düğmesi)
-- [ ] Arka plandaki yenileme isteğinin oturumun hareketsizlik süresini uzatmaması (inceleme 13.4; kural 3)
+- [x] Talep açma, listeleme ve ayrıntı uçları; koordinatörün işinin aynı işlemde kuyruğa konması (yalnızca kimlikler, kural 10)
+- [x] Onay kararı ucu (onayla, düzeltme iste, reddet); önemli onayda passkey
+- [x] Talep sahibinin onayı ucu
+- [x] Talebi iptal etme ve işi durdurma; yönlendirmeyi düzeltme (karar 7)
+- [x] Ajanı şirket için açma ve durdurma (durdurma düğmesi)
+- [x] Arka plandaki yenileme isteğinin oturumun hareketsizlik süresini uzatmaması (inceleme 13.4; kural 3)
 
 Çalıştırıcı (1.1'in ilk parçası) ve Claude bağlantısı (0.6):
 
-- [ ] Kartların ve skill'lerin `card_versions` tablosuna, araç kataloğunun `tools` tablosuna senkronizasyonu
-- [ ] KOR-1 ve SOS-2 için ilk skill'ler (yalnızca yöntem; kurucunun belgeleri gelince genişler)
-- [ ] KOR-1 ve SOS-2'nin şirketteki herkesin talebi için çalışması (8 Ekim, karar 1)
-- [ ] Çalıştırıcı: bağlam, her adım kendi kısa işleminde, `runs` ve `audit_log` adım adım
-- [ ] İki araç: `route_task` (KOR-1) ve `submit_for_approval` (SOS-2); araç kapısı (Y1 kuralı)
-- [ ] İstem: talimat ve veri ayrı; talep metni işaretli veri bloğunda (kural 7)
-- [ ] Araç çağrısı ve süre sınırı; durdurma düğmesi; AI izni denetimi (kural 12)
-- [ ] Claude istemcisi tek dosyada; model adı ve fiyatı yapılandırmadan; maliyet kaydı
+- [x] Kartların ve skill'lerin `card_versions` tablosuna, araç kataloğunun `tools` tablosuna senkronizasyonu
+- [x] KOR-1 ve SOS-2 için ilk skill'ler (yalnızca yöntem; kurucunun belgeleri gelince genişler)
+- [x] KOR-1 ve SOS-2'nin şirketteki herkesin talebi için çalışması (8 Ekim, karar 1)
+- [x] Çalıştırıcı: bağlam, her adım kendi kısa işleminde, `runs` ve `audit_log` adım adım
+- [x] İki araç: `route_task` (KOR-1) ve `submit_for_approval` (SOS-2); araç kapısı (Y1 kuralı)
+- [x] İstem: talimat ve veri ayrı; talep metni işaretli veri bloğunda (kural 7)
+- [x] Araç çağrısı ve süre sınırı; durdurma düğmesi; AI izni denetimi (kural 12)
+- [x] Claude istemcisi tek dosyada; model adı ve fiyatı yapılandırmadan; maliyet kaydı
 - [ ] (Senden) Anthropic API anahtarı ve geliştirme için düşük harcama sınırı (karar 12)
 - [ ] Gerçek modelle tek deneme çağrısı
 
 Arayüz:
 
-- [ ] Kenar çubuğunda "Yeni talep" düğmesi ve "Talepler" satırı; "Görevler" ayrı satır (karar 9 ve 10)
-- [ ] Talep formu: tek alan, ne istendiği; kişisel veri ve müşteri bilgisi için uyarı yok (8 Ekim, karar 5)
-- [ ] Talepler listesi: aşama ve sıranın kimde olduğu
-- [ ] Talep sayfası: aşama, onay kartı, talep sahibinin onayı, sonuç, yolculuk
-- [ ] Onaylar ekranı ve kenar çubuğunda bekleyen sayısı
-- [ ] Ofis görünümünde ajanı açma ve durdurma
-- [ ] Listelerin ve talep sayfasının belirli aralıklarla yenilenmesi (5 Ekim, karar 11; kurucu onayı bekliyor)
+- [x] Kenar çubuğunda "Yeni talep" düğmesi ve "Talepler" satırı; "Görevler" ayrı satır (karar 9 ve 10)
+- [x] Talep formu: tek alan, ne istendiği; kişisel veri ve müşteri bilgisi için uyarı yok (8 Ekim, karar 5)
+- [x] Talepler listesi: aşama ve sıranın kimde olduğu
+- [x] Talep sayfası: aşama, onay kartı, talep sahibinin onayı, sonuç, yolculuk
+- [x] Onaylar ekranı ve kenar çubuğunda bekleyen sayısı
+- [x] Ofis görünümünde ajanı açma ve durdurma
+- [x] Listelerin ve talep sayfasının belirli aralıklarla yenilenmesi (5 Ekim, karar 11; kurucu onayı bekliyor)
 
 Testler:
 
-- [ ] Akış uçtan uca: talep, yönlendirme, ajan, onay, talep sahibinin onayı, tamamlandı (sahte modelle)
-- [ ] Talebin ve onaylanmamış ajan metninin yetkisi olmayana görünmemesi
-- [ ] Talimat gibi yazılmış talep metninin kuralları ve araçları değiştirememesi
+- [x] Akış uçtan uca: talep, yönlendirme, ajan, onay, talep sahibinin onayı, tamamlandı (sahte modelle)
+- [x] Talebin ve onaylanmamış ajan metninin yetkisi olmayana görünmemesi
+- [x] Talimat gibi yazılmış talep metninin kuralları ve araçları değiştirememesi
 
 ### 0.4a Talep akışının kalanı
 
@@ -387,6 +389,8 @@ Testler:
 
 ### 0.5 Onay Masası (M3)
 
+Not (8 Ekim): ince dilim (0.4) bu bölümün bir kısmını talepler için kurdu: karar uçları, gerekçe zorunluluğu ve neden listesi, kararı kimin verebildiği, passkey, kararın talebin durumuna yansıması, dayandığı kayıt değişince onayın kapanması, kararların iz kaydı, Onaylar ekranının ilk hâli ve kenar çubuğundaki sayı. Aşağıdaki maddeler işaretlenmedi; bölüme başlanırken tek tek gözden geçirilir.
+
 Arayüz Paperclip'in kalıplarıyla kurulur (5 Ekim, karar 7; `docs/paperclip-incelemesi.md` 13.3). Kapsam: 5 Ekim, karar 11; kurucu onayı bekliyor.
 
 Sunucu:
@@ -427,6 +431,8 @@ Testler:
 - [ ] Gerekçesiz ret ve düzeltme reddedilir
 
 ### 0.6 Claude bağlantısı, çalışma kaydı ve maliyet (M4)
+
+Not (8 Ekim): ince dilim (0.4) bu bölümün bir kısmını kurdu: tek dosyada Claude istemcisi, modelin karttan ve fiyatın `agents/models.yaml` dosyasından okunması, çalışma kaydı (model, kart sürümü, token, maliyet, süre), hata ve yeniden deneme davranışı, deneme çağrısı betiği. Gerçek çağrı API anahtarını bekliyor. Aşağıdaki maddeler işaretlenmedi; bölüme başlanırken tek tek gözden geçirilir.
 
 - [ ] Anthropic API anahtarı (Senden: hesap ve anahtar); geliştirmede de API anahtarı, düşük harcama sınırıyla (7 Ekim, karar 12)
 - [ ] Anahtarın kasada durması; yalnızca worker ortamında
