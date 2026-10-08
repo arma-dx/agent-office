@@ -12,6 +12,7 @@ import { registerOfficeRoutes } from './routes/office.ts';
 import { registerPasskeyRoutes } from './routes/passkeys.ts';
 import { registerRequestRoutes } from './routes/requests.ts';
 import { registerSessionRoutes } from './routes/session.ts';
+import { registerTodayRoutes } from './routes/today.ts';
 import { DEFAULT_RATE_LIMITS, registerRateLimit, sameOriginGuard } from './security.ts';
 import type { RouteDeps, ServerServices } from './services.ts';
 
@@ -89,6 +90,7 @@ export function buildServer(opts: BuildServerOptions = {}): FastifyInstance {
       registerOfficeRoutes(api, deps);
       registerPasskeyRoutes(api, deps);
       registerRequestRoutes(api, deps);
+      registerTodayRoutes(api, deps);
       registerAgentRoutes(api, deps);
       done();
     });

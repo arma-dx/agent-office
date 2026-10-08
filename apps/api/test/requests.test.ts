@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { agentStep, createPool, withContext } from '@agent-office/db';
 import {
+  BACKGROUND_HEADER,
   COMPANY_HEADER,
   COORDINATOR_AGENT_CODE,
+  NOTIFICATION_LIST_LIMIT,
   apiErrorSchema,
   approvalDecisionDetails,
   approvalDeskSchema,
@@ -11,10 +13,15 @@ import {
   requestIntakeSchema,
   requestListSchema,
   routingOptionsSchema,
+  sidebarCountsSchema,
+  todaySchema,
   type RequestDetail,
+  type SidebarCounts,
+  type Today,
 } from '@agent-office/shared';
 import type { LightMyRequestResponse } from 'fastify';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
+import { hashSessionKey } from '../src/session.ts';
 import { SoftwareAuthenticator } from './authenticator.ts';
 import { accounts, ids } from './fixtures.ts';
 import {
@@ -1691,5 +1698,574 @@ describe.skipIf(noDatabase)('requests', () => {
       { event: 'agent_enabled', user_id: ids.founder },
       { event: 'agent_stopped', user_id: ids.founder },
     ]);
+  });
+
+  describe('Bugün and notifications', () => {
+    // 8 October decisions 7 and 8. The routes commit and the requests of the whole file stay in
+    // the test database, so every assertion names its own requests by id and never a total.
+
+    async function today(session: string, company: string = ids.arma): Promise<Today> {
+      const res = await get(session, '/api/today', company);
+      expect(res.statusCode).toBe(200);
+      return todaySchema.parse(res.json());
+    }
+
+    async function counts(session: string, company: string = ids.arma): Promise<SidebarCounts> {
+      const res = await get(session, '/api/today/counts', company);
+      expect(res.statusCode).toBe(200);
+      return sidebarCountsSchema.parse(res.json());
+    }
+
+    const decide = (approvalId: string, payload: object) =>
+      post(founder, `/api/approvals/${approvalId}/decision`, payload);
+    const APPROVE = { decision: 'approved', selectedOption: 'A' };
+
+    /** The employee's request, routed to HAF-2, its result submitted: it waits for the founder. */
+    async function submitted(): Promise<{ id: string; approvalId: string }> {
+      const { id } = await open(employee);
+      await route(id, ids.employee);
+      return { id, approvalId: await submit(id, ids.employee) };
+    }
+
+    /** The employee's request, stopped by the founder: one notification for the employee. */
+    async function stopped(reason = 'Bu iş bu hafta yapılmayacak.'): Promise<string> {
+      const { id } = await open(employee);
+      const res = await post(founder, `/api/requests/${id}/close`, { reason });
+      expect(res.statusCode).toBe(200);
+      return id;
+    }
+
+    async function noteOf(requestId: string): Promise<{ id: string; read: boolean }> {
+      const rows = await adminQuery<{ id: string; read: boolean }>(
+        `select id, read_at is not null as read from office.notifications where record_id = $1`,
+        [requestId],
+      );
+      expect(rows).toHaveLength(1);
+      return rows[0] ?? { id: '', read: false };
+    }
+
+    const about = (answer: Today, requestId: string) =>
+      answer.notifications.filter(
+        (item) => item.template !== 'passkeys_reset' && item.request.id === requestId,
+      );
+
+    it('lists what waits for the person: a result to decide, a result to accept, a request that fell to them', async () => {
+      const r1 = await submitted();
+      const r2 = await submitted();
+      expect((await decide(r2.approvalId, APPROVE)).statusCode).toBe(200);
+      // The unit agent's run ended without a submission: the request fell to a person.
+      const r3 = await open(employee);
+      await route(r3.id, ids.employee);
+      await agentStep(
+        workerPool,
+        { companyId: ids.arma, userId: ids.employee, agentCode: 'HAF-2' },
+        async (client) => {
+          await client.query(
+            `insert into office.runs (company_id, task_id, agent_code, card_version_id,
+               trigger_type, model, status, finished_at, summary, output)
+             values ($1, $2, 'HAF-2', $3, 'handoff', 'test-model', 'completed', now(),
+               'Ajan sonucu onaya sunmadan çalışmasını bitirdi.', $4)`,
+            [
+              ids.arma,
+              r3.id,
+              CARD_HAF,
+              JSON.stringify({ outcome: 'no_submission', final_text: 'ONAYSIZ TASLAK' }),
+            ],
+          );
+        },
+      );
+
+      const res = await get(founder, '/api/today');
+      expect(res.statusCode).toBe(200);
+      const forFounder = todaySchema.parse(res.json());
+      expect(forFounder.expectedTruncated).toBe(false);
+      const item = (answer: Today, id: string) => answer.expected.find((row) => row.id === id);
+      expect(item(forFounder, r1.id)).toMatchObject({
+        stage: 'unit_approval',
+        waitingForMe: true,
+        requester: { userId: ids.employee, name: 'Çalışan' },
+        unit: { code: 'HAF' },
+      });
+      expect(item(forFounder, r3.id)).toMatchObject({
+        stage: 'fell_to_person',
+        cause: 'no_submission',
+        waitingForMe: true,
+      });
+      // Approved: it waits for its requester now, not for the founder.
+      expect(item(forFounder, r2.id)).toBeUndefined();
+      // An item is the summary of its request, as the request's own page gives it.
+      for (const id of [r1.id, r3.id]) {
+        const detail = await read(founder, id);
+        const { stage, cause, turn, waitingForMe, title, updatedAt, status, delayed } = detail;
+        expect(item(forFounder, id)).toMatchObject({
+          stage,
+          cause,
+          turn,
+          waitingForMe,
+          title,
+          updatedAt,
+          status,
+          delayed,
+        });
+      }
+      // The one that has not moved for longest first.
+      const moved = forFounder.expected.map((row) => row.updatedAt);
+      expect(moved).toEqual([...moved].sort());
+      expect(moved.indexOf(item(forFounder, r1.id)?.updatedAt ?? '')).toBeLessThan(
+        moved.lastIndexOf(item(forFounder, r3.id)?.updatedAt ?? ''),
+      );
+      // Everything on the founder's list expects something of the founder.
+      for (const row of forFounder.expected) {
+        expect(['unit_approval', 'requester_approval', 'fell_to_person']).toContain(row.stage);
+      }
+
+      const employeeRes = await get(employee, '/api/today');
+      const forEmployee = todaySchema.parse(employeeRes.json());
+      expect(item(forEmployee, r2.id)).toMatchObject({
+        stage: 'requester_approval',
+        waitingForMe: true,
+      });
+      expect(item(forEmployee, r1.id)).toBeUndefined();
+      expect(item(forEmployee, r3.id)).toBeUndefined();
+      for (const row of forEmployee.expected) {
+        expect(row).toMatchObject({ stage: 'requester_approval', waitingForMe: true });
+      }
+      // A colleague who requested nothing and decides nothing.
+      expect((await today(colleague)).expected).toEqual([]);
+      // Nothing an agent wrote: not the result, not the coordinator's reason, not a draft.
+      for (const body of [res.body, employeeRes.body]) {
+        expect(body).not.toContain('İki seçenek.');
+        expect(body).not.toContain('Yeni ofisimiz açıldı.');
+        expect(body).not.toContain(COORDINATOR_REASON);
+        expect(body).not.toContain('ONAYSIZ TASLAK');
+      }
+    });
+
+    it('counts the same things in one light answer: Bugün is the list, Onaylar is the desk', async () => {
+      const { id, approvalId } = await submitted();
+      const state = async (session: string) => {
+        const list = await today(session);
+        const desk = approvalDeskSchema.parse((await get(session, '/api/approvals')).json());
+        const numbers = await counts(session);
+        expect(numbers.today).toBe(list.expected.length);
+        expect(numbers.approvals).toBe(desk.approvals.length + desk.acceptances.length);
+        expect(numbers.today - numbers.approvals).toBe(
+          list.expected.filter((row) => row.stage === 'fell_to_person').length,
+        );
+        return { list, desk, numbers };
+      };
+      const founderBefore = await state(founder);
+      const employeeBefore = await state(employee);
+      expect(founderBefore.desk.approvals.map((card) => card.requestId)).toContain(id);
+      expect(founderBefore.list.expected.map((row) => row.id)).toContain(id);
+      expect(employeeBefore.list.expected.map((row) => row.id)).not.toContain(id);
+      // The answer is two numbers and nothing else.
+      const raw = await get(founder, '/api/today/counts');
+      expect(Object.keys(raw.json<object>()).sort()).toEqual(['approvals', 'today']);
+
+      expect((await decide(approvalId, APPROVE)).statusCode).toBe(200);
+      const founderAfter = await state(founder);
+      const employeeAfter = await state(employee);
+      expect(founderAfter.numbers).toEqual({
+        today: founderBefore.numbers.today - 1,
+        approvals: founderBefore.numbers.approvals - 1,
+      });
+      expect(employeeAfter.numbers).toEqual({
+        today: employeeBefore.numbers.today + 1,
+        approvals: employeeBefore.numbers.approvals + 1,
+      });
+      expect(employeeAfter.desk.acceptances.map((card) => card.requestId)).toContain(id);
+    });
+
+    it('a result is on the appointed approver’s list and still on the founder’s; a right holder who is appointed nowhere has none', async () => {
+      const listed = async (session: string) =>
+        (await today(session)).expected.map((row) => row.id);
+      // Routed while nobody is appointed for the unit: the founder decides it.
+      const earlier = await submitted();
+      expect(await listed(founder)).toContain(earlier.id);
+      // Holding the approval right alone puts nothing on a person's list.
+      expect(await listed(rightHolder)).toEqual([]);
+      expect(await counts(rightHolder)).toEqual({ today: 0, approvals: 0 });
+
+      const founderContext = { companyId: ids.arma, userId: ids.founder };
+      await withContext(besidePool, founderContext, (client) =>
+        client.query(
+          `insert into office.approvers (company_id, unit_code, user_id) values ($1, 'HAF', $2)`,
+          [ids.arma, RIGHT_HOLDER],
+        ),
+      );
+      try {
+        const { id } = await submitted();
+        const forApprover = await today(rightHolder);
+        // Only the step that names them: the request routed before the appointment is not theirs.
+        expect(forApprover.expected).toMatchObject([
+          { id, stage: 'unit_approval', waitingForMe: true },
+        ]);
+        expect(await counts(rightHolder)).toEqual({ today: 1, approvals: 1 });
+        // The founder may still decide it: it is on the founder's list too, although the turn is
+        // the appointed person's.
+        expect((await today(founder)).expected.find((row) => row.id === id)).toMatchObject({
+          stage: 'unit_approval',
+          waitingForMe: false,
+          turn: { kind: 'person', userId: RIGHT_HOLDER },
+        });
+        // Neither on the requester's nor on a colleague's.
+        expect(await listed(employee)).not.toContain(id);
+        expect(await listed(colleague)).toEqual([]);
+      } finally {
+        await withContext(besidePool, founderContext, (client) =>
+          client.query(
+            `delete from office.approvers where company_id = $1 and unit_code = 'HAF' and user_id = $2`,
+            [ids.arma, RIGHT_HOLDER],
+          ),
+        );
+      }
+    });
+
+    it('tells the requester when the request is returned, rejected or stopped, with a template and ids only', async () => {
+      const returned = await open(employee, 'KVKK aydınlatma metni hazırlansın');
+      await route(returned.id, ids.employee, null);
+      const rejected = await submitted();
+      const rejection = await decide(rejected.approvalId, {
+        decision: 'rejected',
+        reason: 'other',
+        note: 'Gizli not',
+      });
+      expect(rejection.statusCode).toBe(200);
+      const stoppedId = await stopped('Gizli neden');
+
+      const res = await get(employee, '/api/today');
+      expect(res.statusCode).toBe(200);
+      const answer = todaySchema.parse(res.json());
+      expect(answer.notificationsTruncated).toBe(false);
+      expect(about(answer, returned.id)).toEqual([
+        {
+          id: (await noteOf(returned.id)).id,
+          template: 'request_returned',
+          createdAt: expect.any(String) as unknown,
+          read: false,
+          request: { id: returned.id, title: 'KVKK aydınlatma metni hazırlansın' },
+          unit: { code: 'HAF', name: 'Kurumsal Hafıza' },
+        },
+      ]);
+      expect(about(answer, rejected.id)).toEqual([
+        {
+          id: (await noteOf(rejected.id)).id,
+          template: 'request_rejected',
+          createdAt: expect.any(String) as unknown,
+          read: false,
+          request: { id: rejected.id, title: 'LinkedIn için gönderi yaz' },
+        },
+      ]);
+      expect(about(answer, stoppedId)).toEqual([
+        {
+          id: (await noteOf(stoppedId)).id,
+          template: 'request_stopped',
+          createdAt: expect.any(String) as unknown,
+          read: false,
+          request: { id: stoppedId, title: 'LinkedIn için gönderi yaz' },
+        },
+      ]);
+      // The newest first.
+      const order = answer.notifications.flatMap((item) =>
+        item.template === 'passkeys_reset' ? [] : [item.request.id],
+      );
+      const mine = [stoppedId, rejected.id, returned.id];
+      expect(order.filter((id) => mine.includes(id))).toEqual(mine);
+      const times = answer.notifications.map((item) => item.createdAt);
+      expect(times).toEqual([...times].sort().reverse());
+      // The reason of a return, a rejection or a stop is on the request, never in the notification;
+      // the closed requests expect nothing of anybody.
+      expect(res.body).not.toContain(COORDINATOR_REASON);
+      expect(res.body).not.toContain('Gizli not');
+      expect(res.body).not.toContain('Gizli neden');
+      expect(res.body).not.toContain('İki seçenek.');
+      for (const id of mine) {
+        expect(answer.expected.map((row) => row.id)).not.toContain(id);
+      }
+      // In the database too: ids and codes, sent by the coordinator or by the person who acted.
+      expect(
+        await adminQuery(
+          `select template, recipient_user_id, record_type, channel, sender_agent_code,
+                  sender_user_id
+           from office.notifications where record_id = any ($1::uuid[]) order by created_at`,
+          [mine],
+        ),
+      ).toEqual([
+        {
+          template: 'request_returned',
+          recipient_user_id: ids.employee,
+          record_type: 'task',
+          channel: 'panel',
+          sender_agent_code: 'KOR-1',
+          sender_user_id: null,
+        },
+        {
+          template: 'request_rejected',
+          recipient_user_id: ids.employee,
+          record_type: 'task',
+          channel: 'panel',
+          sender_agent_code: null,
+          sender_user_id: ids.founder,
+        },
+        {
+          template: 'request_stopped',
+          recipient_user_id: ids.employee,
+          record_type: 'task',
+          channel: 'panel',
+          sender_agent_code: null,
+          sender_user_id: ids.founder,
+        },
+      ]);
+    });
+
+    it('tells nobody of their own act', async () => {
+      const cancelled = await open(employee);
+      expect((await post(employee, `/api/requests/${cancelled.id}/close`)).statusCode).toBe(200);
+      // The founder's own request, rejected by the founder as the unit's approver.
+      const own = await open(founder);
+      await route(own.id, ids.founder);
+      const approvalId = await submit(own.id, ids.founder);
+      const rejection = await decide(approvalId, { decision: 'rejected', reason: 'incomplete' });
+      expect(requestDetailSchema.parse(rejection.json())).toMatchObject({ status: 'cancelled' });
+      const closed = await open(founder);
+      expect((await post(founder, `/api/requests/${closed.id}/close`)).statusCode).toBe(200);
+
+      const acts = [cancelled.id, own.id, closed.id];
+      expect(
+        await adminQuery('select id from office.notifications where record_id = any ($1::uuid[])', [
+          acts,
+        ]),
+      ).toEqual([]);
+      for (const session of [employee, founder]) {
+        const answer = await today(session);
+        for (const id of acts) {
+          expect(about(answer, id)).toEqual([]);
+        }
+      }
+    });
+
+    it('a notification is the recipient’s alone', async () => {
+      const stoppedId = await stopped();
+      const waiting = await submitted();
+      expect(about(await today(employee), stoppedId)).toHaveLength(1);
+      // The founder stopped it and reads the company's notification log in the database; the
+      // screen's answer still holds only the founder's own.
+      expect((await noteOf(stoppedId)).read).toBe(false);
+      const forFounder = await today(founder);
+      expect(about(forFounder, stoppedId)).toEqual([]);
+      expect(
+        forFounder.notifications.every(
+          (item) => item.template === 'passkeys_reset' || item.request.id !== stoppedId,
+        ),
+      ).toBe(true);
+      expect(forFounder.expected.map((row) => row.id)).toContain(waiting.id);
+      for (const session of [colleague, rightHolder, external]) {
+        expect(about(await today(session), stoppedId)).toEqual([]);
+      }
+
+      // Another company: nothing of Arma DX, for the same founder.
+      const inPillika = await today(founder, ids.pillika);
+      expect(inPillika.notifications).toEqual([]);
+      expect(inPillika.expected.map((row) => row.id)).not.toContain(waiting.id);
+      const companies = await adminQuery<{ company_id: string }>(
+        'select distinct company_id from office.tasks where id = any ($1::uuid[])',
+        [inPillika.expected.map((row) => row.id)],
+      );
+      expect(companies.filter((row) => row.company_id !== ids.pillika)).toEqual([]);
+      // A company the person is not a member of.
+      for (const url of ['/api/today', '/api/today/counts']) {
+        const refused = await get(employee, url, ids.pillika);
+        expect([refused.statusCode, errorCode(refused)]).toEqual([403, 'forbidden']);
+      }
+      const marked = await post(
+        employee,
+        '/api/notifications/read',
+        { ids: [(await noteOf(stoppedId)).id] },
+        ids.pillika,
+      );
+      expect([marked.statusCode, errorCode(marked)]).toEqual([403, 'forbidden']);
+      expect((await noteOf(stoppedId)).read).toBe(false);
+    });
+
+    it('a read mark marks only the reader’s own, and only a list of ids', async () => {
+      const stoppedId = await stopped();
+      const other = await stopped();
+      const note = await noteOf(stoppedId);
+      const mark = (session: string, body: object, company: string = ids.arma) =>
+        post(session, '/api/notifications/read', body, company);
+
+      // Somebody else's notification: answered the same, and nothing is marked. The founder reads
+      // the log and is still not the recipient; in another company the id is nobody's.
+      for (const session of [founder, colleague, external]) {
+        const res = await mark(session, { ids: [note.id] });
+        expect(res.statusCode).toBe(204);
+        expect(res.body).toBe('');
+      }
+      expect((await mark(founder, { ids: [note.id] }, ids.pillika)).statusCode).toBe(204);
+      expect((await noteOf(stoppedId)).read).toBe(false);
+
+      // The recipient: marked, and still listed, read.
+      expect((await mark(employee, { ids: [note.id] })).statusCode).toBe(204);
+      expect((await noteOf(stoppedId)).read).toBe(true);
+      const answer = await today(employee);
+      expect(about(answer, stoppedId)).toMatchObject([{ id: note.id, read: true }]);
+      // Only what was named.
+      expect(about(answer, other)).toMatchObject([{ read: false }]);
+      expect((await noteOf(other)).read).toBe(false);
+      // Again: nothing changes and nothing is said.
+      const [before] = await adminQuery<{ read_at: Date }>(
+        'select read_at from office.notifications where id = $1',
+        [note.id],
+      );
+      expect((await mark(employee, { ids: [note.id] })).statusCode).toBe(204);
+      expect(
+        await adminQuery('select read_at from office.notifications where id = $1', [note.id]),
+      ).toEqual([before]);
+
+      const uuids = Array.from({ length: NOTIFICATION_LIST_LIMIT + 1 }, () => randomUUID());
+      for (const body of [
+        {},
+        { ids: [] },
+        { ids: uuids },
+        { ids: ['x'] },
+        { ids: note.id },
+        { ids: [note.id], all: true },
+        { all: true },
+      ]) {
+        const res = await mark(employee, body);
+        expect([res.statusCode, errorCode(res)], JSON.stringify(body).slice(0, 60)).toEqual([
+          400,
+          'invalid_request',
+        ]);
+      }
+      expect((await mark(employee, { ids: uuids.slice(1) })).statusCode).toBe(204);
+      expect((await noteOf(other)).read).toBe(false);
+
+      for (const [method, url] of [
+        ['GET', '/api/today'],
+        ['GET', '/api/today/counts'],
+        ['POST', '/api/notifications/read'],
+      ] as const) {
+        const res = await server.app.inject({
+          method,
+          url,
+          headers: { ...SAME_ORIGIN, [COMPANY_HEADER]: ids.arma },
+          ...(method === 'POST' ? { payload: { ids: [note.id] } } : {}),
+        });
+        expect([res.statusCode, errorCode(res)], url).toEqual([401, 'unauthenticated']);
+      }
+    });
+
+    it('a read notification is kept for 30 days, an unread one until it is read', async () => {
+      const stoppedId = await stopped();
+      const note = await noteOf(stoppedId);
+      await adminExec(
+        `update office.notifications set created_at = now() - interval '31 days'
+         where id = '${note.id}'`,
+      );
+      // Not read yet: listed whatever its age, after the newer ones.
+      const old = await today(employee);
+      expect(about(old, stoppedId)).toMatchObject([{ id: note.id, read: false }]);
+      expect(old.notifications.at(-1)?.id).toBe(note.id);
+      expect((await post(employee, '/api/notifications/read', { ids: [note.id] })).statusCode).toBe(
+        204,
+      );
+      expect(about(await today(employee), stoppedId)).toEqual([]);
+      // Inside the keeping time a read one stays.
+      await adminExec(
+        `update office.notifications set created_at = now() - interval '29 days'
+         where id = '${note.id}'`,
+      );
+      expect(about(await today(employee), stoppedId)).toMatchObject([{ read: true }]);
+    });
+
+    it('an external person has no list, reads their own passkey notice and is refused the counts', async () => {
+      await adminExec(
+        `insert into office.notifications
+           (company_id, recipient_user_id, template, record_type, record_id)
+         values ('${ids.arma}', '${ids.external}', 'passkeys_reset', 'user', '${ids.external}')`,
+      );
+      try {
+        const answer = await today(external);
+        expect(answer.expected).toEqual([]);
+        expect(answer.expectedTruncated).toBe(false);
+        expect(answer.notifications).toEqual([
+          {
+            id: expect.any(String) as unknown,
+            template: 'passkeys_reset',
+            createdAt: expect.any(String) as unknown,
+            read: false,
+          },
+        ]);
+        const refused = await get(external, '/api/today/counts');
+        expect([refused.statusCode, errorCode(refused)]).toEqual([403, 'insiders_only']);
+        // Nobody else gets the notice, also not the founder.
+        for (const session of [founder, employee]) {
+          expect(
+            (await today(session)).notifications.filter(
+              (item) => item.template === 'passkeys_reset',
+            ),
+          ).toEqual([]);
+        }
+        const id = answer.notifications[0]?.id ?? '';
+        expect((await post(external, '/api/notifications/read', { ids: [id] })).statusCode).toBe(
+          204,
+        );
+        expect((await today(external)).notifications).toMatchObject([{ id, read: true }]);
+      } finally {
+        await adminExec(
+          `delete from office.notifications
+           where recipient_user_id = '${ids.external}' and template = 'passkeys_reset'`,
+        );
+      }
+    });
+
+    it('in Kurucu alanı nothing is expected and nothing is counted', async () => {
+      expect(await today(founder, ids.founderSpace)).toEqual({
+        expected: [],
+        expectedTruncated: false,
+        notifications: [],
+        notificationsTruncated: false,
+      });
+      expect(await counts(founder, ids.founderSpace)).toEqual({ today: 0, approvals: 0 });
+      // Not a member of the founder's private space.
+      const refused = await get(employee, '/api/today', ids.founderSpace);
+      expect([refused.statusCode, errorCode(refused)]).toEqual([403, 'forbidden']);
+    });
+
+    it('the refresh of the list and of the counts does not extend the idle time', async () => {
+      const session = await sessionOf(server, accounts.employee);
+      const [row] = await adminQuery<{ id: string }>(
+        'select id from office.sessions where key_hash = $1',
+        [hashSessionKey(session)],
+      );
+      const sessionId = row?.id ?? '';
+      const idle = async (): Promise<boolean> => {
+        const [seen] = await adminQuery<{ stale: boolean }>(
+          `select last_seen_at < now() - interval '24 minutes' as stale
+           from office.sessions where id = $1`,
+          [sessionId],
+        );
+        return seen?.stale ?? false;
+      };
+      await adminQuery(
+        `update office.sessions set last_seen_at = now() - interval '25 minutes' where id = $1`,
+        [sessionId],
+      );
+      for (const url of ['/api/today', '/api/today/counts']) {
+        const res = await server.app.inject({
+          method: 'GET',
+          url,
+          cookies: { [SESSION_COOKIE]: session },
+          headers: { ...SAME_ORIGIN, [COMPANY_HEADER]: ids.arma, [BACKGROUND_HEADER]: '1' },
+        });
+        expect(res.statusCode, url).toBe(200);
+        expect(await idle(), url).toBe(true);
+      }
+      // The same request made by the person counts as activity.
+      expect((await get(session, '/api/today')).statusCode).toBe(200);
+      expect(await idle()).toBe(false);
+    });
   });
 });
