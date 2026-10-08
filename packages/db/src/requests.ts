@@ -76,7 +76,10 @@ export interface RequestRow {
 
 // One row per request with everything the stage is derived from. The facts about approvals the
 // reader may not read come from office.request_flow_facts (a status and a time, never content).
-const REQUEST_SQL = `
+// `chosen` picks the requests first (one by id, or the page of the list with its order and limit):
+// the flow facts, the active step and the latest run are then read for those rows only, not for
+// every request the company ever had.
+const requestSql = (chosen: string): string => `
   select t.id, t.title, t.description, t.status, t.created_at, t.updated_at,
          t.requester_user_id, t.closed_by_user_id, t.close_reason,
          t.unit_code, u.name as unit_name,
@@ -135,7 +138,13 @@ const REQUEST_SQL = `
          f.not_started_at,
          lr.agent_code as run_agent_code, lr.status as run_status,
          lr.error_code as run_error_code, lr.started_at as run_started_at
-  from office.tasks t
+  from (
+    select x.id, x.company_id, x.title, x.description, x.status, x.created_at, x.updated_at,
+           x.requester_user_id, x.closed_by_user_id, x.close_reason, x.unit_code
+    from office.tasks x
+    where x.kind = 'request' and x.company_id = office.ctx_company_id()
+      ${chosen}
+  ) t
   left join office.units u on u.code = t.unit_code
   left join office.task_routings s on s.task_id = t.id and s.status = 'active'
   left join office.agent_definitions sa on sa.code = s.agent_code
@@ -145,19 +154,22 @@ const REQUEST_SQL = `
     from office.runs r where r.task_id = t.id
     order by r.started_at desc, r.id desc
     limit 1
-  ) lr on true
-  where t.kind = 'request' and t.company_id = office.ctx_company_id()`;
+  ) lr on true`;
 
-/** The requests the person can see, the newest movement first; `mine` keeps only their own. */
+/**
+ * The requests the person can see, the newest movement first; `mine` keeps only their own. The
+ * order and the limit are applied to the requests themselves (the index tasks_requests_by_movement
+ * serves them); the joins keep no order, so the page is ordered again.
+ */
 export async function listRequests(
   client: Queryable,
   options: { coordinator: string; mine: boolean; limit: number },
 ): Promise<RequestRow[]> {
   const { rows } = await client.query<RequestRow>(
-    `${REQUEST_SQL}
-       and ($2::boolean is false or t.requester_user_id = office.ctx_user_id())
-     order by t.updated_at desc, t.id
-     limit $3`,
+    `${requestSql(`and ($2::boolean is false or x.requester_user_id = office.ctx_user_id())
+      order by x.updated_at desc, x.id
+      limit $3`)}
+     order by t.updated_at desc, t.id`,
     [options.coordinator, options.mine, options.limit],
   );
   return rows;
@@ -169,7 +181,7 @@ export async function readRequest(
   coordinator: string,
   requestId: string,
 ): Promise<RequestRow | null> {
-  const { rows } = await client.query<RequestRow>(`${REQUEST_SQL} and t.id = $2`, [
+  const { rows } = await client.query<RequestRow>(requestSql('and x.id = $2'), [
     coordinator,
     requestId,
   ]);

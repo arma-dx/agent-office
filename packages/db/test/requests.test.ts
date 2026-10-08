@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import type { ContextInput } from '../src/context.ts';
+import { listRequests, readRequest } from '../src/requests.ts';
 import { ids } from './fixtures.ts';
 import {
   closePools,
@@ -1939,6 +1940,70 @@ describe.skipIf(noDatabase)('what a reader may know about approvals they cannot 
     await inWorkerTransaction(async (tx) => {
       await tx.setContext(agentRun(ids.employeeA, 'KOR-1'));
       expect((await tx.expectError(FACTS, [ids.requestA])).code).toBe('42501');
+    });
+  });
+});
+
+describe.skipIf(noDatabase)('the list of requests', () => {
+  afterAll(closePools);
+
+  it('takes its page from the requests themselves: newest movement first, cut at the limit, each with its facts', async () => {
+    await inTransaction(async (tx) => {
+      // Two requests of this transaction (one instant, so the id decides between them) and the
+      // fixture's request, which moved earlier.
+      const { task: submitted } = await submittedRequest(tx);
+      await tx.setContext(employeeA);
+      const fresh = await openRequest(tx);
+      const [first = '', second = ''] = [submitted, fresh].sort();
+      const page = async (limit: number, mine = false): Promise<string[]> =>
+        (await listRequests(tx.client, { coordinator: 'KOR-1', mine, limit })).map((row) => row.id);
+      for (const reader of [founderA, employeeA, colleagueA]) {
+        await tx.setContext(reader);
+        expect(await page(10)).toEqual([first, second, ids.requestA]);
+        expect(await page(2)).toEqual([first, second]);
+        expect(await page(1)).toEqual([first]);
+      }
+      // "Mine" is asked before the limit: the requests are employee A's.
+      expect(await page(10, true)).toEqual([]);
+      await tx.setContext(employeeA);
+      expect(await page(2, true)).toEqual([first, second]);
+      // Another company's reader gets its own requests.
+      await tx.setContext(founderP);
+      expect(await page(10)).toEqual([ids.requestP]);
+
+      // The facts of each request are read for the rows of the page.
+      await tx.setContext(employeeA);
+      const rows = await listRequests(tx.client, { coordinator: 'KOR-1', mine: false, limit: 2 });
+      expect(rows.find((row) => row.id === submitted)).toMatchObject({
+        status: 'awaiting_approval',
+        unit_code: 'HAF',
+        routed: true,
+        step_agent_code: 'HAF-1',
+        step_agent_enabled: true,
+        step_approver_user_id: ids.founder,
+        pending_result: true,
+        pending_acceptance: false,
+        // Both runs of this request were opened in this one instant; which is the latest is not
+        // the point here.
+        run_agent_code: expect.stringMatching(/^(KOR|HAF)-1$/) as unknown,
+        reader_may_decide: false,
+        coordinator_enabled: true,
+      });
+      expect(rows.find((row) => row.id === fresh)).toMatchObject({
+        status: 'open',
+        unit_code: null,
+        routed: false,
+        step_agent_code: null,
+        pending_result: false,
+        run_agent_code: null,
+      });
+      // One request is read with the same statement and gives the same row.
+      expect(await readRequest(tx.client, 'KOR-1', submitted)).toEqual(
+        rows.find((row) => row.id === submitted),
+      );
+      // A task between people and another company's request are not requests to this reader.
+      expect(await readRequest(tx.client, 'KOR-1', ids.taskA)).toBeNull();
+      expect(await readRequest(tx.client, 'KOR-1', ids.requestP)).toBeNull();
     });
   });
 });
