@@ -16,7 +16,7 @@ import { SAME_ORIGIN, SESSION_COOKIE, adminQuery, type TestServer } from './help
 
 /** The panel's ceremonies, run against the test server with a software passkey. */
 
-export type Method = 'GET' | 'POST' | 'PATCH' | 'DELETE';
+export type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
 /** A request the panel sends with the session cookie (and, for company routes, the company). */
 export function send(

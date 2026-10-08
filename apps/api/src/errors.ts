@@ -60,6 +60,18 @@ export function databaseErrorCode(error: unknown): string | undefined {
 }
 
 /**
+ * The constraint a database error names (a key, a foreign key, a check of a table), if any. An
+ * exception a function raises names none. The name is the database's own, never row content.
+ */
+export function databaseErrorConstraint(error: unknown): string | undefined {
+  if (databaseErrorCode(error) === undefined) {
+    return undefined;
+  }
+  const { constraint } = error as { constraint?: unknown };
+  return typeof constraint === 'string' ? constraint : undefined;
+}
+
+/**
  * The parts of an error that may be logged. A database error's message and detail can carry row
  * values (an address in a unique key, user input), so only its codes are kept.
  */

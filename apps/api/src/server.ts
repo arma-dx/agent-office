@@ -10,6 +10,7 @@ import { registerInvitationRoutes } from './routes/invitations.ts';
 import { registerMemberRoutes } from './routes/members.ts';
 import { registerOfficeRoutes } from './routes/office.ts';
 import { registerPasskeyRoutes } from './routes/passkeys.ts';
+import { registerProjectRoutes } from './routes/projects.ts';
 import { registerRequestRoutes } from './routes/requests.ts';
 import { registerSessionRoutes } from './routes/session.ts';
 import { registerTodayRoutes } from './routes/today.ts';
@@ -92,6 +93,7 @@ export function buildServer(opts: BuildServerOptions = {}): FastifyInstance {
       registerRequestRoutes(api, deps);
       registerTodayRoutes(api, deps);
       registerAgentRoutes(api, deps);
+      registerProjectRoutes(api, deps);
       done();
     });
   }
