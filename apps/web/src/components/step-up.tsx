@@ -75,6 +75,12 @@ interface StepUpDialogProps<T> {
   description: ReactNode;
   confirmLabel: string;
   destructive?: boolean;
+  /**
+   * The confirm button waits for something the description is still reading (the number of
+   * requests an opening starts): it stays focusable and does nothing, so the passkey is not asked
+   * for before the person has read what they confirm.
+   */
+  confirmBlocked?: boolean;
   /** The button that opens the dialog; without it the caller opens it and returns the focus. */
   trigger?: ReactNode;
   onCloseAutoFocus?: (event: Event) => void;
@@ -110,6 +116,7 @@ function StepUpDialogContent<T>({
   description,
   confirmLabel,
   destructive = false,
+  confirmBlocked = false,
   onCloseAutoFocus,
 }: Omit<StepUpDialogProps<T>, 'open' | 'onOpenChange' | 'trigger' | 'request'> & {
   request: StepUpOptionsRequest;
@@ -138,9 +145,9 @@ function StepUpDialogContent<T>({
         <Button
           variant={destructive ? 'destructive' : 'default'}
           size="lg"
-          {...busyProps(stepUp.busy || !stepUp.ready)}
+          {...busyProps(stepUp.busy || !stepUp.ready || confirmBlocked)}
           onClick={() => {
-            stepUp.confirm();
+            if (!confirmBlocked) stepUp.confirm();
           }}
         >
           {confirmLabel}

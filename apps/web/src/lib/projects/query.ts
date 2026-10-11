@@ -1,8 +1,9 @@
 import {
   createProjectSchema,
   customerListSchema,
+  customerPermissionsAnswerSchema,
   customerPermissionsSchema,
-  customerSchema,
+  projectAiPermissionAnswerSchema,
   projectAiPermissionSchema,
   projectDetailSchema,
   projectListSchema,
@@ -10,10 +11,11 @@ import {
   setProjectMemberRoleSchema,
   updateProjectSchema,
   type CreateProject,
-  type Customer,
   type CustomerOption,
   type CustomerPermissions,
+  type CustomerPermissionsAnswer,
   type ProjectAiPermission,
+  type ProjectAiPermissionAnswer,
   type ProjectDetail,
   type ProjectList,
   type ProjectMemberCandidate,
@@ -162,35 +164,40 @@ export function setProjectMemberRole(
 
 /**
  * The founder opens or closes the AI permission of a project. Opening names the customer the page
- * showed and carries a project_ai_permission re-verification for it; closing carries neither.
+ * showed and carries a project_ai_permission re-verification for it; closing carries neither. The
+ * answer is the project and `restarted`: how many waiting requests this opening started again
+ * (8 October decision 49); 0 for a close.
  */
 export function setProjectAiPermission(
   companyId: string,
   projectId: string,
   permission: ProjectAiPermission,
-): Promise<ProjectDetail> {
+): Promise<ProjectAiPermissionAnswer> {
   const id = z.uuid().parse(projectId);
   const body = projectAiPermissionSchema.parse(permission);
   return apiRequest(`/projects/${id}/ai-permission`, {
     method: 'PUT',
     body,
-    schema: projectDetailSchema,
+    schema: projectAiPermissionAnswerSchema,
     companyId,
   });
 }
 
-/** The founder sets the contract permissions of a customer; opening the AI one needs a passkey. */
+/**
+ * The founder sets the contract permissions of a customer; opening the AI one needs a passkey and
+ * answers with `restarted`, the waiting requests of the customer's projects it started again.
+ */
 export function setCustomerPermissions(
   companyId: string,
   customerId: string,
   permissions: CustomerPermissions,
-): Promise<Customer> {
+): Promise<CustomerPermissionsAnswer> {
   const id = z.uuid().parse(customerId);
   const body = customerPermissionsSchema.parse(permissions);
   return apiRequest(`/customers/${id}/permissions`, {
     method: 'PATCH',
     body,
-    schema: customerSchema,
+    schema: customerPermissionsAnswerSchema,
     companyId,
   });
 }

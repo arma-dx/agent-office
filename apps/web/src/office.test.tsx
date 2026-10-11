@@ -22,9 +22,12 @@ import {
   PILLIKA,
   sessionBody,
   sessionHandler,
+  type Handler,
 } from './test/mock-api.ts';
 import { ARMADX_OFFICE, FOUNDER_OFFICE, PILLIKA_OFFICE } from './test/office-fixtures.ts';
 import { renderApp } from './test/render-app.tsx';
+import { approvalDeskKey, requestKey, requestsKey } from './lib/requests/query.ts';
+import { todayKey } from './lib/today/query.ts';
 
 /**
  * The answer of GET /api/office for a pilot office; no company has a switch unless one is given,
@@ -652,13 +655,22 @@ describe('office page: the agent switch', () => {
     return within(panel).getByText('Durum', { selector: 'dt' }).nextElementSibling;
   }
 
-  /** An office whose switches the test changes, and a PUT that answers when the test lets it. */
-  function switchApi(switches: Record<string, CompanyAgentStatus>) {
+  const countKey = (code: string) => `GET /waiting-work?agent=${code}`;
+
+  /**
+   * An office whose switches the test changes, and a PUT that answers when the test lets it. The
+   * confirmation of an opening asks how many waiting requests it would start: `waiting`.
+   */
+  function switchApi(
+    switches: Record<string, CompanyAgentStatus>,
+    waiting: Handler = () => json({ waiting: 0 }),
+  ) {
     let body = officeBody(ARMADX_OFFICE, switches);
     let answer: (response: Response) => void = () => undefined;
     const api = mockApi({
       'GET /session': sessionHandler(),
       'GET /office': () => json(body),
+      [countKey('KOR-1')]: waiting,
       [switchKey('KOR-1')]: () =>
         new Promise<Response>((resolve) => {
           answer = resolve;
@@ -666,14 +678,21 @@ describe('office page: the agent switch', () => {
     });
     return {
       api,
-      /** The API stores the change and answers with the agent as it now is. */
-      store: (status: CompanyAgentStatus): void => {
+      /**
+       * The API stores the change and answers with the agent as it now is. An opening also says
+       * how many waiting requests it started (8 October decision 49).
+       */
+      store: (status: CompanyAgentStatus, restarted = 0): void => {
         body = officeBody(ARMADX_OFFICE, { ...switches, 'KOR-1': status });
-        // An opening also says how many waiting requests it started (8 October decision 49).
-        answer(json({ ...KOR_1, status, ...(status === 'enabled' ? { restarted: 0 } : {}) }));
+        answer(json({ ...KOR_1, status, ...(status === 'enabled' ? { restarted } : {}) }));
       },
     };
   }
+  const OPENING =
+    'Açık ajan kendisine yönlendirilen talepleri çalıştırır ve yapay zekâ modelini kullanır.';
+  /** The line of the confirmation that says how many requests the opening starts. */
+  const count = (dialog: HTMLElement) => within(dialog).getByRole('status');
+  const toasts = () => screen.getByRole('region', { name: 'Anlık bildirimler' });
 
   it('stops an open agent after a confirmation, and shows it stopped only when the API has stored it', async () => {
     wideWindow();
@@ -688,8 +707,11 @@ describe('office page: the agent switch', () => {
     expect(dialog).toHaveTextContent(
       'Yeni iş almaz; süren çalışması bir sonraki adımdan önce durur.',
     );
-    // A stop starts nothing, and its confirmation does not speak of waiting work.
-    expect(dialog).not.toHaveTextContent(/yeniden başlar|ücretli/);
+    // A stop starts nothing: its confirmation does not speak of waiting work and asks for no
+    // count.
+    expect(dialog).not.toHaveTextContent(/yeniden başlar|ücretli|bekleyen/i);
+    expect(within(dialog).queryByRole('status')).toBeNull();
+    expect(api.callsTo(countKey('KOR-1'))).toEqual([]);
     // Opening the dialog sends nothing.
     expect(api.callsTo(switchKey('KOR-1'))).toEqual([]);
 
@@ -751,11 +773,14 @@ describe('office page: the agent switch', () => {
       name: 'KOR-1 bu şirkette açılsın mı?',
     });
     // What opening means is said before it is confirmed: the agent works and uses the model, and
-    // the requests that waited for it start again at once, each a paid run (8 October decision
-    // 49).
-    expect(within(dialog).getByText(/^Açık ajan/).textContent).toBe(
-      'Açık ajan kendisine yönlendirilen talepleri çalıştırır ve yapay zekâ modelini kullanır. Bu ajanı bekleyen talep varsa açınca hemen yeniden başlar; her biri ücretli bir yapay zekâ çalışmasıdır.',
-    );
+    // how many requests that waited for it start again at once (8 October decision 49). Here
+    // none waits.
+    expect(within(dialog).getByText(/^Açık ajan/).textContent).toBe(OPENING);
+    await waitFor(() => {
+      expect(count(dialog)).toHaveTextContent(
+        'Bu ajanı bekleyen talep yok; açmak hiçbir çalışmayı başlatmaz.',
+      );
+    });
     await userEvent.click(within(dialog).getByRole('button', { name: label }));
     await waitFor(() => {
       expect(api.callsTo(switchKey('KOR-1')).map((call) => call.body)).toEqual([
@@ -777,6 +802,211 @@ describe('office page: the agent switch', () => {
     });
   });
 
+  // Opening an agent starts the work that waited for it (8 October decision 49). Each restarted
+  // request is a paid run, so the confirmation says HOW MANY before it can be confirmed; the
+  // number is the database's, and the panel never counts.
+  it('opening an agent: the confirmation says how many requests will start before it can be confirmed', async () => {
+    wideWindow();
+    let waiting: (response: Response) => void = () => undefined;
+    const { api, store } = switchApi(
+      { 'KOR-1': 'stopped' },
+      () =>
+        new Promise<Response>((resolve) => {
+          waiting = resolve;
+        }),
+    );
+    renderApp('/c/armadx/office');
+    await userEvent.click(await screen.findByRole('button', { name: /^KOR-1 / }));
+    const panel = detailsPanel();
+    await userEvent.click(within(panel).getByRole('button', { name: 'Ajanı yeniden aç' }));
+    const dialog = await screen.findByRole('alertdialog', {
+      name: 'KOR-1 bu şirkette açılsın mı?',
+    });
+    // The count is asked for this agent in this company, once, when the confirmation opens.
+    await waitFor(() => {
+      expect(api.callsTo(countKey('KOR-1'))).toHaveLength(1);
+    });
+    expect(api.callsTo(countKey('KOR-1'))[0]?.headers.get(COMPANY_HEADER)).toBe(ARMADX.companyId);
+    // While the number is on its way the founder cannot confirm: the button stays focusable, is
+    // marked busy, and a press sends nothing.
+    expect(count(dialog)).toHaveTextContent('Bekleyen talepler sayılıyor.');
+    const confirm = within(dialog).getByRole('button', { name: 'Ajanı yeniden aç' });
+    expect(confirm).toHaveAttribute('aria-disabled', 'true');
+    await userEvent.click(confirm);
+    confirm.focus();
+    await userEvent.keyboard('{Enter}');
+    expect(api.callsTo(switchKey('KOR-1'))).toEqual([]);
+    // Giving up is always possible.
+    expect(within(dialog).getByRole('button', { name: 'Vazgeç' })).not.toHaveAttribute(
+      'aria-disabled',
+    );
+
+    // The number arrives in the same live line: it names the count twice, how many wait and how
+    // many paid runs the opening starts.
+    waiting(json({ waiting: 3 }));
+    await waitFor(() => {
+      expect(count(dialog).textContent).toBe(
+        'Bu ajanı 3 talep bekliyor. Ajanı açınca 3 talebin çalışması hemen yeniden başlar; her biri ücretli bir yapay zekâ çalışmasıdır.',
+      );
+    });
+    expect(within(dialog).getByText(OPENING)).toBeVisible();
+    expect(confirm).not.toHaveAttribute('aria-disabled');
+    await userEvent.click(confirm);
+    await waitFor(() => {
+      expect(api.callsTo(switchKey('KOR-1')).map((call) => call.body)).toEqual([
+        { status: 'enabled' },
+      ]);
+    });
+    // The answer says what really started: one request was closed in the seconds between.
+    store('enabled', 2);
+    await waitFor(() => {
+      expect(screen.queryByRole('alertdialog')).toBeNull();
+    });
+    expect(
+      await within(toasts()).findByText('Bekleyen 2 talebin çalışması yeniden başlatıldı.'),
+    ).toBeVisible();
+    // Asked once: the count is not read again behind the founder's back.
+    expect(api.callsTo(countKey('KOR-1'))).toHaveLength(1);
+    expect(api.unexpected).toEqual([]);
+  });
+
+  it('opening an agent: a count that could not be read is said and does not block the opening; every confirmation counts anew', async () => {
+    wideWindow();
+    let answers = 0;
+    const { api, store } = switchApi({ 'KOR-1': 'stopped' }, () => {
+      answers += 1;
+      return answers === 1
+        ? apiError(500, 'internal_error', 'Beklenmeyen bir hata oluştu.')
+        : json({ waiting: 1 });
+    });
+    renderApp('/c/armadx/office');
+    await userEvent.click(await screen.findByRole('button', { name: /^KOR-1 / }));
+    const open = within(detailsPanel()).getByRole('button', { name: 'Ajanı yeniden aç' });
+    await userEvent.click(open);
+    let dialog = await screen.findByRole('alertdialog');
+    // Not retried in silence and not hidden: the sentence says that it could not be counted and
+    // what may start.
+    await waitFor(() => {
+      expect(count(dialog).textContent).toBe(
+        'Bekleyen talepler sayılamadı. Bu ajanı bekleyen talep varsa açınca hemen yeniden başlar; her biri ücretli bir yapay zekâ çalışmasıdır.',
+      );
+    });
+    expect(api.callsTo(countKey('KOR-1'))).toHaveLength(1);
+    expect(within(dialog).getByRole('button', { name: 'Ajanı yeniden aç' })).not.toHaveAttribute(
+      'aria-disabled',
+    );
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Vazgeç' }));
+    await waitFor(() => {
+      expect(screen.queryByRole('alertdialog')).toBeNull();
+    });
+
+    // The next confirmation reads the number anew; nothing of the last one is shown meanwhile.
+    await userEvent.click(open);
+    dialog = await screen.findByRole('alertdialog');
+    await waitFor(() => {
+      expect(count(dialog).textContent).toBe(
+        'Bu ajanı 1 talep bekliyor. Ajanı açınca 1 talebin çalışması hemen yeniden başlar; her biri ücretli bir yapay zekâ çalışmasıdır.',
+      );
+    });
+    expect(api.callsTo(countKey('KOR-1'))).toHaveLength(2);
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Vazgeç' }));
+    await waitFor(() => {
+      expect(screen.queryByRole('alertdialog')).toBeNull();
+    });
+
+    // A third confirmation while its count is on its way: the number of the one before is not
+    // shown as this one's, and the button waits again.
+    let release: (response: Response) => void = () => undefined;
+    api.handle(
+      countKey('KOR-1'),
+      () =>
+        new Promise<Response>((resolve) => {
+          release = resolve;
+        }),
+    );
+    await userEvent.click(open);
+    dialog = await screen.findByRole('alertdialog');
+    expect(count(dialog).textContent).toBe('Bekleyen talepler sayılıyor.');
+    const confirm = within(dialog).getByRole('button', { name: 'Ajanı yeniden aç' });
+    expect(confirm).toHaveAttribute('aria-disabled', 'true');
+    await userEvent.click(confirm);
+    expect(api.callsTo(switchKey('KOR-1'))).toEqual([]);
+    release(json({ waiting: 4 }));
+    await waitFor(() => {
+      expect(count(dialog)).toHaveTextContent('Bu ajanı 4 talep bekliyor.');
+    });
+    await userEvent.click(confirm);
+    await waitFor(() => {
+      expect(api.callsTo(switchKey('KOR-1'))).toHaveLength(1);
+    });
+    store('enabled', 4);
+    expect(
+      await within(toasts()).findByText('Bekleyen 4 talebin çalışması yeniden başlatıldı.'),
+    ).toBeVisible();
+  });
+
+  it('opening an agent reads everything that shows a request again; with nothing restarted no toast; a stop reads nothing of it', async () => {
+    wideWindow();
+    const { api, store } = switchApi({ 'KOR-1': 'stopped' });
+    const { queryClient } = renderApp('/c/armadx/office');
+    await userEvent.click(await screen.findByRole('button', { name: /^KOR-1 / }));
+    const panel = detailsPanel();
+    // What shows a request and is not on screen now: the lists, a request's page, Bugün, the desk.
+    const elsewhere = [
+      requestsKey(ARMADX.companyId, false),
+      requestKey(ARMADX.companyId, '11111111-1111-4111-8111-111111111111'),
+      todayKey(ARMADX.companyId),
+      approvalDeskKey(ARMADX.companyId),
+    ];
+    const seed = () => {
+      for (const key of elsewhere) queryClient.setQueryData(key, { seeded: true });
+    };
+    const stale = () => elsewhere.map((key) => queryClient.getQueryState(key)?.isInvalidated);
+    const counts = () => api.callsTo('GET /today/counts').length;
+
+    seed();
+    let before = counts();
+    await userEvent.click(within(panel).getByRole('button', { name: 'Ajanı yeniden aç' }));
+    let dialog = await screen.findByRole('alertdialog');
+    const confirm = within(dialog).getByRole('button', { name: 'Ajanı yeniden aç' });
+    await waitFor(() => {
+      expect(confirm).not.toHaveAttribute('aria-disabled');
+    });
+    await userEvent.click(confirm);
+    await waitFor(() => {
+      expect(api.callsTo(switchKey('KOR-1'))).toHaveLength(1);
+    });
+    // Nothing is read again before the API has stored the opening.
+    expect(stale()).toEqual([false, false, false, false]);
+    store('enabled', 0);
+    await waitFor(() => {
+      expect(screen.queryByRole('alertdialog')).toBeNull();
+    });
+    expect(stale()).toEqual([true, true, true, true]);
+    await waitFor(() => {
+      expect(counts()).toBe(before + 1);
+    });
+    // Nothing started: nothing is announced.
+    expect(toasts()).not.toHaveTextContent(/yeniden başlatıldı/);
+
+    // A stop moves no request to an agent: only the office is read again.
+    seed();
+    before = counts();
+    await userEvent.click(within(panel).getByRole('button', { name: 'Ajanı durdur' }));
+    dialog = await screen.findByRole('alertdialog');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Ajanı durdur' }));
+    await waitFor(() => {
+      expect(api.callsTo(switchKey('KOR-1'))).toHaveLength(2);
+    });
+    store('stopped');
+    await waitFor(() => {
+      expect(screen.queryByRole('alertdialog')).toBeNull();
+    });
+    expect(stale()).toEqual([false, false, false, false]);
+    expect(counts()).toBe(before);
+    expect(toasts()).not.toHaveTextContent(/yeniden başlatıldı/);
+  });
+
   it('says the refusal of the API in the dialog and changes nothing', async () => {
     wideWindow();
     // The office answer said the card can run; the API is the second line and refuses.
@@ -785,6 +1015,7 @@ describe('office page: the agent switch', () => {
     const api = mockApi({
       'GET /session': sessionHandler(),
       'GET /office': () => json(officeBody(ARMADX_OFFICE)),
+      [countKey('KOR-2')]: () => json({ waiting: 0 }),
       [switchKey('KOR-2')]: () => apiError(409, 'agent_not_ready', refusal),
     });
     renderApp('/c/armadx/office');
@@ -795,7 +1026,11 @@ describe('office page: the agent switch', () => {
     const dialog = await screen.findByRole('alertdialog', {
       name: 'KOR-2 bu şirkette açılsın mı?',
     });
-    await userEvent.click(within(dialog).getByRole('button', { name: 'Ajanı aç' }));
+    const confirm = within(dialog).getByRole('button', { name: 'Ajanı aç' });
+    await waitFor(() => {
+      expect(confirm).not.toHaveAttribute('aria-disabled');
+    });
+    await userEvent.click(confirm);
     expect(await within(dialog).findByRole('alert')).toHaveTextContent(refusal);
     // The dialog stays with the message; the agent is as it was and the office was not read again.
     expect(screen.getByRole('alertdialog')).toBeVisible();

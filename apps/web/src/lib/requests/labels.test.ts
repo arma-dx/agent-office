@@ -20,6 +20,7 @@ import {
   acceptInPlace,
   answeredInPlace,
   dueText,
+  restartedSentence,
   rowSentence,
   stepText,
   waitingWorkSentence,
@@ -273,6 +274,15 @@ describe('the sentences decision 49 changed', () => {
         /kendiliğinden (yeniden )?başlatmaz|kendiliğinden başlamaz|yeniden ele almaz/,
       );
     }
+  });
+});
+
+describe('what is said after an opening', () => {
+  it('names how many waiting requests were started again, in the word of every other text', () => {
+    expect(restartedSentence(1)).toBe('Bekleyen 1 talebin çalışması yeniden başlatıldı.');
+    expect(restartedSentence(12)).toBe('Bekleyen 12 talebin çalışması yeniden başlatıldı.');
+    // "Talep", never "iş": what restarts is counted in requests.
+    expect(restartedSentence(3)).not.toMatch(/\biş/);
   });
 });
 

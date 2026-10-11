@@ -1469,3 +1469,113 @@ describe('a request that goes on in the founder’s name', () => {
     expect(journey).not.toHaveTextContent('Ayşe Yılmaz sonucu onayladı.');
   });
 });
+
+// 8 October decision 49: work that waited for a stopped agent, a closed coordinator or a closed AI
+// permission starts again by itself when the switch is opened. The page of a request that waits
+// says so, and "çalışma başlamadı" keeps one meaning: a job the runner refused although the agent
+// and the permission are open.
+describe('the page of a request that waits for a switch', () => {
+  const fallen = (overrides: Parameters<typeof requestDetail>[0]) =>
+    requestDetail({
+      status: 'in_progress',
+      stage: 'fell_to_person',
+      turn: { kind: 'founder' },
+      waitingForMe: true,
+      approval: null,
+      actions: { cancel: false, stop: true, reroute: true },
+      ...overrides,
+    });
+  const open = async (request: ReturnType<typeof requestDetail>, session = sessionHandler()) => {
+    mockApi({ 'GET /session': session, [`GET /requests/${REQUEST_ID}`]: () => json(request) });
+    renderApp(REQUEST_PAGE);
+    await screen.findByText('Ayşe Yılmaz yazdı.');
+    return screen.getByRole('main');
+  };
+
+  it('page: a stopped agent’s request says that opening the agent starts it again', async () => {
+    const main = await open(fallen({ cause: 'agent_stopped' }));
+    expect(stageLine()).toContain('Aşama: Sizden bekleniyor: ajan durduruldu Sıra: sizde');
+    expect(within(main).getByText('Ajan durdurulduğu için iş yarıda kaldı.')).toBeVisible();
+    expect(
+      within(main).getByText(
+        'Ajan Ofis görünümünden yeniden açıldığında bu iş kendiliğinden yeniden başlar. Beklemek istemiyorsanız "Yönlendirmeyi düzelt" ile işi açık bir ajana verebilirsiniz.',
+      ),
+    ).toBeVisible();
+    // Waiting is one way on; the other is still offered.
+    expect(screen.getByRole('button', { name: 'Yönlendirmeyi düzelt' })).toBeVisible();
+    expect(main).not.toHaveTextContent(/kendiliğinden başlamaz|kendiliğinden (yeniden )?başlatmaz/);
+    cleanup();
+
+    // The requester cannot open an agent and cannot route: neither is said to them.
+    const forRequester = await open(
+      fallen({
+        cause: 'agent_stopped',
+        waitingForMe: false,
+        actions: { cancel: true, stop: false, reroute: false },
+      }),
+      sessionHandler(EMPLOYEE_SESSION),
+    );
+    expect(forRequester).toHaveTextContent('Ajan durdurulduğu için iş yarıda kaldı.');
+    expect(forRequester).not.toHaveTextContent(/Ofis görünümünden|Yönlendirmeyi düzelt/);
+    expect(
+      within(forRequester).getByText('Talep kayıtlı. Sıradaki adımı Kurucu atacak.'),
+    ).toBeVisible();
+  });
+
+  it('page: a closed coordinator’s request says that opening it takes the request up again', async () => {
+    const main = await open(
+      fallen({ status: 'open', cause: 'coordinator_closed', unit: null, agent: null, journey: [] }),
+    );
+    expect(stageLine()).toContain('Aşama: Sizden bekleniyor: koordinasyon merkezi kapalı');
+    expect(
+      within(main).getByText(
+        'Koordinasyon merkezi yeniden açıldığında bu talebi kendiliğinden ele alır. Beklemek istemiyorsanız "Yönlendirmeyi düzelt" ile talebi bir birime ve ajana kendiniz verebilirsiniz.',
+      ),
+    ).toBeVisible();
+    // Only the founder opens it, and is told where.
+    expect(
+      within(main).getByText('Koordinasyon merkezi (KOR-1) Ofis görünümünden açılır.'),
+    ).toBeVisible();
+    expect(main).not.toHaveTextContent(/yeniden ele almaz/);
+  });
+
+  it('page: çalışma başlamadı reads as a job the runner refused', async () => {
+    const main = await open(fallen({ cause: 'not_started' }));
+    expect(stageLine()).toContain('Aşama: Sizden bekleniyor: çalışma başlamadı');
+    expect(
+      within(main).getByText(
+        'Ajanın çalışması başlatılamadı: ajan açık olduğu hâlde çalıştırıcı işi başlatmadı (ajanın kartı okunamadı, iş verildikten sonra talep değişti ya da çalıştırıcı işi o an alamadı).',
+      ),
+    ).toBeVisible();
+    // Opening an agent does not start this one: a person gives the work again.
+    expect(
+      within(main).getByText(
+        '"Yönlendirmeyi düzelt" ile işi bir ajana yeniden verin; yeni bir çalışma başlar. İş gerekmiyorsa talebi kapatabilirsiniz.',
+      ),
+    ).toBeVisible();
+    expect(main).not.toHaveTextContent(/Ofis görünümünden|kendiliğinden/);
+  });
+
+  it('page: permission open again and not restarted: the two sentences, with Yönlendirmeyi düzelt', async () => {
+    // The close stopped the unit agent's run; the permission was opened again and the work did
+    // not start (its agent was stopped at that moment, or the permission was opened outside the
+    // panel).
+    const main = await open(
+      fallen({ cause: 'ai_permission_interrupted', project: PROJECT_REF, agentsMayWork: true }),
+    );
+    expect(stageLine()).toContain('Aşama: Sizden bekleniyor: izin kapanınca durdu Sıra: sizde');
+    expect(
+      within(main).getByText(
+        'Yapay zekâ izni kapatıldığı için ajanın çalışması durduruldu. İzin yeniden açık, ama iş yeniden başlamadı.',
+      ),
+    ).toBeVisible();
+    expect(
+      within(main).getByText(
+        'Ajan kapalıysa Ofis görünümünden açıldığında iş kendiliğinden başlar. Ajan açıksa "Yönlendirmeyi düzelt" ile işi yeniden verin.',
+      ),
+    ).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Yönlendirmeyi düzelt' })).toBeVisible();
+    // The permission is open: nothing is held and nothing points to the project's switch.
+    expect(main).not.toHaveTextContent(/izni kapalı|Projeyi aç/);
+  });
+});

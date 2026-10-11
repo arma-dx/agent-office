@@ -1,10 +1,12 @@
 import {
   customerPermissionDetails,
   projectAiPermissionDetails,
+  type ProjectAiPermissionAnswer,
   type ProjectDetail,
 } from '@agent-office/shared';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useId, useRef, useState, type ReactNode } from 'react';
+import { toast } from 'sonner';
 import { ProjectTile } from '@/components/projects/project-tile';
 import { StatusBadge } from '@/components/status';
 import { StepUpDialog } from '@/components/step-up';
@@ -20,6 +22,7 @@ import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { ApiError, userMessage } from '@/lib/api';
 import { formatDay, formatFull } from '@/lib/dates';
+import { waitingState, waitingWorkQueryOptions } from '@/lib/office/query';
 import {
   agentsSentence,
   COLOR_NAME,
@@ -36,7 +39,7 @@ import {
   setProjectAiPermission,
 } from '@/lib/projects/query';
 import { useStoreProject } from '@/lib/projects/store';
-import { WAITING_WORK_IF_ANY, personName } from '@/lib/requests/labels';
+import { personName, restartedSentence, waitingWorkSentence } from '@/lib/requests/labels';
 import { approvalDeskKey } from '@/lib/requests/query';
 import { useCompany } from '@/lib/session';
 import { sidebarCountsKey, todayKey } from '@/lib/today/query';
@@ -48,6 +51,17 @@ const FIELD_NAME = 'text-ink-secondary';
 const SECTION = 'flex flex-col gap-2';
 const SECTION_HEADING = 'font-medium';
 const SWITCH_ROW = 'flex items-center gap-2';
+
+/**
+ * The answer of a change of the project's AI permission: the project, which the page keeps, and
+ * how many waiting requests the change started again, which is the answer's alone.
+ */
+function split({ restarted, ...project }: ProjectAiPermissionAnswer): {
+  project: ProjectDetail;
+  restarted: number;
+} {
+  return { project, restarted };
+}
 
 /** A change of a permission that waits for its confirmation. */
 type PermissionChange =
@@ -140,6 +154,12 @@ function PlainConfirmation({
  * its request for the customer that was asked, and never moves to one the founder did not look at.
  * For the project's permission the API then refuses as above; a contract permission is set for
  * the customer the confirmation names.
+ *
+ * Opening an AI permission starts the waiting requests again (8 October decision 49), each a
+ * paid run. The confirmation says how many will start before the passkey is asked for: the number
+ * is the database's, read when the confirmation opens, and the confirm button waits for it. A
+ * count that could not be read does not block the opening; the sentence then says what may start.
+ * Afterwards a toast says how many really started.
  */
 function Permissions({ project }: { project: ProjectDetail }) {
   const company = useCompany();
@@ -203,10 +223,35 @@ function Permissions({ project }: { project: ProjectDetail }) {
   const founderOfProject = project.actions.setAiPermission;
   const founderOfCustomer = project.actions.setCustomerPermissions;
 
+  // How many waiting requests the opening that is being confirmed would start. Read only while
+  // such a confirmation is open, and anew for each.
+  const projectWaiting = useQuery({
+    ...waitingWorkQueryOptions(company.companyId, { project: project.id }),
+    enabled: pending === 'project_on',
+  });
+  const customerWaiting = useQuery({
+    // The id is only read while the query is enabled; a confirmation without a customer asks none.
+    ...waitingWorkQueryOptions(company.companyId, { customer: confirmedId ?? project.id }),
+    enabled: pending === 'customer_ai_on' && confirmedId !== null,
+  });
+  const said = (restarted: number) => {
+    if (restarted > 0) toast.success(restartedSentence(restarted));
+  };
+
+  // The page says that the customer's contract still keeps agents out: opening the project's
+  // permission then starts nothing, and the confirmation says why. The count is 0 there although
+  // requests may wait (they wait for the contract too), so "no request waits" is not said; a
+  // number is said all the same when the database counts one (the page was older than the
+  // contract).
+  const contractKeepsOut = confirmed !== null && !confirmed.aiAllowed;
+  const counted = waitingState(projectWaiting);
+  const projectCount =
+    contractKeepsOut && !(typeof counted === 'number' && counted > 0) ? null : counted;
+
   let dialog: ReactNode = null;
   if (pending === 'project_on') {
     dialog = (
-      <StepUpDialog<ProjectDetail | 'project_changed'>
+      <StepUpDialog<ProjectAiPermissionAnswer | 'project_changed'>
         open
         onOpenChange={(open) => {
           if (!open) close();
@@ -236,7 +281,9 @@ function Permissions({ project }: { project: ProjectDetail }) {
               queryKey: projectKey(company.companyId, project.id),
             });
           } else {
-            store(result);
+            const { project: stored, restarted } = split(result);
+            store(stored);
+            said(restarted);
             afterAiChange();
           }
           close();
@@ -244,14 +291,21 @@ function Permissions({ project }: { project: ProjectDetail }) {
         onCloseAutoFocus={returnFocus}
         title={`${project.name} için yapay zekâ izni açılsın mı?`}
         description={
-          'İzin açılınca ajanlar bu projede çalışabilir ve projenin kayıtları yapay zekâ modeline gönderilebilir. Projenin müşterisi varsa izni yalnızca müşterinin sözleşmesi yapay zekâ kullanımına izin veriyorsa açın. İzin açıkken projenin müşterisi değiştirilemez.' +
-          // Opening starts the waiting work again (8 October decision 49), unless the
-          // customer's contract still keeps agents out: then nothing starts, and nothing is
-          // promised.
-          (confirmed && !confirmed.aiAllowed
-            ? ' Müşterinin sözleşme izni kapalı olduğu için ajanlar yine de çalışamaz.'
-            : ` ${WAITING_WORK_IF_ANY.project}`)
+          <>
+            İzin açılınca ajanlar bu projede çalışabilir ve projenin kayıtları yapay zekâ modeline
+            gönderilebilir. Projenin müşterisi varsa izni yalnızca müşterinin sözleşmesi yapay zekâ
+            kullanımına izin veriyorsa açın. İzin açıkken projenin müşterisi değiştirilemez.
+            {contractKeepsOut
+              ? ' Müşterinin sözleşme izni kapalı olduğu için ajanlar yine de çalışamaz.'
+              : null}
+            {projectCount === null ? null : (
+              <span role="status" className="mt-2 block">
+                {waitingWorkSentence('project', projectCount)}
+              </span>
+            )}
+          </>
         }
+        confirmBlocked={projectWaiting.isFetching}
         confirmLabel="İzni aç"
       />
     );
@@ -262,7 +316,11 @@ function Permissions({ project }: { project: ProjectDetail }) {
         description="Ajanlar bu projede artık çalışamaz: süren çalışmalar durdurulur, açık talepler bekler ve bekleyen sonuçlar izin açılana kadar onaylanamaz. İzni yeniden açmak passkey ister."
         confirmLabel="İzni kapat"
         run={async () => {
-          store(await setProjectAiPermission(company.companyId, project.id, { allowed: false }));
+          // A close starts nothing: only the project is kept.
+          store(
+            split(await setProjectAiPermission(company.companyId, project.id, { allowed: false }))
+              .project,
+          );
           afterAiChange();
         }}
         onClose={close}
@@ -283,10 +341,11 @@ function Permissions({ project }: { project: ProjectDetail }) {
           details: customerPermissionDetails({}),
         }}
         action={async (stepUp) => {
-          await setCustomerPermissions(company.companyId, confirmed.id, {
+          const { restarted } = await setCustomerPermissions(company.companyId, confirmed.id, {
             aiAllowed: true,
             stepUp,
           });
+          said(restarted);
           afterAiChange();
           await afterCustomerChange();
           return undefined;
@@ -294,7 +353,17 @@ function Permissions({ project }: { project: ProjectDetail }) {
         onSuccess={close}
         onCloseAutoFocus={returnFocus}
         title={`${confirmed.name} için yapay zekâ izni açılsın mı?`}
-        description={`Sözleşmenin yapay zekâ kullanımına izin verdiğini işaretliyorsunuz. Bu izin müşterinin bütün projeleri için geçerlidir; ajanlar yalnızca yapay zekâ izni açık projelerde çalışır. ${WAITING_WORK_IF_ANY.customer}`}
+        description={
+          <>
+            Sözleşmenin yapay zekâ kullanımına izin verdiğini işaretliyorsunuz. Bu izin müşterinin
+            bütün projeleri için geçerlidir; ajanlar yalnızca yapay zekâ izni açık projelerde
+            çalışır.
+            <span role="status" className="mt-2 block">
+              {waitingWorkSentence('customer', waitingState(customerWaiting))}
+            </span>
+          </>
+        }
+        confirmBlocked={customerWaiting.isFetching}
         confirmLabel="İzni aç"
       />
     );

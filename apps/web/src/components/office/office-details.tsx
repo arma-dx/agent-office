@@ -1,5 +1,6 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useId, useState, type Ref } from 'react';
+import { toast } from 'sonner';
 import { AgentWorkList } from '@/components/office/agent-work';
 import { StopEverywhere } from '@/components/office/stop-everywhere';
 import {
@@ -14,10 +15,11 @@ import { Button } from '@/components/ui/button';
 import { userMessage } from '@/lib/api';
 import { useReturnFocus } from '@/lib/focus';
 import { useOfficeDialog } from '@/lib/office/hold';
-import { officeQueryOptions } from '@/lib/office/query';
-import { WAITING_WORK_IF_ANY } from '@/lib/requests/labels';
-import { setAgentSwitch } from '@/lib/requests/query';
+import { officeQueryOptions, waitingState, waitingWorkQueryOptions } from '@/lib/office/query';
+import { restartedSentence, waitingWorkSentence } from '@/lib/requests/labels';
+import { approvalDeskKey, setAgentSwitch } from '@/lib/requests/query';
 import { useCompany } from '@/lib/session';
+import { sidebarCountsKey, todayKey } from '@/lib/today/query';
 import { busyProps } from '@/lib/utils';
 import {
   AGENT_NOT_READY_SENTENCE,
@@ -79,9 +81,13 @@ function UnitDetails({ unit, onSelect }: { unit: OfficeUnit; onSelect: (id: stri
 /**
  * The founder's switch for one agent in this company (CLAUDE.md: every agent has a stop switch per
  * company). Opening lets the agent take the requests routed to it and starts the work that waited
- * for it again (8 October decision 49; each is a paid run, and the confirmation says so before it
- * is confirmed); stopping keeps it from taking new work and ends its open run before the next
- * step. Nothing is shown as changed before the API has stored it.
+ * for it again (8 October decision 49). Each is a paid run, so the confirmation says how many
+ * requests will start before it can be confirmed: the number is the database's, read when the
+ * confirmation opens, and the confirm button waits for it. A count that could not be read does not
+ * block the opening; the sentence then says what may start. Afterwards a toast says how many
+ * really started, and everything that shows a request reads again. Stopping keeps the agent from
+ * taking new work and ends its open run before the next step; its confirmation reads no count.
+ * Nothing is shown as changed before the API has stored it.
  *
  * An agent whose card has no version to run with cannot be opened: the API refuses it. The panel
  * knows that from the office answer (`ready`), so it says so in a sentence and offers no button
@@ -106,9 +112,30 @@ function AgentSwitchButton({ agent }: { agent: OfficeAgent }) {
   // The office is not read again by itself under the open confirmation (lib/office/hold.ts).
   useOfficeDialog(confirming);
   const next = isOpen(agent.state) ? 'stopped' : 'enabled';
+  const opening = next === 'enabled';
+  const waiting = useQuery({
+    ...waitingWorkQueryOptions(company.companyId, { agent: agent.code }),
+    enabled: confirming && opening,
+  });
+  // The founder does not confirm before the number is on the screen.
+  const counting = opening && waiting.isFetching;
   const change = useMutation({
     mutationFn: () => setAgentSwitch(company.companyId, agent.code, next),
-    onSuccess: async () => {
+    onSuccess: async ({ restarted }) => {
+      if (opening) {
+        if (restarted > 0) toast.success(restartedSentence(restarted));
+        // The stage of the restarted requests has just changed: the lists, every request page,
+        // Bugün, the two counts of the sidebar and the approval desk read again.
+        for (const queryKey of [
+          ['company', company.companyId, 'requests'],
+          ['company', company.companyId, 'request'],
+          todayKey(company.companyId),
+          sidebarCountsKey(company.companyId),
+          approvalDeskKey(company.companyId),
+        ]) {
+          void queryClient.invalidateQueries({ queryKey });
+        }
+      }
       await queryClient.invalidateQueries({
         queryKey: officeQueryOptions(company.companyId).queryKey,
       });
@@ -147,10 +174,17 @@ function AgentSwitchButton({ agent }: { agent: OfficeAgent }) {
               : `${agent.code} bu şirkette açılsın mı?`}
           </AlertDialogTitle>
           <AlertDialogDescription>
-            {next === 'stopped'
-              ? 'Yeni iş almaz; süren çalışması bir sonraki adımdan önce durur.'
-              : `Açık ajan kendisine yönlendirilen talepleri çalıştırır ve yapay zekâ modelini kullanır. ${WAITING_WORK_IF_ANY.agent}`}
+            {opening
+              ? 'Açık ajan kendisine yönlendirilen talepleri çalıştırır ve yapay zekâ modelini kullanır.'
+              : 'Yeni iş almaz; süren çalışması bir sonraki adımdan önce durur.'}
           </AlertDialogDescription>
+          {/* A live region: a screen reader that has read the dialog hears the number when it
+              arrives. The number is in the sentence, never in a colour or a badge. */}
+          {opening ? (
+            <p role="status" className="text-sm">
+              {waitingWorkSentence('agent', waitingState(waiting))}
+            </p>
+          ) : null}
           {change.isError ? (
             <p role="alert" className="text-sm text-destructive">
               {userMessage(change.error)}
@@ -167,9 +201,9 @@ function AgentSwitchButton({ agent }: { agent: OfficeAgent }) {
             </AlertDialogCancel>
             <Button
               size="lg"
-              {...busyProps(change.isPending)}
+              {...busyProps(change.isPending || counting)}
               onClick={() => {
-                if (!change.isPending) change.mutate();
+                if (!change.isPending && !counting) change.mutate();
               }}
             >
               {label}

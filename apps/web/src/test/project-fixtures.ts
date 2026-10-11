@@ -250,9 +250,16 @@ export function projectRequestsRoute(projectId: string = PROJECT_ID): string {
   return `GET /requests?project=${projectId}`;
 }
 
+/** The key of the count an opening confirmation reads (GET /waiting-work with one scope). */
+export function waitingWorkRoute(
+  scope: { agent: string } | { project: string } | { customer: string },
+): string {
+  return `GET /waiting-work?${new URLSearchParams(scope).toString()}`;
+}
+
 /**
  * The read routes of the section, answering the fixtures; a test replaces what it is about. The
- * project has no request unless a test gives some.
+ * project has no request unless a test gives some, and no request waits for an opening.
  */
 export function projectHandlers(
   detail: ProjectDetail = projectDetail(),
@@ -263,6 +270,11 @@ export function projectHandlers(
     'GET /projects': () => json({ projects: [project()], truncated: false }),
     [`GET /projects/${detail.id}`]: () => json(detail),
     [projectRequestsRoute(detail.id)]: () => json({ requests: [], truncated: false }),
+    // The confirmation of an opening asks how many waiting requests it would start: none.
+    [waitingWorkRoute({ project: detail.id })]: () => json({ waiting: 0 }),
+    ...(detail.customer
+      ? { [waitingWorkRoute({ customer: detail.customer.id })]: () => json({ waiting: 0 }) }
+      : {}),
     'GET /projects/member-candidates': () => json({ people: CANDIDATES }),
     'GET /customers': () => json({ customers: CUSTOMERS }),
     ...extra,

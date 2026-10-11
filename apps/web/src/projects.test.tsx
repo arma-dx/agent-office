@@ -51,6 +51,7 @@ import {
   roleHandlers,
   roleRoute,
   sessionAs,
+  waitingWorkRoute,
   type MemberOfProject,
 } from './test/project-fixtures.ts';
 import {
@@ -1957,6 +1958,15 @@ describe('projects: permissions', () => {
       expect(screen.queryByRole('alertdialog')).toBeNull();
     });
   };
+  /**
+   * The line of an opening confirmation that says how many requests will start: a live region
+   * inside the description (the passkey dialog has a status line of its own for the ceremony).
+   */
+  const status = (dialog: HTMLElement): HTMLElement => {
+    const line = dialog.querySelector<HTMLElement>('span[role="status"]');
+    if (!line) throw new Error('No count line');
+    return line;
+  };
 
   beforeEach(() => {
     // The panel shows by itself in a wide window.
@@ -2064,10 +2074,12 @@ describe('projects: permissions', () => {
     const dialog = await screen.findByRole('alertdialog');
     expect(dialog).not.toHaveTextContent('ajanlar yine de çalışamaz');
     // Agents can work once it is open: the requests that waited start again, each a paid run,
-    // and the founder reads that before confirming (8 October decision 49).
-    expect(dialog).toHaveTextContent(
-      'İzin açıkken projenin müşterisi değiştirilemez. Bu projede bekleyen talep varsa izni açınca hemen yeniden başlar; her biri ücretli bir yapay zekâ çalışmasıdır.',
-    );
+    // and the founder reads how many before confirming (8 October decision 49). Here none waits.
+    await waitFor(() => {
+      expect(dialog).toHaveTextContent(
+        'İzin açıkken projenin müşterisi değiştirilemez.Bu projede bekleyen talep yok; izni açmak hiçbir çalışmayı başlatmaz.',
+      );
+    });
     await waitFor(() => {
       expect(stepUp.issued).toHaveLength(1);
     });
@@ -2202,7 +2214,10 @@ describe('projects: permissions', () => {
 
     // Confirming anew is for the customer the page now shows, with a new passkey prompt.
     api.handle(AI, () =>
-      json(projectDetail({ aiAllowed: true, agentsMayWork: true, customer: OTHER_CUSTOMER })),
+      json({
+        ...projectDetail({ aiAllowed: true, agentsMayWork: true, customer: OTHER_CUSTOMER }),
+        restarted: 0,
+      }),
     );
     await userEvent.click(aiSwitch());
     // The sentence goes when the founder acts on it.
@@ -2392,9 +2407,12 @@ describe('projects: permissions', () => {
     let dialog = await screen.findByRole('alertdialog', {
       name: 'Beta Lojistik için yapay zekâ izni açılsın mı?',
     });
-    expect(dialog).toHaveTextContent(
-      'Sözleşmenin yapay zekâ kullanımına izin verdiğini işaretliyorsunuz. Bu izin müşterinin bütün projeleri için geçerlidir; ajanlar yalnızca yapay zekâ izni açık projelerde çalışır. Bu müşterinin projelerinde bekleyen talep varsa izni açınca hemen yeniden başlar; her biri ücretli bir yapay zekâ çalışmasıdır.',
-    );
+    // What the permission is, and how many waiting requests opening it starts: here none.
+    await waitFor(() => {
+      expect(dialog).toHaveTextContent(
+        'Sözleşmenin yapay zekâ kullanımına izin verdiğini işaretliyorsunuz. Bu izin müşterinin bütün projeleri için geçerlidir; ajanlar yalnızca yapay zekâ izni açık projelerde çalışır.Bu müşterinin projelerinde bekleyen talep yok; izni açmak hiçbir çalışmayı başlatmaz.',
+      );
+    });
     await waitFor(() => {
       expect(stepUp.issued).toHaveLength(1);
     });
@@ -2505,6 +2523,196 @@ describe('projects: permissions', () => {
     expect(
       within(contractSection()).getByText('İzinleri yalnızca kurucu değiştirir.'),
     ).toBeVisible();
+  });
+
+  // Opening an AI permission starts the requests that waited for it (8 October decision 49), each
+  // a paid run. The confirmation says HOW MANY before the passkey can be asked for; the number is
+  // the database's.
+  it('AI permission: the opening confirmation of the project and of the customer says how many requests will start, and no passkey is asked for before the number is shown', async () => {
+    const stepUp = stepUpIssuer();
+    const PAID = 'her biri ücretli bir yapay zekâ çalışmasıdır.';
+    const toasts = () => screen.getByRole('region', { name: 'Anlık bildirimler' });
+    let customer = { ...CUSTOMER_OPEN };
+    let aiAllowed = false;
+    const detail = () =>
+      projectDetail({ aiAllowed, agentsMayWork: aiAllowed && customer.aiAllowed, customer });
+    let release: (response: Response) => void = () => undefined;
+    const pendingCount: Handler = () =>
+      new Promise<Response>((resolve) => {
+        release = resolve;
+      });
+    const PROJECT_COUNT = waitingWorkRoute({ project: PROJECT_ID });
+    const CUSTOMER_COUNT = waitingWorkRoute({ customer: CUSTOMER_ID });
+    const api = mockApi(
+      projectHandlers(detail(), {
+        'POST /step-up/options': stepUp.handler,
+        [`GET /projects/${PROJECT_ID}`]: () => json(detail()),
+        [PROJECT_COUNT]: pendingCount,
+        [CUSTOMER_COUNT]: pendingCount,
+        [AI]: (call) => {
+          aiAllowed = (call.body as { allowed: boolean }).allowed;
+          return json({ ...detail(), restarted: aiAllowed ? 2 : 0 });
+        },
+        [CONTRACT]: (call) => {
+          customer = { ...customer, ...(call.body as { aiAllowed?: boolean }) };
+          return json({ ...customer, restarted: customer.aiAllowed ? 5 : 0 });
+        },
+      }),
+    );
+    const { queryClient } = renderApp(PAGE);
+    await screen.findByRole('heading', { level: 2, name: 'Depo otomasyonu' });
+
+    // The project's permission.
+    await userEvent.click(aiSwitch());
+    let dialog = await screen.findByRole('alertdialog', {
+      name: 'Depo otomasyonu için yapay zekâ izni açılsın mı?',
+    });
+    expect(status(dialog)).toHaveTextContent('Bekleyen talepler sayılıyor.');
+    expect(api.callsTo(PROJECT_COUNT)).toHaveLength(1);
+    expect(api.callsTo(PROJECT_COUNT)[0]?.headers.get('x-company-id')).toBe(ARMADX.companyId);
+    // The passkey is ready and the number is not: the button waits, a press asks for no passkey
+    // and sends nothing.
+    await waitFor(() => {
+      expect(stepUp.issued).toHaveLength(1);
+    });
+    let confirm = within(dialog).getByRole('button', { name: 'İzni aç' });
+    expect(confirm).toHaveAttribute('aria-disabled', 'true');
+    await userEvent.click(confirm);
+    expect(startAuthentication).not.toHaveBeenCalled();
+    expect(api.callsTo(AI)).toEqual([]);
+    release(json({ waiting: 2 }));
+    await waitFor(() => {
+      expect(status(dialog).textContent).toBe(
+        `Bu projede 2 talep bekliyor. İzni açınca 2 talebin çalışması hemen yeniden başlar; ${PAID}`,
+      );
+    });
+    // What the permission is stays said above the number.
+    expect(dialog).toHaveTextContent('İzin açıkken projenin müşterisi değiştirilemez.');
+    await userEvent.click(await ready(confirm));
+    await closed();
+    expect(
+      await within(toasts()).findByText('Bekleyen 2 talebin çalışması yeniden başlatıldı.'),
+    ).toBeVisible();
+    // The count is the answer's: the project the page keeps does not carry it.
+    expect(queryClient.getQueryData(['company', ARMADX.companyId, 'project', PROJECT_ID])).toEqual(
+      detail(),
+    );
+    // Closing it again starts nothing and says nothing of the kind.
+    await userEvent.click(aiSwitch());
+    await userEvent.click(
+      within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'İzni kapat' }),
+    );
+    await closed();
+    expect(queryClient.getQueryData(['company', ARMADX.companyId, 'project', PROJECT_ID])).toEqual(
+      detail(),
+    );
+    expect(api.callsTo(PROJECT_COUNT)).toHaveLength(1);
+
+    // The customer's permission: first closed without a passkey and without a count, then
+    // opened with both.
+    const contract = () =>
+      within(contractSection()).getByRole('switch', {
+        name: 'Sözleşme yapay zekâ kullanımına izin veriyor',
+      });
+    await userEvent.click(contract());
+    await userEvent.click(
+      within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'İzni kapat' }),
+    );
+    await closed();
+    expect(api.callsTo(CUSTOMER_COUNT)).toEqual([]);
+    await waitFor(() => {
+      expect(contract()).not.toBeChecked();
+    });
+    vi.mocked(startAuthentication).mockClear();
+    await userEvent.click(contract());
+    dialog = await screen.findByRole('alertdialog', {
+      name: 'Beta Lojistik için yapay zekâ izni açılsın mı?',
+    });
+    expect(status(dialog)).toHaveTextContent('Bekleyen talepler sayılıyor.');
+    await waitFor(() => {
+      expect(stepUp.issued).toHaveLength(2);
+    });
+    confirm = within(dialog).getByRole('button', { name: 'İzni aç' });
+    expect(confirm).toHaveAttribute('aria-disabled', 'true');
+    await userEvent.click(confirm);
+    expect(startAuthentication).not.toHaveBeenCalled();
+    expect(api.callsTo(CONTRACT)).toHaveLength(1);
+    release(json({ waiting: 5 }));
+    await waitFor(() => {
+      expect(status(dialog).textContent).toBe(
+        `Bu müşterinin projelerinde 5 talep bekliyor. İzni açınca 5 talebin çalışması hemen yeniden başlar; ${PAID}`,
+      );
+    });
+    await userEvent.click(await ready(confirm));
+    await closed();
+    expect(
+      await within(toasts()).findByText('Bekleyen 5 talebin çalışması yeniden başlatıldı.'),
+    ).toBeVisible();
+    expect(api.callsTo(CUSTOMER_COUNT)).toHaveLength(1);
+    expect(api.unexpected).toEqual([]);
+  });
+
+  it('AI permission: a count that could not be read is said and does not block the opening; while the contract keeps agents out no count is promised, and with nothing restarted no toast', async () => {
+    const stepUp = stepUpIssuer();
+    const toasts = () => screen.getByRole('region', { name: 'Anlık bildirimler' });
+    const PROJECT_COUNT = waitingWorkRoute({ project: PROJECT_ID });
+    // The count fails for good: the confirmation says so and what may start.
+    mockApi(
+      projectHandlers(projectDetail({ customer: null }), {
+        'POST /step-up/options': stepUp.handler,
+        [PROJECT_COUNT]: () => apiError(500, 'internal_error', 'Beklenmeyen bir hata oluştu.'),
+        [AI]: () =>
+          json({
+            ...projectDetail({ customer: null, aiAllowed: true, agentsMayWork: true }),
+            restarted: 0,
+          }),
+      }),
+    );
+    renderApp(PAGE);
+    await screen.findByRole('heading', { level: 2, name: 'Depo otomasyonu' });
+    await userEvent.click(aiSwitch());
+    let dialog = await screen.findByRole('alertdialog');
+    await waitFor(() => {
+      expect(status(dialog).textContent).toBe(
+        'Bekleyen talepler sayılamadı. Bu projede bekleyen talep varsa izni açınca hemen yeniden başlar; her biri ücretli bir yapay zekâ çalışmasıdır.',
+      );
+    });
+    await userEvent.click(await ready(within(dialog).getByRole('button', { name: 'İzni aç' })));
+    await closed();
+    expect(aiSwitch()).toBeChecked();
+    // Nothing started: nothing is announced.
+    expect(toasts()).not.toHaveTextContent(/yeniden başlatıldı/);
+    cleanup();
+
+    // The customer's contract keeps agents out (the fixture's project): the opening starts
+    // nothing. The database counts 0 although requests may wait, so "no request waits" is not
+    // said; the sentence about the contract says why nothing starts.
+    const api = mockApi(
+      projectHandlers(projectDetail(), {
+        'POST /step-up/options': stepUpIssuer().handler,
+        [PROJECT_COUNT]: () => json({ waiting: 0 }),
+      }),
+    );
+    renderApp(PAGE);
+    await screen.findByRole('heading', { level: 2, name: 'Depo otomasyonu' });
+    await userEvent.click(aiSwitch());
+    dialog = await screen.findByRole('alertdialog');
+    await ready(within(dialog).getByRole('button', { name: 'İzni aç' }));
+    expect(api.callsTo(PROJECT_COUNT)).toHaveLength(1);
+    expect(dialog).toHaveTextContent('ajanlar yine de çalışamaz');
+    expect(dialog).not.toHaveTextContent(/bekleyen|sayıl/i);
+    expect(dialog.querySelector('span[role="status"]')).toBeNull();
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Vazgeç' }));
+    await closed();
+
+    // The page was older than the contract and the database counts requests that will start:
+    // the number is said, whatever the page believed.
+    api.handle(PROJECT_COUNT, () => json({ waiting: 1 }));
+    await userEvent.click(aiSwitch());
+    dialog = await screen.findByRole('alertdialog');
+    await waitFor(() => {
+      expect(dialog).toHaveTextContent('Bu projede 1 talep bekliyor.');
+    });
   });
 
   it('permissions: closing says what happens to the work under way, and the requests are read again afterwards', async () => {

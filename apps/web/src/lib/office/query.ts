@@ -1,9 +1,12 @@
 import {
   agentStopIfOpenResponseSchema,
   officeResponseSchema,
+  waitingWorkQuerySchema,
+  waitingWorkResponseSchema,
   type AgentStopIfOpenResponse,
   type CompanyAgentStatus,
   type OfficeResponse,
+  type WaitingWorkQuery,
 } from '@agent-office/shared';
 import { queryOptions } from '@tanstack/react-query';
 import { apiRequest } from '../api.ts';
@@ -55,6 +58,44 @@ export function agentSwitchQueryOptions(companyId: string, agentCode: string) {
     retry: false,
     refetchOnWindowFocus: false,
   });
+}
+
+/**
+ * How many waiting requests an opening would start (8 October decision 49): of an agent, of a
+ * project's AI permission or of a customer's. The database counts by the rule of the restart
+ * itself; the panel never counts. Read anew for every confirmation and never kept: the number is
+ * shown to the person who is about to start that many paid runs. The address carries an agent
+ * code or an id only, never a name or a text.
+ */
+export function waitingWorkQueryOptions(companyId: string, scope: WaitingWorkQuery) {
+  return queryOptions({
+    queryKey: ['company', companyId, 'waiting-work', scope] as const,
+    queryFn: ({ signal }): Promise<number> =>
+      apiRequest(
+        `/waiting-work?${new URLSearchParams(waitingWorkQuerySchema.parse(scope)).toString()}`,
+        { schema: waitingWorkResponseSchema, companyId, signal },
+      ).then((answer) => answer.waiting),
+    staleTime: 0,
+    gcTime: 0,
+    retry: false,
+    refetchOnWindowFocus: false,
+  });
+}
+
+/**
+ * What the confirmation of an opening says about the count: on its way, the number, or that it
+ * could not be read (which does not block the opening; the sentence then says what may start).
+ * "On its way" is every read, also the second one of a page that stayed open: the number of the
+ * confirmation before is never shown as the number of this one. A confirm button waits on
+ * `isFetching` for the same reason.
+ */
+export function waitingState(count: {
+  isFetching: boolean;
+  isError: boolean;
+  data: number | undefined;
+}): number | 'counting' | 'unknown' {
+  if (count.isFetching) return 'counting';
+  return count.isError || count.data === undefined ? 'unknown' : count.data;
 }
 
 /**

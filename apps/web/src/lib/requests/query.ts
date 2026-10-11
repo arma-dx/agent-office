@@ -1,4 +1,5 @@
 import {
+  agentOpenResponseSchema,
   approvalDeskSchema,
   officeAgentSchema,
   requestDetailSchema,
@@ -6,12 +7,12 @@ import {
   requestListSchema,
   routingOptionsSchema,
   type AcceptanceDecision,
+  type AgentOpenResponse,
   type ApprovalDecision,
   type ApprovalDesk,
   type CorrectRouting,
   type CreateRequest,
   type CreateRequestComment,
-  type OfficeAgent,
   type RequestDetail,
   type RequestIntake,
   type RequestList,
@@ -224,16 +225,25 @@ export function decideAcceptance(
   });
 }
 
-/** The founder opens an agent for the company or stops it. */
+/**
+ * The founder opens an agent for the company or stops it. An opening answers with the number of
+ * waiting requests it started again (8 October decision 49); a stop starts nothing, and its
+ * answer is given the same shape with 0.
+ */
 export function setAgentSwitch(
   companyId: string,
   agentCode: string,
   status: 'enabled' | 'stopped',
-): Promise<OfficeAgent> {
+): Promise<AgentOpenResponse> {
+  const request = { method: 'PUT', body: { status }, companyId } as const;
+  if (status === 'enabled') {
+    return apiRequest(`/agents/${agentCode}/switch`, {
+      ...request,
+      schema: agentOpenResponseSchema,
+    });
+  }
   return apiRequest(`/agents/${agentCode}/switch`, {
-    method: 'PUT',
-    body: { status },
+    ...request,
     schema: officeAgentSchema,
-    companyId,
-  });
+  }).then((agent) => ({ ...agent, restarted: 0 }));
 }

@@ -248,8 +248,9 @@ const WAITING_WHERE: Record<OpeningKind, string> = {
 };
 
 /**
- * What an opening starts when nobody counted: said in the confirmation of the opening before the
- * founder confirms, because every restarted request is a paid run.
+ * What an opening may start, without a number: the second half of the sentence for a count that
+ * could not be read. Every restarted request is a paid run, and the confirmation says so before
+ * the founder confirms.
  */
 export const WAITING_WORK_IF_ANY: Record<OpeningKind, string> = {
   agent:
@@ -284,6 +285,15 @@ export function waitingWorkSentence(
   }
   const count = String(waiting);
   return `${where} ${count} talep bekliyor. ${kind === 'agent' ? 'Ajanı' : 'İzni'} açınca ${count} talebin çalışması hemen yeniden başlar; her biri ücretli bir yapay zekâ çalışmasıdır.`;
+}
+
+/**
+ * What the toast says after an opening that started work again: the number the API answered, which
+ * can differ from the number the confirmation showed (a request was routed, closed or stopped in
+ * the seconds between). Said only when something started.
+ */
+export function restartedSentence(count: number): string {
+  return `Bekleyen ${String(count)} talebin çalışması yeniden başlatıldı.`;
 }
 
 /** Why the form does not take a request now. */
