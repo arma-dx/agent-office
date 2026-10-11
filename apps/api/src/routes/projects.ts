@@ -6,6 +6,7 @@ import {
   insertProject,
   listCustomers,
   listMemberCandidates,
+  listProjectApprovals,
   listProjectMembers,
   listProjectRuns,
   listProjects,
@@ -15,6 +16,7 @@ import {
   readCompanyKind,
   readCustomer,
   readProject,
+  readerSeesUndecided,
   removeProjectMember,
   removeProjectMilestone,
   setCustomerPermissions,
@@ -28,6 +30,7 @@ import {
   type ProjectRunTotalsRow,
 } from '@agent-office/db';
 import {
+  PROJECT_APPROVAL_LIST_LIMIT,
   PROJECT_LIST_LIMIT,
   PROJECT_RUN_LIST_LIMIT,
   createMilestoneSchema,
@@ -43,6 +46,7 @@ import {
   projectAiPermissionAnswerSchema,
   projectAiPermissionDetails,
   projectAiPermissionSchema,
+  projectApprovalsSchema,
   projectDetailSchema,
   projectListSchema,
   projectMemberCandidatesSchema,
@@ -57,6 +61,7 @@ import {
   type CustomerPermissionsAnswer,
   type ProjectActor,
   type ProjectAiPermissionAnswer,
+  type ProjectApprovals,
   type ProjectDetail,
   type ProjectList,
   type Milestone,
@@ -81,8 +86,8 @@ import type { RouteDeps } from '../services.ts';
 
 /**
  * The Projects section (8 October decisions 11 and 14 to 22), step 1, the owner and the
- * managers of a project (decision 44), and of step 3 (decision 17) the budget, the milestones
- * and the agent runs of a project with their cost.
+ * managers of a project (decision 44), and of step 3 (decision 17) the budget, the milestones,
+ * the agent runs of a project with their cost and the results of its requests.
  *
  *   GET   /api/projects                    the projects the person may read, open ones first
  *   POST  /api/projects                    a founder or an employee opens a project and is its
@@ -105,6 +110,9 @@ import type { RouteDeps } from '../services.ts';
  *   GET    /api/projects/:projectId/runs              the newest agent runs of the project and
  *                                                     totals over all of them; tokens and cost
  *                                                     for the founder only
+ *   GET    /api/projects/:projectId/approvals         the results of the project's requests, as
+ *                                                     they wait or were decided; no decision is
+ *                                                     made here
  *   GET   /api/customers                   the customers of the company to choose from, by name
  *   PATCH /api/customers/:customerId/permissions      the founder sets the contract permissions
  *                                                     of a customer (the AI one with a passkey)
@@ -1032,6 +1040,50 @@ export function registerProjectRoutes(
         truncated: rows.length > PROJECT_RUN_LIST_LIMIT,
         totals: { runCount: totals.run_count, usage: usageOf(totals) },
         serverTime: new Date().toISOString(),
+      });
+    }),
+  );
+
+  /**
+   * The results of the requests of a project (decision 17): the ones that wait for the unit's
+   * approver first, then what was decided, the newest first. Read through the row policy of
+   * approvals, which is the rule of docs/SONRA.md V-c: a result that waits, was sent back or was
+   * rejected is a row only for those who hold the approval right; an approved one for every
+   * reader of the project. `seesUndecided` tells the page which of the two lists it got. A row
+   * is the request's title and what became of the result; nothing the agent wrote and nothing a
+   * person wrote when deciding is in it, and no decision is made through this list.
+   */
+  app.get('/api/projects/:projectId/approvals', async (request, reply): Promise<ProjectApprovals> =>
+    runner.withCompany(request, reply, INSIDERS, async (context) => {
+      const projectId = projectIdOf(request);
+      const { client } = context;
+      await projectOf(context, projectId);
+      const rows = await listProjectApprovals(client, projectId, PROJECT_APPROVAL_LIST_LIMIT + 1);
+      const shown = rows.slice(0, PROJECT_APPROVAL_LIST_LIMIT);
+      const names = await peopleNames(
+        client,
+        shown.flatMap((row) => (row.decided_by_user_id !== null ? [row.decided_by_user_id] : [])),
+      );
+      return projectApprovalsSchema.parse({
+        approvals: shown.map((row) => ({
+          id: row.id,
+          request: { id: row.task_id, title: row.task_title },
+          agent: { code: row.agent_code, name: row.agent_name },
+          // It waited when the request changed (a stop, a new routing): closed, never decided.
+          status: row.status === 'pending' && row.invalidated_at !== null ? 'closed' : row.status,
+          attempt: row.attempt,
+          createdAt: row.created_at.toISOString(),
+          decidedAt: row.decided_at?.toISOString() ?? null,
+          decidedBy:
+            row.decided_by_user_id !== null
+              ? {
+                  userId: row.decided_by_user_id,
+                  name: names.get(row.decided_by_user_id) ?? null,
+                }
+              : null,
+        })),
+        truncated: rows.length > PROJECT_APPROVAL_LIST_LIMIT,
+        seesUndecided: await readerSeesUndecided(client),
       });
     }),
   );

@@ -2,11 +2,13 @@ import { z } from 'zod';
 import { agentCodeSchema } from './cards.ts';
 import { usdSchema } from './projects.ts';
 import { runStatusSchema } from './requests.ts';
+import { taskPersonSchema } from './tasks.ts';
 
 /**
  * The sections of the project page that only read (8 October decision 17): the agent runs of a
- * project with their cost. What changes the project itself (its fields, its members, the budget,
- * the milestones) is in projects.ts.
+ * project with their cost, and the results of its requests as the unit's approver decided them.
+ * What changes the project itself (its fields, its members, the budget, the milestones) is in
+ * projects.ts.
  *
  * Nothing an agent wrote is in any answer here (docs/SONRA.md V-c): a row carries the title of
  * its request, which a person wrote, and times, codes and numbers.
@@ -60,3 +62,34 @@ export const projectRunsSchema = z.object({
   serverTime: instantSchema,
 });
 export type ProjectRuns = z.output<typeof projectRunsSchema>;
+
+/**
+ * One result of a request of the project, as the unit's approver decided it or as it waits. For
+ * a reader the row policy of approvals gives the row to (docs/SONRA.md V-c): a waiting, sent back
+ * or rejected result only to those who hold the approval right. Nothing the agent wrote: the
+ * request's title stands for the result. `closed`: it waited and the request changed before
+ * anybody decided.
+ */
+export const projectApprovalSchema = z.object({
+  id: z.uuid(),
+  request: requestRefSchema,
+  agent: agentRefSchema,
+  status: z.enum(['pending', 'approved', 'changes_requested', 'rejected', 'closed']),
+  attempt: z.number().int().min(1).max(2),
+  createdAt: instantSchema,
+  decidedAt: instantSchema.nullable(),
+  decidedBy: taskPersonSchema.nullable(),
+});
+export type ProjectApproval = z.output<typeof projectApprovalSchema>;
+
+export const PROJECT_APPROVAL_LIST_LIMIT = 200;
+
+/** GET /api/projects/:projectId/approvals: waiting ones first, then the newest decisions. */
+export const projectApprovalsSchema = z.object({
+  approvals: z.array(projectApprovalSchema),
+  truncated: z.boolean(),
+  // False: the reader holds no approval right, so results that wait or were refused are not in
+  // the list; the page says so.
+  seesUndecided: z.boolean(),
+});
+export type ProjectApprovals = z.output<typeof projectApprovalsSchema>;

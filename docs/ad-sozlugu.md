@@ -513,6 +513,15 @@ Ajan çalışmaları ve maliyeti (8 Ekim karar 17):
 - Veritabanı ifadeleri: `listProjectRuns` (satır türü `ProjectRunRow`; kurucu olmayan okur için beş kullanım sütunu boş gelir), `projectRunTotals` (satır türü `ProjectRunTotalsRow`; `run_count` herkese, toplamlar yalnızca kurucuya).
 - Panel adresi: proje sayfasında `?tab=runs` ("Çalışmalar" sekmesi).
 
+Projenin onayları (8 Ekim karar 17):
+
+- "Projenin onayları" → `approvals` (o projenin taleplerinde birim onayına sunulan sonuçlar; karar bu listede verilmez).
+- Uç nokta: `GET /api/projects/:projectId/approvals` (bekleyen sonuçlar önce, sonra karar verilenler, en yenisi üstte; en çok 200). Göç yok: liste `approvals` tablosunun var olan satır kuralıyla okunur; bekleyen, düzeltme istenen ve reddedilen sonucu yalnızca onay hakkı olan görür.
+- API yanıt alanları: `approvals` (her sonuçta `id`, `request`: talebin kimliği ve başlığı, `agent`, `status`, `attempt`, `createdAt`, `decidedAt`, `decidedBy`), `truncated`, `seesUndecided` (okuyan kişinin onay hakkı var: bekleyen ve onaylanmayan sonuçları da görür). Sonucun başlığı, özeti, gerekçesi, risk notu ve içeriği hiç gitmez; karar verenin notu da gitmez.
+- Sonuç durumu (bu listede): `pending` (onay bekliyor), `approved`, `changes_requested`, `rejected`, `closed` (beklerken talep değişti; karar verilmeden kapandı).
+- Şemalar: `projectApprovalSchema`, `projectApprovalsSchema` (`packages/shared/src/project-sections.ts`). Sabit: `PROJECT_APPROVAL_LIST_LIMIT` (200).
+- Veritabanı ifadeleri: `listProjectApprovals` (satır türü `ProjectApprovalRow`), `readerSeesUndecided` (okuyan kişinin şirkette onay hakkı var mı; `office.can_approve`).
+
 ## Notlar
 
 - Hata metinleri (veritabanı tetikleyicilerinin `raise exception` metinleri, geliştiriciye dönük iletiler) İngilizcedir. Kullanıcıya gösterilecek Türkçe metni API üretir; API hata metnine göre değil SQLSTATE koduna göre dallanır.

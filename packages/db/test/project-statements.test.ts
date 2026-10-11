@@ -9,6 +9,7 @@ import {
   insertProject,
   listCustomers,
   listMemberCandidates,
+  listProjectApprovals,
   listProjectMembers,
   listProjectRuns,
   listProjects,
@@ -17,6 +18,7 @@ import {
   readCompanyKind,
   readCustomer,
   readProject,
+  readerSeesUndecided,
   removeProjectMember,
   removeProjectMilestone,
   setCustomerPermissions,
@@ -1193,6 +1195,378 @@ describe.skipIf(noDatabase)('statements of the runs of a project', () => {
           'run_count',
         ]);
       }
+    });
+  });
+});
+
+// Step 3 of the Projects section (8 October decision 17): the results of a project's requests, as
+// the unit's approver decided them or as they wait. Who reads which result is the row policy of
+// approvals (docs/SONRA.md V-c); these tests show that the statement keeps to it and carries
+// nothing an agent wrote. One privileged transaction per case, as for the runs above.
+describe.skipIf(noDatabase)('statements of the approvals of a project', () => {
+  afterAll(closePools);
+
+  const MARKER = 'WHAT-THE-AGENT-WROTE';
+  const OPEN = `insert into office.tasks (company_id, project_id, kind, title, description)
+    values (office.ctx_company_id(), $1, 'request', $2, 'What is wanted') returning id`;
+  const TO_KOR = JSON.stringify([{ unit: 'KOR', agent: 'KOR-1', reason: 'By a person' }]);
+  const ADD_MEMBER =
+    'insert into office.project_members (company_id, project_id, user_id) values ($1, $2, $3)';
+  // An employee of Arma DX who is a member of no project and holds no approval right.
+  // (approverA, of the file's head, holds the right and is a member of no project either.)
+  const sharedA: ContextInput = { companyId: ids.arma, userId: ids.sharedEmployee };
+
+  async function asPerson(tx: Tx, context: ContextInput): Promise<void> {
+    await asRole(tx, 'app');
+    await tx.setContext(context);
+  }
+
+  /**
+   * A request of the employee in that project (or in none), given to KOR-1 by the founder, with a
+   * result KOR-1 submitted from a run in the request's own context. The result carries an
+   * agent's words in every field that can hold them.
+   */
+  async function submitted(
+    tx: Tx,
+    title: string,
+    project: string | null = ids.projectA,
+  ): Promise<{ task: string; approval: string }> {
+    await asPerson(tx, employeeA);
+    const [task] = await tx.rows<{ id: string }>(OPEN, [project, title]);
+    if (!task) {
+      throw new Error('The request was not written');
+    }
+    await tx.setContext(founderA);
+    await tx.exec('select office.correct_routing($1, $2::jsonb)', [task.id, TO_KOR]);
+    await asRole(tx, 'worker');
+    await tx.setContext({ ...employeeA, agentCode: 'KOR-1', projectId: project });
+    const [run] = await tx.rows<{ id: string }>(
+      `insert into office.runs
+         (company_id, task_id, agent_code, card_version_id, trigger_type, model)
+       values (office.ctx_company_id(), $1, 'KOR-1', $2, 'handoff', 'test-model') returning id`,
+      [task.id, ids.cardKor],
+    );
+    const [approval] = await tx.rows<{ id: string }>(
+      `insert into office.approvals (company_id, task_id, run_id, agent_code, title, summary,
+         agent_rationale, risk_note, payload, basis_type, basis_id, basis_version, involves_money,
+         goes_external)
+       values (office.ctx_company_id(), $1, $2, 'KOR-1', $3, $3, $3, $3, $4::jsonb, 'task', $1,
+         (select version from office.tasks where id = $1), false, false) returning id`,
+      [task.id, run?.id, MARKER, JSON.stringify({ text: MARKER })],
+    );
+    await tx.exec(
+      `update office.runs set status = 'completed', finished_at = now() where id = $1`,
+      [run?.id],
+    );
+    if (!approval) {
+      throw new Error('The result was not written');
+    }
+    return { task: task.id, approval: approval.id };
+  }
+
+  /** The founder decides a result. */
+  async function decide(tx: Tx, approval: string, status: string): Promise<void> {
+    await asPerson(tx, founderA);
+    expect(
+      await tx.exec(
+        status === 'approved'
+          ? `update office.approvals set status = 'approved' where id = $1`
+          : `update office.approvals set status = '${status}', rejection_reason = 'other',
+               decision_reason = 'Not this' where id = $1`,
+        [approval],
+      ),
+    ).toBe(1);
+  }
+
+  /** The approval right holder approverA becomes a member of projectA. */
+  async function approverJoins(tx: Tx): Promise<void> {
+    await asPerson(tx, founderA);
+    await tx.exec(ADD_MEMBER, [ids.arma, ids.projectA, ids.approverA]);
+  }
+
+  /** Moves the moment of a decision (or of a submission) into the past: see startedAgo above. */
+  async function momentAgo(
+    tx: Tx,
+    approval: string,
+    column: 'decided_at' | 'created_at' | 'invalidated_at',
+    minutes: number,
+  ): Promise<void> {
+    await asRole(tx, null);
+    await tx.exec(`set local session_replication_role = 'replica'`);
+    await tx.exec(
+      `update office.approvals set ${column} = now() - make_interval(mins => $2) where id = $1`,
+      [approval, minutes],
+    );
+    await tx.exec(`set local session_replication_role = 'origin'`);
+  }
+
+  async function listedBy(tx: Tx, context: ContextInput): Promise<string[]> {
+    await asPerson(tx, context);
+    return (await listProjectApprovals(tx.client, ids.projectA, 100)).map((row) => row.id);
+  }
+
+  const STRANGERS: ContextInput[] = [
+    // An employee who is no member; the same with the approval right.
+    sharedA,
+    approverA,
+    externalA,
+    founderP,
+    employeeP,
+  ];
+
+  it('listProjectApprovals: a waiting result is a row for the founder and for a member who holds the approval right, and for no other member', async () => {
+    await inAdminTransaction(async (tx) => {
+      const { task, approval } = await submitted(tx, 'A waiting result');
+      await asPerson(tx, founderA);
+      expect(await listProjectApprovals(tx.client, ids.projectA, 100)).toEqual([
+        {
+          id: approval,
+          task_id: task,
+          task_title: 'A waiting result',
+          agent_code: 'KOR-1',
+          agent_name: 'Ofis Koordinatörü',
+          status: 'pending',
+          invalidated_at: null,
+          attempt: 1,
+          created_at: expect.any(Date) as Date,
+          decided_at: null,
+          decided_by_user_id: null,
+        },
+      ]);
+      // employeeA is the requester and a plain member, without the approval right: no row.
+      expect(await listedBy(tx, employeeA)).toEqual([]);
+      // approverA holds the right and is no member of the project: no row either.
+      for (const context of STRANGERS) {
+        expect(await listedBy(tx, context), JSON.stringify(context)).toEqual([]);
+      }
+      // As a member of the project the same person reads the waiting result.
+      await approverJoins(tx);
+      expect(await listedBy(tx, approverA)).toEqual([approval]);
+      expect(await listedBy(tx, employeeA)).toEqual([]);
+    });
+  });
+
+  it('listProjectApprovals: an approved result is a row for every reader of the project', async () => {
+    await inAdminTransaction(async (tx) => {
+      const { task, approval } = await submitted(tx, 'An approved result');
+      await decide(tx, approval, 'approved');
+      await approverJoins(tx);
+      for (const context of [founderA, employeeA, approverA]) {
+        await asPerson(tx, context);
+        expect(
+          await listProjectApprovals(tx.client, ids.projectA, 100),
+          context.userId ?? '',
+        ).toMatchObject([
+          {
+            id: approval,
+            task_id: task,
+            task_title: 'An approved result',
+            status: 'approved',
+            invalidated_at: null,
+            decided_by_user_id: ids.founder,
+          },
+        ]);
+      }
+      // Approved or not: nobody who cannot read the project reads its results.
+      for (const context of [sharedA, externalA, founderP, employeeP, ...NOBODY]) {
+        expect(await listedBy(tx, context), JSON.stringify(context)).toEqual([]);
+      }
+    });
+  });
+
+  it('listProjectApprovals: a rejected and a sent back result stay hidden from a member without the right', async () => {
+    await inAdminTransaction(async (tx) => {
+      const rejected = await submitted(tx, 'A rejected result');
+      const sentBack = await submitted(tx, 'A result that was sent back');
+      // A result that waited when a person routed the request again: closed without a decision.
+      const closed = await submitted(tx, 'A result that was closed');
+      await decide(tx, rejected.approval, 'rejected');
+      await decide(tx, sentBack.approval, 'changes_requested');
+      await asPerson(tx, founderA);
+      await tx.exec('select office.correct_routing($1, $2::jsonb)', [closed.task, TO_KOR]);
+      await approverJoins(tx);
+
+      for (const context of [founderA, approverA]) {
+        await asPerson(tx, context);
+        const rows = await listProjectApprovals(tx.client, ids.projectA, 100);
+        const byId = new Map(rows.map((row) => [row.id, row]));
+        expect(rows, context.userId ?? '').toHaveLength(3);
+        expect(byId.get(rejected.approval)).toMatchObject({
+          status: 'rejected',
+          decided_by_user_id: ids.founder,
+        });
+        expect(byId.get(sentBack.approval)).toMatchObject({
+          status: 'changes_requested',
+          decided_by_user_id: ids.founder,
+        });
+        // Still "pending" in the record, with the moment it was closed.
+        expect(byId.get(closed.approval)).toMatchObject({
+          status: 'pending',
+          decided_at: null,
+          decided_by_user_id: null,
+        });
+        expect(byId.get(closed.approval)?.invalidated_at).toBeInstanceOf(Date);
+      }
+      // The requester, a plain member without the right, reads none of the three.
+      expect(await listedBy(tx, employeeA)).toEqual([]);
+      for (const context of STRANGERS.filter((stranger) => stranger !== approverA)) {
+        expect(await listedBy(tx, context), JSON.stringify(context)).toEqual([]);
+      }
+    });
+  });
+
+  it('listProjectApprovals: waiting ones first, then the newest decision; only results of requests of that project', async () => {
+    await inAdminTransaction(async (tx) => {
+      const older = await submitted(tx, 'Decided long ago');
+      const newer = await submitted(tx, 'Decided just now');
+      const closed = await submitted(tx, 'Closed in between');
+      const waitsLong = await submitted(tx, 'Waits since long');
+      const waits = await submitted(tx, 'Waits since now');
+      // Not of this project: a result of a request without a project.
+      const outside = await submitted(tx, 'Without a project', null);
+      await decide(tx, older.approval, 'approved');
+      await decide(tx, newer.approval, 'approved');
+      await asPerson(tx, founderA);
+      await tx.exec('select office.correct_routing($1, $2::jsonb)', [closed.task, TO_KOR]);
+      await momentAgo(tx, older.approval, 'decided_at', 60);
+      await momentAgo(tx, closed.approval, 'invalidated_at', 30);
+      await momentAgo(tx, newer.approval, 'decided_at', 5);
+      await momentAgo(tx, waitsLong.approval, 'created_at', 600);
+      await momentAgo(tx, waits.approval, 'created_at', 1);
+
+      const all = await listedBy(tx, founderA);
+      // The two that wait come first (the one submitted last on top), then what was decided or
+      // closed, the latest first: a result that waits for days still stands above them.
+      expect(all).toEqual([
+        waits.approval,
+        waitsLong.approval,
+        newer.approval,
+        closed.approval,
+        older.approval,
+      ]);
+      expect(all).not.toContain(outside.approval);
+      // The fixtures' own approvals: one on a task between people in this project (no result of
+      // a request), one result of a request without a project.
+      expect(all).not.toContain(ids.approvalAProject);
+      expect(all).not.toContain(ids.requestApprovalA);
+      // Cut at the limit, from the top.
+      expect((await listProjectApprovals(tx.client, ids.projectA, 3)).map((row) => row.id)).toEqual(
+        [waits.approval, waitsLong.approval, newer.approval],
+      );
+      expect(await listProjectApprovals(tx.client, ids.projectANoAi, 100)).toEqual([]);
+      expect(await listProjectApprovals(tx.client, ids.projectP, 100)).toEqual([]);
+      expect(await listProjectApprovals(tx.client, randomUUID(), 100)).toEqual([]);
+    });
+  });
+
+  it("listProjectApprovals: no column of the row is the approval's title, summary, reasoning, risk note or payload", async () => {
+    await inAdminTransaction(async (tx) => {
+      const { approval } = await submitted(tx, 'A request');
+      // The words are on the approval row ...
+      await asRole(tx, null);
+      expect(
+        await tx.rows(
+          `select title, summary, agent_rationale, risk_note, payload from office.approvals
+           where id = $1`,
+          [approval],
+        ),
+      ).toEqual([
+        {
+          title: MARKER,
+          summary: MARKER,
+          agent_rationale: MARKER,
+          risk_note: MARKER,
+          payload: { text: MARKER },
+        },
+      ]);
+      // ... and in no row of the list, waiting or approved, for the founder either.
+      for (const step of ['waiting', 'approved']) {
+        if (step === 'approved') {
+          await decide(tx, approval, 'approved');
+        }
+        for (const context of step === 'approved' ? [founderA, employeeA] : [founderA]) {
+          await asPerson(tx, context);
+          const rows = await listProjectApprovals(tx.client, ids.projectA, 100);
+          expect(rows).toHaveLength(1);
+          for (const row of rows) {
+            expect(Object.keys(row).sort()).toEqual([
+              'agent_code',
+              'agent_name',
+              'attempt',
+              'created_at',
+              'decided_at',
+              'decided_by_user_id',
+              'id',
+              'invalidated_at',
+              'status',
+              'task_id',
+              'task_title',
+            ]);
+          }
+          expect(JSON.stringify(rows)).not.toContain(MARKER);
+          // Nor a person's words about the result.
+          expect(JSON.stringify(rows)).not.toContain('Not this');
+        }
+      }
+    });
+  });
+
+  it('readerSeesUndecided: true for the founder and for an employee with the approval right', async () => {
+    await inTransaction(async (tx) => {
+      for (const context of [founderA, approverA, founderP]) {
+        await tx.setContext(context);
+        expect(await readerSeesUndecided(tx.client), context.userId ?? '').toBe(true);
+      }
+      // An employee without the right, an external person, an employee of the other company
+      // here, and nobody at all.
+      for (const context of [
+        employeeA,
+        sharedA,
+        externalA,
+        employeeP,
+        { companyId: ids.arma, userId: ids.employeeP },
+        ...NOBODY,
+      ]) {
+        await tx.setContext(context);
+        expect(await readerSeesUndecided(tx.client), JSON.stringify(context)).toBe(false);
+      }
+    });
+  });
+
+  it('listProjectApprovals: nothing in the context of Pillika, nothing for an external person and nothing without a context', async () => {
+    await inAdminTransaction(async (tx) => {
+      const waiting = await submitted(tx, 'A waiting result');
+      const approved = await submitted(tx, 'An approved result');
+      await decide(tx, approved.approval, 'approved');
+      expect(await listedBy(tx, founderA)).toEqual([waiting.approval, approved.approval]);
+      const others: ContextInput[] = [
+        founderP,
+        employeeP,
+        { ...founderP, projectId: ids.projectA },
+        externalA,
+        ...NOBODY,
+        { projectId: ids.projectA },
+      ];
+      for (const context of others) {
+        expect(await listedBy(tx, context), JSON.stringify(context)).toEqual([]);
+      }
+      // The worker's role in the context of Pillika reads none of them either.
+      await asRole(tx, 'worker');
+      for (const context of [
+        { companyId: ids.pillika, userId: ids.founder, agentCode: 'KOR-1' },
+        {
+          companyId: ids.pillika,
+          userId: ids.founder,
+          agentCode: 'KOR-1',
+          projectId: ids.projectA,
+        },
+      ]) {
+        await tx.setContext(context);
+        expect(await listProjectApprovals(tx.client, ids.projectA, 100)).toEqual([]);
+      }
+      // And the other way round: nothing of Pillika's project in the context of Arma DX.
+      await asPerson(tx, founderA);
+      expect(await listProjectApprovals(tx.client, ids.projectP, 100)).toEqual([]);
     });
   });
 });

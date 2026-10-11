@@ -1,9 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import { agentStep, createPool } from '@agent-office/db';
+import { agentStep, createPool, withContext } from '@agent-office/db';
 import {
+  projectApprovalsSchema,
   projectDetailSchema,
   projectRunsSchema,
   requestDetailSchema,
+  type ProjectApprovals,
   type ProjectDetail,
   type ProjectRuns,
 } from '@agent-office/shared';
@@ -21,9 +23,10 @@ import {
 import { errorCode, send, type Method } from './passkey-helpers.ts';
 
 // The sections of the project page that only read (8 October decision 17), through the API: the
-// agent runs of a project with their cost. Projects and requests are opened through the API; the
-// runs are written with the worker's restricted role in the request's own context, as the runner
-// writes them. Tests commit, so each uses a project of its own.
+// agent runs of a project with their cost, and the results of its requests. Projects and requests
+// are opened through the API and results are decided through it; the runs and the results are
+// written with the worker's restricted role in the request's own context, as the runner writes
+// them. Tests commit, so each uses a project of its own.
 //
 // The coordinator gets a card version for the length of this file (a request is taken only while
 // it has one) and loses it again at the end: other files read the office as the fixtures left it.
@@ -31,6 +34,14 @@ import { errorCode, send, type Method } from './passkey-helpers.ts';
 const database = inject('database');
 const CARD = '00000000-0000-4000-8000-000000000961';
 const PILLIKA_PROJECT = '00000000-0000-4000-8000-000000000962';
+// An employee who holds the approval right. A person of this file's own: other files change the
+// approval right of the fixtures' people.
+const RIGHT_HOLDER = '00000000-0000-4000-8000-000000000963';
+const rightHolderAccount = {
+  email: 'right.holder.sections@armadx.test',
+  sub: 'sub-right-holder-sections',
+  hd: 'armadx.test',
+} as const;
 // What an agent wrote: on the run rows, and in no answer of this file.
 const AGENT_TEXT = 'AJANIN-YAZDIĞI-METİN';
 
@@ -42,7 +53,10 @@ describe.skipIf(noDatabase)('the reading sections of a project', () => {
   // A third employee of Arma DX (the fixtures' newcomer): a member of no project of this file.
   let third: string;
   let external: string;
+  let rightHolder: string;
   const workerPool = createPool(database?.worker ?? '', 'agent-office-api-test-worker', () => {});
+  // A connection of the API's role beside the server's own, for an act the API has no route for.
+  const besidePool = createPool(database?.app ?? '', 'agent-office-api-test-beside', () => {});
 
   beforeAll(async () => {
     server = createTestServer();
@@ -51,6 +65,15 @@ describe.skipIf(noDatabase)('the reading sections of a project', () => {
     colleague = await sessionOf(server, accounts.holder);
     third = await sessionOf(server, accounts.newcomer);
     external = await sessionOf(server, accounts.external);
+    await adminExec(`
+      insert into office.users (id, name) values ('${RIGHT_HOLDER}', 'Onay Hakkı Olan Üye')
+        on conflict do nothing;
+      insert into office.user_emails (email, user_id)
+        values ('${rightHolderAccount.email}', '${RIGHT_HOLDER}') on conflict do nothing;
+      insert into office.memberships (company_id, user_id, role, can_approve)
+        values ('${ids.arma}', '${RIGHT_HOLDER}', 'employee', true) on conflict do nothing;
+    `);
+    rightHolder = await sessionOf(server, rightHolderAccount);
     await adminExec(`
       insert into office.card_versions (id, agent_code, git_commit, content, authority_level, model)
         values ('${CARD}', 'KOR-1', 'abc0961', '{"card": {"status": "active"}}', 'Y2',
@@ -64,10 +87,15 @@ describe.skipIf(noDatabase)('the reading sections of a project', () => {
   });
 
   afterAll(async () => {
-    await adminExec(
-      `update office.agent_definitions set current_version_id = null where code = 'KOR-1'`,
-    );
+    // Removing a member needs a passkey re-verification; this clean-up is an administrator's.
+    await adminExec(`
+      update office.agent_definitions set current_version_id = null where code = 'KOR-1';
+      alter table office.memberships disable trigger require_step_up;
+      delete from office.memberships where user_id = '${RIGHT_HOLDER}';
+      alter table office.memberships enable trigger require_step_up;
+    `);
     await workerPool.end();
+    await besidePool.end();
     await server.close();
     await closeAdminPool();
   });
@@ -412,6 +440,300 @@ describe.skipIf(noDatabase)('the reading sections of a project', () => {
         expect(errorCode(res)).toBe('insiders_only');
         expect(res.body).not.toContain('KOR-1');
         expect(res.body).not.toContain('runs');
+      }
+    });
+  });
+
+  describe('the approvals of a project', () => {
+    const approvalsUrl = (projectId: string): string => `/api/projects/${projectId}/approvals`;
+
+    async function approvalsOf(session: string, projectId: string): Promise<ProjectApprovals> {
+      const res = await call(session, 'GET', approvalsUrl(projectId));
+      expect(res.statusCode, res.body).toBe(200);
+      return projectApprovalsSchema.parse(res.json());
+    }
+
+    /**
+     * The founder gives the request to KOR-1, through the database's own function with the API's
+     * role: the route does not offer the coordinator's own unit, and the fixtures open no other
+     * agent in Arma DX. (Routing again while a result waits closes that result.)
+     */
+    const giveToAgent = (taskId: string) =>
+      withContext(besidePool, { companyId: ids.arma, userId: ids.founder }, (client) =>
+        client.query('select office.correct_routing($1, $2::jsonb)', [
+          taskId,
+          JSON.stringify([{ unit: 'KOR', agent: 'KOR-1', reason: 'Kurucu verdi.' }]),
+        ]),
+      );
+
+    /**
+     * A request of the employee in the project with a result KOR-1 submitted, as the runner
+     * writes it. The result carries an agent's words in every field that can hold them.
+     */
+    async function submitted(projectId: string, text: string) {
+      const taskId = await requestIn(projectId, text);
+      await giveToAgent(taskId);
+      const approvalId = await agentStep(
+        workerPool,
+        { companyId: ids.arma, userId: ids.employee, agentCode: 'KOR-1', projectId },
+        async (client) => {
+          const opened = await client.query<{ id: string }>(
+            `insert into office.runs (company_id, task_id, agent_code, card_version_id,
+               trigger_type, model)
+             values ($1, $2, 'KOR-1', $3, 'handoff', 'test-model') returning id`,
+            [ids.arma, taskId, CARD],
+          );
+          const runId = opened.rows[0]?.id;
+          const result = await client.query<{ id: string }>(
+            `insert into office.approvals (company_id, task_id, run_id, agent_code, title, summary,
+               agent_rationale, risk_note, payload, basis_type, basis_id, basis_version,
+               involves_money, goes_external)
+             values ($1, $2, $3, 'KOR-1', $4, $4, $4, $4, $5::jsonb, 'task', $2,
+               (select version from office.tasks where id = $2), false, false)
+             returning id`,
+            [ids.arma, taskId, runId, AGENT_TEXT, JSON.stringify({ text: AGENT_TEXT })],
+          );
+          await client.query(
+            `update office.runs set status = 'completed', finished_at = now() where id = $1`,
+            [runId],
+          );
+          return result.rows[0]?.id ?? '';
+        },
+      );
+      return { taskId, approvalId };
+    }
+
+    /** The founder decides a result through the API. */
+    async function decide(approvalId: string, decision: string): Promise<void> {
+      const res = await call(
+        founder,
+        'POST',
+        `/api/approvals/${approvalId}/decision`,
+        decision === 'approved'
+          ? { decision }
+          : { decision, reason: 'other', note: 'ONAYLAYICININ-NOTU' },
+      );
+      expect(res.statusCode, res.body).toBe(200);
+    }
+
+    /** A project with the approval right holder as one more plain member. */
+    async function projectWithApprover(name: string): Promise<ProjectDetail> {
+      const made = await project(name);
+      const added = await call(employee, 'PUT', `/api/projects/${made.id}/members/${RIGHT_HOLDER}`);
+      expect(added.statusCode, added.body).toBe(200);
+      return made;
+    }
+
+    it('GET approvals: the founder gets waiting and decided results with who decided', async () => {
+      const made = await projectWithApprover('Sonuçları olan proje');
+      const approved = await submitted(made.id, 'Onaylanan iş');
+      const rejected = await submitted(made.id, 'Reddedilen iş');
+      const sentBack = await submitted(made.id, 'Düzeltme istenen iş');
+      const waiting = await submitted(made.id, 'Bekleyen iş');
+      await decide(approved.approvalId, 'approved');
+      await decide(rejected.approvalId, 'rejected');
+      await decide(sentBack.approvalId, 'changes_requested');
+
+      // The founder, and a member who holds the approval right: the same list.
+      for (const session of [founder, rightHolder]) {
+        const answer = await approvalsOf(session, made.id);
+        expect(answer.seesUndecided).toBe(true);
+        expect(answer.truncated).toBe(false);
+        expect(answer.approvals).toHaveLength(4);
+        // What waits stands first.
+        expect(answer.approvals[0]).toEqual({
+          id: waiting.approvalId,
+          request: { id: waiting.taskId, title: 'Bekleyen iş' },
+          agent: { code: 'KOR-1', name: 'Ofis Koordinatörü' },
+          status: 'pending',
+          attempt: 1,
+          createdAt: expect.any(String) as string,
+          decidedAt: null,
+          decidedBy: null,
+        });
+        const byId = new Map(answer.approvals.map((row) => [row.id, row]));
+        const decided: [string, string, string][] = [
+          [approved.approvalId, 'approved', 'Onaylanan iş'],
+          [rejected.approvalId, 'rejected', 'Reddedilen iş'],
+          [sentBack.approvalId, 'changes_requested', 'Düzeltme istenen iş'],
+        ];
+        for (const [id, status, title] of decided) {
+          const row = byId.get(id);
+          expect(row, title).toMatchObject({
+            request: { title },
+            status,
+            attempt: 1,
+            decidedBy: { userId: ids.founder, name: 'Kurucu' },
+          });
+          expect(Date.parse(row?.decidedAt ?? '')).toBeGreaterThan(Date.now() - 60_000);
+        }
+        // Then the decisions, the newest first.
+        const times = answer.approvals.slice(1).map((row) => Date.parse(row.decidedAt ?? ''));
+        expect(times).toEqual([...times].sort((a, b) => b - a));
+      }
+    });
+
+    it('GET approvals: a member without the approval right gets only approved ones and seesUndecided false', async () => {
+      const made = await projectWithApprover('Onaysız sonuçları gizli proje');
+      const approved = await submitted(made.id, 'Onaylanan iş');
+      const rejected = await submitted(made.id, 'Reddedilen iş');
+      const sentBack = await submitted(made.id, 'Düzeltme istenen iş');
+      await submitted(made.id, 'Bekleyen iş');
+      await decide(approved.approvalId, 'approved');
+      await decide(rejected.approvalId, 'rejected');
+      await decide(sentBack.approvalId, 'changes_requested');
+      // The owner of the project (who is also the requester) and a plain member: employees
+      // without the approval right.
+      for (const session of [employee, colleague]) {
+        const res = await call(session, 'GET', approvalsUrl(made.id));
+        expect(res.statusCode, res.body).toBe(200);
+        const answer = projectApprovalsSchema.parse(res.json());
+        expect(answer.seesUndecided).toBe(false);
+        expect(answer.truncated).toBe(false);
+        expect(answer.approvals).toMatchObject([
+          {
+            id: approved.approvalId,
+            request: { id: approved.taskId, title: 'Onaylanan iş' },
+            status: 'approved',
+            decidedBy: { userId: ids.founder, name: 'Kurucu' },
+          },
+        ]);
+        // Not even the titles of the requests whose results wait or were refused (the member
+        // reads those requests on the Talepler tab; this list says nothing of their results).
+        for (const text of ['Reddedilen iş', 'Düzeltme istenen iş', 'Bekleyen iş', 'pending']) {
+          expect(res.body, text).not.toContain(text);
+        }
+      }
+      // Before anything is approved the member's list is empty.
+      const fresh = await projectWithApprover('Yalnızca bekleyeni olan proje');
+      await submitted(fresh.id, 'Bekleyen iş');
+      expect(await approvalsOf(employee, fresh.id)).toEqual({
+        approvals: [],
+        truncated: false,
+        seesUndecided: false,
+      });
+      expect((await approvalsOf(founder, fresh.id)).approvals).toHaveLength(1);
+      // A project without a result: empty for everybody, and the flag still says who is asking.
+      const empty = await project('Sonucu olmayan proje');
+      expect(await approvalsOf(founder, empty.id)).toEqual({
+        approvals: [],
+        truncated: false,
+        seesUndecided: true,
+      });
+    });
+
+    it('GET approvals: a result that waited when the request changed reads closed', async () => {
+      const made = await projectWithApprover('Sonucu kapanan proje');
+      const closed = await submitted(made.id, 'Yeniden yönlendirilen iş');
+      const waiting = await submitted(made.id, 'Bekleyen iş');
+      // The founder gives the first request to an agent again while its result waits.
+      await giveToAgent(closed.taskId);
+      expect(
+        await adminQuery(
+          'select status, invalidated_at is not null as closed from office.approvals where id = $1',
+          [closed.approvalId],
+        ),
+      ).toEqual([{ status: 'pending', closed: true }]);
+      const answer = await approvalsOf(founder, made.id);
+      expect(answer.approvals.map((row) => [row.id, row.status])).toEqual([
+        // What still waits stands first; the closed one is no waiting result any more.
+        [waiting.approvalId, 'pending'],
+        [closed.approvalId, 'closed'],
+      ]);
+      expect(answer.approvals[1]).toMatchObject({
+        request: { id: closed.taskId, title: 'Yeniden yönlendirilen iş' },
+        decidedAt: null,
+        decidedBy: null,
+      });
+      // Never decided, so not approved: hidden from a member without the approval right.
+      expect((await approvalsOf(colleague, made.id)).approvals).toEqual([]);
+    });
+
+    it("GET approvals: the agent's title and summary are in no body", async () => {
+      const made = await projectWithApprover('Sonuç metni gizli proje');
+      const approved = await submitted(made.id, 'Onaylanan iş\nTalebin ikinci satırı');
+      const rejected = await submitted(made.id, 'Reddedilen iş');
+      await submitted(made.id, 'Bekleyen iş');
+      await decide(approved.approvalId, 'approved');
+      await decide(rejected.approvalId, 'rejected');
+      // The words are on the approval rows ...
+      expect(
+        await adminQuery(
+          `select title, summary, agent_rationale, risk_note, payload, decision_reason
+           from office.approvals where id = $1`,
+          [rejected.approvalId],
+        ),
+      ).toEqual([
+        {
+          title: AGENT_TEXT,
+          summary: AGENT_TEXT,
+          agent_rationale: AGENT_TEXT,
+          risk_note: AGENT_TEXT,
+          payload: { text: AGENT_TEXT },
+          decision_reason: 'ONAYLAYICININ-NOTU',
+        },
+      ]);
+      // ... and in no body: for the founder, who may read them on the request's page, either.
+      for (const session of [founder, rightHolder, employee, colleague]) {
+        const res = await call(session, 'GET', approvalsUrl(made.id));
+        expect(res.statusCode, res.body).toBe(200);
+        expect(res.body).not.toContain(AGENT_TEXT);
+        expect(res.body).not.toContain('ONAYLAYICININ-NOTU');
+        expect(res.body).not.toContain('Talebin ikinci satırı');
+        expect(res.body).toContain('Onaylanan iş');
+        for (const row of res.json<{ approvals: object[] }>().approvals) {
+          expect(Object.keys(row).sort()).toEqual([
+            'agent',
+            'attempt',
+            'createdAt',
+            'decidedAt',
+            'decidedBy',
+            'id',
+            'request',
+            'status',
+          ]);
+        }
+      }
+    });
+
+    it("GET approvals: 404 for a non-member and for the other company's project", async () => {
+      const made = await projectWithApprover('Sonuçları görünmeyen proje');
+      const approved = await submitted(made.id, 'Onaylanan iş');
+      await decide(approved.approvalId, 'approved');
+      const hidden: [string, string, string?][] = [
+        // An employee of the company who is no member of the project.
+        [third, made.id],
+        [founder, made.id, ids.pillika],
+        [founder, PILLIKA_PROJECT],
+        [rightHolder, PILLIKA_PROJECT],
+        [employee, randomUUID()],
+        [employee, 'not-an-id'],
+      ];
+      for (const [session, id, company] of hidden) {
+        const res = await call(session, 'GET', approvalsUrl(id), undefined, company);
+        expect(res.statusCode, id).toBe(404);
+        expect(errorCode(res)).toBe('not_found');
+        expect(res.body).not.toContain('Onaylanan iş');
+      }
+      const own = await call(founder, 'GET', approvalsUrl(PILLIKA_PROJECT), undefined, ids.pillika);
+      expect(own.statusCode, own.body).toBe(200);
+      expect(projectApprovalsSchema.parse(own.json())).toEqual({
+        approvals: [],
+        truncated: false,
+        seesUndecided: true,
+      });
+    });
+
+    it("GET approvals: an external person gets the section's answer and no row", async () => {
+      const made = await projectWithApprover('Dış kişiye kapalı sonuçlar');
+      const approved = await submitted(made.id, 'Onaylanan iş');
+      await decide(approved.approvalId, 'approved');
+      for (const id of [made.id, randomUUID(), 'not-an-id']) {
+        const res = await call(external, 'GET', approvalsUrl(id));
+        expect(res.statusCode, id).toBe(403);
+        expect(errorCode(res)).toBe('insiders_only');
+        expect(res.body).not.toContain('Onaylanan iş');
+        expect(res.body).not.toContain('approvals');
       }
     });
   });

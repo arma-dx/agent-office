@@ -17,6 +17,11 @@ import type { Queryable } from './queryable.ts';
  * The runs of a project: whoever reads the project reads its runs (the row policy of runs), and
  * the statements select no text of a run. Tokens and cost are the founder's (docs/SONRA.md P-t):
  * the statements leave them out for everybody else, so no later code can hand them on by mistake.
+ *
+ * The approvals of a project: read through the row policy of approvals, which is the rule of
+ * docs/SONRA.md V-c (a waiting or refused result is a row only for who holds the approval right;
+ * an approved one for every reader of the project). The statement adds no condition of its own
+ * about who reads, and selects nothing an agent wrote.
  */
 
 export interface ProjectRow {
@@ -372,6 +377,55 @@ export async function projectRunTotals(
   const row = rows[0];
   if (!row) throw new Error('The totals of a project gave no row');
   return row;
+}
+
+export interface ProjectApprovalRow {
+  id: string;
+  task_id: string;
+  task_title: string;
+  agent_code: string;
+  agent_name: string;
+  status: string;
+  invalidated_at: Date | null;
+  attempt: number;
+  created_at: Date;
+  decided_at: Date | null;
+  decided_by_user_id: string | null;
+}
+
+/**
+ * The results of the requests of a project, as the row policy of approvals gives them to the
+ * reader (docs/SONRA.md V-c): waiting ones first, then the newest. No title, summary, reasoning
+ * or payload of an approval is selected: those are an agent's words.
+ */
+export async function listProjectApprovals(
+  client: Queryable,
+  projectId: string,
+  limit: number,
+): Promise<ProjectApprovalRow[]> {
+  const { rows } = await client.query<ProjectApprovalRow>(
+    `select a.id, a.task_id, t.title as task_title, a.agent_code, d.name as agent_name,
+            a.status, a.invalidated_at, a.attempt, a.created_at, a.decided_at,
+            a.decided_by_user_id
+       from office.approvals a
+       join office.tasks t on t.id = a.task_id and t.kind = 'request'
+       join office.agent_definitions d on d.code = a.agent_code
+      where a.project_id = $1 and a.company_id = office.ctx_company_id()
+        and a.routing_id is not null
+      order by (a.status = 'pending' and a.invalidated_at is null) desc,
+               coalesce(a.decided_at, a.invalidated_at, a.created_at) desc, a.id
+      limit $2`,
+    [projectId, limit],
+  );
+  return rows;
+}
+
+/** Does the reader hold the approval right in the context company (the founder always does). */
+export async function readerSeesUndecided(client: Queryable): Promise<boolean> {
+  const { rows } = await client.query<{ sees: boolean | null }>(
+    'select office.can_approve() as sees',
+  );
+  return rows[0]?.sees === true;
 }
 
 export interface ProjectMemberRow {

@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  PROJECT_APPROVAL_LIST_LIMIT,
   PROJECT_RUN_LIST_LIMIT,
+  projectApprovalSchema,
+  projectApprovalsSchema,
   projectRunSchema,
   projectRunsSchema,
   runUsageSchema,
@@ -148,6 +151,96 @@ describe('the runs of a project', () => {
         projectRunsSchema.safeParse({ ...forMember, ...change }).success,
         JSON.stringify(change),
       ).toBe(false);
+    }
+  });
+});
+
+describe('the approvals of a project', () => {
+  const APPROVAL = {
+    id: uuid(5),
+    request: { id: uuid(2), title: 'Lansman gönderisi' },
+    agent: { code: 'SOS-2', name: 'Sosyal Medya İçerik Ajanı' },
+    status: 'approved',
+    attempt: 1,
+    createdAt: '2026-10-09T09:00:00.000Z',
+    decidedAt: '2026-10-09T09:30:00.000Z',
+    decidedBy: { userId: uuid(3), name: 'Ada Yılmaz' },
+  };
+
+  it("a project approval carries the request's title and no field of the result", () => {
+    expect(Object.keys(projectApprovalSchema.shape)).toEqual([
+      'id',
+      'request',
+      'agent',
+      'status',
+      'attempt',
+      'createdAt',
+      'decidedAt',
+      'decidedBy',
+    ]);
+    expect(Object.keys(projectApprovalSchema.shape.request.shape)).toEqual(['id', 'title']);
+    // What an approval row holds of an agent's words, and what a person wrote when deciding,
+    // does not survive the parse: the list says that a result exists and what became of it.
+    const parsed = projectApprovalSchema.parse({
+      ...APPROVAL,
+      title: 'Ajanın başlığı',
+      summary: 'Ajanın özeti',
+      rationale: 'Ajanın gerekçesi',
+      riskNote: 'Ajanın risk notu',
+      payload: { options: [{ code: 'A', text: 'Ajanın metni', hashtags: [] }] },
+      options: [{ code: 'A', text: 'Ajanın metni', hashtags: [] }],
+      reason: 'other',
+      note: 'Onaylayıcının notu',
+    });
+    expect(parsed).toEqual(APPROVAL);
+    expect(JSON.stringify(parsed)).not.toContain('Ajanın');
+    expect(JSON.stringify(parsed)).not.toContain('Onaylayıcının');
+
+    // The five states of a result; a waiting one has no decision yet.
+    const waiting = { ...APPROVAL, status: 'pending', decidedAt: null, decidedBy: null };
+    expect(projectApprovalSchema.parse(waiting)).toEqual(waiting);
+    for (const status of ['changes_requested', 'rejected']) {
+      expect(projectApprovalSchema.parse({ ...APPROVAL, status, attempt: 2 }).status).toBe(status);
+    }
+    // Closed without a decision: nobody decided it.
+    const closed = { ...APPROVAL, status: 'closed', decidedAt: null, decidedBy: null };
+    expect(projectApprovalSchema.parse(closed)).toEqual(closed);
+    // A decider whose name cannot be read any more.
+    expect(
+      projectApprovalSchema.parse({ ...APPROVAL, decidedBy: { userId: uuid(3), name: null } })
+        .decidedBy,
+    ).toEqual({ userId: uuid(3), name: null });
+    for (const change of [
+      { status: 'invalidated' },
+      { status: 'done' },
+      { attempt: 0 },
+      { attempt: 3 },
+      // A result is always of a request: the title stands for it.
+      { request: null },
+      { request: { id: uuid(2) } },
+      { agent: { code: 'sos-2', name: 'x' } },
+      { createdAt: '2026-10-09' },
+      { decidedAt: undefined },
+      { decidedBy: undefined },
+    ]) {
+      expect(
+        projectApprovalSchema.safeParse({ ...APPROVAL, ...change }).success,
+        JSON.stringify(change),
+      ).toBe(false);
+    }
+  });
+
+  it('the list says whether the reader sees results that wait or were refused', () => {
+    expect(PROJECT_APPROVAL_LIST_LIMIT).toBe(200);
+    for (const seesUndecided of [true, false]) {
+      const answer = { approvals: [APPROVAL], truncated: false, seesUndecided };
+      expect(projectApprovalsSchema.parse(answer)).toEqual(answer);
+    }
+    const empty = { approvals: [], truncated: false, seesUndecided: false };
+    expect(projectApprovalsSchema.parse(empty)).toEqual(empty);
+    for (const field of ['approvals', 'truncated', 'seesUndecided']) {
+      const without = Object.fromEntries(Object.entries(empty).filter(([name]) => name !== field));
+      expect(projectApprovalsSchema.safeParse(without).success, field).toBe(false);
     }
   });
 });
