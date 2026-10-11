@@ -47,6 +47,8 @@ Henüz olmayanlar: veritabanı (göç dosyası yok), giriş, işlevli ekran (yal
 
 11 Ekim 2026: Projeler'in ikinci adımı kuruldu (0.4c adım 2); 0.4a adım 3'ün proje alanı da bununla tamamlandı. Talep formunda isteğe bağlı proje alanı var; proje sayfasında "Talepler" ve "Ayarlar" sekmeleri var; proje içindeki talepte ajanlar o projenin içinde çalışıyor ve kural 12 kodla denetleniyor (8 Ekim, karar 45-49). İzin kapanınca süren çalışma durur, talep kurucunun "Sizden beklenenler" listesine düşer ve bekleyen sonuç onaylanamaz. İzin ya da ajan yeniden açılınca bekleyen talepler kendiliğinden başlar; onay penceresi kaç talebin başlayacağını önceden söyler. Talep sahibi talebini göremez olursa ajan kurucunun adına çalışır ve sonucu kurucu onaylar. Adım tasarlanırken ve yapılırken türetilen seçimler `docs/SONRA.md` içinde P2-a ila P2-af olarak duruyor; sonunda karar numarası yazmayanların hepsi kurucu onayı bekliyor. Ekranlar tarayıcıda görülmeden yazıldı; kurucunun talep formuna, bir proje sayfasına ve bir açma penceresine bir kez bakması gerekir (P2-ad). Beş yeni göç (`20261008102200` ila `20261008102600`) yerel veritabanına uygulanana ve ardından `pnpm db:sync-definitions` çalıştırılana kadar yerelde talep listeleri sunucu hatası verir, çalıştırıcı iş alamaz. Adım incelendi; bulunan sekiz eksik giderildi (izin kapatılıp hemen açılınca aynı işin iki kez yürümesi, ajan durdurulup hemen açılınca talebin bir kişide kalması, dört arayüz metni ve düzeni, iki belge cümlesi, eksik bir test; SONRA P2-ac ve P2-ad). Sıradaki adım proje sayfasının öteki bölümleri (adım 3).
 
+12 Ekim 2026: Projeler'in üçüncü adımının ilk parçası kuruldu (0.4c adım 3): bütçe ve kilometre taşları. Proje sayfasında "Kilometre taşları" sekmesi var: ad, isteğe bağlı gün ve tamamlandı işareti; projenin her üyesi ve kurucu ekler, değiştirir ve siler. Bütçe özellikler panelinde bir satırdır ve kendi penceresi vardır: tutar ve para birimi (TL, dolar ya da avro); bütçeyi projenin sahibi, yöneticileri ve kurucu görür ve değiştirir (12 Ekim, karar 2), düz üyenin sayfasında bütçe hiç görünmez. Türetilen seçimler `docs/SONRA.md` içinde P3-a ila P3-f; P3-a ve P3-b karara bağlandı, ötekiler kurucu onayı bekliyor. Ekranlar tarayıcıda görülmeden yazıldı; kurucunun bir proje sayfasına bir kez bakması gerekir. Yeni göç (`20261008102700_project_budget_and_milestones.sql`) yerel veritabanına uygulanana kadar yerelde proje listesi ve proje sayfası sunucu hatası verir.
+
 ## Sprint 0
 
 ### 0.1 Arayüz temeli
@@ -403,7 +405,7 @@ Bu işten çıkarılanlar:
 
 ### 0.4c Projeler
 
-8 Ekim, karar 11 ve 14-22. Projeler "İş" grubunda ayrı bir bölümdür (karar 14). Çalışanlar da proje açar ve üye ekler; yapay zekâ iznini yalnızca kurucu, passkey ile açar (karar 15 ve 22). Türetilen yorumlar ve varsayımlar `docs/SONRA.md` içinde P-a ila P-u. Adım 1 tasarlanırken ve yapılırken türetilenler aynı dosyada P1-a ila P1-z. Projede sahip, yönetici ve üye ayrımı 8 Ekim karar 44 ile geldi; ondan türetilenler P1b-a ila P1b-m. Adım 2 (8 Ekim, karar 45-49) tasarlanırken ve yapılırken türetilenler P2-a ila P2-af.
+8 Ekim, karar 11 ve 14-22. Projeler "İş" grubunda ayrı bir bölümdür (karar 14). Çalışanlar da proje açar ve üye ekler; yapay zekâ iznini yalnızca kurucu, passkey ile açar (karar 15 ve 22). Türetilen yorumlar ve varsayımlar `docs/SONRA.md` içinde P-a ila P-u. Adım 1 tasarlanırken ve yapılırken türetilenler aynı dosyada P1-a ila P1-z. Projede sahip, yönetici ve üye ayrımı 8 Ekim karar 44 ile geldi; ondan türetilenler P1b-a ila P1b-m. Adım 2 (8 Ekim, karar 45-49) tasarlanırken ve yapılırken türetilenler P2-a ila P2-af. Adım 3 (karar 17; 11 Ekim karar 1; 12 Ekim karar 1 ve 2) tasarlanırken ve yapılırken türetilenler P3-a ila P3-z.
 
 Adım 1: en küçük Projeler
 
@@ -426,11 +428,12 @@ Adım 2: talep formunda proje alanı
 
 Adım 3: proje sayfasının öteki bölümleri (karar 17; her biri ayrı küçük adım)
 
-- [ ] Bütçe ve kilometre taşları
+- [x] Bütçe ve kilometre taşları (bütçeyi sahip, yöneticiler ve kurucu görür ve değiştirir, 12 Ekim karar 2; para birimi her seferinde seçilir, SONRA P3-c; yapay zekâ maliyeti bütçeden düşülmez, SONRA P3-d; kilometre taşlarını her üye tutar, SONRA P3-e, P3-f)
 - [ ] Ajan çalışmaları ve maliyeti
 - [ ] Onaylar
-- [ ] Projenin notları (Notlar işiyle birlikte)
+- [ ] Projenin notları (Notlar işiyle birlikte) (adım 3'te kurulmadı: Notlar işi (1.3) bekleniyor; proje sayfasında not sekmesi yok)
 - [ ] Projeye yapay zekâ harcama sınırı: aşılınca o projede ajanlar durur
+- [ ] `20261008102700_project_budget_and_milestones.sql` göçünün yerel veritabanına ve test ortamına uygulanması
 
 Adım 4: proje dosyaları (karar 20)
 
