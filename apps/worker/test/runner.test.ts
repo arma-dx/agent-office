@@ -1,5 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import { agentStep, restartWaitingWork, setContext, withContext } from '@agent-office/db';
+import {
+  agentStep,
+  restartWaitingWork,
+  setAgentSwitch,
+  setContext,
+  withContext,
+} from '@agent-office/db';
 import { afterAll, describe, expect, it } from 'vitest';
 import { closeLostRun, runAgentJob } from '../src/runner/run.ts';
 import { handleAgentRunJob } from '../src/worker.ts';
@@ -3138,6 +3144,134 @@ describe.skipIf(noDatabase)('a request inside a project', () => {
     expect(
       await admin(`select count(*)::int as n from office.approvals where task_id = $1`, [taskId]),
     ).toEqual([{ n: 1 }]);
+  });
+
+  // A stop that meets an opening (decision 49). The founder's own acts, with the API's role: the
+  // stop, and the opening with its restart in one transaction, as the route does them.
+  const founderActs = <T>(work: Parameters<typeof withContext<T>>[2]): Promise<T> =>
+    withContext(testPools().app, { companyId: ids.arma, userId: ids.founder }, work);
+  const stopSos = () => founderActs((client) => setAgentSwitch(client, 'SOS-2', 'stopped'));
+  const openSos = () =>
+    founderActs(async (client) => {
+      const row = await setAgentSwitch(client, 'SOS-2', 'enabled');
+      const work = await restartWaitingWork(client, { agentCode: 'SOS-2' });
+      return { opened: typeof row === 'object' && row.opened, work: work.map((w) => w.task_id) };
+    });
+  const switchOfSos = () =>
+    admin(
+      `select status from office.company_agents where company_id = $1 and agent_code = 'SOS-2'`,
+      [ids.arma],
+    );
+  const stopTraces = async (taskId: string) =>
+    (
+      await admin<{ event: string }>(
+        `select event from office.audit_log
+         where record_type = 'task' and record_id = $1
+           and event in ('run_stopped', 'run_restarted', 'run_refused')
+         order by id`,
+        [taskId],
+      )
+    ).map((row) => row.event);
+
+  it('an agent opened again just before its stopped run would be closed: the run goes on with its answer', async () => {
+    const taskId = await routedRequest();
+    try {
+      const model = new ScriptedModel([
+        async () => {
+          await stopSos();
+          return toolUse('submit_for_approval', RESULT);
+        },
+      ]);
+      const { deps, jobs } = await runner(model);
+      // The runner has read the switch as stopped. Before it takes the restart lock the founder
+      // opens the agent again: that restart passes this open run by.
+      let opening: Awaited<ReturnType<typeof openSos>> | undefined;
+      const pool = meeting(deps.pool, 'pg_advisory_xact_lock_shared', async () => {
+        opening = await openSos();
+      });
+      const result = await runAgentJob({ ...deps, pool }, job(taskId, 'SOS-2', ids.founder));
+      expect(opening).toMatchObject({ opened: true });
+      expect(opening?.work).not.toContain(taskId);
+      // Behind the lock the switch reads open: nothing is left that would start the work again,
+      // so the run is not closed. It goes on and submits.
+      expect(result).toMatchObject({ outcome: 'submitted', modelCalls: 1 });
+      expect(await runRow(result.runId)).toMatchObject({ status: 'completed', error_code: null });
+      expect(await stopTraces(taskId)).toEqual([]);
+      expect(jobs.sent).toEqual([]);
+      expect(await switchOfSos()).toEqual([{ status: 'enabled' }]);
+      expect(await statusOf(taskId)).toBe('awaiting_approval');
+    } finally {
+      await admin(
+        `update office.company_agents set status = 'enabled' where company_id = $1 and agent_code = 'SOS-2'`,
+        [ids.arma],
+      );
+    }
+  });
+
+  it('an agent opened again while its stopped run is being closed: the opening waits and restarts the work', async () => {
+    /** Resolves when a statement of the founder's opening waits for a lock. */
+    async function untilOpeningWaits(): Promise<void> {
+      for (let attempt = 0; attempt < 500; attempt += 1) {
+        const waiting = await admin(
+          `select 1 from pg_catalog.pg_stat_activity
+           where application_name = 'worker-test-app' and wait_event_type = 'Lock'
+             and state = 'active'`,
+        );
+        if (waiting.length > 0) return;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      throw new Error('The opening never waited');
+    }
+    const taskId = await routedRequest();
+    try {
+      const model = new ScriptedModel([
+        async () => {
+          await stopSos();
+          return toolUse('submit_for_approval', RESULT);
+        },
+      ]);
+      const { deps, jobs } = await runner(model);
+      // The runner holds the restart lock and is about to write the stop. The founder opens the
+      // agent now: the restart of that opening waits for the lock (or, without it, runs at once
+      // and passes the open run by).
+      let opening: ReturnType<typeof openSos> | undefined;
+      const pool = meeting(
+        deps.pool,
+        'set status = $2, finished_at = now(), error_code = $3',
+        async () => {
+          opening = openSos();
+          await Promise.race([untilOpeningWaits(), opening]);
+        },
+      );
+      const result = await runAgentJob({ ...deps, pool }, job(taskId, 'SOS-2', ids.founder));
+      // The stop was written in the transaction that held the lock ...
+      expect(result).toMatchObject({ outcome: 'stopped', modelCalls: 1 });
+      expect(await runRow(result.runId)).toMatchObject({
+        status: 'stopped',
+        error_code: 'agent_stopped',
+        tool_call_count: 0,
+        input_tokens: 100,
+        output: { outcome: 'stopped', model_calls: 1 },
+      });
+      // ... so the opening found a stopped run and called for its work again: no request is left
+      // at "ajan durduruldu" beside an open agent.
+      const opened = await opening;
+      expect(opened).toMatchObject({ opened: true });
+      expect(opened?.work).toContain(taskId);
+      expect(await stopTraces(taskId)).toEqual(['run_stopped', 'run_restarted']);
+      expect(await switchOfSos()).toEqual([{ status: 'enabled' }]);
+      // The runner itself sends nothing: the job is the opening's.
+      expect(jobs.sent).toEqual([]);
+      const again = await runner(new ScriptedModel([toolUse('submit_for_approval', RESULT)]));
+      expect(await runAgentJob(again.deps, job(taskId, 'SOS-2', ids.founder))).toMatchObject({
+        outcome: 'submitted',
+      });
+    } finally {
+      await admin(
+        `update office.company_agents set status = 'enabled' where company_id = $1 and agent_code = 'SOS-2'`,
+        [ids.arma],
+      );
+    }
   });
 
   it('a job refused while its agent is being opened starts the work itself', async () => {

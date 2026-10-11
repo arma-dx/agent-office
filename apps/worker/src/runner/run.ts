@@ -1287,6 +1287,8 @@ export async function runAgentJob(
       ];
       // Whether the numbers of this call reached the run (set inside the step below).
       const numbers = { recorded: true };
+      // Whether the step below wrote the end of the run itself (a stopped agent).
+      const end = { written: false };
       const goOn = await agentStep(deps.pool, context, async (client) => {
         const paid = await client.query(
           `update office.runs set input_tokens = input_tokens + $2,
@@ -1326,42 +1328,68 @@ export async function runAgentJob(
           // Hidden for a reason neither function knows: nothing took the numbers.
           numbers.recorded = false;
         }
-        const state = await client.query<{
+        interface State {
           agent: string | null;
           task: string;
           step: string | null;
           routed: boolean;
           run: string | null;
           run_code: string | null;
-        }>(
-          `select (select ca.status from office.company_agents ca where ca.agent_code = $2) as agent,
-                  t.status as task,
-                  (select s.id from office.task_routings s
-                   where s.task_id = t.id and s.status = 'active' and s.agent_code = $2) as step,
-                  exists (select 1 from office.task_routings r where r.task_id = t.id) as routed,
-                  (select r.status from office.runs r where r.id = $3) as run,
-                  (select r.error_code from office.runs r where r.id = $3) as run_code
-           from office.tasks t where t.id = $1`,
-          [job.taskId, job.agentCode, runId],
-        );
-        const row = state.rows[0];
-        if (!row || row.task === 'done' || row.task === 'cancelled') return 'request_closed';
-        // The run's own record. A run that was closed while the model was answering stays
-        // closed, also when everything else reads as before: an AI permission that was closed
-        // and opened again inside this one call left the run stopped and visible, and the
-        // opening has called for the work again (8 October decision 49). The answer is dropped
-        // with the code the run was closed with; the job of the restart does the work, once.
-        if (row.run !== 'running') return row.run_code ?? 'run_closed';
-        if (row.agent !== 'enabled') return 'agent_stopped';
-        // The coordinator routes a request nobody has routed yet. Once a person gave it to a unit
-        // while this run was open (7 October decision 7), the run has nothing left to decide: it
-        // stops here, before its answer is looked at. The database refuses such a routing too.
-        if (coordinator) return row.routed ? 'routing_changed' : null;
-        // A unit agent works for the step its run was opened for, not for whichever step names
-        // its code now: a new routing to the same agent is a new step, with a note this run never
-        // read.
-        if (row.step === null || row.step !== opened.stepId) return 'routing_changed';
-        return null;
+        }
+        const readState = async (): Promise<State | undefined> => {
+          const state = await client.query<State>(
+            `select (select ca.status from office.company_agents ca where ca.agent_code = $2) as agent,
+                    t.status as task,
+                    (select s.id from office.task_routings s
+                     where s.task_id = t.id and s.status = 'active' and s.agent_code = $2) as step,
+                    exists (select 1 from office.task_routings r where r.task_id = t.id) as routed,
+                    (select r.status from office.runs r where r.id = $3) as run,
+                    (select r.error_code from office.runs r where r.id = $3) as run_code
+             from office.tasks t where t.id = $1`,
+            [job.taskId, job.agentCode, runId],
+          );
+          return state.rows[0];
+        };
+        /** Why the run ends here, or null: it goes on with the answer it has. */
+        const verdict = (row: State | undefined): string | null => {
+          if (!row || row.task === 'done' || row.task === 'cancelled') return 'request_closed';
+          // The run's own record. A run that was closed while the model was answering stays
+          // closed, also when everything else reads as before: an AI permission that was closed
+          // and opened again inside this one call left the run stopped and visible, and the
+          // opening has called for the work again (8 October decision 49). The answer is dropped
+          // with the code the run was closed with; the job of the restart does the work, once.
+          if (row.run !== 'running') return row.run_code ?? 'run_closed';
+          if (row.agent !== 'enabled') return 'agent_stopped';
+          // The coordinator routes a request nobody has routed yet. Once a person gave it to a
+          // unit while this run was open (7 October decision 7), the run has nothing left to
+          // decide: it stops here, before its answer is looked at. The database refuses such a
+          // routing too.
+          if (coordinator) return row.routed ? 'routing_changed' : null;
+          // A unit agent works for the step its run was opened for, not for whichever step names
+          // its code now: a new routing to the same agent is a new step, with a note this run
+          // never read.
+          if (row.step === null || row.step !== opened.stepId) return 'routing_changed';
+          return null;
+        };
+        const read = verdict(await readState());
+        if (read !== 'agent_stopped') return read;
+        // The agent is stopped. An opening of the agent restarts the work of a run that is
+        // already stopped and passes by a run that is still open (decision 49), so the stop is
+        // written here, behind the lock every restart of the company takes, and not in a later
+        // step: an agent that is opened again between this read and that write would restart
+        // nothing, and the request would read "ajan durduruldu" beside an open agent. Behind
+        // the lock everything is read once more. Still stopped: the run ends in this
+        // transaction, and an opening that waits for the lock finds it stopped. Open again: its
+        // restart passed this open run by, and the run goes on with the answer it has.
+        // The order is free of deadlocks: this transaction holds the run's row and no lock an
+        // opening takes before the restart lock.
+        await client.query(RESTART_LOCK_SHARED, [job.companyId]);
+        const behindLock = verdict(await readState());
+        if (behindLock === 'agent_stopped') {
+          await writeEnd(client, 'stopped', 'stopped', { errorCode: 'agent_stopped' });
+          end.written = true;
+        }
+        return behindLock;
       });
       if (!numbers.recorded) {
         // Hidden and neither stopped by a permission nor handed over: the numbers are kept in
@@ -1374,6 +1402,7 @@ export async function runAgentJob(
         });
       }
       if (goOn !== null) {
+        if (end.written) return ended('stopped', 'stopped', goOn);
         // For a run the database closed (a permission, a hand-over) this changes no row: the
         // status and the code the database wrote stand.
         return await finish('stopped', 'stopped', { errorCode: goOn });
