@@ -1046,7 +1046,7 @@ describe('the page of a request inside a project', () => {
         }),
     });
     renderApp('/c/armadx/approvals');
-    const results = await screen.findByRole('region', { name: /Taleplerinizin sonuçları/ });
+    const results = await screen.findByRole('region', { name: 'Talep sahibi onayları 2' });
     const [held, free] = within(results).getAllByRole('region', { name: 'Sonuç hazır' });
     if (!held || !free) throw new Error('Two acceptance cards were expected');
     expect(within(held).getByText(CHANGES_HELD)).toBeVisible();
@@ -1181,6 +1181,18 @@ describe('a request that goes on in the founder’s name', () => {
       ...overrides,
     });
 
+  /** The last item of the journey while the requester's approval waits. */
+  const PENDING_ACCEPTANCE = {
+    kind: 'acceptance' as const,
+    id: 'c0000000-0000-4000-8000-000000000001',
+    at: '2026-10-07T10:00:00.000Z',
+    round: 1,
+    status: 'pending' as const,
+    decidedBy: null,
+    reason: null,
+    note: null,
+  };
+
   it('page: a request whose requester cannot read it says so to every reader, in the open and in the closed form', async () => {
     const open = requestDetail({ ...working, requesterReads: false });
     mockApi({
@@ -1260,7 +1272,8 @@ describe('a request that goes on in the founder’s name', () => {
     });
     const api = mockApi({
       'GET /session': sessionHandler(),
-      [`GET /requests/${REQUEST_ID}`]: () => json(standIn()),
+      [`GET /requests/${REQUEST_ID}`]: () =>
+        json(standIn({ journey: [...DEFAULT_JOURNEY, PENDING_ACCEPTANCE] })),
       [ACCEPTANCE]: () => json(done),
     });
     renderApp(REQUEST_PAGE);
@@ -1268,6 +1281,13 @@ describe('a request that goes on in the founder’s name', () => {
     // The turn is the founder's, in the words every waiting result uses.
     expect(stageLine()).toContain('Aşama: Sonucu onaylamanız bekleniyor Sıra: sizde');
     expect(screen.getByText(ABSENT)).toBeVisible();
+    // The journey says the same as the banner and the card: the founder's answer is awaited,
+    // not the answer of a requester who cannot read the result.
+    const journey = screen.getByRole('region', { name: 'Yolculuk' });
+    expect(within(journey).getAllByRole('listitem').at(-1)).toHaveTextContent(
+      'Sonuç onaylandı; talep sahibinin yerine kurucunun onayı bekleniyor.',
+    );
+    expect(journey).not.toHaveTextContent(/talep sahibinin onayı bekleniyor|iletildi/);
     // In whose place, above the question, and both buttons are described by it.
     const inPlace = within(card).getByText(IN_PLACE);
     expect(
@@ -1395,7 +1415,10 @@ describe('a request that goes on in the founder’s name', () => {
         }),
     });
     renderApp('/c/armadx/approvals');
-    const results = await screen.findByRole('region', { name: /Taleplerinizin sonuçları/ });
+    const results = await screen.findByRole('region', { name: 'Talep sahibi onayları 2' });
+    // The heading names the kind of approval: one of the two requests is not the reader's own,
+    // so it never says "your requests".
+    expect(screen.getByRole('main')).not.toHaveTextContent(/Talepleriniz/);
     const [inPlace, own] = within(results).getAllByRole('region', { name: 'Sonuç hazır' });
     if (!inPlace || !own) throw new Error('Two acceptance cards were expected');
     expect(within(inPlace).getByText(IN_PLACE)).toBeVisible();
@@ -1467,6 +1490,29 @@ describe('a request that goes on in the founder’s name', () => {
     expect(lines[1]).not.toContain('Ayşe Yılmaz');
     expect(lines[2]).not.toContain('Ayşe Yılmaz');
     expect(journey).not.toHaveTextContent('Ayşe Yılmaz sonucu onayladı.');
+    cleanup();
+
+    // An approval that still waits for a requester who reads the request names the requester.
+    mockApi({
+      'GET /session': sessionHandler(),
+      [`GET /requests/${REQUEST_ID}`]: () =>
+        json(
+          requestDetail({
+            stage: 'requester_approval',
+            turn: { kind: 'person', ...EMPLOYEE },
+            waitingForMe: false,
+            approval: null,
+            result: RESULT,
+            journey: [...DEFAULT_JOURNEY, PENDING_ACCEPTANCE],
+          }),
+        ),
+    });
+    renderApp(REQUEST_PAGE);
+    const waits = await screen.findByRole('region', { name: 'Yolculuk' });
+    expect(within(waits).getAllByRole('listitem').at(-1)).toHaveTextContent(
+      'Sonuç talep sahibine iletildi; talep sahibinin onayı bekleniyor.',
+    );
+    expect(waits).not.toHaveTextContent(/kurucunun onayı/);
   });
 });
 

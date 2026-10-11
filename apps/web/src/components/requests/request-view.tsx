@@ -1218,7 +1218,12 @@ export function Journey({ request }: { request: RequestDetail }) {
                 >
                   <p>
                     {item.status === 'pending'
-                      ? 'Sonuç talep sahibine iletildi; talep sahibinin onayı bekleniyor.'
+                      ? // The requester who cannot read the request is not who answers (8 October
+                        // decision 45): the line names the founder, as the banner and the card
+                        // above it do, and never says that the requester's answer is awaited.
+                        request.requesterReads
+                        ? 'Sonuç talep sahibine iletildi; talep sahibinin onayı bekleniyor.'
+                        : 'Sonuç onaylandı; talep sahibinin yerine kurucunun onayı bekleniyor.'
                       : item.status === 'closed'
                         ? 'Talep sahibinin onayı kapandı: talep değişti.'
                         : item.decidedBy

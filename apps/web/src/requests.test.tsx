@@ -3371,7 +3371,7 @@ describe('Onaylar', () => {
       `/c/armadx/requests/${REQUEST_ID}`,
     );
     expect(within(approvals).getByRole('button', { name: 'Onayla' })).toBeVisible();
-    const results = screen.getByRole('region', { name: /Taleplerinizin sonuçları/ });
+    const results = screen.getByRole('region', { name: 'Talep sahibi onayları 1' });
     expect(within(results).getByRole('button', { name: 'Sonucu onayla' })).toBeVisible();
     expect(within(results).getByRole('link', { name: 'Kasım bülteni' })).toBeVisible();
     // The card says here too what "not what I asked for" does this time, as the API gave it.

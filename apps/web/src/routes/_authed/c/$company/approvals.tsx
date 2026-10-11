@@ -19,11 +19,13 @@ import { useCompany } from '@/lib/session';
 /**
  * "Onaylar": what waits for a decision of the reader, in two groups that are two different
  * records. "Birim onayları" are results an agent submitted and the reader may decide (the gate of
- * rule 4, sometimes with a passkey); "Taleplerinizin sonuçları" are approved results of the
- * reader's own requests that wait for their acceptance and, for the founder, of requests whose
- * requester can no longer read them (8 October decision 45; the card says in whose place). The cards are the ones the request page
- * uses, and each decision goes through the same endpoint whichever screen it is given on
- * (5 October decision 10). Nothing here can be dismissed or postponed.
+ * rule 4, sometimes with a passkey); "Talep sahibi onayları" are approved results that wait for
+ * the requester's acceptance: of the reader's own requests and, for the founder, of requests
+ * whose requester can no longer read them (8 October decision 45; the card says in whose place).
+ * The heading names the kind of approval and not whose request it is, so that it is true for
+ * both. The cards are the ones the request page uses, and each decision goes through the same
+ * endpoint whichever screen it is given on (5 October decision 10). Nothing here can be dismissed
+ * or postponed.
  */
 export const Route = createFileRoute('/_authed/c/$company/approvals')({
   staticData: { location: { label: 'Onaylar' } },
@@ -102,7 +104,7 @@ function ApprovalsScreen() {
       {acceptances.length > 0 ? (
         <section aria-labelledby={acceptancesId} className="flex flex-col gap-3">
           <h2 id={acceptancesId} className="text-sm font-semibold">
-            Taleplerinizin sonuçları{' '}
+            Talep sahibi onayları{' '}
             <span className="font-normal text-ink-secondary tabular-nums">
               {acceptances.length}
             </span>
