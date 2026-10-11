@@ -195,6 +195,16 @@ const projectChanged = (): ApiError =>
 
 // The key that keeps a customer's name unique in its company, and the link of a project to its
 // customer (supabase/migrations: project_fields, agents_customers_projects).
+// deadlock_detected: the change met another transaction (a run that was writing its records) and
+// PostgreSQL ended this one. Nothing was changed; said plainly, because a permission that the
+// founder believes closed and is not would be worse than a second click.
+const permissionBusy = (): ApiError =>
+  new ApiError(
+    409,
+    'permission_busy',
+    'İzin değiştirilemedi: aynı anda başka bir işlem sürüyordu. Hiçbir şey değişmedi; yeniden deneyin.',
+  );
+
 const CUSTOMER_NAME_KEY = 'customers_company_name';
 const PROJECT_CUSTOMER_LINK = 'projects_customer_id_company_id_fkey';
 
@@ -677,7 +687,10 @@ export function registerProjectRoutes(app: FastifyInstance, { runner, config }: 
    * recomputes that from its own request, and the database uses it up once, in this transaction.
    * If the project has another customer by now (a member changed it), nothing is opened and the
    * answer tells the panel to read the project again. Closing needs no passkey: it only stops
-   * agents. Asking for the value the project already has changes nothing and uses nothing.
+   * agents. The database closes the open runs of the project in the same transaction; its open
+   * requests stay open and fall to the founder, and a result that waits is not approved until
+   * the permission is open again (8 October decisions 46 and 47). Asking for the value the
+   * project already has changes nothing and uses nothing.
    */
   app.put(
     '/api/projects/:projectId/ai-permission',
@@ -723,6 +736,8 @@ export function registerProjectRoutes(app: FastifyInstance, { runner, config }: 
           // object_not_in_prerequisite_state: the customer changed between the read above and
           // the opening.
           if (code === '55000') throw projectChanged();
+          // Closing a permission also closes the open runs of the project.
+          if (code === '40P01') throw permissionBusy();
           throw error;
         }
         return detailOf(context, await projectOf(context, projectId));
@@ -752,6 +767,8 @@ export function registerProjectRoutes(app: FastifyInstance, { runner, config }: 
    * The contract permissions of a customer (decision 16), set by the founder alone. Opening the AI
    * permission asks for a passkey for exactly this customer and this body; closing it, and the
    * automated processing permission either way, ask for none. A permission left out stays.
+   * Closing the AI permission closes the open runs of every project of the customer, as closing
+   * a project's own does.
    */
   app.patch('/api/customers/:customerId/permissions', async (request, reply): Promise<Customer> =>
     runner.withCompany(request, reply, INSIDERS, async (context) => {
@@ -791,6 +808,8 @@ export function registerProjectRoutes(app: FastifyInstance, { runner, config }: 
         if (code === '28000') throw stepUpRequired();
         if (code === '42501') throw founderOnly();
         if (code === 'P0002') throw notFound();
+        // Closing a permission also closes the open runs of the customer's projects.
+        if (code === '40P01') throw permissionBusy();
         throw error;
       }
       const now = await readCustomer(client, customerId);

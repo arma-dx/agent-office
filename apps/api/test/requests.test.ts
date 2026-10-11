@@ -3868,5 +3868,401 @@ describe.skipIf(noDatabase)('requests', () => {
       const { res } = await meanwhile(steady.id, employee, 'select $1::uuid', [steady.id]);
       expect(res.statusCode, res.body).toBe(201);
     });
+
+    // Rule 12 while a request is under way (8 October decisions 46 to 48) ------------------------
+
+    /** The founder closes the AI permission of a project through the panel's route. */
+    async function closeAi(projectId: string): Promise<void> {
+      const res = await put(founder, `/api/projects/${projectId}/ai-permission`, {
+        allowed: false,
+      });
+      expect(res.statusCode, res.body).toBe(200);
+      expect(projectDetailSchema.parse(res.json()).aiAllowed).toBe(false);
+    }
+
+    /** The employee's request in the project, routed to HAF-2. */
+    async function routedIn(projectId: string): Promise<string> {
+      const { id } = await openIn(employee, projectId);
+      await route(id, ids.employee, 'HAF-2', 'HAF', projectId);
+      return id;
+    }
+
+    /** The same with a result HAF-2 submitted. */
+    async function submittedIn(
+      projectId: string,
+      options: { goesExternal?: boolean } = {},
+    ): Promise<{ id: string; approvalId: string }> {
+      const id = await routedIn(projectId);
+      return { id, approvalId: await submit(id, ids.employee, { ...options, projectId }) };
+    }
+
+    const HELD =
+      'Bu projede ajanlar şu an çalışamaz: projenin ya da müşterisinin yapay zekâ izni kapalı. İzin açılana kadar bu işlem yapılamaz.';
+    const held = (res: LightMyRequestResponse): unknown[] => [
+      res.statusCode,
+      errorCode(res),
+      messageOf(res),
+    ];
+
+    it('while the permission is closed the request falls to the founder and nothing calls for a run', async () => {
+      const made = await workable({ name: 'İzni kapanan proje' });
+      const id = await routedIn(made.id);
+      // The unit agent's run is open when the permission is closed.
+      const runId = await agentStep(
+        workerPool,
+        { companyId: ids.arma, userId: ids.employee, agentCode: 'HAF-2', projectId: made.id },
+        async (client) => {
+          const run = await client.query<{ id: string }>(
+            `insert into office.runs (company_id, task_id, agent_code, card_version_id,
+               trigger_type, model) values ($1, $2, 'HAF-2', $3, 'handoff', 'test-model')
+             returning id`,
+            [ids.arma, id, CARD_HAF],
+          );
+          return run.rows[0]?.id ?? '';
+        },
+      );
+      expect(await read(founder, id)).toMatchObject({
+        stage: 'working',
+        agentsMayWork: true,
+        actions: { reroute: true },
+      });
+
+      await closeAi(made.id);
+      // The run was closed with the permission, in the same transaction.
+      expect(
+        await adminQuery('select status, error_code from office.runs where id = $1', [runId]),
+      ).toEqual([{ status: 'stopped', error_code: 'ai_permission_closed' }]);
+      for (const reader of [founder, employee]) {
+        const detail = await read(reader, id);
+        expect(detail).toMatchObject({
+          // The request stays open (decision 47).
+          status: 'in_progress',
+          stage: 'fell_to_person',
+          cause: 'ai_permission_closed',
+          turn: { kind: 'founder' },
+          waitingForMe: reader === founder,
+          agentsMayWork: false,
+          project: { id: made.id },
+        });
+        // Nothing that calls for a run is offered; the request can still be closed.
+        expect(detail.actions).toEqual({
+          cancel: reader === employee,
+          stop: reader === founder,
+          reroute: false,
+        });
+      }
+      const before = server.jobs.sent.length;
+      const rerouted = await post(founder, `/api/requests/${id}/routing`, {
+        unitCode: 'HAF',
+        agentCode: 'HAF-2',
+      });
+      expect(held(rerouted)).toEqual([409, 'ai_permission_closed', HELD]);
+      expect(server.jobs.sent).toHaveLength(before);
+      expect(
+        await adminQuery(`select count(*)::int as n from office.task_routings where task_id = $1`, [
+          id,
+        ]),
+      ).toEqual([{ n: 1 }]);
+
+      // Decision 47, word for word: it is on the founder's list with its cause, and nobody is
+      // told.
+      const today = async (session: string): Promise<Today> =>
+        todaySchema.parse((await get(session, '/api/today')).json());
+      const mine = (await today(founder)).expected.find((item) => item.id === id);
+      expect(mine).toMatchObject({ stage: 'fell_to_person', cause: 'ai_permission_closed' });
+      const theirs = await today(employee);
+      expect(theirs.expected.map((item) => item.id)).not.toContain(id);
+      expect(
+        theirs.notifications.filter(
+          (item) => item.template !== 'passkeys_reset' && item.request.id === id,
+        ),
+      ).toEqual([]);
+      expect(
+        await adminQuery(`select 1 from office.notifications where record_id = $1`, [id]),
+      ).toEqual([]);
+      // The list says the same as the page.
+      const row = requestListSchema
+        .parse((await get(founder, `/api/requests?project=${made.id}`)).json())
+        .requests.find((request) => request.id === id);
+      expect(row).toMatchObject({ stage: 'fell_to_person', cause: 'ai_permission_closed' });
+
+      // Opened again (here by hand, so nothing is restarted): the run the close stopped reads as
+      // interrupted, and the routing can be corrected again.
+      await allowAi(made.id);
+      const after = await read(founder, id);
+      expect(after).toMatchObject({
+        stage: 'fell_to_person',
+        cause: 'ai_permission_interrupted',
+        agentsMayWork: true,
+        actions: { reroute: true },
+      });
+      const again = await post(founder, `/api/requests/${id}/routing`, {
+        unitCode: 'HAF',
+        agentCode: 'HAF-2',
+      });
+      expect(again.statusCode, again.body).toBe(200);
+      expect(server.jobs.sent.slice(before)).toEqual([
+        { companyId: ids.arma, userId: ids.employee, taskId: id, agentCode: 'HAF-2' },
+      ]);
+    });
+
+    it('the customer’s permission holds a request like the project’s own', async () => {
+      const customerId = randomUUID();
+      const made = await workable({
+        name: 'Müşterisinin izni kapanan proje',
+        customer: { kind: 'new', id: customerId, name: `Müşteri ${customerId}` },
+      });
+      // Agents may work only once both are open.
+      const early = await sendIn(employee, made.id);
+      expect(errorCode(early)).toBe('project_ai_not_allowed');
+      await adminQuery('update office.customers set ai_allowed = true where id = $1', [customerId]);
+      const id = await routedIn(made.id);
+      const closed = await send(
+        server,
+        founder,
+        'PATCH',
+        `/api/customers/${customerId}/permissions`,
+        {
+          company: ids.arma,
+          payload: { aiAllowed: false },
+        },
+      );
+      expect(closed.statusCode, closed.body).toBe(200);
+      expect(await read(founder, id)).toMatchObject({
+        stage: 'fell_to_person',
+        cause: 'ai_permission_closed',
+        agentsMayWork: false,
+        actions: { reroute: false },
+      });
+    });
+
+    it('while the permission is closed a result is not approved and no changes are asked for; it is rejected or stopped', async () => {
+      await freshPasskey(server, founder, founderKey, ids.founder, 'Kurucu telefonu');
+      const made = await workable({ name: 'Sonucu bekleyen proje' });
+      const first = await submittedIn(made.id, { goesExternal: true });
+      const stopped = await submittedIn(made.id);
+      await closeAi(made.id);
+
+      // The result keeps its stage and its card; the card says that agents may not work.
+      const detail = await read(founder, first.id);
+      expect(detail).toMatchObject({
+        stage: 'unit_approval',
+        cause: null,
+        agentsMayWork: false,
+        approval: { id: first.approvalId, agentsMayWork: false, needsStepUp: true },
+        actions: { stop: true, reroute: false },
+      });
+      // It still waits for the founder's decision: on the list and in the counts.
+      const desk = approvalDeskSchema.parse((await get(founder, '/api/approvals')).json());
+      expect(desk.approvals.find((item) => item.id === first.approvalId)).toMatchObject({
+        agentsMayWork: false,
+      });
+      // The requester reads why nothing moves, and not the result.
+      expect(await read(employee, first.id)).toMatchObject({
+        stage: 'unit_approval',
+        agentsMayWork: false,
+        approval: null,
+      });
+
+      const url = `/api/approvals/${first.approvalId}/decision`;
+      const before = server.jobs.sent.length;
+      // Approving is refused before the passkey is asked for, and with one the challenge stays.
+      expect(held(await post(founder, url, { decision: 'approved', selectedOption: 'A' }))).toEqual(
+        [409, 'ai_permission_closed', HELD],
+      );
+      const stepUp = await signStepUp(server, founder, founderKey, {
+        purpose: 'approve',
+        companyId: ids.arma,
+        subjectId: first.approvalId,
+        details: approvalDecisionDetails('A'),
+      });
+      expect(
+        held(await post(founder, url, { decision: 'approved', selectedOption: 'A', stepUp })),
+      ).toEqual([409, 'ai_permission_closed', HELD]);
+      expect(
+        await adminQuery(
+          'select consumed_at is not null as consumed from office.passkey_challenges where id = $1',
+          [stepUp.challengeId],
+        ),
+      ).toEqual([{ consumed: false }]);
+      // A change request would call for a run.
+      expect(
+        held(await post(founder, url, { decision: 'changes_requested', reason: 'incomplete' })),
+      ).toEqual([409, 'ai_permission_closed', HELD]);
+      expect(server.jobs.sent).toHaveLength(before);
+      expect((await read(founder, first.id)).stage).toBe('unit_approval');
+
+      // Rejecting closes the request, as always; the requester is told.
+      const rejected = await post(founder, url, { decision: 'rejected', reason: 'incomplete' });
+      expect(rejected.statusCode, rejected.body).toBe(200);
+      expect(requestDetailSchema.parse(rejected.json())).toMatchObject({
+        status: 'cancelled',
+        cause: 'rejected',
+      });
+      // And the work can be stopped.
+      const stop = await post(founder, `/api/requests/${stopped.id}/close`, {
+        reason: 'İzin kapalıyken bekletilmeyecek.',
+      });
+      expect(stop.statusCode, stop.body).toBe(200);
+      expect(requestDetailSchema.parse(stop.json()).status).toBe('cancelled');
+    });
+
+    it('with the permission open again the same result is approved, with the same passkey confirmation', async () => {
+      await freshPasskey(server, founder, founderKey, ids.founder, 'Kurucu telefonu');
+      const made = await workable({ name: 'İzni yeniden açılan proje' });
+      const { id, approvalId } = await submittedIn(made.id, { goesExternal: true });
+      await closeAi(made.id);
+      const stepUp = await signStepUp(server, founder, founderKey, {
+        purpose: 'approve',
+        companyId: ids.arma,
+        subjectId: approvalId,
+        details: approvalDecisionDetails('B'),
+      });
+      const url = `/api/approvals/${approvalId}/decision`;
+      const body = { decision: 'approved', selectedOption: 'B', stepUp };
+      expect(errorCode(await post(founder, url, body))).toBe('ai_permission_closed');
+      await allowAi(made.id);
+      const approved = await post(founder, url, body);
+      expect(approved.statusCode, approved.body).toBe(200);
+      expect(requestDetailSchema.parse(approved.json())).toMatchObject({
+        id,
+        stage: 'requester_approval',
+        agentsMayWork: true,
+      });
+    });
+
+    it('the requester accepts an approved result while the permission is closed and cannot ask for changes', async () => {
+      const made = await workable({ name: 'Onaylanmış sonucu bekleyen proje' });
+      const accepted = await submittedIn(made.id);
+      const asked = await submittedIn(made.id);
+      for (const { approvalId } of [accepted, asked]) {
+        const res = await post(founder, `/api/approvals/${approvalId}/decision`, {
+          decision: 'approved',
+          selectedOption: 'A',
+        });
+        expect(res.statusCode, res.body).toBe(200);
+      }
+      // The approval desk says for an acceptance too whether agents may work.
+      const waiting = async (requestId: string) =>
+        approvalDeskSchema
+          .parse((await get(employee, '/api/approvals')).json())
+          .acceptances.find((item) => item.requestId === requestId);
+      expect(await waiting(asked.id)).toMatchObject({ agentsMayWork: true, forRequester: null });
+      await closeAi(made.id);
+      expect(await waiting(asked.id)).toMatchObject({ agentsMayWork: false, forRequester: null });
+      expect(await read(employee, asked.id)).toMatchObject({
+        stage: 'requester_approval',
+        waitingForMe: true,
+        agentsMayWork: false,
+        acceptance: { round: 1, returnsToAgent: true, inPlaceOfRequester: false },
+      });
+
+      const before = server.jobs.sent.length;
+      const changes = await post(employee, `/api/requests/${asked.id}/acceptance`, {
+        decision: 'changes_requested',
+        note: 'Daha kısa olsun.',
+      });
+      expect(held(changes)).toEqual([409, 'ai_permission_closed', HELD]);
+      expect(server.jobs.sent).toHaveLength(before);
+      expect((await read(employee, asked.id)).stage).toBe('requester_approval');
+      // Accepting the result that was approved while the permission was open starts no agent.
+      const done = await post(employee, `/api/requests/${accepted.id}/acceptance`, {
+        decision: 'approved',
+      });
+      expect(done.statusCode, done.body).toBe(200);
+      expect(requestDetailSchema.parse(done.json()).status).toBe('done');
+      // With the permission open again the change request goes back to the agent.
+      await allowAi(made.id);
+      const later = await post(employee, `/api/requests/${asked.id}/acceptance`, {
+        decision: 'changes_requested',
+        note: 'Daha kısa olsun.',
+      });
+      expect(later.statusCode, later.body).toBe(200);
+      expect(server.jobs.sent.slice(before)).toEqual([
+        { companyId: ids.arma, userId: ids.employee, taskId: asked.id, agentCode: 'HAF-2' },
+      ]);
+    });
+
+    it('an approval that meets a close of the permission is answered as held', async () => {
+      const made = await workable({ name: 'Karar sırasında izni kapanan proje' });
+      const { id, approvalId } = await submittedIn(made.id);
+      // Somebody closes the permission and has not committed: the route still reads it open, and
+      // the database's own hold waits for the close and then refuses.
+      const admin = await adminPool.connect();
+      let pending: Promise<LightMyRequestResponse>;
+      try {
+        await admin.query('begin');
+        await admin.query('update office.projects set ai_allowed = false where id = $1', [made.id]);
+        pending = post(founder, `/api/approvals/${approvalId}/decision`, {
+          decision: 'approved',
+          selectedOption: 'A',
+        });
+        await untilServerWaits();
+        await admin.query('commit');
+      } catch (error) {
+        await admin.query('rollback');
+        throw error;
+      } finally {
+        admin.release();
+      }
+      expect(held(await pending)).toEqual([409, 'ai_permission_closed', HELD]);
+      expect(await read(founder, id)).toMatchObject({
+        stage: 'unit_approval',
+        agentsMayWork: false,
+      });
+      expect(
+        await adminQuery('select status from office.approvals where id = $1', [approvalId]),
+      ).toEqual([{ status: 'pending' }]);
+    });
+
+    it('a project that is closed takes no new request and lets its open requests finish', async () => {
+      const made = await workable({ name: 'Kapanırken talepleri süren proje' });
+      const first = await submittedIn(made.id);
+      const second = await submittedIn(made.id);
+      // A member closes the project.
+      const closed = await send(server, employee, 'PATCH', `/api/projects/${made.id}`, {
+        company: ids.arma,
+        payload: { status: 'completed' },
+      });
+      expect(closed.statusCode, closed.body).toBe(200);
+      expect(projectDetailSchema.parse(closed.json()).closed).toBe(true);
+      expect(errorCode(await sendIn(employee, made.id))).toBe('project_closed');
+
+      // The open requests go on: nothing about them is held (decision 48).
+      expect(await read(founder, first.id)).toMatchObject({
+        stage: 'unit_approval',
+        agentsMayWork: true,
+        actions: { reroute: true },
+        approval: { agentsMayWork: true },
+      });
+      const before = server.jobs.sent.length;
+      const changes = await post(founder, `/api/approvals/${first.approvalId}/decision`, {
+        decision: 'changes_requested',
+        reason: 'incomplete',
+      });
+      expect(changes.statusCode, changes.body).toBe(200);
+      expect(requestDetailSchema.parse(changes.json()).stage).toBe('revising');
+      expect(server.jobs.sent.slice(before)).toEqual([
+        { companyId: ids.arma, userId: ids.employee, taskId: first.id, agentCode: 'HAF-2' },
+      ]);
+      // And to their end.
+      const approved = await post(founder, `/api/approvals/${second.approvalId}/decision`, {
+        decision: 'approved',
+        selectedOption: 'A',
+      });
+      expect(approved.statusCode, approved.body).toBe(200);
+      const accepted = await post(employee, `/api/requests/${second.id}/acceptance`, {
+        decision: 'approved',
+      });
+      expect(accepted.statusCode, accepted.body).toBe(200);
+      expect(requestDetailSchema.parse(accepted.json())).toMatchObject({
+        status: 'done',
+        project: { id: made.id },
+      });
+      // The list of the closed project still holds them.
+      expect(await listed(founder, `?project=${made.id}`)).toEqual(
+        expect.arrayContaining([first.id, second.id]),
+      );
+    });
   });
 });

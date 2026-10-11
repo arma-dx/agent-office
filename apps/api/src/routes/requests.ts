@@ -210,6 +210,14 @@ const projectAiNotAllowed = (byCustomer: boolean): ApiError =>
       : 'Bu projede talep açılamaz: projenin yapay zekâ izni kapalı. İzni kurucu, projenin sayfasından açar.',
   );
 
+// Rule 12 while a request is under way: an act that releases an agent's work or calls for a run.
+const aiPermissionClosed = (): ApiError =>
+  new ApiError(
+    409,
+    'ai_permission_closed',
+    'Bu projede ajanlar şu an çalışamaz: projenin ya da müşterisinin yapay zekâ izni kapalı. İzin açılana kadar bu işlem yapılamaz.',
+  );
+
 /**
  * Why a request cannot be opened in this project now, as the answer to give; null when it can.
  * Read with the person's own rights: a project they are not a member of is one that does not
@@ -362,7 +370,8 @@ async function detailOf(context: CompanyContext, row: RequestRow): Promise<Reque
       // somebody else's request and correct the routing.
       cancel: open && isRequester,
       stop: open && !isRequester && row.reader_may_decide,
-      reroute: open && row.reader_may_decide,
+      // Correcting the routing calls for a run; none starts while agents may not work (rule 12).
+      reroute: open && row.reader_may_decide && row.agents_may_work,
     },
     comments: toComments(commentRows, names, mayComment),
     serverTime: now.toISOString(),
@@ -629,6 +638,10 @@ export function registerRequestRoutes(
       if (before.status === 'done' || before.status === 'cancelled') {
         throw requestClosed();
       }
+      // Rule 12: the routing would call for a run that the runner then refuses.
+      if (!before.agents_may_work) {
+        throw aiPermissionClosed();
+      }
       const { unitCode, agentCode, note } = body.data;
       // The coordinator's own unit is never a place to route to (the list does not offer it).
       const options = await listRoutingOptions(client, COORDINATOR_AGENT_CODE);
@@ -678,8 +691,13 @@ export function registerRequestRoutes(
         throw invalidRequest();
       }
       const { client, companyId } = context;
-      if (!(await readRequest(client, COORDINATOR_AGENT_CODE, requestId))) {
+      const before = await readRequest(client, COORDINATOR_AGENT_CODE, requestId);
+      if (!before) {
         throw notFound();
+      }
+      // "Not what I asked for" calls for a run; accepting the approved result starts none.
+      if (body.data.decision === 'changes_requested' && !before.agents_may_work) {
+        throw aiPermissionClosed();
       }
       // The request first, as a close and a correction do: the answer then waits for them
       // instead of meeting them half way.
@@ -788,6 +806,11 @@ export function registerRequestRoutes(
         throw approvalClosed();
       }
       const decision = body.data;
+      // Rule 12: nothing of a project is approved, and no new attempt is called for, while agents
+      // may not work in it. Said before the passkey is asked for. Rejecting stays possible.
+      if (!approval.agents_may_work && decision.decision !== 'rejected') {
+        throw aiPermissionClosed();
+      }
       if (decision.decision === 'approved') {
         const options = optionsOf(approval.payload);
         const chosen = decision.selectedOption;
@@ -826,6 +849,9 @@ export function registerRequestRoutes(
         const code = databaseErrorCode(error);
         // invalid_authorization_specification: no re-verification for this approval.
         if (code === '28000') throw stepUpRequired();
+        // object_not_in_prerequisite_state: the permission was closed between the read above and
+        // the decision (office.hold_result_without_ai_permission).
+        if (code === '55000') throw aiPermissionClosed();
         // check_violation: the basis changed or the approval was closed meanwhile.
         if (code === '23514') throw approvalClosed();
         if (code === '42501') throw notFound();
