@@ -422,7 +422,7 @@ Adım 2: talep formunda proje alanı
 
 - [x] Talep formunda proje alanı; proje sayfasında o projenin talepleri (kapalı proje sunulmaz; ajanların çalışamadığı proje nedeniyle birlikte seçilemez görünür, SONRA P2-a; proje sayfasında Talepler ve Ayarlar sekmeleri, SONRA P2-j)
 - [x] Çalışmanın proje bağlamı; kural 12 denetiminin kodla yapılması; izin kapanırsa talebin insana düşmesi (çalıştırıcı projeyi talepten okur; izin kapanınca süren çalışma durur, talep kurucuya düşer, bekleyen sonuç onaylanamaz, kararlar 46 ve 47; izin ya da ajan yeniden açılınca bekleyen işler kendiliğinden başlar, karar 49, SONRA P2-v ila P2-y; talep sahibi talebi göremez olursa ajan kurucunun adına çalışır, karar 45, SONRA P2-q ila P2-u)
-- [ ] Dört yeni göçün (`20261008102200` ila `20261008102500`) yerel veritabanına ve test ortamına uygulanması; ardından yerelde `pnpm db:sync-definitions` (KOR-1 ve SOS-2 kartlarına `project_context` eklendi; çalıştırılmadan proje içindeki talep "ajan kartı çalışmaya açık değil" der)
+- [ ] Beş yeni göçün (`20261008102200` ila `20261008102600`) yerel veritabanına ve test ortamına uygulanması; ardından yerelde `pnpm db:sync-definitions` (KOR-1 ve SOS-2 kartlarına `project_context` eklendi; çalıştırılmadan proje içindeki talep "ajan kartı çalışmaya açık değil" der)
 
 Adım 3: proje sayfasının öteki bölümleri (karar 17; her biri ayrı küçük adım)
 

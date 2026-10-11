@@ -440,6 +440,40 @@ describe.skipIf(noDatabase)('waiting work starts again', () => {
     expect(await restartTraces(outside)).toEqual([]);
   });
 
+  it('a result is taken only from a run that is still open: the run a closed permission stopped submits nothing once the permission is open again', async () => {
+    await setSwitch('HAF-1', 'enabled');
+    const task = await routed(ids.projectA);
+    const stopped = await startRun(task, 'HAF-1', ids.projectA);
+    // Closed and opened again while the run's model call is in flight: the run is stopped, and
+    // visible to its own context again; the step is the same and the agent is open.
+    await closeProjectPermission();
+    await openProjectPermission();
+    expect(
+      await adminQuery('select status, error_code from office.runs where id = $1', [stopped]),
+    ).toEqual([{ status: 'stopped', error_code: 'ai_permission_closed' }]);
+    const submitFrom = (run: string): Promise<{ id: string }[] | string> =>
+      settled(
+        committed('worker', agentRun('HAF-1', ids.projectA), (tx) =>
+          tx.rows<{ id: string }>(SUBMIT, [task, run, null]),
+        ),
+      );
+    const state = (): Promise<Record<string, unknown>[]> =>
+      adminQuery(
+        `select t.status, (select count(*)::int from office.approvals a where a.task_id = t.id) as results
+         from office.tasks t where t.id = $1`,
+        [task],
+      );
+    // The late answer of the stopped run: refused, and the request is as it was.
+    expect(await submitFrom(stopped)).toBe('23514');
+    expect(await state()).toEqual([{ status: 'in_progress', results: 0 }]);
+    // The opening called for the work again: the run of the restart submits as always.
+    expect(idsOf(await restart({ project: ids.projectA }))).toEqual([task]);
+    const again = await startRun(task, 'HAF-1', ids.projectA);
+    expect(await submitFrom(again)).toEqual([{ id: expect.any(String) as string }]);
+    expect(await state()).toEqual([{ status: 'awaiting_approval', results: 1 }]);
+    await endRun(again, 'HAF-1', 'completed', null, ids.projectA);
+  });
+
   it('a reopened permission of a customer restarts the held requests of its projects, and of no other customer', async () => {
     await setSwitch('HAF-1', 'enabled');
     const held = await routed(ids.projectA);
