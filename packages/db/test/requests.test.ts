@@ -4074,3 +4074,163 @@ describe.skipIf(noDatabase)('the due day of a request', () => {
     });
   });
 });
+
+// A request inside a project (8 October decisions 11, 17 and 48; docs/SONRA.md P-h, P-m). Who may
+// open it there is the row policy and office.check_task; the one rule this step adds is the
+// closed project. Nothing of a request's project changes afterwards.
+describe.skipIf(noDatabase)('a request inside a project', () => {
+  afterAll(closePools);
+
+  const OPEN = `insert into office.tasks (company_id, project_id, kind, title)
+    values ($1, $2, 'request', 'x')`;
+  const NO_AI = { code: '23514', message: 'Agents do not work in this project (AI permission)' };
+  const CLOSED = { code: '23514', message: 'A closed project takes no new request' };
+
+  it('the founder and a member open a request in a project; nobody else does, and no project of the other company is named', async () => {
+    await inTransaction(async (tx) => {
+      for (const person of [employeeA, founderA]) {
+        await tx.setContext(person);
+        const task = await openRequest(tx, ids.projectA);
+        expect(
+          await one(tx, 'select project_id, requester_user_id from office.tasks where id = $1', [
+            task,
+          ]),
+        ).toEqual({ project_id: ids.projectA, requester_user_id: person.userId });
+      }
+      // An employee who is no member, and one with the approval right who is no member: the
+      // project gives them no row, so it reads like a project without the permission.
+      for (const person of [colleagueA, approverA]) {
+        await tx.setContext(person);
+        expect(await tx.expectError(OPEN, [ids.arma, ids.projectA])).toEqual(NO_AI);
+      }
+      // An external person reads no project either, and opens no request at all.
+      await tx.setContext(externalA);
+      expect(await tx.expectError(OPEN, [ids.arma, ids.projectA])).toEqual(NO_AI);
+      expect((await tx.expectError(OPEN, [ids.arma, null])).code).toBe('42501');
+      // A project of the other company is no project of this one, also for its founder.
+      await tx.setContext(founderA);
+      expect(await tx.expectError(OPEN, [ids.arma, ids.projectP])).toEqual(NO_AI);
+      await tx.setContext(founderP);
+      expect(await tx.expectError(OPEN, [ids.pillika, ids.projectA])).toEqual(NO_AI);
+    });
+    await inWorkerTransaction(async (tx) => {
+      // The worker's role with a member's name alone is not that member.
+      await tx.setContext(employeeA);
+      expect(await tx.expectError(OPEN, [ids.arma, ids.projectA])).toEqual({
+        code: '42501',
+        message: 'A request is opened through the API',
+      });
+      await tx.setContext({ ...agentRun(ids.employeeA, 'KOR-1'), projectId: ids.projectA });
+      expect(await tx.expectError(OPEN, [ids.arma, ids.projectA])).toEqual({
+        code: '42501',
+        message: 'A request is opened by a person',
+      });
+    });
+  });
+
+  it('a closed project takes no new request and takes one again when it is open again', async () => {
+    await inTransaction(async (tx) => {
+      await tx.setContext(employeeA);
+      const before = await openRequest(tx, ids.projectA);
+      for (const status of ['completed', 'cancelled']) {
+        // A member closes the project (docs/SONRA.md P1b-i).
+        await tx.setContext(employeeA);
+        expect(
+          await tx.exec('update office.projects set status = $2 where id = $1', [
+            ids.projectA,
+            status,
+          ]),
+        ).toBe(1);
+        for (const person of [employeeA, founderA]) {
+          await tx.setContext(person);
+          expect(await tx.expectError(OPEN, [ids.arma, ids.projectA]), status).toEqual(CLOSED);
+        }
+        // Somebody who does not read the project does not learn that it is closed.
+        await tx.setContext(colleagueA);
+        expect(await tx.expectError(OPEN, [ids.arma, ids.projectA]), status).toEqual(NO_AI);
+        // The request that was opened before the close is read as before and keeps its status.
+        await tx.setContext(employeeA);
+        expect(
+          await tx.rows('select status, project_id from office.tasks where id = $1', [before]),
+        ).toEqual([{ status: 'open', project_id: ids.projectA }]);
+      }
+      for (const status of ['planned', 'in_progress', 'backlog']) {
+        await tx.setContext(employeeA);
+        await tx.exec('update office.projects set status = $2 where id = $1', [
+          ids.projectA,
+          status,
+        ]);
+        expect(await openRequest(tx, ids.projectA), status).toEqual(expect.any(String));
+      }
+    });
+  });
+
+  it('a project where agents may not work takes no request: its own permission, or its customer’s', async () => {
+    await inTransaction(async (tx) => {
+      await tx.setContext(founderA);
+      for (const project of [ids.projectANoAi, ids.projectACustomerNoAi]) {
+        expect(await tx.expectError(OPEN, [ids.arma, project])).toEqual(NO_AI);
+      }
+      // A member of such a project is refused like the founder.
+      await tx.setContext(employeeA);
+      expect(await tx.expectError(OPEN, [ids.arma, ids.projectANoAi])).toEqual(NO_AI);
+      expect(await tx.count('tasks', `kind = 'request' and project_id is not null`)).toBe(0);
+    });
+  });
+
+  it('the project of a request never changes', async () => {
+    await inTransaction(async (tx) => {
+      await tx.setContext(employeeA);
+      const inside = await openRequest(tx, ids.projectA);
+      const outside = await openRequest(tx);
+      for (const person of [employeeA, founderA]) {
+        await tx.setContext(person);
+        for (const [task, project] of [
+          [inside, null],
+          [inside, ids.projectANoAi],
+          [outside, ids.projectA],
+        ] as const) {
+          expect(
+            (
+              await tx.expectError('update office.tasks set project_id = $2 where id = $1', [
+                task,
+                project,
+              ])
+            ).code,
+          ).toBe('42501');
+        }
+      }
+      await tx.setContext(founderA);
+      expect(
+        await tx.rows('select id, project_id from office.tasks where id = any ($1::uuid[])', [
+          [inside, outside],
+        ]),
+      ).toEqual(
+        expect.arrayContaining([
+          { id: inside, project_id: ids.projectA },
+          { id: outside, project_id: null },
+        ]),
+      );
+    });
+    await inAdminTransaction(async (tx) => {
+      // The privileged role without a context is refused too, and the flow's own role has no
+      // privilege on the column: no function of the flow can move a request to another project.
+      await tx.setContext({});
+      expect(
+        (
+          await tx.expectError('update office.tasks set project_id = $2 where id = $1', [
+            ids.requestA,
+            ids.projectA,
+          ])
+        ).code,
+      ).toBe('42501');
+      expect(
+        await one(
+          tx,
+          `select has_column_privilege('office_trigger', 'office.tasks', 'project_id', 'update')
+             as flow`,
+        ),
+      ).toEqual({ flow: false });
+    });
+  });
+});
