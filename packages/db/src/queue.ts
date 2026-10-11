@@ -77,7 +77,8 @@ export function agentRunExpireSeconds(durationMinutes: number | null): number {
 }
 
 /**
- * One agent run to start: who asked (the run's identity), on which request, and which agent. Ids
+ * One agent run to start: who asked (the requester; in whose name the run goes is resolved by the
+ * database when the run opens, 8 October decision 45), on which request, and which agent. Ids
  * only (rule 10). The agent code is the key of the global table agent_definitions, an identifier
  * and not company data; its pattern leaves no room for text. The job is a hint: the runner reads
  * the request again with the restricted role and this context, and does nothing the database would

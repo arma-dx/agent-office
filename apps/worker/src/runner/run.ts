@@ -2,6 +2,8 @@ import {
   agentRunJobSchema,
   agentStep,
   dueDaySql,
+  setContext,
+  withContext,
   type AgentContext,
   type AgentRunJob,
   type AgentRunSender,
@@ -49,11 +51,12 @@ import {
 /**
  * One agent run, from the job to the last record (KALAN-ISLER 1.1, the first slice).
  *
- * The job is a hint and the database is the authority: the runner sets the run's context from the
- * job (company, the requester as identity, the agent) and reads everything again with the worker's
- * restricted role. Rule 9: the context stays the same for the whole run; every database step is
- * its own short transaction that sets the context again (agentStep), and no transaction is open
- * while the model is called. Rule 5: the run row is written when the run opens, after every model
+ * The job is a hint and the database is the authority: the runner takes the company and the agent
+ * from the job and asks the database in whose name and in which project the run goes (8 October
+ * decision 45; office.request_run_gate), and reads everything again with the worker's restricted
+ * role. Rule 9: the context stays the same for the whole run; every database step is its own
+ * short transaction that sets the context again (agentStep), and no transaction is open while the
+ * model is called. Rule 5: the run row is written when the run opens, after every model
  * call (tokens and cost) and when it ends; every tool call has its own row and its audit row.
  *
  * Nothing here sets the status of the request: the records the run writes (a run, a routing, an
@@ -176,6 +179,8 @@ interface TaskRow {
   description: string | null;
   status: string;
   requester_user_id: string;
+  // The name of the request's project; null when it is inside none.
+  project_name: string | null;
   // The due day of the request (YYYY-MM-DD, office time); null when the requester gave none.
   due_date: string | null;
   ai_allowed: boolean;
@@ -298,8 +303,10 @@ async function audit(
   } = {},
 ): Promise<void> {
   await client.query(
-    `insert into office.audit_log (company_id, event, tool_name, record_type, record_id, run_id)
-     values (office.ctx_company_id(), $1, $2, $3, $4, $5)`,
+    // The project of the run's context is the label of its trace (rule 5).
+    `insert into office.audit_log
+       (company_id, project_id, event, tool_name, record_type, record_id, run_id)
+     values (office.ctx_company_id(), office.ctx_project_id(), $1, $2, $3, $4, $5)`,
     [
       event,
       fields.tool ?? null,
@@ -353,19 +360,52 @@ export async function runAgentJob(
     return none('job_invalid');
   }
   const job: AgentRunJob = parsedJob.data;
+  // Neither the person nor the project is the job's to say (8 October decision 45; rule 9): the
+  // database names both (office.request_run_gate). From the opening on they stay for every step
+  // of the run. Until the gate has answered, the person is the requester the job names.
   const context: AgentContext = {
     companyId: job.companyId,
     userId: job.userId,
     agentCode: job.agentCode,
+    projectId: null,
+  };
+  interface Gate {
+    run_as: string | null;
+    project_id: string | null;
+    ai_allowed: boolean;
+  }
+  /** A transaction that starts with the company and the agent and no person: the gate names one. */
+  const unresolved = <T>(fn: (client: pg.PoolClient) => Promise<T>): Promise<T> =>
+    withContext(deps.pool, { companyId: job.companyId, agentCode: job.agentCode }, fn);
+  /**
+   * Asks the database in whose name and in which project a run on this request goes, and sets
+   * both in the open transaction and in the run's context. Null: no request of this company.
+   */
+  const resolve = async (client: pg.PoolClient): Promise<Gate | null> => {
+    const { rows } = await client.query<Gate>(
+      'select run_as, project_id, ai_allowed from office.request_run_gate($1)',
+      [job.taskId],
+    );
+    const gate = rows[0];
+    if (gate === undefined || gate.run_as === null) return null;
+    context.userId = gate.run_as;
+    context.projectId = gate.project_id;
+    await setContext(client, context);
+    return gate;
   };
   const coordinator = job.agentCode === COORDINATOR_AGENT_CODE;
   const now = deps.now ?? Date.now;
   const refuse = async (outcome: RunOutcome): Promise<RunResult> => {
     deps.log('run_refused', { reason: outcome, task: job.taskId, agent: job.agentCode });
-    // The trace of a run that was not opened; fails silently when the context sees nothing.
-    await agentStep(deps.pool, context, (client) =>
-      audit(client, 'run_refused', { recordType: 'task', recordId: job.taskId }),
-    ).catch(() => undefined);
+    // The trace of a run that was not opened, in the name and the project the database resolves:
+    // it is written also when the requester can no longer write anything (the trace is what a
+    // restart reads, 8 October decision 49). Nothing is written when there is no such request
+    // for this company; a failure is silent.
+    await unresolved(async (client) => {
+      if ((await resolve(client)) !== null) {
+        await audit(client, 'run_refused', { recordType: 'task', recordId: job.taskId });
+      }
+    }).catch(() => undefined);
     return none(outcome);
   };
   /**
@@ -375,9 +415,11 @@ export async function runAgentJob(
    */
   const skip = async (outcome: RunOutcome): Promise<RunResult> => {
     deps.log('run_skipped', { reason: outcome, task: job.taskId, agent: job.agentCode });
-    await agentStep(deps.pool, context, (client) =>
-      audit(client, 'run_skipped', { recordType: 'task', recordId: job.taskId }),
-    ).catch(() => undefined);
+    await unresolved(async (client) => {
+      if ((await resolve(client)) !== null) {
+        await audit(client, 'run_skipped', { recordType: 'task', recordId: job.taskId });
+      }
+    }).catch(() => undefined);
     return none(outcome);
   };
 
@@ -405,7 +447,8 @@ export async function runAgentJob(
       ? ROUTE_TASK
       : null;
 
-  // Gate and open the run: one transaction, agent context.
+  // Gate and open the run: one transaction. It starts with the company and the agent and no
+  // person; the gate names the person and the project, and the rest runs in that context.
   type Opened =
     | { kind: 'refused'; outcome: RunOutcome }
     | { kind: 'closed'; outcome: RunOutcome; runId: string }
@@ -423,6 +466,16 @@ export async function runAgentJob(
   const openRun = async (client: pg.PoolClient): Promise<Opened> => {
     // Two jobs for one request wait for each other here.
     await client.query('select pg_advisory_xact_lock(hashtextextended($1, 0))', [job.taskId]);
+    // In whose name the run goes (8 October decision 45), its project context (docs/SONRA.md
+    // W-g) and rule 12 (the runner checks at the start of every run): the database is asked,
+    // inside this transaction. This transaction began with the company and the agent and no
+    // person; from here on its context, and the context of every later step, carries the person
+    // and the project the gate named. The answer about the permission is locked until the run
+    // row is committed, so a permission that is closed at this moment either is read here or
+    // finds the run and closes it. The person is not locked: if it changes before the insert,
+    // the insert is refused (office.check_run_request) and the opening is read again (below).
+    const gated = await resolve(client);
+    if (gated === null) return { kind: 'refused', outcome: 'task_not_visible' };
     // The stop switch (rule: a stopped agent takes no new work).
     const agentSwitch = await client.query<{ status: string }>(
       'select status from office.company_agents where agent_code = $1',
@@ -431,16 +484,12 @@ export async function runAgentJob(
     if (agentSwitch.rows[0]?.status !== 'enabled') {
       return { kind: 'refused', outcome: 'agent_not_enabled' };
     }
-    // Rule 12 (the runner checks at the start of every run). Today the row policies answer first:
-    // a project without AI permission, and with it its request, is hidden from every agent run,
-    // and a request in any project is hidden from a run whose context carries no project (the job
-    // has none yet). Both end here as "task_not_visible": no run, no model call. The ai_allowed
-    // column below is the runner's own guard behind the policies. It cannot be false while they
-    // hold (a request without a project always allows AI), so "ai_not_allowed" is not an answer
-    // anybody reads today; a distinct reason for the person has to come from a place that can see
-    // the project.
+    // A refusal here leaves no run and calls no model. The ai_allowed column of the read below
+    // stays as the runner's own guard behind the gate and the policies.
+    if (!gated.ai_allowed) return { kind: 'refused', outcome: 'ai_not_allowed' };
     const found = await client.query<TaskRow>(
       `select t.title, t.description, t.status, t.requester_user_id,
+              (select p.name from office.projects p where p.id = t.project_id) as project_name,
               ${dueDaySql('t.due_at')} as due_date,
               (
                 t.project_id is null or exists (
@@ -470,7 +519,9 @@ export async function runAgentJob(
     if (task.status === 'done' || task.status === 'cancelled') {
       return { kind: 'refused', outcome: 'request_closed' };
     }
-    // The run's identity is the requester; the job cannot name somebody else.
+    // The job names the requester: who asked. In whose name the run goes is the gate's answer,
+    // which may be the founder (decision 45); a job that names anybody else as the requester is
+    // not this request's job.
     if (task.requester_user_id !== job.userId) return { kind: 'refused', outcome: 'job_stale' };
     if (task.requester_role !== 'founder' && task.requester_role !== 'employee') {
       return { kind: 'refused', outcome: 'job_stale' };
@@ -659,7 +710,11 @@ export async function runAgentJob(
 
     // The card and the model must allow the run; if not, the run is closed where it was opened,
     // without a model call, so that the request's page can say why nothing happened.
-    const trialRefused = card.status === 'trial' && task.requester_role !== 'founder';
+    // A card on trial runs for the founder's own request only: not for a request the founder's
+    // name merely stands in for (8 October decision 45).
+    const ownRequest = context.userId === task.requester_user_id;
+    const trialRefused =
+      card.status === 'trial' && !(ownRequest && task.requester_role === 'founder');
     const closeWith =
       card.status === 'draft' || trialRefused || offered.length === 0
         ? 'card_not_runnable'
@@ -690,6 +745,8 @@ export async function runAgentJob(
           // office's).
           today: officeDay(now()),
           agent: job.agentCode,
+          // The name of the request's project: a fact of the request, data like the rest.
+          ...(task.project_name !== null ? { project: task.project_name } : {}),
           // The requester's due day, as a fact of the request: data like the rest, no instruction
           // (docs/SONRA.md D-g). Left out when the request has none.
           ...(task.due_date !== null ? { dueDate: task.due_date } : {}),
@@ -704,7 +761,7 @@ export async function runAgentJob(
     };
   };
   const open = (): Promise<Opened> =>
-    agentStep(deps.pool, context, openRun).catch((error: unknown): Opened => {
+    unresolved(openRun).catch((error: unknown): Opened => {
       // The transaction was rolled back, and with it the closing of older runs.
       superseded.length = 0;
       // check_violation from the run's own triggers: the agent was stopped or the request closed
@@ -712,11 +769,16 @@ export async function runAgentJob(
       if (sqlState(error) === '23514') {
         return { kind: 'refused', outcome: 'job_stale' };
       }
+      // insufficient_privilege from the insert of the run: the person the gate named stopped
+      // being the resolved one in this instant (or lost the project). Read again, once, like a
+      // step that moved.
+      if (sqlState(error) === '42501') throw new StepMoved();
       throw error;
     });
   // A step that moved under the opening is read again, once, from the start: the run then opens
   // for the new step, with what that step carries. If it moved a second time in that instant the
-  // job gives way; the job of the newest routing starts the work.
+  // job gives way; the job of the newest routing starts the work. The same for a person who
+  // stopped being the resolved one under the opening: the gate is asked anew.
   const opened = await open().catch((error: unknown) => {
     if (!(error instanceof StepMoved)) throw error;
     return open().catch((again: unknown): Opened => {
@@ -927,7 +989,8 @@ export async function runAgentJob(
               runId,
             ]);
             if (agent !== null) {
-              // The unit agent's run, in the name of the same requester; stored with the routing.
+              // The unit agent's run; stored with the routing. The job names the requester, as
+              // every job does: in whose name that run goes is the gate's answer when it opens.
               await deps.jobs.send(client, {
                 companyId: job.companyId,
                 userId: job.userId,
@@ -1130,26 +1193,61 @@ export async function runAgentJob(
       }
       modelCalls += 1;
 
-      // After every model call: what it cost, and whether the run may go on. The database does
-      // not stop a run that is already open, so the switch, the request and the step are read
-      // again here. The cost is written whatever the run's status: a call that was answered is
-      // paid for, also when the run was closed from elsewhere while the model was answering.
+      // After every model call: what it cost, and whether the run may go on. The database stops
+      // an open run by itself only when an AI permission is closed (rule 12), so the switch, the
+      // request and the step are read again here. The cost is written whatever the run's status:
+      // a call that was answered is paid for, also when the run was closed from elsewhere while
+      // the model was answering.
       const usage = usageOf(message);
+      const paidFor = [
+        runId,
+        usage.input,
+        usage.output,
+        usage.cacheWrite5m + usage.cacheWrite1h,
+        usage.cacheRead,
+        costOf(usage, profile.prices),
+      ];
+      // Whether the numbers of this call reached the run (set inside the step below).
+      const numbers = { recorded: true };
       const goOn = await agentStep(deps.pool, context, async (client) => {
-        await client.query(
+        const paid = await client.query(
           `update office.runs set input_tokens = input_tokens + $2,
              output_tokens = output_tokens + $3, cache_write_tokens = cache_write_tokens + $4,
              cache_read_tokens = cache_read_tokens + $5, cost_usd = cost_usd + $6::numeric
            where id = $1`,
-          [
-            runId,
-            usage.input,
-            usage.output,
-            usage.cacheWrite5m + usage.cacheWrite1h,
-            usage.cacheRead,
-            costOf(usage, profile.prices),
-          ],
+          paidFor,
         );
+        if ((paid.rowCount ?? 0) === 0) {
+          // The run is hidden from this context. If an AI permission was closed while the model
+          // was answering, the database stopped the run; it takes the numbers of this answered
+          // call through its own narrow function (rule 5). False for a run that is hidden for
+          // any other reason (its person lost the request: handed over below).
+          const added = await client.query<{ ok: boolean }>(
+            `select office.add_usage_to_stopped_run($1, $2, $3, $4, $5, $6::numeric) as ok`,
+            paidFor,
+          );
+          // The database's own stop: the answer is dropped, and the log names the real reason.
+          if (added.rows[0]?.ok === true) return 'ai_permission_closed';
+          // Not a permission. If the person of this run is no longer the one the database
+          // resolves for the request (8 October decision 45), the database closes the run here,
+          // with the numbers of this answered call, and the same work is called for again in
+          // this transaction: the new run opens in the name resolved now.
+          const handed = await client.query<{ ok: boolean }>(
+            `select office.hand_run_over($1, $2, $3, $4, $5, $6::numeric) as ok`,
+            paidFor,
+          );
+          if (handed.rows[0]?.ok === true) {
+            await deps.jobs.send(client, {
+              companyId: job.companyId,
+              userId: job.userId,
+              taskId: job.taskId,
+              agentCode: job.agentCode,
+            });
+            return 'identity_changed';
+          }
+          // Hidden for a reason neither function knows: nothing took the numbers.
+          numbers.recorded = false;
+        }
         const state = await client.query<{
           agent: string | null;
           task: string;
@@ -1177,7 +1275,19 @@ export async function runAgentJob(
         if (row.step === null || row.step !== opened.stepId) return 'routing_changed';
         return null;
       });
+      if (!numbers.recorded) {
+        // Hidden and neither stopped by a permission nor handed over: the numbers are kept in
+        // the log at least. Numbers only, never text (rule 6).
+        deps.log('run_usage_unrecorded', {
+          run: runId,
+          input: usage.input,
+          output: usage.output,
+          cost: costOf(usage, profile.prices),
+        });
+      }
       if (goOn !== null) {
+        // For a run the database closed (a permission, a hand-over) this changes no row: the
+        // status and the code the database wrote stand.
         return await finish('stopped', 'stopped', { errorCode: goOn });
       }
 
@@ -1249,6 +1359,51 @@ export async function runAgentJob(
       }
     }
   } catch (error) {
+    // A step failed. If agents may no longer work in the run's project, the database has stopped
+    // the run (rule 12); if the run's person is no longer the one the database resolves, the run
+    // is handed over (decision 45). Either way the run is hidden from this context and the
+    // failure is that change meeting a step half way, not an error of the runner.
+    const asked = await unresolved((client) =>
+      client.query<Gate>('select run_as, project_id, ai_allowed from office.request_run_gate($1)', [
+        job.taskId,
+      ]),
+    ).catch(() => null);
+    const gateNow = asked?.rows[0];
+    if (gateNow !== undefined && (context.projectId ?? null) !== null && !gateNow.ai_allowed) {
+      deps.log('run_finished', {
+        run: runId,
+        status: 'stopped',
+        outcome: 'stopped',
+        code: 'ai_permission_closed',
+      });
+      return { outcome: 'stopped', runId, modelCalls };
+    }
+    if (gateNow !== undefined && gateNow.run_as !== null && gateNow.run_as !== context.userId) {
+      const handed = await agentStep(deps.pool, context, async (client) => {
+        // The usage of the last answered call was written before the step that failed.
+        const over = await client.query<{ ok: boolean }>(
+          'select office.hand_run_over($1, 0, 0, 0, 0, 0::numeric) as ok',
+          [runId],
+        );
+        if (over.rows[0]?.ok !== true) return false;
+        await deps.jobs.send(client, {
+          companyId: job.companyId,
+          userId: job.userId,
+          taskId: job.taskId,
+          agentCode: job.agentCode,
+        });
+        return true;
+      }).catch(() => false);
+      if (handed) {
+        deps.log('run_finished', {
+          run: runId,
+          status: 'stopped',
+          outcome: 'stopped',
+          code: 'identity_changed',
+        });
+        return { outcome: 'stopped', runId, modelCalls };
+      }
+    }
     // Anything unforeseen still closes the run and leaves a trace; the error itself is rethrown
     // for the worker's log.
     await finish('failed', 'failed', { errorCode: 'runner_error' }).catch(() => undefined);
@@ -1296,10 +1451,27 @@ export async function closeLostRun(
   if (!parsed.success) return null;
   const job = parsed.data;
   if (which !== 'overdue' && which.runId === null) return null;
-  return agentStep(
+  // A run of a project request is visible only in its project's context, and a run whose
+  // requester has left only to the person the database resolves now: the transaction starts
+  // without a person and takes both from the gate.
+  return withContext(
     deps.pool,
-    { companyId: job.companyId, userId: job.userId, agentCode: job.agentCode },
+    { companyId: job.companyId, agentCode: job.agentCode },
     async (client) => {
+      // In whose name and in which project the run of this request is seen now (decision 45).
+      const gate = await client.query<{ run_as: string | null; project_id: string | null }>(
+        'select run_as, project_id from office.request_run_gate($1)',
+        [job.taskId],
+      );
+      const seenAs = gate.rows[0];
+      // No request of this company any more: nothing of it can be seen or closed.
+      if (seenAs === undefined || seenAs.run_as === null) return null;
+      await setContext(client, {
+        companyId: job.companyId,
+        userId: seenAs.run_as,
+        agentCode: job.agentCode,
+        projectId: seenAs.project_id,
+      });
       const closed =
         which === 'overdue'
           ? await client.query<{ id: string }>(

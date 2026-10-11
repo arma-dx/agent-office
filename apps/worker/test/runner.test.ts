@@ -105,8 +105,17 @@ async function correctToSameAgent(taskId: string, note: string): Promise<void> {
   ]);
 }
 
-/** A run that is left "running", as a worker that died leaves it: opened with the worker's role. */
-async function leftOpen(taskId: string, agentCode: string, minutesLimit?: number): Promise<string> {
+/**
+ * A run that is left "running", as a worker that died leaves it: opened with the worker's role,
+ * in the name and the project the database resolves for the request (the founder's own request
+ * without a project unless said otherwise).
+ */
+async function leftOpen(
+  taskId: string,
+  agentCode: string,
+  minutesLimit?: number,
+  as: { userId: string; projectId: string | null } = { userId: ids.founder, projectId: null },
+): Promise<string> {
   const [version] = await admin<{ id: string; model: string }>(
     `select v.id, v.model from office.agent_definitions d
      join office.card_versions v on v.id = d.current_version_id where d.code = $1`,
@@ -114,7 +123,7 @@ async function leftOpen(taskId: string, agentCode: string, minutesLimit?: number
   );
   return agentStep(
     testPools().worker,
-    { companyId: ids.arma, userId: ids.founder, agentCode },
+    { companyId: ids.arma, userId: as.userId, agentCode, projectId: as.projectId },
     async (client) => {
       const { rows } = await client.query<{ id: string }>(
         `insert into office.runs
@@ -1926,9 +1935,9 @@ describe.skipIf(noDatabase)('a run never leaves its company, its request or its 
     const outcomes = [
       // The Arma DX request with Pillika as the context: the run sees nothing of it.
       (await runAgentJob(deps, job(taskId, 'KOR-1', ids.founder, ids.pillika))).outcome,
-      // A person who is not a member of the company as identity.
+      // A job that names a person who is not a member of the company.
       (await runAgentJob(deps, job(taskId, 'KOR-1', ids.otherFounder))).outcome,
-      // An identity other than the requester.
+      // A job that names a member who is not the requester.
       (await runAgentJob(deps, job(taskId, 'KOR-1', ids.employee))).outcome,
       // A unit agent the request was never routed to.
       (await runAgentJob(deps, job(taskId, 'SOS-2', ids.founder))).outcome,
@@ -1940,8 +1949,9 @@ describe.skipIf(noDatabase)('a run never leaves its company, its request or its 
     ];
     expect(outcomes).toEqual([
       'task_not_visible',
-      // Not a member: not even the agent's switch is visible to such a run.
-      'agent_not_enabled',
+      // The person of a run is the database's answer (8 October decision 45), never the job's:
+      // a job that names anybody but the requester is not this request's job, member or not.
+      'job_stale',
       'job_stale',
       'job_stale',
       'task_not_visible',
@@ -1952,59 +1962,6 @@ describe.skipIf(noDatabase)('a run never leaves its company, its request or its 
     expect(model.requests).toHaveLength(0);
     expect(jobs.sent).toEqual([]);
     expect(await statusOf(taskId)).toBe('open');
-  });
-
-  it('no agent runs on a request of a project without AI permission (rule 12)', async () => {
-    // A project of Arma DX, and a founder's request inside it.
-    const [project] = await admin<{ id: string }>(
-      `insert into office.projects (company_id, name, ai_allowed) values ($1, 'Kural 12', true)
-       returning id`,
-      [ids.arma],
-    );
-    const projectId = project?.id ?? '';
-    const taskId = await withContext(
-      testPools().app,
-      { companyId: ids.arma, userId: ids.founder },
-      async (client) => {
-        const { rows } = await client.query<{ id: string }>(
-          `insert into office.tasks (company_id, project_id, kind, title, description)
-           values ($1, $2, 'request', 'Proje içinde talep', 'Gönderi yaz') returning id`,
-          [ids.arma, projectId],
-        );
-        return rows[0]?.id ?? '';
-      },
-    );
-    // What a run sees of the request when its context names the project: the row while the
-    // project allows AI, nothing at all once the permission is withdrawn. The row policies give
-    // the answer; the runner's own ai_allowed column never reads false.
-    const seenInProject = () =>
-      agentStep(
-        testPools().worker,
-        { companyId: ids.arma, userId: ids.founder, agentCode: 'KOR-1', projectId },
-        async (client) =>
-          (await client.query('select 1 from office.tasks where id = $1', [taskId])).rows.length,
-      );
-    expect(await seenInProject()).toBe(1);
-    await admin('update office.projects set ai_allowed = false where id = $1', [projectId]);
-    expect(await seenInProject()).toBe(0);
-
-    // The permission was withdrawn after the request was opened; its job is still on the queue.
-    const model = new ScriptedModel([]);
-    const { deps, jobs, log } = await runner(model);
-    const result = await runAgentJob(deps, job(taskId, 'KOR-1', ids.founder));
-    expect(result).toEqual({ outcome: 'task_not_visible', runId: null, modelCalls: 0 });
-    expect(await runCount(taskId)).toBe(0);
-    expect(model.requests).toHaveLength(0);
-    expect(jobs.sent).toEqual([]);
-    expect(log).toEqual([
-      {
-        event: 'run_refused',
-        fields: { reason: 'task_not_visible', task: taskId, agent: 'KOR-1' },
-      },
-    ]);
-    // Nor can a run be opened on it by hand with the worker's role.
-    await expect(leftOpen(taskId, 'KOR-1')).rejects.toThrow();
-    expect(await runCount(taskId)).toBe(0);
   });
 
   it('a routing a person made during the coordinator’s run stands: the late answer is not executed', async () => {
@@ -2345,5 +2302,658 @@ describe.skipIf(noDatabase)('a run belongs to the step it was opened for', () =>
     expect(await runRow(other)).toMatchObject({ status: 'running', error_code: null });
     expect(log).toContainEqual({ event: 'run_lost', fields: { run: opened?.id } });
     expect(log).not.toContainEqual({ event: 'run_lost', fields: { run: other } });
+  });
+});
+
+// Requests inside a project (8 October decisions 11, 17 and 45 to 47; rule 12). The runner asks
+// the database at the start of every run in whose name the run goes, in which project, and
+// whether agents may work there (office.request_run_gate); the job carries none of the three.
+describe.skipIf(noDatabase)('a request inside a project', () => {
+  afterAll(closeTestPools);
+
+  /** A project of Arma DX with the employee as a member; the AI permissions as asked. */
+  async function project(aiAllowed: boolean, customerAi: boolean | null = null): Promise<string> {
+    let customerId: string | null = null;
+    if (customerAi !== null) {
+      const [customer] = await admin<{ id: string }>(
+        `insert into office.customers (company_id, name, ai_allowed)
+         values ($1, 'Müşteri ' || gen_random_uuid(), $2) returning id`,
+        [ids.arma, customerAi],
+      );
+      customerId = customer?.id ?? null;
+    }
+    const [row] = await admin<{ id: string }>(
+      `insert into office.projects (company_id, customer_id, name, ai_allowed)
+       values ($1, $2, 'Lansman', $3) returning id`,
+      [ids.arma, customerId, aiAllowed],
+    );
+    const id = row?.id ?? '';
+    await admin(
+      `insert into office.project_members (company_id, project_id, user_id) values ($1, $2, $3)`,
+      [ids.arma, id, ids.employee],
+    );
+    return id;
+  }
+
+  /** The person opens a request, inside the project or without one, as the API does. */
+  async function openIn(projectId: string | null, userId: string = ids.employee): Promise<string> {
+    return withContext(testPools().app, { companyId: ids.arma, userId }, async (client) => {
+      const { rows } = await client.query<{ id: string }>(
+        `insert into office.tasks (company_id, project_id, kind, title, description)
+         values ($1, $2, 'request', 'Lansman gönderisi', 'Lansman için gönderi yaz') returning id`,
+        [ids.arma, projectId],
+      );
+      return rows[0]?.id ?? '';
+    });
+  }
+
+  /** The employee is taken out of the project: they can no longer read its requests. */
+  const takeOut = (projectId: string) =>
+    admin('delete from office.project_members where project_id = $1 and user_id = $2', [
+      projectId,
+      ids.employee,
+    ]);
+
+  const closePermission = (projectId: string) =>
+    admin('update office.projects set ai_allowed = false where id = $1', [projectId]);
+
+  /** The founder closes the permission through the database's own function, as the API does. */
+  const founderCloses = (projectId: string) =>
+    asPerson(ids.founder, 'select office.set_project_ai_permission($1, false, null)', [projectId]);
+
+  const runsOf = (taskId: string) =>
+    admin<{
+      id: string;
+      agent_code: string;
+      status: string;
+      error_code: string | null;
+      user_id: string;
+      project_id: string | null;
+      input_tokens: number;
+      output_tokens: number;
+      paid: boolean;
+    }>(
+      `select id, agent_code, status, error_code, user_id, project_id, input_tokens,
+              output_tokens, cost_usd > 0 as paid
+       from office.runs where task_id = $1 order by started_at, id`,
+      [taskId],
+    );
+
+  const tracesOf = (taskId: string) =>
+    admin(
+      `select event, user_id, agent_code, project_id from office.audit_log
+       where record_type = 'task' and record_id = $1
+         and event in ('run_refused', 'run_skipped', 'run_restarted')
+       order by id`,
+      [taskId],
+    );
+
+  const routingsOf = (taskId: string) =>
+    admin('select agent_code, project_id from office.task_routings where task_id = $1', [taskId]);
+
+  it('rule 12: a request of a project without the permission never reaches the model', async () => {
+    for (const close of ['project', 'customer'] as const) {
+      const projectId = await project(true, true);
+      const taskId = await openIn(projectId);
+      // What a run sees of the request when its context names the project: the row while agents
+      // may work there, nothing at all once a permission is withdrawn.
+      const seenInProject = () =>
+        agentStep(
+          testPools().worker,
+          { companyId: ids.arma, userId: ids.employee, agentCode: 'KOR-1', projectId },
+          async (client) =>
+            (await client.query('select 1 from office.tasks where id = $1', [taskId])).rows.length,
+        );
+      expect(await seenInProject()).toBe(1);
+      // The permission is withdrawn after the request was opened; its job is still on the queue.
+      await admin(
+        close === 'project'
+          ? 'update office.projects set ai_allowed = false where id = $1'
+          : `update office.customers set ai_allowed = false
+             where id = (select customer_id from office.projects where id = $1)`,
+        [projectId],
+      );
+      expect(await seenInProject()).toBe(0);
+
+      const model = new ScriptedModel([]);
+      const { deps, jobs, log } = await runner(model);
+      const result = await runAgentJob(deps, job(taskId, 'KOR-1', ids.employee));
+      // The reason is said, and it is the real one (it was "task_not_visible" while the runner
+      // could not tell a closed permission from a request it may not see).
+      expect(result, close).toEqual({ outcome: 'ai_not_allowed', runId: null, modelCalls: 0 });
+      expect(model.requests).toHaveLength(0);
+      expect(jobs.sent).toEqual([]);
+      expect(log).toEqual([
+        {
+          event: 'run_refused',
+          fields: { reason: 'ai_not_allowed', task: taskId, agent: 'KOR-1' },
+        },
+      ]);
+      // The trace is on the request, with its project, its agent and the person the run would
+      // have gone as.
+      expect(await tracesOf(taskId)).toEqual([
+        { event: 'run_refused', user_id: ids.employee, agent_code: 'KOR-1', project_id: projectId },
+      ]);
+      expect(await runsOf(taskId)).toEqual([]);
+      // Nor can a run be opened on it by hand with the worker's role.
+      await expect(
+        leftOpen(taskId, 'KOR-1', undefined, { userId: ids.employee, projectId }),
+      ).rejects.toThrow();
+      expect(await runsOf(taskId)).toEqual([]);
+    }
+
+    // The same for the unit agent's job, when the permission is closed after the routing.
+    const projectId = await project(true);
+    const taskId = await openIn(projectId);
+    const first = await runner(new ScriptedModel([toolUse('route_task', ROUTE_TO_SOS)]));
+    expect((await runAgentJob(first.deps, job(taskId, 'KOR-1', ids.employee))).outcome).toBe(
+      'routed',
+    );
+    await closePermission(projectId);
+    const model = new ScriptedModel([]);
+    const second = await runner(model);
+    expect(await runAgentJob(second.deps, job(taskId, 'SOS-2', ids.employee))).toEqual({
+      outcome: 'ai_not_allowed',
+      runId: null,
+      modelCalls: 0,
+    });
+    expect(model.requests).toHaveLength(0);
+    expect((await runsOf(taskId)).map((run) => run.agent_code)).toEqual(['KOR-1']);
+    expect(await tracesOf(taskId)).toEqual([
+      { event: 'run_refused', user_id: ids.employee, agent_code: 'SOS-2', project_id: projectId },
+    ]);
+  });
+
+  it('a project request runs in the context of its project, and the model is told its name', async () => {
+    const projectId = await project(true, true);
+    const taskId = await openIn(projectId);
+    const kor = new ScriptedModel([toolUse('route_task', ROUTE_TO_SOS)]);
+    const first = await runner(kor);
+    const routed = await runAgentJob(first.deps, job(taskId, 'KOR-1', ids.employee));
+    expect(routed.outcome).toBe('routed');
+    // The job for the unit agent is the one every routing sends: four ids, nothing of the
+    // project (rule 10).
+    expect(first.jobs.sent).toEqual([
+      { companyId: ids.arma, userId: ids.employee, taskId, agentCode: 'SOS-2' },
+    ]);
+    expect(firstUserText(kor)).toContain('"project":"Lansman"');
+    const sos = new ScriptedModel([toolUse('submit_for_approval', RESULT)]);
+    const second = await runner(sos);
+    const submitted = await runAgentJob(second.deps, job(taskId, 'SOS-2', ids.employee));
+    expect(submitted.outcome).toBe('submitted');
+    expect(firstUserText(sos)).toContain('"project":"Lansman"');
+    // Every row the two runs wrote carries the project: the runs, their tool calls, the routing,
+    // the approval and the runner's own audit rows.
+    const rows = await admin<{ kind: string; project_id: string | null }>(
+      `select 'run' as kind, project_id from office.runs where task_id = $1
+       union all select 'call', c.project_id from office.tool_calls c
+         join office.runs r on r.id = c.run_id where r.task_id = $1
+       union all select 'approval', project_id from office.approvals where task_id = $1
+       union all select 'routing', project_id from office.task_routings where task_id = $1
+       union all select 'audit', l.project_id from office.audit_log l
+         where l.agent_code is not null
+           and (l.record_id = $1 or l.run_id in (select id from office.runs where task_id = $1))`,
+      [taskId],
+    );
+    expect(rows.map((row) => row.kind).sort()).toEqual(
+      expect.arrayContaining(['approval', 'audit', 'call', 'call', 'routing', 'run', 'run']),
+    );
+    expect(rows.filter((row) => row.kind === 'audit').length).toBeGreaterThanOrEqual(6);
+    expect(rows.filter((row) => row.project_id !== projectId)).toEqual([]);
+    for (const run of await runsOf(taskId)) {
+      expect(run).toMatchObject({ user_id: ids.employee, project_id: projectId });
+    }
+
+    // A request without a project: no project in the facts, none on the run.
+    const plain = await openIn(null);
+    const model = new ScriptedModel([toolUse('route_task', ROUTE_TO_SOS)]);
+    const third = await runner(model);
+    expect((await runAgentJob(third.deps, job(plain, 'KOR-1', ids.employee))).outcome).toBe(
+      'routed',
+    );
+    expect(firstUserText(model)).not.toContain('"project"');
+    expect(await runsOf(plain)).toMatchObject([{ user_id: ids.employee, project_id: null }]);
+  });
+
+  it('the permission is closed during a run: the database closes the run and the answer is dropped', async () => {
+    const projectId = await project(true);
+    const taskId = await openIn(projectId);
+    const model = new ScriptedModel([
+      async () => {
+        await founderCloses(projectId);
+        return toolUse('route_task', ROUTE_TO_SOS, { input: 100, output: 20 });
+      },
+    ]);
+    const { deps, jobs, log } = await runner(model);
+    const result = await runAgentJob(deps, job(taskId, 'KOR-1', ids.employee));
+    expect(result).toMatchObject({ outcome: 'stopped', modelCalls: 1 });
+    expect(jobs.sent).toEqual([]);
+    // The database stopped the run in the transaction of the close. The call was answered and
+    // is paid for: its tokens and its cost are on the run (rule 5), not only in a log.
+    expect(await runsOf(taskId)).toEqual([
+      {
+        id: result.runId,
+        agent_code: 'KOR-1',
+        status: 'stopped',
+        error_code: 'ai_permission_closed',
+        user_id: ids.employee,
+        project_id: projectId,
+        input_tokens: 100,
+        output_tokens: 20,
+        paid: true,
+      },
+    ]);
+    expect(await routingsOf(taskId)).toEqual([]);
+    expect(
+      await admin('select 1 from office.tool_calls where run_id = $1', [result.runId]),
+    ).toEqual([]);
+    expect(log.map((line) => line.event)).not.toContain('run_usage_unrecorded');
+    expect(log.at(-1)).toEqual({
+      event: 'run_finished',
+      fields: {
+        run: result.runId,
+        status: 'stopped',
+        outcome: 'stopped',
+        code: 'ai_permission_closed',
+      },
+    });
+  });
+
+  it('the permission is closed between the model’s answer and its tool call: the run ends as stopped and nothing is thrown', async () => {
+    const projectId = await project(true);
+    const taskId = await openIn(projectId);
+    const { deps, jobs, log } = await runner(
+      new ScriptedModel([toolUse('route_task', ROUTE_TO_SOS, { input: 100, output: 20 })]),
+    );
+    // The close commits after the runner read "the run may go on" and before the tool call's own
+    // row is written: that row then names a run its context no longer sees.
+    const pool = meeting(deps.pool, 'insert into office.tool_calls', () =>
+      founderCloses(projectId),
+    );
+    // Through the worker's handler: a failure would be logged as job_failed and thrown.
+    await handleAgentRunJob({ ...deps, pool }, job(taskId, 'KOR-1', ids.employee));
+    const [run] = await runsOf(taskId);
+    expect(run).toMatchObject({
+      status: 'stopped',
+      error_code: 'ai_permission_closed',
+      // The answered call was written before the step that failed.
+      input_tokens: 100,
+      output_tokens: 20,
+    });
+    expect(await runsOf(taskId)).toHaveLength(1);
+    expect(await admin('select 1 from office.tool_calls where run_id = $1', [run?.id])).toEqual([]);
+    expect(await routingsOf(taskId)).toEqual([]);
+    expect(jobs.sent).toEqual([]);
+    expect(log.map((line) => line.event)).not.toContain('job_failed');
+    expect(log.at(-1)).toEqual({
+      event: 'run_finished',
+      fields: {
+        run: run?.id ?? '',
+        status: 'stopped',
+        outcome: 'stopped',
+        code: 'ai_permission_closed',
+      },
+    });
+  });
+
+  it('a lost run of a project request is closed', async () => {
+    const projectId = await project(true);
+    const taskId = await openIn(projectId);
+    const { deps, log } = await runner(new ScriptedModel([]));
+    const lostJob = job(taskId, 'KOR-1', ids.employee);
+    const as = { userId: ids.employee, projectId };
+    // The runner's own failure names the run its job opened.
+    const crashed = await leftOpen(taskId, 'KOR-1', 5, as);
+    expect(await closeLostRun(deps, lostJob, { runId: crashed })).toBeNull();
+    expect(await runRow(crashed)).toMatchObject({ status: 'failed', error_code: 'worker_lost' });
+    expect(log).toEqual([{ event: 'run_lost', fields: { run: crashed } }]);
+    expect(
+      await admin('select event, project_id from office.audit_log where run_id = $1', [crashed]),
+    ).toEqual([{ event: 'run_failed', project_id: projectId }]);
+    // The dead letter path: a run inside its limit is left alone, one past it is closed.
+    const overdue = await leftOpen(taskId, 'KOR-1', 5, as);
+    expect(await closeLostRun(deps, lostJob, 'overdue')).toBeGreaterThan(5 * 60);
+    expect(await runRow(overdue)).toMatchObject({ status: 'running' });
+    await startedEarlier(overdue, 7);
+    expect(await closeLostRun(deps, lostJob, 'overdue')).toBeNull();
+    expect(await runRow(overdue)).toMatchObject({ status: 'failed', error_code: 'worker_lost' });
+  });
+
+  // In whose name a run goes (8 October decision 45) ----------------------------------------------
+
+  it('a requester who was taken out of the project: the request runs in the founder’s name', async () => {
+    const projectId = await project(true);
+    const taskId = await openIn(projectId);
+    await takeOut(projectId);
+    const model = new ScriptedModel([toolUse('route_task', ROUTE_TO_SOS)]);
+    const { deps, jobs } = await runner(model);
+    // The job names the employee: who asked.
+    const result = await runAgentJob(deps, job(taskId, 'KOR-1', ids.employee));
+    expect(result).toMatchObject({ outcome: 'routed', modelCalls: 1 });
+    expect(await runsOf(taskId)).toMatchObject([
+      { id: result.runId, status: 'completed', user_id: ids.founder, project_id: projectId },
+    ]);
+    // The request does not change hands.
+    expect(
+      await admin('select requester_user_id from office.tasks where id = $1', [taskId]),
+    ).toEqual([{ requester_user_id: ids.employee }]);
+    expect(await routingsOf(taskId)).toEqual([{ agent_code: 'SOS-2', project_id: projectId }]);
+    // The job for the unit agent names the requester again.
+    expect(jobs.sent).toEqual([
+      { companyId: ids.arma, userId: ids.employee, taskId, agentCode: 'SOS-2' },
+    ]);
+    // Every trace of the run carries the founder and the agent.
+    const audit = await admin<{ user_id: string; agent_code: string; project_id: string }>(
+      'select user_id, agent_code, project_id from office.audit_log where run_id = $1',
+      [result.runId],
+    );
+    expect(audit.length).toBeGreaterThanOrEqual(3);
+    expect(
+      audit.filter(
+        (row) =>
+          row.user_id !== ids.founder || row.agent_code !== 'KOR-1' || row.project_id !== projectId,
+      ),
+    ).toEqual([]);
+    // The model is told the role of the person the run goes as, never a name.
+    expect(firstUserText(model)).toContain('"requesterRole":"founder"');
+
+    // The unit agent's run goes in the founder's name too.
+    const sos = await runner(new ScriptedModel([toolUse('submit_for_approval', RESULT)]));
+    const submitted = await runAgentJob(sos.deps, job(taskId, 'SOS-2', ids.employee));
+    expect(submitted.outcome).toBe('submitted');
+    expect((await runsOf(taskId)).map((run) => [run.agent_code, run.user_id])).toEqual([
+      ['KOR-1', ids.founder],
+      ['SOS-2', ids.founder],
+    ]);
+  });
+
+  it('the requester is taken out of the project while the model is answering: the run is handed over and the work starts again in the founder’s name', async () => {
+    const projectId = await project(true);
+    const taskId = await openIn(projectId);
+    const model = new ScriptedModel([
+      async () => {
+        await takeOut(projectId);
+        return toolUse('route_task', ROUTE_TO_SOS, { input: 100, output: 20 });
+      },
+    ]);
+    const { deps, jobs, log } = await runner(model);
+    const result = await runAgentJob(deps, job(taskId, 'KOR-1', ids.employee));
+    expect(result).toMatchObject({ outcome: 'stopped', modelCalls: 1 });
+    // The run that was open in the employee's name is closed by the database, with the numbers
+    // of the call that was answered; nothing of the answer is executed.
+    expect(await runsOf(taskId)).toEqual([
+      {
+        id: result.runId,
+        agent_code: 'KOR-1',
+        status: 'stopped',
+        error_code: 'identity_changed',
+        user_id: ids.employee,
+        project_id: projectId,
+        input_tokens: 100,
+        output_tokens: 20,
+        paid: true,
+      },
+    ]);
+    expect(await routingsOf(taskId)).toEqual([]);
+    expect(log.map((line) => line.event)).not.toContain('run_usage_unrecorded');
+    expect(log.at(-1)).toEqual({
+      event: 'run_finished',
+      fields: {
+        run: result.runId,
+        status: 'stopped',
+        outcome: 'stopped',
+        code: 'identity_changed',
+      },
+    });
+    // The same work is called for again, once, with the same four ids.
+    const again = { companyId: ids.arma, userId: ids.employee, taskId, agentCode: 'KOR-1' };
+    expect(jobs.sent).toEqual([again]);
+    expect(await tracesOf(taskId)).toMatchObject([{ event: 'run_restarted' }]);
+
+    // That job opens a run in the founder's name, and the request is routed.
+    const next = await runner(new ScriptedModel([toolUse('route_task', ROUTE_TO_SOS)]));
+    const routed = await runAgentJob(next.deps, again);
+    expect(routed.outcome).toBe('routed');
+    expect((await runsOf(taskId)).map((run) => [run.status, run.user_id])).toEqual([
+      ['stopped', ids.employee],
+      ['completed', ids.founder],
+    ]);
+  });
+
+  it('the requester is taken out of the project between the model’s answer and its tool call: the run is handed over and nothing is thrown', async () => {
+    const projectId = await project(true);
+    const taskId = await openIn(projectId);
+    const { deps, jobs, log } = await runner(
+      new ScriptedModel([toolUse('route_task', ROUTE_TO_SOS, { input: 100, output: 20 })]),
+    );
+    const pool = meeting(deps.pool, 'insert into office.tool_calls', async () => {
+      await takeOut(projectId);
+    });
+    await handleAgentRunJob({ ...deps, pool }, job(taskId, 'KOR-1', ids.employee));
+    const runs = await runsOf(taskId);
+    expect(runs).toMatchObject([
+      {
+        status: 'stopped',
+        error_code: 'identity_changed',
+        user_id: ids.employee,
+        // Written once, before the step that failed: the hand-over adds nothing to it.
+        input_tokens: 100,
+        output_tokens: 20,
+      },
+    ]);
+    expect(await routingsOf(taskId)).toEqual([]);
+    expect(await admin('select 1 from office.tool_calls where run_id = $1', [runs[0]?.id])).toEqual(
+      [],
+    );
+    expect(jobs.sent).toEqual([
+      { companyId: ids.arma, userId: ids.employee, taskId, agentCode: 'KOR-1' },
+    ]);
+    expect(log.map((line) => line.event)).not.toContain('job_failed');
+    expect(log.at(-1)).toEqual({
+      event: 'run_finished',
+      fields: {
+        run: runs[0]?.id ?? '',
+        status: 'stopped',
+        outcome: 'stopped',
+        code: 'identity_changed',
+      },
+    });
+  });
+
+  it('a job cannot choose the person', async () => {
+    const projectId = await project(true);
+    const taskId = await openIn(projectId);
+    const idle = new ScriptedModel([]);
+    const refusing = await runner(idle);
+    // The founder may read every request, and still a job cannot put the founder's name on the
+    // employee's request: the job names the requester, and the database names the person.
+    expect(await runAgentJob(refusing.deps, job(taskId, 'KOR-1', ids.founder))).toEqual({
+      outcome: 'job_stale',
+      runId: null,
+      modelCalls: 0,
+    });
+    expect(await runsOf(taskId)).toEqual([]);
+    expect(await tracesOf(taskId)).toMatchObject([{ event: 'run_refused', agent_code: 'KOR-1' }]);
+    // Nor can it name the project: the job has four ids and no fifth.
+    expect(
+      (
+        await runAgentJob(refusing.deps, {
+          ...job(taskId, 'KOR-1', ids.employee),
+          projectId: randomUUID(),
+        })
+      ).outcome,
+    ).toBe('job_invalid');
+    expect(await runsOf(taskId)).toEqual([]);
+    expect(idle.requests).toHaveLength(0);
+    // The request's own job runs as the gate says.
+    const { deps } = await runner(new ScriptedModel([toolUse('route_task', ROUTE_TO_SOS)]));
+    expect((await runAgentJob(deps, job(taskId, 'KOR-1', ids.employee))).outcome).toBe('routed');
+    expect(await runsOf(taskId)).toMatchObject([{ user_id: ids.employee, project_id: projectId }]);
+    // The worker's role cannot open a run in another name by hand either.
+    await expect(
+      leftOpen(await openIn(projectId), 'KOR-1', undefined, { userId: ids.founder, projectId }),
+    ).rejects.toMatchObject({ code: '42501' });
+  });
+
+  it('a card on trial runs only for the founder’s own request, also when the founder stands in', async () => {
+    const setStatus = (status: string) =>
+      admin(
+        `update office.card_versions v
+         set content = jsonb_set(v.content, '{card,status}', to_jsonb($1::text))
+         from office.agent_definitions d
+         where d.code = 'KOR-1' and v.id = d.current_version_id
+         returning v.content -> 'card' ->> 'status' as status`,
+        [status],
+      );
+    const projectId = await project(true);
+    const taskId = await openIn(projectId);
+    await takeOut(projectId);
+    expect(await setStatus('trial')).toEqual([{ status: 'trial' }]);
+    try {
+      // The run would go in the founder's name, and it is still the employee's request.
+      const idle = new ScriptedModel([]);
+      const trial = await runner(idle);
+      const refused = await runAgentJob(trial.deps, job(taskId, 'KOR-1', ids.employee));
+      expect(refused).toMatchObject({ outcome: 'card_not_runnable', modelCalls: 0 });
+      expect(idle.requests).toHaveLength(0);
+      expect(await runsOf(taskId)).toMatchObject([
+        { status: 'failed', error_code: 'card_not_runnable', user_id: ids.founder },
+      ]);
+      // The founder's own request in the same project runs.
+      const own = await openIn(projectId, ids.founder);
+      const passes = await runner(new ScriptedModel([toolUse('route_task', ROUTE_TO_SOS)]));
+      expect(await runAgentJob(passes.deps, job(own, 'KOR-1', ids.founder))).toMatchObject({
+        outcome: 'routed',
+        modelCalls: 1,
+      });
+    } finally {
+      expect(await setStatus('active')).toEqual([{ status: 'active' }]);
+    }
+  });
+
+  it('a lost run of a requester who has left is closed in the resolved name', async () => {
+    const projectId = await project(true);
+    const taskId = await openIn(projectId);
+    const lost = await leftOpen(taskId, 'KOR-1', 5, { userId: ids.employee, projectId });
+    await takeOut(projectId);
+    const { deps, log } = await runner(new ScriptedModel([]));
+    // The job still names the employee, who sees nothing of the project any more.
+    await closeLostRun(deps, job(taskId, 'KOR-1', ids.employee), { runId: lost });
+    expect(await runRow(lost)).toMatchObject({
+      status: 'failed',
+      error_code: 'worker_lost',
+      // The run keeps the name it was opened in.
+      user_id: ids.employee,
+    });
+    expect(log).toEqual([{ event: 'run_lost', fields: { run: lost } }]);
+  });
+
+  it('the trace of a refused job is written also when its requester has left the company', async () => {
+    // A person of this case's own: an employee of Arma DX who opens a request and is removed.
+    const leaver = randomUUID();
+    await admin(`insert into office.users (id, name) values ($1, 'Ayrılan Çalışan')`, [leaver]);
+    await admin(
+      `insert into office.memberships (company_id, user_id, role) values ($1, $2, 'employee')`,
+      [ids.arma, leaver],
+    );
+    const taskId = await openIn(null, leaver);
+    await admin('delete from office.memberships where company_id = $1 and user_id = $2', [
+      ids.arma,
+      leaver,
+    ]);
+    const setSwitch = (status: string) =>
+      admin(
+        `update office.company_agents set status = $2 where company_id = $1 and agent_code = 'KOR-1'`,
+        [ids.arma, status],
+      );
+    await setSwitch('stopped');
+    try {
+      const idle = new ScriptedModel([]);
+      const { deps, log } = await runner(idle);
+      expect(await runAgentJob(deps, job(taskId, 'KOR-1', leaver))).toEqual({
+        outcome: 'agent_not_enabled',
+        runId: null,
+        modelCalls: 0,
+      });
+      expect(idle.requests).toHaveLength(0);
+      expect(log).toEqual([
+        {
+          event: 'run_refused',
+          fields: { reason: 'agent_not_enabled', task: taskId, agent: 'KOR-1' },
+        },
+      ]);
+      // The requester can write nothing any more: the trace is in the founder's name. It is
+      // what the restart reads when the agent is opened again.
+      expect(await tracesOf(taskId)).toEqual([
+        { event: 'run_refused', user_id: ids.founder, agent_code: 'KOR-1', project_id: null },
+      ]);
+      expect(await runsOf(taskId)).toEqual([]);
+    } finally {
+      await setSwitch('enabled');
+    }
+    // With the agent open the request goes on in the founder's name.
+    const { deps } = await runner(new ScriptedModel([toolUse('route_task', ROUTE_TO_SOS)]));
+    expect((await runAgentJob(deps, job(taskId, 'KOR-1', leaver))).outcome).toBe('routed');
+    expect(await runsOf(taskId)).toMatchObject([{ user_id: ids.founder, project_id: null }]);
+  });
+
+  // Waiting work that was started again (8 October decision 49) -----------------------------------
+
+  it('two jobs for one restarted request: the second is skipped', async () => {
+    const taskId = await routedRequest();
+    const setSwitch = (status: string) =>
+      asPerson(
+        ids.founder,
+        `update office.company_agents set status = $1
+         where company_id = office.ctx_company_id() and agent_code = 'SOS-2'`,
+        [status],
+      );
+    // The unit agent's job arrives while the agent is stopped.
+    await setSwitch('stopped');
+    const refused = await runner(new ScriptedModel([]));
+    expect((await runAgentJob(refused.deps, job(taskId, 'SOS-2', ids.founder))).outcome).toBe(
+      'agent_not_enabled',
+    );
+    // The founder opens the agent: the database picks the request, once.
+    await setSwitch('enabled');
+    const picked = await withContext(
+      testPools().app,
+      { companyId: ids.arma, userId: ids.founder },
+      async (client) =>
+        (
+          await client.query<{ task_id: string }>(
+            `select task_id from office.restart_waiting_work('SOS-2', null, null)`,
+          )
+        ).rows.map((row) => row.task_id),
+    );
+    expect(picked).toContain(taskId);
+    // Two jobs reach the runner for it (the restart's, and one a person's routing or a retry
+    // put there): the first does the work, the second finds it done and waiting.
+    const restarted = job(taskId, 'SOS-2', ids.founder);
+    const first = await runner(new ScriptedModel([toolUse('submit_for_approval', RESULT)]));
+    expect((await runAgentJob(first.deps, restarted)).outcome).toBe('submitted');
+    const idle = new ScriptedModel([]);
+    const second = await runner(idle);
+    expect(await runAgentJob(second.deps, restarted)).toEqual({
+      outcome: 'duplicate_job',
+      runId: null,
+      modelCalls: 0,
+    });
+    expect(idle.requests).toHaveLength(0);
+    expect(second.log).toEqual([
+      { event: 'run_skipped', fields: { reason: 'duplicate_job', task: taskId, agent: 'SOS-2' } },
+    ]);
+    expect((await tracesOf(taskId)).map((row) => row.event)).toEqual([
+      'run_refused',
+      'run_restarted',
+      'run_skipped',
+    ]);
+    // One run of the unit agent, and one result that waits.
+    expect(
+      (await runsOf(taskId)).filter((run) => run.agent_code === 'SOS-2').map((run) => run.status),
+    ).toEqual(['completed']);
+    expect(
+      await admin(`select count(*)::int as n from office.approvals where task_id = $1`, [taskId]),
+    ).toEqual([{ n: 1 }]);
   });
 });

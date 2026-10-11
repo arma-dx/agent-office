@@ -89,10 +89,13 @@ export function dataBlock(name: string, content: unknown): string {
 
 export interface RunFacts {
   company: string;
-  // The requester's role, never their name or address.
+  // The role of the person the run goes as: the requester, or the founder standing in for a
+  // requester who can no longer read the request. Never a name or an address.
   requesterRole: 'founder' | 'employee';
   today: string;
   agent: string;
+  // The name of the request's project, when it is inside one.
+  project?: string;
   // The due day the requester gave (YYYY-MM-DD, the office's day); absent when none. A fact of
   // the request, given as data like the rest of this block: it orders nothing.
   dueDate?: string;
