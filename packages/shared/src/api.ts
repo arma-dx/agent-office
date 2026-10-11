@@ -114,6 +114,21 @@ export const apiErrorCodeSchema = z.enum([
   'milestone_limit',
   // The milestone was removed meanwhile; the page is read again.
   'milestone_not_found',
+  // Project files (8 October decision 20).
+  'file_too_large',
+  'file_empty',
+  'file_name_invalid',
+  'file_type_not_allowed',
+  'file_content_mismatch',
+  'file_limit_reached',
+  'file_space_full',
+  'file_delete_not_allowed',
+  'file_content_missing',
+  'file_storage_unavailable',
+  'file_storage_failed',
+  'uploads_busy',
+  'downloads_busy',
+  'upload_ticket_invalid',
 ]);
 export type ApiErrorCode = z.output<typeof apiErrorCodeSchema>;
 
