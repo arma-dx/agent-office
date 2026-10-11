@@ -867,7 +867,8 @@ describe('where a request is and whose turn it is', () => {
 
   it("after the limit is raised a run it stopped reads spending_limit_interrupted, with the approver's turn", () => {
     const stopped = run('SOS-2', 'stopped', 'spending_limit_reached');
-    // Raising the limit starts nothing by itself: a person gives the work again.
+    // A raise through the panel starts this work again (11 October decision 1). Raised outside
+    // the panel, or while the step's agent was stopped: nothing called for the work again.
     expect(of({ lastRun: stopped }, routed)).toBe(
       'fell_to_person spending_limit_interrupted approver on time',
     );

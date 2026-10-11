@@ -250,8 +250,10 @@ export async function projectDoor(client: Queryable, projectId: string): Promise
   if (project.customer_id !== null && project.customer_ai_allowed !== true) {
     return projectAiNotAllowed(true);
   }
-  // Decision 17: raising the limit starts nothing by itself, so requests are not left to pile
-  // up behind a reached limit (docs/SONRA.md P3-r).
+  // Decision 17: no agent can work on a request of this project until the founder raises the
+  // limit, so a new one is refused at the door with the reason (docs/SONRA.md P3-r, awaiting
+  // the founder; the other reading takes the request and lets it wait for the raise, which
+  // starts held work again since 11 October decision 1).
   if (project.spending_limit_reached) return projectSpendingLimitReached();
   return null;
 }
