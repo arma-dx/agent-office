@@ -852,6 +852,41 @@ describe.skipIf(noDatabase)('project members', () => {
       );
     });
   });
+
+  it("project members: an agent run adds and removes nobody through the API's role, in the founder's or the owner's name, with or without the project in its context", async () => {
+    await inTransaction(async (tx) => {
+      await tx.setContext(founderA);
+      expect(await tx.exec(ADD_MEMBER, [ids.arma, ids.projectA, ids.sharedEmployee])).toBe(1);
+      await giveRole(tx, ids.projectA, ids.employeeA, 'owner');
+      const before = await memberRoles(tx, ids.projectA);
+      expect(before).toEqual({ [ids.employeeA]: 'owner', [ids.sharedEmployee]: 'member' });
+      const everyMember = await tx.count('project_members');
+      // Adding and removing are acts of people: the same person and role would do both without
+      // the agent code (the founder is a founder in an agent context too).
+      for (const person of [founderA, employeeA]) {
+        for (const project of [{}, { projectId: ids.projectA }]) {
+          const context = { ...person, agentCode: 'KOR-1', ...project };
+          const who = JSON.stringify(context);
+          await tx.setContext(context);
+          expect(
+            (await tx.expectError(ADD_MEMBER, [ids.arma, ids.projectA, ids.approverA])).code,
+            who,
+          ).toBe('42501');
+          expect(await tx.exec(REMOVE_MEMBER, [ids.projectA, ids.sharedEmployee]), who).toBe(0);
+          // A delete that names no row asks the delete policy alone: a run that reads no member
+          // row would otherwise seem to be refused by what it cannot see.
+          expect(await tx.exec('delete from office.project_members'), who).toBe(0);
+        }
+      }
+      await tx.setContext(founderA);
+      expect(await memberRoles(tx, ids.projectA)).toEqual(before);
+      expect(await tx.count('project_members')).toBe(everyMember);
+      // The same two acts pass for the same people once no agent code is in the context.
+      await tx.setContext(employeeA);
+      expect(await tx.exec(ADD_MEMBER, [ids.arma, ids.projectA, ids.approverA])).toBe(1);
+      expect(await tx.exec(REMOVE_MEMBER, [ids.projectA, ids.sharedEmployee])).toBe(1);
+    });
+  });
 });
 
 describe.skipIf(noDatabase)('project roles', () => {
@@ -1062,6 +1097,67 @@ describe.skipIf(noDatabase)('project roles', () => {
       // And is removed like any plain member.
       await tx.setContext(employeeA);
       expect(await tx.exec(REMOVE_MEMBER, [ids.projectA, ids.approverA])).toBe(1);
+    });
+  });
+
+  it("project roles: the migration's own statement makes the opener of an existing project its owner if still a member, and nobody else", async () => {
+    const sql = await readFile(
+      new URL('20261008102100_project_owner_and_managers.sql', MIGRATIONS),
+      'utf8',
+    );
+    // The shorter beginning "update office.project_members pm set role =" is also a statement of
+    // office.set_project_member_role; the backfill is the one that reads the projects.
+    const start = sql.indexOf(
+      "update office.project_members pm set role = 'owner'\n  from office.projects p",
+    );
+    expect(start).toBeGreaterThan(-1);
+    const statement = sql.slice(start, sql.indexOf(';', start) + 1);
+    // One statement, and it names each table once.
+    expect(statement.split('office.project_members')).toHaveLength(2);
+    expect(statement.split('office.projects')).toHaveLength(2);
+    // It stands before the unique index and the triggers of the file: it writes no trace and
+    // asks no member check (trap 3 of the design).
+    expect(start).toBeLessThan(sql.indexOf('create unique index project_members_one_owner'));
+    expect(start).toBeLessThan(sql.indexOf('create trigger'));
+    await inAdminTransaction(async (tx) => {
+      await tx.exec(
+        'create temp table legacy_projects (id text, created_by_user_id text) on commit drop',
+      );
+      await tx.exec(
+        `create temp table legacy_members
+           (project_id text, user_id text, role text not null default 'member') on commit drop`,
+      );
+      // p1: the opener is a member among others. p2: the opener is no member any more (another
+      // project's opener is). p3: written without a person.
+      await tx.exec(
+        `insert into legacy_projects values ('p1', 'opener'), ('p2', 'gone'), ('p3', null)`,
+      );
+      await tx.exec(
+        `insert into legacy_members (project_id, user_id) values
+           ('p1', 'a-other'), ('p1', 'opener'), ('p1', 'z-other'),
+           ('p2', 'a-other'), ('p2', 'opener'),
+           ('p3', 'opener'), ('p3', 'a-other')`,
+      );
+      expect(
+        await tx.exec(
+          statement
+            .replace('office.project_members', 'legacy_members')
+            .replace('office.projects', 'legacy_projects'),
+        ),
+      ).toBe(1);
+      expect(
+        await tx.rows(
+          'select project_id, user_id, role from legacy_members order by project_id, user_id',
+        ),
+      ).toEqual([
+        { project_id: 'p1', user_id: 'a-other', role: 'member' },
+        { project_id: 'p1', user_id: 'opener', role: 'owner' },
+        { project_id: 'p1', user_id: 'z-other', role: 'member' },
+        { project_id: 'p2', user_id: 'a-other', role: 'member' },
+        { project_id: 'p2', user_id: 'opener', role: 'member' },
+        { project_id: 'p3', user_id: 'a-other', role: 'member' },
+        { project_id: 'p3', user_id: 'opener', role: 'member' },
+      ]);
     });
   });
 
