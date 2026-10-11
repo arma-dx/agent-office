@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { projectDetail, CUSTOMER_ID, OTHER_CUSTOMER_ID } from '../../test/project-fixtures.ts';
 import {
   createProjectBody,
+  milestoneFormSchema,
   NEW_CUSTOMER,
   newProjectValues,
   projectChanges,
@@ -166,5 +167,38 @@ describe('project form', () => {
         IDS.customerId,
       ),
     ).toEqual({ name: 'Başka' });
+  });
+});
+
+describe('milestone form', () => {
+  const problem = (values: unknown): Record<string, string> => {
+    const result = milestoneFormSchema.safeParse(values);
+    if (result.success) return {};
+    return Object.fromEntries(
+      result.error.issues.map((issue) => [issue.path.join('.'), issue.message]),
+    );
+  };
+
+  it('takes a trimmed name of 1 to 120 characters and an empty or real day', () => {
+    expect(milestoneFormSchema.parse({ name: '  Yayın  ', date: '' })).toEqual({
+      name: 'Yayın',
+      date: '',
+    });
+    expect(problem({ name: 'a'.repeat(120), date: '2026-12-01' })).toEqual({});
+  });
+
+  it('says in Turkish what is wrong with the name and with the day', () => {
+    expect(problem({ name: '   ', date: '' })).toEqual({ name: 'Ad yazın.' });
+    expect(problem({ name: 'a'.repeat(121), date: '' })).toEqual({
+      name: 'Ad en çok 120 karakter olabilir.',
+    });
+    // A character nobody sees (a bidirectional override): the database refuses it too.
+    expect(problem({ name: 'Yayın\u202e', date: '' })).toEqual({
+      name: 'Ad okunamayan bir karakter içeriyor. Adı yeniden yazın.',
+    });
+    // A day that does not exist, and the year PostgreSQL does not have.
+    for (const date of ['2026-02-30', '0000-01-01', '12.01.2026']) {
+      expect(problem({ name: 'Yayın', date })).toEqual({ date: 'Geçerli bir tarih girin.' });
+    }
   });
 });

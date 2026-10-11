@@ -1,4 +1,5 @@
 import {
+  createMilestoneSchema,
   createProjectSchema,
   customerListSchema,
   customerPermissionsAnswerSchema,
@@ -9,7 +10,9 @@ import {
   projectListSchema,
   projectMemberCandidatesSchema,
   setProjectMemberRoleSchema,
+  updateMilestoneSchema,
   updateProjectSchema,
+  type CreateMilestone,
   type CreateProject,
   type CustomerOption,
   type CustomerPermissions,
@@ -20,6 +23,7 @@ import {
   type ProjectList,
   type ProjectMemberCandidate,
   type ProjectMemberRole,
+  type UpdateMilestone,
   type UpdateProject,
 } from '@agent-office/shared';
 import { queryOptions } from '@tanstack/react-query';
@@ -157,6 +161,60 @@ export function setProjectMemberRole(
   return apiRequest(`/projects/${ids.projectId}/members/${ids.userId}/role`, {
     method: 'PUT',
     body,
+    schema: projectDetailSchema,
+    companyId,
+  });
+}
+
+/**
+ * A member or the founder adds a milestone to a project (8 October 2026, decision 17). The panel
+ * chooses the id, so a send that is repeated adds one entry. Every change of the milestones
+ * answers the whole project.
+ */
+export function addMilestone(
+  companyId: string,
+  projectId: string,
+  milestone: CreateMilestone,
+): Promise<ProjectDetail> {
+  const id = z.uuid().parse(projectId);
+  const body = createMilestoneSchema.parse(milestone);
+  return apiRequest(`/projects/${id}/milestones`, {
+    method: 'POST',
+    body,
+    schema: projectDetailSchema,
+    companyId,
+  });
+}
+
+/** Only the fields that are sent change: the name, the day (null clears it), done. */
+export function updateMilestone(
+  companyId: string,
+  projectId: string,
+  milestoneId: string,
+  changes: UpdateMilestone,
+): Promise<ProjectDetail> {
+  const ids = z
+    .object({ projectId: z.uuid(), milestoneId: z.uuid() })
+    .parse({ projectId, milestoneId });
+  const body = updateMilestoneSchema.parse(changes);
+  return apiRequest(`/projects/${ids.projectId}/milestones/${ids.milestoneId}`, {
+    method: 'PATCH',
+    body,
+    schema: projectDetailSchema,
+    companyId,
+  });
+}
+
+export function removeMilestone(
+  companyId: string,
+  projectId: string,
+  milestoneId: string,
+): Promise<ProjectDetail> {
+  const ids = z
+    .object({ projectId: z.uuid(), milestoneId: z.uuid() })
+    .parse({ projectId, milestoneId });
+  return apiRequest(`/projects/${ids.projectId}/milestones/${ids.milestoneId}`, {
+    method: 'DELETE',
     schema: projectDetailSchema,
     companyId,
   });

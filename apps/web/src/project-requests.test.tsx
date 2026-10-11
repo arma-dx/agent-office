@@ -18,9 +18,9 @@ import {
 import { FOUNDER, REQUEST_ID, requestDetail, summaryOf } from './test/request-fixtures.ts';
 import { currentLocation, renderApp } from './test/render-app.tsx';
 
-// The page of a project has two tabs (8 October 2026, decision 17): "Talepler", the requests of
-// the project in the list form of the Talepler screen, and "Ayarlar", the description and the
-// members. The tab is in the address.
+// The page of a project has tabs (8 October 2026, decision 17): first "Talepler", the requests of
+// the project in the list form of the Talepler screen, and last "Ayarlar", the description and
+// the members; the tabs between them have test files of their own. The tab is in the address.
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -66,7 +66,7 @@ const tab = (name: string) => screen.getByRole('tab', { name });
 const tabPanel = (name: string) => screen.getByRole('tabpanel', { name });
 
 describe('projects: the tabs of a project', () => {
-  it('page: two tabs, Talepler first; arrows move between them; the address keeps Ayarlar', async () => {
+  it('page: the tabs, Talepler first and Ayarlar last; arrows move between them; the address keeps the tab', async () => {
     mockApi(projectHandlers(projectDetail({ status: 'completed', closed: true })));
     const { router } = renderApp(PATH);
     const list = await tabs();
@@ -74,7 +74,7 @@ describe('projects: the tabs of a project', () => {
       within(list)
         .getAllByRole('tab')
         .map((item) => item.textContent),
-    ).toEqual(['Talepler', 'Ayarlar']);
+    ).toEqual(['Talepler', 'Kilometre taşları', 'Ayarlar']);
     // Every link to a project opens "Talepler": the address names no tab.
     expect(tab('Talepler')).toHaveAttribute('aria-selected', 'true');
     expect(tab('Ayarlar')).toHaveAttribute('aria-selected', 'false');
@@ -101,6 +101,12 @@ describe('projects: the tabs of a project', () => {
     const before = router.history.length;
     tab('Talepler').focus();
     await userEvent.keyboard('{ArrowRight}');
+    expect(tab('Kilometre taşları')).toHaveAttribute('aria-selected', 'true');
+    expect(tab('Kilometre taşları')).toHaveFocus();
+    await waitFor(() => {
+      expect(currentLocation(router)).toEqual({ pathname: PATH, search: { tab: 'milestones' } });
+    });
+    await userEvent.keyboard('{ArrowRight}');
     expect(tab('Ayarlar')).toHaveAttribute('aria-selected', 'true');
     expect(tab('Ayarlar')).toHaveFocus();
     await waitFor(() => {
@@ -112,6 +118,8 @@ describe('projects: the tabs of a project', () => {
     expect(within(tabPanel('Ayarlar')).getByRole('region', { name: 'Üyeler 2' })).toBeVisible();
     expect(screen.queryByRole('heading', { name: 'Bu projede henüz talep yok' })).toBeNull();
     above();
+    await userEvent.keyboard('{ArrowLeft}');
+    expect(tab('Kilometre taşları')).toHaveAttribute('aria-selected', 'true');
     await userEvent.keyboard('{ArrowLeft}');
     expect(tab('Talepler')).toHaveAttribute('aria-selected', 'true');
     expect(tab('Talepler')).toHaveFocus();

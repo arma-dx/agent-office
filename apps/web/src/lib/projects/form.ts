@@ -4,6 +4,7 @@ import {
   DEFAULT_PROJECT_ICON,
   DEFAULT_PROJECT_STATUS,
   hasHiddenCharacter,
+  MILESTONE_NAME_MAX,
   PROJECT_DESCRIPTION_MAX,
   PROJECT_MEMBER_MAX,
   PROJECT_NAME_MAX,
@@ -177,3 +178,24 @@ export function projectChanges(
   }
   return Object.keys(changes).length === 0 ? null : changes;
 }
+
+/**
+ * The form of a milestone ("Kilometre taşı ekle" and "Kilometre taşını düzenle"): a name and an
+ * optional day, with the sentence for each thing that is wrong. The limits are the shared
+ * contract's (milestoneNameSchema, projectDaySchema).
+ */
+export const milestoneFormSchema = z.object({
+  name: z
+    .string()
+    .trim()
+    .min(1, 'Ad yazın.')
+    .max(MILESTONE_NAME_MAX, 'Ad en çok 120 karakter olabilir.')
+    .refine((name) => !hasHiddenCharacter(name), {
+      message: 'Ad okunamayan bir karakter içeriyor. Adı yeniden yazın.',
+    }),
+  // Empty, or a day as a date field gives it (YYYY-MM-DD).
+  date: z.string().refine((day) => day === '' || projectDaySchema.safeParse(day).success, {
+    message: 'Geçerli bir tarih girin.',
+  }),
+});
+export type MilestoneFormValues = z.output<typeof milestoneFormSchema>;
