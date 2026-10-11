@@ -21,7 +21,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { formatDay } from '../dates.ts';
-import { PROJECT_STATUS } from '../status.ts';
+import { PROJECT_STATUS, type RunStatus } from '../status.ts';
 
 /**
  * Every Turkish word of the Projects section that is not a status (the statuses are in
@@ -232,6 +232,48 @@ export function handOverDescription(reader: {
   if (!reader.owner) return `${becomes} Şimdiki sahip üye olarak kalır.`;
   if (reader.founder) return `${becomes} Siz üye olarak kalırsınız.`;
   return `${becomes} Siz üye olarak kalırsınız; üye ekleyip çıkaramaz, rol veremezsiniz. Sahipliği size yeni sahip ya da kurucu geri verebilir.`;
+}
+
+// Why a run ended as it did, after its status word. The codes are the runner's and the
+// database's (runs.error_code).
+const LIMIT_REASON: Record<string, string> = {
+  tool_call_limit: 'araç çağrısı sınırı',
+  time_limit: 'süre sınırı',
+};
+const STOP_REASON: Record<string, string> = {
+  agent_stopped: 'ajan durduruldu',
+  ai_permission_closed: 'yapay zekâ izni kapandı',
+  identity_changed: 'kurucunun adına yeniden başladı',
+  // The AI spending limit of the project was reached while the run was going (decision 17).
+  spending_limit_reached: 'harcama sınırı doldu',
+};
+const FAILURE_REASON: Record<string, string> = {
+  card_not_runnable: 'ajan kartı çalışmaya açık değil',
+  model_unavailable: 'model kullanılamadı',
+};
+
+/**
+ * The reason that stands after the status word of a run in the list of a project's runs, or null
+ * when the word says everything. A code is never shown raw: a code this list does not know gives
+ * no reason, except for a stopped run, which was stopped because its request changed (a person
+ * stopped the work or gave it to another agent) whenever no switch stopped it.
+ */
+export function runResultReason(status: RunStatus, errorCode: string | null): string | null {
+  if (errorCode === null) return null;
+  if (status === 'limit_reached') return LIMIT_REASON[errorCode] ?? null;
+  if (status === 'stopped') return STOP_REASON[errorCode] ?? 'talep değişti';
+  if (status === 'failed') return FAILURE_REASON[errorCode] ?? null;
+  return null;
+}
+
+/**
+ * How long a run took, short enough for a narrow column: seconds under a minute, minutes from a
+ * minute on. A run that is still open is not timed on the page: it says "Sürüyor".
+ */
+export function runDurationText(durationMs: number | null): string {
+  if (durationMs === null) return 'Sürüyor';
+  const seconds = Math.max(1, Math.round(durationMs / 1000));
+  return seconds < 60 ? `${String(seconds)} sn.` : `${String(Math.round(seconds / 60))} dk.`;
 }
 
 const byName = new Intl.Collator('tr');

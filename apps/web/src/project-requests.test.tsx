@@ -61,6 +61,14 @@ const listOf =
   () =>
     json({ requests: requests.map(summaryOf), truncated: false });
 
+/** The tabs of the page in their order, each with its value in the address. */
+const TABS: [name: string, value: string | undefined][] = [
+  ['Talepler', undefined],
+  ['Kilometre taşları', 'milestones'],
+  ['Çalışmalar', 'runs'],
+  ['Ayarlar', 'settings'],
+];
+
 const tabs = () => screen.findByRole('tablist', { name: 'Proje bölümleri' });
 const tab = (name: string) => screen.getByRole('tab', { name });
 const tabPanel = (name: string) => screen.getByRole('tabpanel', { name });
@@ -74,7 +82,7 @@ describe('projects: the tabs of a project', () => {
       within(list)
         .getAllByRole('tab')
         .map((item) => item.textContent),
-    ).toEqual(['Talepler', 'Kilometre taşları', 'Ayarlar']);
+    ).toEqual(TABS.map(([name]) => name));
     // Every link to a project opens "Talepler": the address names no tab.
     expect(tab('Talepler')).toHaveAttribute('aria-selected', 'true');
     expect(tab('Ayarlar')).toHaveAttribute('aria-selected', 'false');
@@ -97,32 +105,30 @@ describe('projects: the tabs of a project', () => {
     };
     above();
 
-    // The tab list is one Tab stop; Right and Left move between the tabs and select.
+    // The tab list is one Tab stop; Right and Left move between the tabs and select. Each tab but
+    // the first is in the address.
     const before = router.history.length;
     tab('Talepler').focus();
-    await userEvent.keyboard('{ArrowRight}');
-    expect(tab('Kilometre taşları')).toHaveAttribute('aria-selected', 'true');
-    expect(tab('Kilometre taşları')).toHaveFocus();
-    await waitFor(() => {
-      expect(currentLocation(router)).toEqual({ pathname: PATH, search: { tab: 'milestones' } });
-    });
-    await userEvent.keyboard('{ArrowRight}');
-    expect(tab('Ayarlar')).toHaveAttribute('aria-selected', 'true');
-    expect(tab('Ayarlar')).toHaveFocus();
-    await waitFor(() => {
-      expect(currentLocation(router)).toEqual({ pathname: PATH, search: { tab: 'settings' } });
-    });
+    for (const [name, value] of TABS.slice(1)) {
+      await userEvent.keyboard('{ArrowRight}');
+      expect(tab(name)).toHaveAttribute('aria-selected', 'true');
+      expect(tab(name)).toHaveFocus();
+      await waitFor(() => {
+        expect(currentLocation(router)).toEqual({ pathname: PATH, search: { tab: value } });
+      });
+      expect(screen.getAllByRole('tabpanel')).toHaveLength(1);
+      above();
+    }
     expect(
       within(tabPanel('Ayarlar')).getByRole('heading', { level: 3, name: 'Açıklama' }),
     ).toBeVisible();
     expect(within(tabPanel('Ayarlar')).getByRole('region', { name: 'Üyeler 2' })).toBeVisible();
     expect(screen.queryByRole('heading', { name: 'Bu projede henüz talep yok' })).toBeNull();
-    above();
-    await userEvent.keyboard('{ArrowLeft}');
-    expect(tab('Kilometre taşları')).toHaveAttribute('aria-selected', 'true');
-    await userEvent.keyboard('{ArrowLeft}');
-    expect(tab('Talepler')).toHaveAttribute('aria-selected', 'true');
-    expect(tab('Talepler')).toHaveFocus();
+    for (const [name] of TABS.slice(0, -1).toReversed()) {
+      await userEvent.keyboard('{ArrowLeft}');
+      expect(tab(name)).toHaveAttribute('aria-selected', 'true');
+      expect(tab(name)).toHaveFocus();
+    }
     await waitFor(() => {
       expect(currentLocation(router).search).toEqual({});
     });

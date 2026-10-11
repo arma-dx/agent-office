@@ -6,6 +6,8 @@ import {
   ROLE_ACT,
   ROLE_ACT_ORDER,
   roleGivenSentence,
+  runDurationText,
+  runResultReason,
 } from './labels.ts';
 
 describe('project labels: roles (8 October decision 44)', () => {
@@ -60,5 +62,41 @@ describe('project labels: roles (8 October decision 44)', () => {
     expect(handOverDescription({ founder: true, owner: false, projectHasOwner: false })).toBe(
       'Projenin sahibi bu kişi olur.',
     );
+  });
+});
+
+describe('project labels: the result of an agent run', () => {
+  it('a reason stands after the status word for the codes the list knows', () => {
+    expect(runResultReason('limit_reached', 'tool_call_limit')).toBe('araç çağrısı sınırı');
+    expect(runResultReason('limit_reached', 'time_limit')).toBe('süre sınırı');
+    expect(runResultReason('stopped', 'agent_stopped')).toBe('ajan durduruldu');
+    expect(runResultReason('stopped', 'ai_permission_closed')).toBe('yapay zekâ izni kapandı');
+    expect(runResultReason('stopped', 'identity_changed')).toBe('kurucunun adına yeniden başladı');
+    expect(runResultReason('stopped', 'spending_limit_reached')).toBe('harcama sınırı doldu');
+    // A run no switch stopped was stopped because its request changed.
+    expect(runResultReason('stopped', 'request_changed')).toBe('talep değişti');
+    expect(runResultReason('stopped', 'routing_changed')).toBe('talep değişti');
+    expect(runResultReason('failed', 'card_not_runnable')).toBe('ajan kartı çalışmaya açık değil');
+    expect(runResultReason('failed', 'model_unavailable')).toBe('model kullanılamadı');
+  });
+
+  it('a code is never shown raw: an unknown one gives no reason, and a code of another status none', () => {
+    expect(runResultReason('failed', 'runner_error')).toBeNull();
+    expect(runResultReason('limit_reached', 'something_new')).toBeNull();
+    expect(runResultReason('completed', null)).toBeNull();
+    expect(runResultReason('running', null)).toBeNull();
+    expect(runResultReason('stopped', null)).toBeNull();
+    // A reason belongs to its status: a stop code on a failed run says nothing.
+    expect(runResultReason('failed', 'agent_stopped')).toBeNull();
+    expect(runResultReason('completed', 'time_limit')).toBeNull();
+  });
+
+  it('a duration is seconds under a minute and minutes from a minute on; an open run says Sürüyor', () => {
+    expect(runDurationText(null)).toBe('Sürüyor');
+    expect(runDurationText(38_000)).toBe('38 sn.');
+    expect(runDurationText(200)).toBe('1 sn.');
+    expect(runDurationText(59_400)).toBe('59 sn.');
+    expect(runDurationText(60_000)).toBe('1 dk.');
+    expect(runDurationText(605_000)).toBe('10 dk.');
   });
 });

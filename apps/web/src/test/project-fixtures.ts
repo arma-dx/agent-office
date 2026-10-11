@@ -3,6 +3,8 @@ import {
   memberRemoval,
   memberRoleChanges,
   projectDetailSchema,
+  projectRunSchema,
+  projectRunsSchema,
   projectSummarySchema,
   setProjectMemberRoleSchema,
   type CustomerOption,
@@ -12,6 +14,8 @@ import {
   type ProjectMember,
   type ProjectMemberCandidate,
   type ProjectMemberRole,
+  type ProjectRun,
+  type ProjectRuns,
   type ProjectSummary,
 } from '@agent-office/shared';
 import { apiError, ARMADX, json, sessionHandler, USER_ID, type Handler } from './mock-api.ts';
@@ -266,9 +270,63 @@ export function waitingWorkRoute(
   return `GET /waiting-work?${new URLSearchParams(scope).toString()}`;
 }
 
+/** The key of the list of a project's agent runs (the "Çalışmalar" tab of its page). */
+export function projectRunsRoute(projectId: string = PROJECT_ID): string {
+  return `GET /projects/${projectId}/runs`;
+}
+
+export const RUN_ID = 'd1111111-1111-4111-8111-111111111111';
+
+/**
+ * One agent run of the fixture's project as a member reads it: finished, on a request, without
+ * tokens or cost (those are the founder's; a test gives `usage`).
+ */
+export function projectRun(overrides: Partial<ProjectRun> = {}): ProjectRun {
+  return projectRunSchema.parse({
+    id: RUN_ID,
+    request: { id: 'e1111111-1111-4111-8111-111111111111', title: 'Ekim bülteni taslağı' },
+    agent: { code: 'SOS-2', name: 'Sosyal İçerik Yazım Ajanı' },
+    status: 'completed',
+    errorCode: null,
+    startedAt: '2026-10-08T09:00:00.000Z',
+    finishedAt: '2026-10-08T09:00:38.000Z',
+    durationMs: 38_000,
+    usage: null,
+    ...overrides,
+  });
+}
+
+/** GET /projects/:id/runs: the given runs, counted, with the usage added up when they carry it. */
+export function projectRuns(
+  runs: ProjectRun[] = [],
+  overrides: Partial<ProjectRuns> = {},
+): ProjectRuns {
+  const used = runs.flatMap((run) => (run.usage ? [run.usage] : []));
+  return projectRunsSchema.parse({
+    runs,
+    truncated: false,
+    totals: {
+      runCount: runs.length,
+      usage:
+        used.length === 0
+          ? null
+          : {
+              inputTokens: used.reduce((sum, usage) => sum + usage.inputTokens, 0),
+              outputTokens: used.reduce((sum, usage) => sum + usage.outputTokens, 0),
+              cacheWriteTokens: used.reduce((sum, usage) => sum + usage.cacheWriteTokens, 0),
+              cacheReadTokens: used.reduce((sum, usage) => sum + usage.cacheReadTokens, 0),
+              costUsd: used.reduce((sum, usage) => sum + Number(usage.costUsd), 0).toFixed(6),
+            },
+    },
+    serverTime: '2026-10-08T10:00:00.000Z',
+    ...overrides,
+  });
+}
+
 /**
  * The read routes of the section, answering the fixtures; a test replaces what it is about. The
- * project has no request unless a test gives some, and no request waits for an opening.
+ * project has no request and no agent run unless a test gives some, and no request waits for an
+ * opening.
  */
 export function projectHandlers(
   detail: ProjectDetail = projectDetail(),
@@ -279,6 +337,7 @@ export function projectHandlers(
     'GET /projects': () => json({ projects: [project()], truncated: false }),
     [`GET /projects/${detail.id}`]: () => json(detail),
     [projectRequestsRoute(detail.id)]: () => json({ requests: [], truncated: false }),
+    [projectRunsRoute(detail.id)]: () => json(projectRuns()),
     // The confirmation of an opening asks how many waiting requests it would start: none.
     [waitingWorkRoute({ project: detail.id })]: () => json({ waiting: 0 }),
     ...(detail.customer

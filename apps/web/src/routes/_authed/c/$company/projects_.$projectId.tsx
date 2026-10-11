@@ -1,8 +1,8 @@
 // Parts adapted from Paperclip (MIT License, Copyright (c) 2025 Paperclip AI).
 // Source: ui/src/pages/ProjectDetail.tsx (the header: tile, name, status) at commit
 // dd868ed125cd709506dd9b29fca640a44d580501. License text: THIRD_PARTY_NOTICES.md.
-// Changes: tabs of our own (the requests of the project, its milestones, its settings) in the
-// address; no inline editing, no star, no plugin slots; the budget is in the properties panel;
+// Changes: tabs of our own (the requests of the project, its milestones, its agent runs, its
+// settings) in the address; no inline editing, no star, no plugin slots; the budget is in the properties panel;
 // the properties go to the shell's panel; members and the AI permission are ours; Turkish texts.
 import type { MembershipSummary, ProjectDetail } from '@agent-office/shared';
 import { useQuery } from '@tanstack/react-query';
@@ -14,6 +14,7 @@ import { ProjectMembers } from '@/components/projects/project-members';
 import { ProjectMilestones } from '@/components/projects/project-milestones';
 import { ProjectProperties } from '@/components/projects/project-properties';
 import { ProjectRequests } from '@/components/projects/project-requests';
+import { ProjectRuns } from '@/components/projects/project-runs';
 import { ProjectTile } from '@/components/projects/project-tile';
 import { PageLabel } from '@/components/shell/page-label';
 import { PropertiesPanel } from '@/components/shell/properties-panel';
@@ -32,19 +33,19 @@ import { useCompany } from '@/lib/session';
 /**
  * One project (8 October 2026, decision 17): its name and status and whether agents may work in
  * it, then its tabs. "Talepler" (shown first) lists the requests of the project and opens a new
- * one in it; "Kilometre taşları" keeps its milestones; "Ayarlar" holds its description and its
- * members. The properties are in the shell's panel on all of them. The project comes from one
+ * one in it; "Kilometre taşları" keeps its milestones; "Çalışmalar" lists its agent runs;
+ * "Ayarlar" holds its description and its members. The properties are in the shell's panel on all of them. The project comes from one
  * answer of the API, already cut to what the reader may read: a project the reader cannot see is
  * the same screen as one that does not exist.
  *
  * The tab is in the address: "Talepler" has no search parameter, so every link to a project opens
- * it; `?tab=milestones` and `?tab=settings` open the others and survive a reload. A value the
- * page does not know opens "Talepler".
+ * it; `?tab=milestones`, `?tab=runs` and `?tab=settings` open the others and survive a reload.
+ * A value the page does not know opens "Talepler".
  *
  * The notes of a project (decision 17 names them) come with the Notes work: until then the page
  * has no tab, no link and no empty section for them.
  */
-const tabSchema = z.enum(['requests', 'milestones', 'settings']);
+const tabSchema = z.enum(['requests', 'milestones', 'runs', 'settings']);
 const searchSchema = z.object({ tab: tabSchema.optional().catch(undefined) });
 
 export const Route = createFileRoute('/_authed/c/$company/projects_/$projectId')({
@@ -165,6 +166,7 @@ function ProjectPage({ project }: { project: ProjectDetail }) {
           items={[
             { value: 'requests', label: 'Talepler' },
             { value: 'milestones', label: 'Kilometre taşları' },
+            { value: 'runs', label: 'Çalışmalar' },
             { value: 'settings', label: 'Ayarlar' },
           ]}
         />
@@ -173,6 +175,9 @@ function ProjectPage({ project }: { project: ProjectDetail }) {
         </TabsContent>
         <TabsContent value="milestones">
           <ProjectMilestones project={project} />
+        </TabsContent>
+        <TabsContent value="runs">
+          <ProjectRuns project={project} />
         </TabsContent>
         <TabsContent value="settings" className="flex flex-col gap-5">
           <section className="flex flex-col gap-1">

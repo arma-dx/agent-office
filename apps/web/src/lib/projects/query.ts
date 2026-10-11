@@ -9,6 +9,7 @@ import {
   projectDetailSchema,
   projectListSchema,
   projectMemberCandidatesSchema,
+  projectRunsSchema,
   setProjectBudgetSchema,
   setProjectMemberRoleSchema,
   updateMilestoneSchema,
@@ -25,6 +26,7 @@ import {
   type ProjectList,
   type ProjectMemberCandidate,
   type ProjectMemberRole,
+  type ProjectRuns,
   type UpdateMilestone,
   type UpdateProject,
 } from '@agent-office/shared';
@@ -48,6 +50,12 @@ export const projectsKey = (companyId: string) => ['company', companyId, 'projec
 export const projectPagesKey = (companyId: string) => ['company', companyId, 'project'] as const;
 export const projectKey = (companyId: string, projectId: string) =>
   ['company', companyId, 'project', projectId] as const;
+/**
+ * The agent runs of a project. Under projectKey, so everything that makes a project page read
+ * again reads them again too.
+ */
+export const projectRunsKey = (companyId: string, projectId: string) =>
+  ['company', companyId, 'project', projectId, 'runs'] as const;
 export const customersKey = (companyId: string) => ['company', companyId, 'customers'] as const;
 export const memberCandidatesKey = (companyId: string) =>
   ['company', companyId, 'project-member-candidates'] as const;
@@ -67,6 +75,27 @@ export function projectQueryOptions(companyId: string, projectId: string) {
       apiRequest(`/projects/${projectId}`, { schema: projectDetailSchema, companyId, signal }),
     // A hidden and a missing project are one answer; asking again changes nothing.
     retry: false,
+  });
+}
+
+/**
+ * GET /api/projects/:projectId/runs: the newest runs of the project and totals over all of them.
+ * `background`: the periodic refresh of the "Çalışmalar" tab, which does not extend the session's
+ * idle time (rule 3).
+ */
+export function fetchProjectRuns(
+  companyId: string,
+  projectId: string,
+  options: { signal?: AbortSignal; background?: boolean } = {},
+): Promise<ProjectRuns> {
+  const id = z.uuid().parse(projectId);
+  return apiRequest(`/projects/${id}/runs`, { schema: projectRunsSchema, companyId, ...options });
+}
+
+export function projectRunsQueryOptions(companyId: string, projectId: string) {
+  return queryOptions({
+    queryKey: projectRunsKey(companyId, projectId),
+    queryFn: ({ signal }) => fetchProjectRuns(companyId, projectId, { signal }),
   });
 }
 
