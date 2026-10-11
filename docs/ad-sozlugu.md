@@ -483,6 +483,7 @@ Bekleyen işlerin kendiliğinden başlaması (8 Ekim karar 49):
 - Şemalar: `agentOpenResponseSchema`, `projectAiPermissionAnswerSchema`, `customerPermissionsAnswerSchema` (üçünde de `restarted`: bu isteğin yeniden başlattığı talep sayısı), `waitingWorkQuerySchema`, `waitingWorkResponseSchema`.
 - Çalıştırıcı: `recordSwitchRefusal` (durdurulmuş ajan ya da kapalı izin yüzünden reddedilen işin izini, açma işlemini bekleyerek yazar; o sırada düğme açıldıysa iz yazmaz, işi kendisi başlatır).
 - Panelde (`apps/web/src/lib/requests/labels.ts`): `OpeningKind` (`agent`, `project`, `customer`), `waitingWorkSentence` (açma onayında bekleyen taleplerin cümlesi: sayılıyor, yok, sayı, sayılamadı), `WAITING_WORK_IF_ANY` (sayı okunmadan söylenen cümle).
+- Panel (0.4c adım 2): proje sayfasının adresinde `?tab=` (`settings`: "Ayarlar"; yazılmazsa "Talepler"). Bileşenler: `RequestGroups` (Talepler ekranının ve proje sayfasının ortak talep listesi; `showProject`: satır projenin adını gösterir, `dense`: dar sütun satırı, `headingLevel`), `ProjectRequests` (proje sayfasının "Talepler" sekmesi). `projectOptions` (talep formunun "Proje" alanında sunulanlar). Formu açanlar: `open` ve `openFor` (`useOpenRequestDialogFor`: form proje seçili açılır). `waitingWorkQueryOptions` ve `waitingState` (açma penceresinin okuduğu bekleyen talep sayısı: `counting`, sayı, `unknown`). `confirmBlocked` (passkey penceresinin onay düğmesi sayı gelene kadar bekler).
 
 ## Notlar
 

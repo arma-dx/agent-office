@@ -98,7 +98,7 @@ Rapordaki dört seviye. Ajanların çoğu Y1 ile başlar; "Y1, hedef Y2" yazan a
 - Yükseltme: ajan en az 50 işte ilk seferde yüzde 95 onay oranına ulaşır ve son 30 günde kritik hata yapmazsa bir üst seviyeye önerilir; kararı birim sorumlusu, başlangıçta kurucu verir. Kritik hata ajanı hemen bir seviye düşürür ve vaka incelenir. Eşikler pilotta gerçek veriyle ayarlanır.
 - Hiçbir koşulda ajana bırakılmayan işler (ajan bu işlerde en fazla Y1): para transferi, imza ve taahhüt, resmî kurumlara başvuru ve beyan, kişisel verinin silinmesi ya da üçüncü kişiye aktarılması.
 - Pilotta Y1 kapısı kodla uygulanır (1 Ekim ikinci tur, karar 4): Y1 ajan yalnızca korumalı alana (taslaklar) ve kendi görevinin durumuna yazar; paylaşılan kayda yazması (bildirim, paylaşılan not, başka bir görevi güncelleme) onaya düşer; görev açma öneri olarak gelir. Ajanın soruları ve eskalasyonları "insana sor" yoluyla ajanın sorumlusuna (kartta `owner`) ya da talep sahibine gider, onaya düşmez (2 Ekim, karar 1). Y2 ve Y3 kapıları karar bekliyor (`docs/SONRA.md`, M19).
-- Her ajanın bir insan sorumlusu var; sorumlu ajanı her an durdurabilir ya da işi devralabilir. Pilotta bütün ajanların sorumlusu kurucudadır. Onay, işi yapan birimin onaylayıcısındadır: şimdilik bütün birimlerin onaylayıcısı kurucudur; ileride birime, ayrıca tek bir ajana başka bir kişi atanabilir, talep sahibinin onayı da her işin sonunda alınır (7 Ekim, karar 5 ve 6).
+- Her ajanın bir insan sorumlusu var; sorumlu ajanı her an durdurabilir ya da işi devralabilir. Pilotta bütün ajanların sorumlusu kurucudadır. Onay, işi yapan birimin onaylayıcısındadır: şimdilik bütün birimlerin onaylayıcısı kurucudur; ileride birime, ayrıca tek bir ajana başka bir kişi atanabilir, talep sahibinin onayı da her işin sonunda alınır (7 Ekim, karar 5 ve 6); talep sahibi talebi okuyamıyorsa onayı kurucu verir (8 Ekim, karar 45).
 
 ## Ekranlar
 
@@ -124,7 +124,7 @@ Bir satır, ekranı yapıldığında menüye eklenir. Panel telefona uyumlu yap�
 | Ajanlar | Birimlere göre ajanlar, durumları, yetki seviyeleri, şirket başına durdurma düğmesi ve "her yerde durdur" | 1 |
 | Görev kartı | Kart ve skill'ler salt okunur (değişiklik depoda PR ile), sürüm geçmişi, test sonuçları | 1 |
 | Notlar | Klasör ağacı, editör, geri bağlantılar, etiketler, arama; HAF-2'ye soru (proje sayfasından o projede; genel ekranda proje seçilerek) | 1 |
-| Projeler | Proje listesi; yeni proje (ad, açıklama, müşteri, üyeler); proje sayfası: beş durum, renk ve simge, hedef tarih, üyeler (üyelerde sahip, yönetici, üye; 8 Ekim, karar 44), yapay zekâ izni, talepler, dosyalar, GitHub, bütçe ve kilometre taşları, notlar, ajan çalışmaları ve maliyeti, onaylar, yapay zekâ harcama sınırı (8 Ekim, karar 11 ve 14-22). Adımları KALAN-ISLER 0.4c içinde | 0 ve sonrası |
+| Projeler | Proje listesi; yeni proje (ad, açıklama, müşteri, üyeler); proje sayfası: Talepler ve Ayarlar sekmeleri (0.4c adım 2), beş durum, renk ve simge, hedef tarih, üyeler (üyelerde sahip, yönetici, üye; 8 Ekim, karar 44), yapay zekâ izni, talepler, dosyalar, GitHub, bütçe ve kilometre taşları, notlar, ajan çalışmaları ve maliyeti, onaylar, yapay zekâ harcama sınırı (8 Ekim, karar 11 ve 14-22). Adımları KALAN-ISLER 0.4c içinde | 0 ve sonrası |
 | Müşteriler | Müşteri ve fırsat listesi | 2 |
 | İz kaydı | Kim, ne yaptı, ne zaman; filtreler | 2 |
 | Ayarlar | Kullanıcılar ve roller, şirketler, entegrasyonlar (Drive bağlantısı ve klasör izin listesi Sprint 1, Gmail ve Takvim Sprint 3) | 0, 1 ve 3 |
@@ -137,10 +137,10 @@ Bir satır, ekranı yapıldığında menüye eklenir. Panel telefona uyumlu yap�
 | Kod | Modül | İçerik | Sprint |
 | --- | --- | --- | --- |
 | M1 | Kimlik ve kiracı | Google ile davetli giriş, şirket seçimi, roller, RLS ve proje kapsamı, Kurucu özel alanı; iki adımlı doğrulama (önce `amr` denemesi), passkey kaydı | 0 |
-| M2 | Görev kaydı | Talep, atama, durum, son tarih; pano ve liste | 0 |
+| M2 | Görev kaydı | Talep, atama, durum, son tarih; pano ve liste; talep formunda isteğe bağlı proje alanı (0.4c adım 2) | 0 |
 | M3 | Onay Masası | Kuyruk, özet, fark, onay, ret, düzeltme, gerekçe | 0 |
 | M4 | İz kaydı ve maliyet | Çalışma ve onay kaydı; token ve maliyet; iç iş ve proje ayrımı | 0 |
-| M5 | Ajan çalıştırıcı | Kart ve skill yükleme, Claude ile araç döngüsü, kuyruk, zamanlayıcı, olay tetikleyici, yeniden deneme, zaman aşımı, durdurma; Y1 kapısı, "insana sor" yolu; `project_context` (proje başına zamanlanmış çalışma) ve proje özetlerinin kodla birleştirilmesi | 1 |
+| M5 | Ajan çalıştırıcı | Kart ve skill yükleme, Claude ile araç döngüsü, kuyruk, zamanlayıcı, olay tetikleyici, yeniden deneme, zaman aşımı, durdurma; Y1 kapısı, "insana sor" yolu; `project_context` (proje başına zamanlanmış çalışma) ve proje özetlerinin kodla birleştirilmesi; talep çalışmasında `if_available` kuruldu (0.4c adım 2), `required` ve `per_project` kurulmadı (SONRA P2-g). Talep çalışması talep sahibinin adına koşar; talep sahibi talebi okuyamıyorsa kurucunun adına (8 Ekim, karar 45); kimliği veritabanı belirler. Yeniden açılan ajanı ve yeniden açılan izni bekleyen işler kendiliğinden başlar (8 Ekim, karar 49) | 1 |
 | M6 | Görev kartı yönetimi | Kart görüntüleme, sürüm geçmişi, test setini çalıştırma; düzenleme depoda PR ile. | 1 |
 | M7 | Not sistemi | Markdown editörü, `[[` ile not önerisi, geri bağlantılar, etiket ve özellik filtresi, arama, kaynak gösterme; Drive'dan içeri aktarma | 1 |
 | M8 | Ofis Koordinatörü | Talebi sınıflandırır, şirketi ve birimi belirler, alt görevlere böler; yönlendirme kararları kayıtlı ve düzeltilebilir; koordinatör devre dışıyken birimlere doğrudan erişim yolu (yedek yol) | 1 |
@@ -291,5 +291,5 @@ Kazanılan zamanın ölçülebilmesi için pilottan önce seçilen işlerin bug�
 | İstem enjeksiyonu | E-posta ve dokümana gizlenmiş talimatların uygulanmaması | Haftalık ve her yeni bağlantıda |
 | Maliyet | Çalışma başına maliyetin beklenen aralıkta kalması | Haftalık |
 | Yasak işler | Para, imza, resmî başvuru ve kişisel veri silme ya da aktarma işlerinde hiçbir ajanın Y1'in üstüne çıkamaması | Her yayında |
-| AI izni | AI izni olmayan projede hiçbir ajanın çalışamaması; izni olmayan müşteriye bağlı kayıtların ajan çalışmasına kapalı olması; bu müşteride yalnızca model çağırmayan sistem işlerinin sürmesi | Her yayında |
+| AI izni | AI izni olmayan projede hiçbir ajanın çalışamaması; izni olmayan müşteriye bağlı kayıtların ajan çalışmasına kapalı olması; bu müşteride yalnızca model çağırmayan sistem işlerinin sürmesi; talep açılırken, her çalışmanın başında, izin kapanınca süren çalışmada ve onayda (0.4c adım 2) | Her yayında |
 | Yetki kapısı | Y1 ajanın `internal_write` çağrısının onaya düşmesi; "insana sor" yolunun onaya düşmemesi | Her yayında |

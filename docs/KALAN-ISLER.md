@@ -45,6 +45,8 @@ Henüz olmayanlar: veritabanı (göç dosyası yok), giriş, işlevli ekran (yal
 
 9 Ekim 2026: 0.4a adım 3'ün son tarih ve yorum kısmı yapıldı: talep formunda isteğe bağlı son tarih var, talep sayfası ve Talepler listesi günü geçince "Son tarihi geçti" yazıyor; talep sayfasında "Yorumlar" bölümü var, yorumu talep sahibi, birimin onaylayıcısı ve kurucu yazıyor, ajanlar yorumu görmüyor. Adım tasarlanırken türetilen seçimler `docs/SONRA.md` içinde D-a ila D-k olarak duruyor; hepsi kurucu onayı bekliyor. Ekranlar tarayıcıda görülmeden yazıldı; kurucunun talep formuna ve talep sayfasına bir kez bakması gerekir (D-k). Yeni göç (`20261008102000_request_comments_for_people.sql`) yerel veritabanına uygulanana kadar yerelde talep sayfası sunucu hatası verir. Adımın proje alanı Projeler'i (0.4c adım 2) bekliyor.
 
+11 Ekim 2026: Projeler'in ikinci adımı kuruldu (0.4c adım 2); 0.4a adım 3'ün proje alanı da bununla tamamlandı. Talep formunda isteğe bağlı proje alanı var; proje sayfasında "Talepler" ve "Ayarlar" sekmeleri var; proje içindeki talepte ajanlar o projenin içinde çalışıyor ve kural 12 kodla denetleniyor (8 Ekim, karar 45-49). İzin kapanınca süren çalışma durur, talep kurucunun "Sizden beklenenler" listesine düşer ve bekleyen sonuç onaylanamaz. İzin ya da ajan yeniden açılınca bekleyen talepler kendiliğinden başlar; onay penceresi kaç talebin başlayacağını önceden söyler. Talep sahibi talebini göremez olursa ajan kurucunun adına çalışır ve sonucu kurucu onaylar. Adım tasarlanırken ve yapılırken türetilen seçimler `docs/SONRA.md` içinde P2-a ila P2-af olarak duruyor; sonunda karar numarası yazmayanların hepsi kurucu onayı bekliyor. Ekranlar tarayıcıda görülmeden yazıldı; kurucunun talep formuna, bir proje sayfasına ve bir açma penceresine bir kez bakması gerekir (P2-ad). Dört yeni göç (`20261008102200` ila `20261008102500`) yerel veritabanına uygulanana ve ardından `pnpm db:sync-definitions` çalıştırılana kadar yerelde talep listeleri sunucu hatası verir, çalıştırıcı iş alamaz. Sıradaki adım proje sayfasının öteki bölümleri (adım 3).
+
 ## Sprint 0
 
 ### 0.1 Arayüz temeli
@@ -371,12 +373,13 @@ Adım 2: Ofiste canlı durumlar ve "Her yerde durdur" (karar 9 ve 10)
 - [x] Masada ajanın durumu: Boşta, Çalışıyor, Onay bekliyor, Hata
 - [x] Ajan panelinde sayılar
 - [x] "Her yerde durdur": ajan açık olduğu her şirkette durur; şirket şirket sonuç
+- [x] Yeniden açılan ajanı bekleyen işler kendiliğinden başlar (8 Ekim karar 49; 0.4c adım 2 ile; SONRA Y-j, P2-v)
 
-Adım 3: Son tarih ve yorum (karar 13); proje alanı Projeler'i (0.4c) bekler
+Adım 3: Son tarih ve yorum (karar 13); proje alanı Projeler ile (0.4c adım 2) yapıldı
 
 - [x] Talep formunda son tarih (yalnızca bilgi)
 - [x] Talebe yorum yazma: talep sahibi, birimin onaylayıcısı ve kurucu; ajan görmez
-- [ ] Talep formunda proje alanı; çalışmanın proje bağlamı; kural 12 denetiminin kodla yapılması (Projeler'den sonra)
+- [x] Talep formunda proje alanı; çalışmanın proje bağlamı; kural 12 denetiminin kodla yapılması (0.4c adım 2 ile)
 
 Adım 4: Ajanın soru sorması (ilk gerçek çalışmalardan sonra; sorusu kurucuya o zaman sorulur)
 
@@ -400,7 +403,7 @@ Bu işten çıkarılanlar:
 
 ### 0.4c Projeler
 
-8 Ekim, karar 11 ve 14-22. Projeler "İş" grubunda ayrı bir bölümdür (karar 14). Çalışanlar da proje açar ve üye ekler; yapay zekâ iznini yalnızca kurucu, passkey ile açar (karar 15 ve 22). Türetilen yorumlar ve varsayımlar `docs/SONRA.md` içinde P-a ila P-u. Adım 1 tasarlanırken ve yapılırken türetilenler aynı dosyada P1-a ila P1-z. Projede sahip, yönetici ve üye ayrımı 8 Ekim karar 44 ile geldi; ondan türetilenler P1b-a ila P1b-m.
+8 Ekim, karar 11 ve 14-22. Projeler "İş" grubunda ayrı bir bölümdür (karar 14). Çalışanlar da proje açar ve üye ekler; yapay zekâ iznini yalnızca kurucu, passkey ile açar (karar 15 ve 22). Türetilen yorumlar ve varsayımlar `docs/SONRA.md` içinde P-a ila P-u. Adım 1 tasarlanırken ve yapılırken türetilenler aynı dosyada P1-a ila P1-z. Projede sahip, yönetici ve üye ayrımı 8 Ekim karar 44 ile geldi; ondan türetilenler P1b-a ila P1b-m. Adım 2 (8 Ekim, karar 45-49) tasarlanırken ve yapılırken türetilenler P2-a ila P2-af.
 
 Adım 1: en küçük Projeler
 
@@ -417,8 +420,9 @@ Adım 1: en küçük Projeler
 
 Adım 2: talep formunda proje alanı
 
-- [ ] Talep formunda proje alanı; proje sayfasında o projenin talepleri
-- [ ] Çalışmanın proje bağlamı; kural 12 denetiminin kodla yapılması; izin kapanırsa talebin insana düşmesi
+- [x] Talep formunda proje alanı; proje sayfasında o projenin talepleri (kapalı proje sunulmaz; ajanların çalışamadığı proje nedeniyle birlikte seçilemez görünür, SONRA P2-a; proje sayfasında Talepler ve Ayarlar sekmeleri, SONRA P2-j)
+- [x] Çalışmanın proje bağlamı; kural 12 denetiminin kodla yapılması; izin kapanırsa talebin insana düşmesi (çalıştırıcı projeyi talepten okur; izin kapanınca süren çalışma durur, talep kurucuya düşer, bekleyen sonuç onaylanamaz, kararlar 46 ve 47; izin ya da ajan yeniden açılınca bekleyen işler kendiliğinden başlar, karar 49, SONRA P2-v ila P2-y; talep sahibi talebi göremez olursa ajan kurucunun adına çalışır, karar 45, SONRA P2-q ila P2-u)
+- [ ] Dört yeni göçün (`20261008102200` ila `20261008102500`) yerel veritabanına ve test ortamına uygulanması; ardından yerelde `pnpm db:sync-definitions` (KOR-1 ve SOS-2 kartlarına `project_context` eklendi; çalıştırılmadan proje içindeki talep "ajan kartı çalışmaya açık değil" der)
 
 Adım 3: proje sayfasının öteki bölümleri (karar 17; her biri ayrı küçük adım)
 
