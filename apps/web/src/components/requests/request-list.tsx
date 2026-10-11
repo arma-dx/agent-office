@@ -16,7 +16,10 @@ import { cn } from '@/lib/utils';
  * `dense` is the row of a narrow column (a project's page, which is 768 px at most and shares the
  * window with the properties panel): at every window width it has the columns the wide row keeps
  * below 1280 px (the stage and the turn), and the due day goes under the title instead of beside
- * it, so that the title, the one thing that tells two rows apart, keeps its room.
+ * it, so that the title, the one thing that tells two rows apart, keeps its room. The stage gets
+ * the width of the wide row from 1280 px there too: it says why a request waits ("Sizden
+ * bekleniyor: yapay zekâ izni kapalı"), nothing shows a text that is cut under the row's link,
+ * and the title still has its room beside it (lib/requests/labels.test.ts holds the widths).
  */
 
 function RequestRow({
@@ -92,11 +95,7 @@ function RequestRow({
             </span>
           )}
           <span
-            className={cn(
-              'w-44 truncate',
-              !dense && 'xl:w-64',
-              !request.waitingForMe && 'text-ink-secondary',
-            )}
+            className={cn('w-44 truncate xl:w-64', !request.waitingForMe && 'text-ink-secondary')}
             title={stageText(request)}
           >
             {stageText(request)}

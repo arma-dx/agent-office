@@ -22,6 +22,7 @@ import {
   dueText,
   restartedSentence,
   rowSentence,
+  stageText,
   stepText,
   waitingWorkSentence,
   type OpeningKind,
@@ -148,6 +149,31 @@ describe('the due day of a request in words', () => {
     const due = textWidth(widest, 12) * 1.05;
     expect(row(1280) - PROJECT - 8 - due).toBeLessThan(100);
     expect(row(1440) - PROJECT - 8 - due).toBeGreaterThan(200);
+  });
+
+  it('shows the reason a request waits whole on a project’s page from 1280 px, and leaves the title its room', () => {
+    // The dense row of a project's Talepler tab (components/requests/request-list.tsx). The page
+    // is 768 px at most; from 1280 px the properties panel (320) stands beside it, so at 1280 px
+    // the content is 1280 less the sidebar (240), the page's padding (48) and the panel: 672,
+    // and the row less its own padding (16) is 656. The status icon with its gap takes 24, the
+    // stage and turn columns with their gaps 368 (w-64, w-24).
+    const STAGE = 256;
+    const title = (content: number) => content - 16 - 24 - (STAGE + 96 + 16);
+    expect(title(1280 - 240 - 48 - 320)).toBeGreaterThan(200);
+    // At 1440 px and above the page has its full width.
+    expect(title(768)).toBeGreaterThan(200);
+    // The longest stage the list shows: a request that fell to the reader for a closed AI
+    // permission (8 October decision 47): the cause the founder comes to this page for.
+    const held = stageText({
+      stage: 'fell_to_person',
+      cause: 'ai_permission_closed',
+      delayed: false,
+      waitingForMe: true,
+    });
+    expect(held).toBe('Sizden bekleniyor: yapay zekâ izni kapalı');
+    expect(textWidth(held, 14)).toBeLessThanOrEqual(STAGE);
+    // The column the dense row had at every width cut it.
+    expect(textWidth(held, 14)).toBeGreaterThan(176);
   });
 });
 

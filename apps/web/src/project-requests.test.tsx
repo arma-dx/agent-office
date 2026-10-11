@@ -194,9 +194,19 @@ describe('projects: the tabs of a project', () => {
     const day = within(row).getByText(`Son tarih: ${formatDay('2026-10-20')}`);
     expect(day.tagName).toBe('P');
     expect(day).not.toHaveClass('hidden');
-    for (const column of row.querySelectorAll('span.truncate')) {
-      expect(column.className).not.toMatch(/xl:/);
-    }
+    // The two columns: the stage, which gets the width of the wide row from 1280 px so that the
+    // reason a request waits is not cut, and the turn, which keeps its width at every window
+    // width.
+    const [stage, turn, ...others] = row.querySelectorAll('span.truncate');
+    expect(others).toEqual([]);
+    expect(stage).toHaveTextContent('Ajan çalışıyor');
+    expect(stage?.className.split(' ').filter((name) => /^(xl:)?w-/.test(name))).toEqual([
+      'w-44',
+      'xl:w-64',
+    ]);
+    expect(turn).toHaveTextContent('SOS-2');
+    expect(turn).toHaveClass('w-24');
+    expect(turn?.className).not.toMatch(/xl:/);
     // How many wait is said to a screen reader, as on the Talepler screen.
     expect(within(panel).getByText('1 talep sizden bekleniyor.')).toHaveClass('sr-only');
     // A row is a link: the only button of the tab opens a new request.
