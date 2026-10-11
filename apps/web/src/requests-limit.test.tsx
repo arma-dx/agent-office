@@ -19,6 +19,7 @@ import { project, PROJECT_ID } from './test/project-fixtures.ts';
 import {
   APPROVAL_CARD,
   APPROVAL_ID,
+  DEFAULT_JOURNEY,
   EMPLOYEE,
   PROJECT_REF,
   REQUEST_ID,
@@ -86,10 +87,16 @@ const LIMIT_CARD = { ...APPROVAL_CARD, project: PROJECT_REF, spendingLimitReache
 
 describe('the page of a request whose project is at its spending limit', () => {
   it('a request held by the spending limit: the founder is told where to raise it and is linked to the Çalışmalar tab; a member is told who raises it', async () => {
-    // The run the limit stopped is not why the request waits: its words are not in the notice.
+    // The last run is not why the request waits: its words are not in the notice.
+    const words = 'Kaynak verilmediği için sonuç sunamadım.';
+    const journey = DEFAULT_JOURNEY.map((item, index) =>
+      index === 2 && item.kind === 'run'
+        ? { ...item, status: 'completed' as const, agentText: words }
+        : item,
+    );
     mockApi({
       'GET /session': sessionHandler(),
-      [`GET /requests/${REQUEST_ID}`]: () => json(heldRequest()),
+      [`GET /requests/${REQUEST_ID}`]: () => json(heldRequest({ journey })),
     });
     renderApp(REQUEST_PAGE);
     expect(await screen.findByText(CAUSE_SENTENCE.spending_limit_reached)).toBeVisible();
@@ -98,8 +105,13 @@ describe('the page of a request whose project is at its spending limit', () => {
     const notice = screen.getByText(CAUSE_SENTENCE.spending_limit_reached).closest('[role="note"]');
     if (!(notice instanceof HTMLElement)) throw new Error('No notice');
     expect(within(notice).getByText(CAUSE_FOR_FOUNDER.spending_limit_reached ?? '')).toBeVisible();
-    // 11 October decision 1: raising the limit starts the waiting work by itself.
-    expect(notice).toHaveTextContent('Sınır yükselince bekleyen iş kendiliğinden yeniden başlar.');
+    // 11 October decision 1: raising the limit starts the work it stopped or refused by itself.
+    // A request whose run had ended by itself is not started by a raise, and the sentence does
+    // not promise it.
+    expect(notice).toHaveTextContent(
+      'Sınır yükselince yarıda durdurulan ya da başlatılamayan iş kendiliğinden yeniden başlar. Çalışması durdurulmadan bitmiş talep başlamaz; kendi nedeniyle insana düşer.',
+    );
+    expect(notice).not.toHaveTextContent('bekleyen iş kendiliğinden');
     expect(within(notice).getByRole('link', { name: 'Projeyi aç' })).toHaveAttribute(
       'href',
       `/c/armadx/projects/${PROJECT_ID}?tab=runs`,
@@ -110,6 +122,10 @@ describe('the page of a request whose project is at its spending limit', () => {
     expect(screen.getByRole('main')).not.toHaveTextContent(/Yönlendirmeyi düzelt|Sıradaki adımı/);
     expect(screen.getByRole('button', { name: 'İşi durdur' })).toBeVisible();
     expect(notice).not.toHaveTextContent(LIMIT_FOR_OTHERS);
+    // The decider still reads the agent's words, in the journey, under the label that says
+    // whose: they matter when deciding whether to raise the limit or stop the request.
+    expect(notice).not.toHaveTextContent(words);
+    expect(screen.getByRole('region', { name: 'Yolculuk' })).toHaveTextContent(words);
     cleanup();
 
     // The requester, an employee: who raises the limit, and nothing they cannot do or know.

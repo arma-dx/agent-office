@@ -26,6 +26,7 @@ import { useReturnFocus } from '@/lib/focus';
 import { useDecisionDialog } from '@/lib/requests/hold';
 import {
   AI_CLOSED_FOR_OTHERS,
+  CAUSES_WITHOUT_RUN_WORDS,
   CAUSE_FOR_FOUNDER,
   CAUSE_NEXT,
   CAUSE_SENTENCE,
@@ -733,6 +734,7 @@ export function AcceptanceCardView({
 /** Why a request fell to a person, and what can be done about it. */
 export function FellNotice({ request, isFounder }: { request: RequestDetail; isFounder: boolean }) {
   if (request.stage !== 'fell_to_person' || request.cause === null) return null;
+  // The two causes below are in CAUSES_WITHOUT_RUN_WORDS: their notices show no run's words.
   // Held by a closed AI permission (rule 12; 8 October decision 47): nothing can be routed while
   // it holds, so the notice names the one way on, which is the founder's, and tells everybody
   // else who opens the permission. No "next step" line, and no words of the run the close stopped.
@@ -1164,10 +1166,13 @@ function RunItem({
 export function Journey({ request }: { request: RequestDetail }) {
   const headingId = useId();
   // The words of the run a request fell on are in the notice at the top; not said twice. The
-  // notice of a request held by a closed AI permission shows no run's words (the last run is not
-  // why it waits), so there the journey keeps them.
+  // notice of a request held by a closed AI permission or by a reached AI spending limit shows
+  // no run's words (the last run is not why it waits), so there the journey keeps them: the
+  // founder reads them when deciding whether to open the permission or raise the limit.
   const fellOn =
-    request.stage === 'fell_to_person' && request.cause !== 'ai_permission_closed'
+    request.stage === 'fell_to_person' &&
+    request.cause !== null &&
+    !CAUSES_WITHOUT_RUN_WORDS.includes(request.cause)
       ? request.journey.findLast((item) => item.kind === 'run')?.id
       : undefined;
   return (

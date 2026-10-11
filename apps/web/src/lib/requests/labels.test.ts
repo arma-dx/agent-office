@@ -324,7 +324,7 @@ describe('the sentences of a reached spending limit', () => {
 
   it('the founder is told where the limit is raised and that raising it starts the waiting work', () => {
     expect(CAUSE_FOR_FOUNDER.spending_limit_reached).toBe(
-      'Sınırı projenin sayfasındaki "Çalışmalar" sekmesinden yükseltebilirsiniz; passkey ister. Sınır yükselince bekleyen iş kendiliğinden yeniden başlar. İş gerekmiyorsa talebi durdurabilirsiniz.',
+      'Sınırı projenin sayfasındaki "Çalışmalar" sekmesinden yükseltebilirsiniz; passkey ister. Sınır yükselince yarıda durdurulan ya da başlatılamayan iş kendiliğinden yeniden başlar. Çalışması durdurulmadan bitmiş talep başlamaz; kendi nedeniyle insana düşer. İş gerekmiyorsa talebi durdurabilirsiniz.',
     );
     // While it holds, the routing cannot be corrected: no way on is named for it.
     expect(CAUSE_NEXT.spending_limit_reached).toBeUndefined();

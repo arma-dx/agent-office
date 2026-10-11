@@ -177,10 +177,21 @@ export const CAUSE_FOR_FOUNDER: Partial<Record<RequestCause, string>> = {
     'Kart taslak durumunda; deneme durumunda ve talep kurucuya ait değil; ya da kart, proje içindeki talepte çalışmaya açık değil (project_context alanı). Kart depoda değiştirilir.',
   ai_permission_closed:
     'İzni projenin sayfasından açabilirsiniz; passkey ister. İzin açılınca bekleyen iş kendiliğinden yeniden başlar. İş gerekmiyorsa talebi durdurabilirsiniz.',
-  // 11 October decision 1: raising the limit or taking it away starts the held work again.
+  // 11 October decision 1: raising the limit or taking it away starts the held work again. The
+  // sentence promises only what a raise does: it restarts a run that was stopped and a start
+  // that was refused, not a request whose run had ended by itself before the limit filled.
   spending_limit_reached:
-    'Sınırı projenin sayfasındaki "Çalışmalar" sekmesinden yükseltebilirsiniz; passkey ister. Sınır yükselince bekleyen iş kendiliğinden yeniden başlar. İş gerekmiyorsa talebi durdurabilirsiniz.',
+    'Sınırı projenin sayfasındaki "Çalışmalar" sekmesinden yükseltebilirsiniz; passkey ister. Sınır yükselince yarıda durdurulan ya da başlatılamayan iş kendiliğinden yeniden başlar. Çalışması durdurulmadan bitmiş talep başlamaz; kendi nedeniyle insana düşer. İş gerekmiyorsa talebi durdurabilirsiniz.',
 };
+
+/**
+ * The causes whose notice shows no words of the last run: that run is not why the request waits,
+ * the permission or the limit is. The journey keeps those words for whoever may read them.
+ */
+export const CAUSES_WITHOUT_RUN_WORDS: readonly RequestCause[] = [
+  'ai_permission_closed',
+  'spending_limit_reached',
+];
 
 /**
  * A request held by a closed AI permission, for a reader who cannot open it: every reader of the
