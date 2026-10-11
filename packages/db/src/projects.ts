@@ -409,6 +409,23 @@ export async function readProjectAiSpending(
   return rows[0] ?? null;
 }
 
+/**
+ * The founder sets, changes or (null) takes away the AI spending limit; the database asks for
+ * the founder and, for a raise or a removal, for a passkey re-verification recorded in this
+ * transaction. Returns whether the value changed.
+ */
+export async function setProjectAiSpendingLimit(
+  client: Queryable,
+  projectId: string,
+  limitUsd: string | null,
+): Promise<boolean> {
+  const { rows } = await client.query<{ changed: boolean }>(
+    'select office.set_project_ai_spending_limit($1, $2::numeric) as changed',
+    [projectId, limitUsd],
+  );
+  return rows[0]?.changed === true;
+}
+
 export interface ProjectApprovalRow {
   id: string;
   task_id: string;

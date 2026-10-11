@@ -306,6 +306,34 @@ export const projectAiPermissionSchema = z.discriminatedUnion('allowed', [
 ]);
 export type ProjectAiPermission = z.input<typeof projectAiPermissionSchema>;
 
+/** A limit in US dollars: above zero, at most 999999.99, at most two decimals. */
+export const usdLimitSchema = z
+  .string()
+  .regex(/^(0|[1-9]\d{0,5})(\.\d{1,2})?$/)
+  .refine((amount) => Number(amount) > 0, { message: 'Must be above zero' });
+
+/**
+ * PUT /api/projects/:projectId/ai-spending-limit (founder). limitUsd null takes the limit away.
+ * Raising a limit and taking one away need a project_ai_spending_limit re-verification in stepUp
+ * for this project with projectAiSpendingLimitDetails(limitUsd) (403 step_up_required without
+ * it). A first limit and a lower limit need none.
+ */
+export const projectAiSpendingLimitSchema = z.strictObject({
+  limitUsd: usdLimitSchema.nullable(),
+  stepUp: stepUpSchema.optional(),
+});
+export type ProjectAiSpendingLimit = z.input<typeof projectAiSpendingLimitSchema>;
+
+/**
+ * Does this change loosen the limit (and so ask for the passkey): the database's own rule. The
+ * two amounts are compared exactly (as whole millionths of a dollar), never as floating point
+ * numbers.
+ */
+export function loosensSpendingLimit(current: string | null, next: string | null): boolean {
+  if (current === null) return false;
+  return next === null || microUsd(next) > microUsd(current);
+}
+
 /**
  * PATCH /api/customers/:customerId/permissions (founder): at least one of the two. aiAllowed true
  * on a customer whose AI permission is closed needs a customer_ai_permission re-verification in

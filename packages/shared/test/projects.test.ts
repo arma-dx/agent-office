@@ -3,9 +3,13 @@ import {
   apiErrorCodeSchema,
   customerPermissionDetails,
   customerPermissionDetailsSchema,
+  normalizeUsdLimit,
   projectAiPermissionDetails,
   projectAiPermissionDetailsSchema,
+  projectAiSpendingLimitDetails,
+  projectAiSpendingLimitDetailsSchema,
   stepUpOptionsRequestSchema,
+  stepUpPurposeSchema,
 } from '../src/api.ts';
 import {
   CLOSED_PROJECT_STATUSES,
@@ -27,12 +31,14 @@ import {
   customerPermissionsAnswerSchema,
   customerPermissionsSchema,
   isClosedProjectStatus,
+  loosensSpendingLimit,
   mayAddProjectMembers,
   memberRemoval,
   memberRoleChanges,
   milestoneSchema,
   projectAiPermissionAnswerSchema,
   projectAiPermissionSchema,
+  projectAiSpendingLimitSchema,
   projectBudgetSchema,
   projectDetailSchema,
   projectMemberRoleSchema,
@@ -45,6 +51,7 @@ import {
   SPENDING_WARN_SHARE,
   updateMilestoneSchema,
   updateProjectSchema,
+  usdLimitSchema,
   type MemberRemoval,
   type Milestone,
   type ProjectActor,
@@ -875,6 +882,157 @@ describe('the AI spending limit of a project', () => {
   };
   const without = (object: Record<string, unknown>, field: string) =>
     Object.fromEntries(Object.entries(object).filter(([name]) => name !== field));
+
+  it('a limit is dollars above zero, at most 999999.99, with at most two decimals', () => {
+    for (const limit of ['0.01', '0.5', '1', '25', '25.0', '25.00', '999999', '999999.99']) {
+      expect(usdLimitSchema.parse(limit), limit).toBe(limit);
+      expect(projectAiSpendingLimitSchema.parse({ limitUsd: limit })).toEqual({ limitUsd: limit });
+    }
+    for (const limit of [
+      '0',
+      '0.0',
+      '0.00',
+      '-1',
+      '+1',
+      '1.234',
+      '25,00',
+      '1.',
+      '.5',
+      '01',
+      '1e3',
+      ' 25',
+      '',
+      'NaN',
+      'Infinity',
+      // One more whole digit than the column holds.
+      '1000000',
+      '1000000.00',
+      25,
+      25.5,
+      undefined,
+    ]) {
+      expect(usdLimitSchema.safeParse(limit).success, String(limit)).toBe(false);
+      expect(
+        projectAiSpendingLimitSchema.safeParse({ limitUsd: limit }).success,
+        String(limit),
+      ).toBe(false);
+    }
+    // null takes the limit away; the passkey answer rides in stepUp and nothing else is taken.
+    expect(projectAiSpendingLimitSchema.parse({ limitUsd: null })).toEqual({ limitUsd: null });
+    expect(
+      projectAiSpendingLimitSchema.safeParse({ limitUsd: '25', stepUp: STEP_UP }).success,
+    ).toBe(true);
+    for (const body of [
+      {},
+      { limit: '25' },
+      { limitUsd: '25', currency: 'USD' },
+      { limitUsd: '25', period: 'month' },
+      { limitUsd: '25', stepUp: {} },
+      { limitUsd: null, allowed: true },
+    ]) {
+      expect(projectAiSpendingLimitSchema.safeParse(body).success, JSON.stringify(body)).toBe(
+        false,
+      );
+    }
+  });
+
+  it('raising a limit and taking it away loosen it; a first limit and a lower one do not', () => {
+    // A first limit only stops agents earlier, whatever its amount.
+    expect(loosensSpendingLimit(null, '5.00')).toBe(false);
+    expect(loosensSpendingLimit(null, '999999.99')).toBe(false);
+    expect(loosensSpendingLimit(null, null)).toBe(false);
+    // A lower limit and the same limit, however it is written.
+    expect(loosensSpendingLimit('10.00', '9.99')).toBe(false);
+    expect(loosensSpendingLimit('10.00', '0.01')).toBe(false);
+    expect(loosensSpendingLimit('10.00', '10.00')).toBe(false);
+    expect(loosensSpendingLimit('10.00', '10')).toBe(false);
+    expect(loosensSpendingLimit('10.00', '10.0')).toBe(false);
+    // A raise, by a cent or by much, and a removal.
+    expect(loosensSpendingLimit('10.00', '10.01')).toBe(true);
+    expect(loosensSpendingLimit('10.00', '999999.99')).toBe(true);
+    expect(loosensSpendingLimit('9.99', '10')).toBe(true);
+    expect(loosensSpendingLimit('10.00', null)).toBe(true);
+    // Compared as amounts, not as text ("9" is not above "10") and not as rounded floats.
+    expect(loosensSpendingLimit('10.00', '9')).toBe(false);
+    expect(loosensSpendingLimit('9.00', '10')).toBe(true);
+    expect(loosensSpendingLimit('0.10', '0.30')).toBe(true);
+    expect(loosensSpendingLimit('0.30', '0.10')).toBe(false);
+  });
+
+  it('a spending limit re-verification names the company, the project and the limit with two decimals', () => {
+    expect(stepUpPurposeSchema.options).toContain('project_ai_spending_limit');
+    const body = {
+      purpose: 'project_ai_spending_limit',
+      companyId: uuid(1),
+      subjectId: uuid(2),
+      details: projectAiSpendingLimitDetails('50'),
+    };
+    expect(body.details).toEqual({ action: 'set_limit', limitUsd: '50.00' });
+    expect(stepUpOptionsRequestSchema.safeParse(body).success).toBe(true);
+    // Taking the limit away is confirmed as such.
+    expect(projectAiSpendingLimitDetails(null)).toEqual({ action: 'set_limit', limitUsd: null });
+    expect(
+      stepUpOptionsRequestSchema.safeParse({
+        ...body,
+        details: projectAiSpendingLimitDetails(null),
+      }).success,
+    ).toBe(true);
+    for (const missing of ['companyId', 'subjectId', 'details']) {
+      const incomplete = Object.fromEntries(
+        Object.entries(body).filter(([key]) => key !== missing),
+      );
+      expect(stepUpOptionsRequestSchema.safeParse(incomplete).success, missing).toBe(false);
+    }
+    // The limit is part of what is confirmed, in one written form; nothing else is.
+    for (const details of [
+      { action: 'set_limit' },
+      { action: 'set_limit', limitUsd: '50' },
+      { action: 'set_limit', limitUsd: '50.0' },
+      { action: 'set_limit', limitUsd: '50.000' },
+      { action: 'set_limit', limitUsd: 50 },
+      { action: 'set_limit', limitUsd: '1000000.00' },
+      { action: 'set_limit', limitUsd: '-5.00' },
+      { action: 'raise', limitUsd: '50.00' },
+      { action: 'set_limit', limitUsd: '50.00', customerId: null },
+      // The details of another purpose.
+      projectAiPermissionDetails(null),
+      { action: 'remove' },
+    ]) {
+      expect(
+        projectAiSpendingLimitDetailsSchema.safeParse(details).success,
+        JSON.stringify(details),
+      ).toBe(false);
+      expect(
+        stepUpOptionsRequestSchema.safeParse({ ...body, details }).success,
+        JSON.stringify(details),
+      ).toBe(false);
+    }
+    // And the details of a limit change confirm nothing else.
+    expect(
+      stepUpOptionsRequestSchema.safeParse({
+        ...body,
+        purpose: 'project_ai_permission',
+      }).success,
+    ).toBe(false);
+  });
+
+  it('"50", "50.0" and "50.00" are one limit', () => {
+    for (const written of ['50', '50.0', '50.00']) {
+      expect(normalizeUsdLimit(written), written).toBe('50.00');
+      expect(projectAiSpendingLimitDetails(written)).toEqual(projectAiSpendingLimitDetails('50'));
+    }
+    expect(normalizeUsdLimit('0.5')).toBe('0.50');
+    expect(normalizeUsdLimit('0.05')).toBe('0.05');
+    expect(normalizeUsdLimit('999999.99')).toBe('999999.99');
+    expect(normalizeUsdLimit('7')).toBe('7.00');
+    // Every limit the body accepts is confirmed in a form the details accept.
+    for (const limit of ['0.01', '0.5', '1', '25.0', '999999', '999999.99']) {
+      expect(
+        projectAiSpendingLimitDetailsSchema.safeParse(projectAiSpendingLimitDetails(limit)).success,
+        limit,
+      ).toBe(true);
+    }
+  });
 
   it("the state of a project's spending: no limit, under, from 80 percent on, reached", () => {
     expect(SPENDING_WARN_SHARE).toBe(0.8);

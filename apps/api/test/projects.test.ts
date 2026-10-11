@@ -7,6 +7,7 @@ import {
   customerSchema,
   memberChangeDetails,
   projectAiPermissionDetails,
+  projectAiSpendingLimitDetails,
   projectDetailSchema,
   projectListSchema,
   projectMemberCandidatesSchema,
@@ -2911,6 +2912,256 @@ describe.skipIf(noDatabase)('projects', () => {
         projectId,
         limit,
       ]);
+
+    const setLimit = (session: string, projectId: string, body: object, company?: string) =>
+      call(session, 'PUT', `/api/projects/${projectId}/ai-spending-limit`, body, company);
+
+    /** The founder's passkey confirms that limit (null: its removal) for that project. */
+    const confirmLimit = (projectId: string, limitUsd: string | null): Promise<StepUp> =>
+      signStepUp(server, founder, founderKey, {
+        purpose: 'project_ai_spending_limit',
+        companyId: ids.arma,
+        subjectId: projectId,
+        details: projectAiSpendingLimitDetails(limitUsd),
+      });
+
+    async function storedLimit(projectId: string): Promise<string | null> {
+      const [row] = await adminQuery<{ limit_usd: string | null }>(
+        'select ai_spend_limit_usd::text as limit_usd from office.projects where id = $1',
+        [projectId],
+      );
+      return row?.limit_usd ?? null;
+    }
+
+    const limitTrace = (projectId: string) =>
+      adminQuery<{ event: string; user_id: string | null }>(
+        `select event, user_id from office.audit_log
+         where record_id = $1 and event ~ '^project_ai_spending_limit_' order by id`,
+        [projectId],
+      );
+
+    it('PUT ai-spending-limit: the founder sets a first limit and lowers it without a passkey', async () => {
+      const project = await staffed('Sınırı konan proje');
+      const jobs = server.jobs.sent.length;
+      const first = await setLimit(founder, project.id, { limitUsd: '25' });
+      expect(first.statusCode, first.body).toBe(200);
+      // The whole project, with the limit as the database holds it.
+      expect(projectDetailSchema.parse(first.json())).toMatchObject({
+        id: project.id,
+        name: 'Sınırı konan proje',
+        memberCount: 3,
+        spendingLimitReached: false,
+        aiSpending: { limitUsd: '25.00', spentUsd: '0' },
+        actions: { setAiSpendingLimit: true },
+      });
+      expect(await storedLimit(project.id)).toBe('25.00');
+      // Lower, and lower again to the smallest limit there is.
+      for (const [sent, kept] of [
+        ['10.5', '10.50'],
+        ['0.01', '0.01'],
+      ] as const) {
+        const lowered = await setLimit(founder, project.id, { limitUsd: sent });
+        expect(lowered.statusCode, lowered.body).toBe(200);
+        expect(projectDetailSchema.parse(lowered.json()).aiSpending?.limitUsd).toBe(kept);
+        expect(await storedLimit(project.id)).toBe(kept);
+      }
+      expect(await limitTrace(project.id)).toEqual([
+        { event: 'project_ai_spending_limit_set', user_id: ids.founder },
+        { event: 'project_ai_spending_limit_lowered', user_id: ids.founder },
+        { event: 'project_ai_spending_limit_lowered', user_id: ids.founder },
+      ]);
+      // A limit at or under what was spent stops the agents at once: the answer says so.
+      const spent = await staffed('Sınırı harcamanın altına konan proje');
+      await spend(spent.id, '4');
+      const under = await setLimit(founder, spent.id, { limitUsd: '4' });
+      expect(under.statusCode, under.body).toBe(200);
+      expect(projectDetailSchema.parse(under.json())).toMatchObject({
+        spendingLimitReached: true,
+        aiSpending: { limitUsd: '4.00', spentUsd: '4.000000' },
+      });
+      // Every member of the project is told so too.
+      expect((await read(third, spent.id)).spendingLimitReached).toBe(true);
+      expect((await read(employee, spent.id)).spendingLimitReached).toBe(true);
+      // Nothing was put on the queue by any of it.
+      expect(server.jobs.sent).toHaveLength(jobs);
+    });
+
+    it('PUT ai-spending-limit: a raise and a removal answer 403 step_up_required without a passkey and are stored with one made for exactly that value', async () => {
+      const project = await staffed('Sınırı yükseltilen proje');
+      const other = await staffed('Başka projenin sınırı');
+      for (const id of [project.id, other.id]) {
+        expect((await setLimit(founder, id, { limitUsd: '10' })).statusCode).toBe(200);
+      }
+      // Without a passkey: a raise by a cent, a raise by much, a removal.
+      for (const limitUsd of ['10.01', '500', null]) {
+        const res = await setLimit(founder, project.id, { limitUsd });
+        expect(res.statusCode, String(limitUsd)).toBe(403);
+        expect(errorCode(res)).toBe('step_up_required');
+      }
+      // A passkey made for something else is refused: another value, the removal, another
+      // project, the AI permission of this project.
+      const wrong: StepUp[] = [
+        await confirmLimit(project.id, '49.99'),
+        await confirmLimit(project.id, null),
+        await confirmLimit(other.id, '50'),
+        await signStepUp(server, founder, founderKey, {
+          purpose: 'project_ai_permission',
+          companyId: ids.arma,
+          subjectId: project.id,
+          details: projectAiPermissionDetails(null),
+        }),
+      ];
+      for (const stepUp of wrong) {
+        const res = await setLimit(founder, project.id, { limitUsd: '50', stepUp });
+        expect(res.statusCode).toBe(403);
+        expect(errorCode(res)).toBe('step_up_failed');
+      }
+      expect(await storedLimit(project.id)).toBe('10.00');
+
+      // Made for exactly this value ("50" and "50.00" are one limit): stored, and used up.
+      const stepUp = await confirmLimit(project.id, '50.00');
+      const raised = await setLimit(founder, project.id, { limitUsd: '50', stepUp });
+      expect(raised.statusCode, raised.body).toBe(200);
+      expect(projectDetailSchema.parse(raised.json()).aiSpending).toEqual({
+        limitUsd: '50.00',
+        spentUsd: '0',
+      });
+      expect(await challengeState(stepUp.challengeId)).toMatchObject({ consumed: true });
+      // The same signed answer raises nothing a second time, here or in the other project.
+      for (const id of [project.id, other.id]) {
+        const again = await setLimit(founder, id, { limitUsd: '60', stepUp });
+        expect(again.statusCode).toBe(403);
+        expect(errorCode(again)).toBe('step_up_failed');
+      }
+      expect(await storedLimit(project.id)).toBe('50.00');
+      expect(await storedLimit(other.id)).toBe('10.00');
+
+      // The removal, with a passkey made for the removal.
+      const removal = await confirmLimit(project.id, null);
+      const removed = await setLimit(founder, project.id, { limitUsd: null, stepUp: removal });
+      expect(removed.statusCode, removed.body).toBe(200);
+      expect(projectDetailSchema.parse(removed.json()).aiSpending?.limitUsd).toBeNull();
+      expect(await storedLimit(project.id)).toBeNull();
+      expect(await limitTrace(project.id)).toEqual([
+        { event: 'project_ai_spending_limit_set', user_id: ids.founder },
+        { event: 'project_ai_spending_limit_raised', user_id: ids.founder },
+        { event: 'project_ai_spending_limit_removed', user_id: ids.founder },
+      ]);
+      // A first limit again needs no passkey.
+      expect((await setLimit(founder, project.id, { limitUsd: '1' })).statusCode).toBe(200);
+    });
+
+    it("PUT ai-spending-limit: 403 founder_only for a member, 404 for the other company's project, 400 for 0, three decimals, a comma and an extra field; the same value again changes nothing and asks for nothing", async () => {
+      const project = await staffed('Sınırı korunan proje');
+      expect((await setLimit(founder, project.id, { limitUsd: '10' })).statusCode).toBe(200);
+      // An employee, whatever their role in the project: its owner, a manager, a plain member,
+      // and one who is no member. A lower limit, a raise and a removal alike.
+      for (const session of [employee, colleague, third]) {
+        for (const limitUsd of ['5', '20', null]) {
+          const res = await setLimit(session, project.id, { limitUsd });
+          expect(res.statusCode, String(limitUsd)).toBe(403);
+          expect(errorCode(res)).toBe('founder_only');
+        }
+      }
+      const own = await open(employee, { name: 'Tek kişilik sınır' });
+      const stranger = await setLimit(colleague, own.id, { limitUsd: '5' });
+      expect([stranger.statusCode, errorCode(stranger)]).toEqual([403, 'founder_only']);
+      // An external person gets the section's answer.
+      const outside = await setLimit(external, project.id, { limitUsd: '5' });
+      expect([outside.statusCode, errorCode(outside)]).toEqual([403, 'insiders_only']);
+
+      // The founder: the other company's project, with either company selected; an id nobody
+      // has; an id that is not one.
+      const hidden: [string, string?][] = [
+        [project.id, ids.pillika],
+        [PILLIKA_PROJECT],
+        [randomUUID()],
+        ['not-an-id'],
+      ];
+      for (const [id, company] of hidden) {
+        for (const limitUsd of ['5', null]) {
+          const res = await setLimit(founder, id, { limitUsd }, company);
+          expect(res.statusCode, id).toBe(404);
+          expect(errorCode(res)).toBe('not_found');
+        }
+      }
+      expect(await storedLimit(PILLIKA_PROJECT)).toBeNull();
+
+      const refused: unknown[] = [
+        { limitUsd: '0' },
+        { limitUsd: '0.00' },
+        { limitUsd: '-5' },
+        { limitUsd: '1.234' },
+        { limitUsd: '25,00' },
+        { limitUsd: 25 },
+        { limitUsd: 'NaN' },
+        { limitUsd: 'Infinity' },
+        { limitUsd: '1000000' },
+        { limitUsd: '25', currency: 'USD' },
+        { limitUsd: '25', period: 'month' },
+        { limit: '25' },
+        {},
+      ];
+      for (const payload of refused) {
+        const res = await setLimit(founder, project.id, payload as object);
+        expect(res.statusCode, JSON.stringify(payload)).toBe(400);
+        expect(errorCode(res)).toBe('invalid_request');
+      }
+      expect(
+        (await call(founder, 'PUT', `/api/projects/${project.id}/ai-spending-limit`)).statusCode,
+      ).toBe(400);
+
+      // The value the project has, however it is written: 200, nothing changes, no passkey is
+      // asked for and one that was sent is not used up.
+      const unused = await confirmLimit(project.id, '10');
+      for (const body of [
+        { limitUsd: '10' },
+        { limitUsd: '10.0' },
+        { limitUsd: '10.00', stepUp: unused },
+      ]) {
+        const same = await setLimit(founder, project.id, body);
+        expect(same.statusCode, same.body).toBe(200);
+        expect(projectDetailSchema.parse(same.json()).aiSpending?.limitUsd).toBe('10.00');
+      }
+      expect(await challengeState(unused.challengeId)).toMatchObject({ consumed: false });
+      // No limit to remove: the same.
+      const none = await open(founder, { name: 'Sınırsız proje' });
+      const still = await setLimit(founder, none.id, { limitUsd: null });
+      expect(still.statusCode, still.body).toBe(200);
+      expect(await limitTrace(none.id)).toEqual([]);
+      // Nothing but the first limit was ever written for the project.
+      expect(await storedLimit(project.id)).toBe('10.00');
+      expect(await limitTrace(project.id)).toEqual([
+        { event: 'project_ai_spending_limit_set', user_id: ids.founder },
+      ]);
+    });
+
+    it('PUT ai-spending-limit: 403 step_up_required when the limit was lowered while a lowering was on its way', async () => {
+      const project = await staffed('Sınırı aynı anda düşürülen proje');
+      expect((await setLimit(founder, project.id, { limitUsd: '10' })).statusCode).toBe(200);
+      // Somebody else lowers the limit to 2 behind a lock on the project row; the founder's
+      // lowering to 5 read the limit as 10, waits for the row and is then a raise from 2.
+      const admin = await adminPool.connect();
+      let pending: Promise<LightMyRequestResponse>;
+      try {
+        await admin.query('begin');
+        await admin.query('update office.projects set ai_spend_limit_usd = 2 where id = $1', [
+          project.id,
+        ]);
+        pending = setLimit(founder, project.id, { limitUsd: '5' });
+        await untilServerWaits();
+        await admin.query('commit');
+      } catch (error) {
+        await admin.query('rollback');
+        throw error;
+      } finally {
+        admin.release();
+      }
+      const res = await pending;
+      expect(res.statusCode, res.body).toBe(403);
+      expect(errorCode(res)).toBe('step_up_required');
+      expect(await storedLimit(project.id)).toBe('2.00');
+    });
 
     it('GET project: the founder reads the limit and what was spent; a member reads only whether the limit is reached, and no amount is in the body', async () => {
       const project = await staffed('Harcaması olan proje');

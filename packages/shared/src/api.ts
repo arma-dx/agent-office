@@ -197,8 +197,9 @@ export type InvitationFields = z.output<typeof invitationFieldsSchema>;
 /*
  * Approvals that involve money, leave the company or change a source of truth note, membership
  * changes, passkey changes, a founder's reset of a person's passkeys, opening a task or a note to
- * an external person, and opening the AI permission of a project or of a customer (8 October
- * decision 22) need a re-verification with a passkey (WebAuthn). The panel asks for a
+ * an external person, opening the AI permission of a project or of a customer (8 October
+ * decision 22), and raising or removing the AI spending limit of a project (8 October decision
+ * 17) need a re-verification with a passkey (WebAuthn). The panel asks for a
  * challenge (POST /api/step-up/options), lets the browser sign it (startAuthentication of
  * @simplewebauthn/browser) and sends the result as `stepUp` in the body of the action it confirms.
  * The API recomputes what was confirmed from the action's own request and refuses anything else.
@@ -263,6 +264,8 @@ export const stepUpPurposeSchema = z.enum([
   // 8 October decision 22.
   'project_ai_permission',
   'customer_ai_permission',
+  // 8 October decision 17: raising or removing the AI spending limit of a project.
+  'project_ai_spending_limit',
 ]);
 export type StepUpPurpose = z.output<typeof stepUpPurposeSchema>;
 
@@ -275,6 +278,7 @@ const COMPANY_STEP_UP_PURPOSES: readonly StepUpPurpose[] = [
   'access_grant',
   'project_ai_permission',
   'customer_ai_permission',
+  'project_ai_spending_limit',
 ];
 
 const STEP_UP_DETAIL_LIMIT = 20;
@@ -390,6 +394,33 @@ export function projectAiPermissionDetails(customerId: string | null): ProjectAi
 }
 
 /**
+ * What a project_ai_spending_limit re-verification confirms beyond the project (the subject): the
+ * limit the founder is setting, in US dollars with two decimals, or null when the limit is taken
+ * away. Build it with projectAiSpendingLimitDetails.
+ */
+export const projectAiSpendingLimitDetailsSchema = z.strictObject({
+  action: z.literal('set_limit'),
+  limitUsd: z
+    .string()
+    .regex(/^\d{1,6}\.\d{2}$/)
+    .nullable(),
+});
+export type ProjectAiSpendingLimitDetails = z.output<typeof projectAiSpendingLimitDetailsSchema>;
+
+/** "50" and "50.0" are the limit "50.00": one text for one amount, so one hash. */
+export function normalizeUsdLimit(limitUsd: string): string {
+  const [whole = '0', decimals = ''] = limitUsd.split('.');
+  return `${whole}.${decimals.padEnd(2, '0')}`;
+}
+
+/** The details of a limit change, for POST /api/step-up/options; the API builds the same. */
+export function projectAiSpendingLimitDetails(
+  limitUsd: string | null,
+): ProjectAiSpendingLimitDetails {
+  return { action: 'set_limit', limitUsd: limitUsd === null ? null : normalizeUsdLimit(limitUsd) };
+}
+
+/**
  * What a customer_ai_permission re-verification confirms beyond the customer (the subject): the
  * permissions exactly as the request carries them. "create": a customer added with a new project
  * (POST /api/projects), by its name. "update": PATCH /api/customers/:customerId/permissions.
@@ -449,6 +480,9 @@ export function customerPermissionDetails(
  *                           then PUT /api/projects/:projectId/ai-permission
  *   customer_ai_permission  companyId, subjectId (the customer; a new one's id is chosen by the
  *                           panel), details (customerPermissionDetails)
+ *   project_ai_spending_limit  companyId, subjectId (the project), details
+ *                           (projectAiSpendingLimitDetails: the new limit, or null to remove it);
+ *                           then PUT /api/projects/:projectId/ai-spending-limit
  * 409 no_passkey when the person has no passkey.
  */
 export const stepUpOptionsRequestSchema = z
@@ -511,6 +545,16 @@ export const stepUpOptionsRequestSchema = z
         code: 'custom',
         path: ['details'],
         message: 'Must open a customer AI permission',
+      });
+    }
+    if (
+      body.purpose === 'project_ai_spending_limit' &&
+      !projectAiSpendingLimitDetailsSchema.safeParse(body.details).success
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['details'],
+        message: 'Must be a spending limit change',
       });
     }
     if (

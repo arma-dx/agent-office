@@ -22,6 +22,7 @@ import {
   removeProjectMilestone,
   setCustomerPermissions,
   setProjectAiPermission,
+  setProjectAiSpendingLimit,
   setProjectBudget,
   setProjectMemberRole,
   updateProject,
@@ -43,10 +44,14 @@ import {
   mayAddProjectMembers,
   memberRemoval,
   memberRoleChanges,
+  loosensSpendingLimit,
   milestoneSchema,
+  normalizeUsdLimit,
   projectAiPermissionAnswerSchema,
   projectAiPermissionDetails,
   projectAiPermissionSchema,
+  projectAiSpendingLimitDetails,
+  projectAiSpendingLimitSchema,
   projectApprovalsSchema,
   projectDetailSchema,
   projectListSchema,
@@ -88,7 +93,8 @@ import type { RouteDeps } from '../services.ts';
 /**
  * The Projects section (8 October decisions 11 and 14 to 22), step 1, the owner and the
  * managers of a project (decision 44), and of step 3 (decision 17) the budget, the milestones,
- * the agent runs of a project with their cost and the results of its requests.
+ * the agent runs of a project with their cost, the results of its requests and the AI spending
+ * limit of a project.
  *
  *   GET   /api/projects                    the projects the person may read, open ones first
  *   POST  /api/projects                    a founder or an employee opens a project and is its
@@ -103,6 +109,9 @@ import type { RouteDeps } from '../services.ts';
  *   PUT    /api/projects/:projectId/members/:userId/role  the owner or the founder gives a role
  *   PUT   /api/projects/:projectId/ai-permission      the founder opens (with a passkey) or
  *                                                     closes the AI permission of a project
+ *   PUT   /api/projects/:projectId/ai-spending-limit  the founder sets, changes or removes the
+ *                                                     AI spending limit of a project (raising
+ *                                                     and removing with a passkey)
  *   PUT    /api/projects/:projectId/budget            the owner, a manager or the founder sets
  *                                                     or takes away the budget
  *   POST   /api/projects/:projectId/milestones        a member or the founder adds a milestone
@@ -263,6 +272,15 @@ const permissionBusy = (): ApiError =>
     409,
     'permission_busy',
     'İzin değiştirilemedi: aynı anda başka bir işlem sürüyordu. Hiçbir şey değişmedi; yeniden deneyin.',
+  );
+
+// The same for a change of the AI spending limit: it waits for a run that is being opened in the
+// project, and PostgreSQL may end it when the two meet the other way round.
+const limitBusy = (): ApiError =>
+  new ApiError(
+    409,
+    'permission_busy',
+    'Sınır değiştirilemedi: aynı anda başka bir işlem sürüyordu. Hiçbir şey değişmedi; yeniden deneyin.',
   );
 
 const CUSTOMER_NAME_KEY = 'customers_company_name';
@@ -892,6 +910,70 @@ export function registerProjectRoutes(
           ...(await detailOf(context, await projectOf(context, projectId))),
           restarted,
         });
+      }),
+  );
+
+  /**
+   * The AI spending limit of a project (decision 17): in US dollars, over the whole life of the
+   * project; null takes it away. Set by the founder alone. A first limit and a lower one only
+   * stop agents earlier and need no passkey; a raise and a removal let agents spend more, so the
+   * re-verification is signed for this project and this very value, the route recomputes that
+   * from its own request, and the database uses it up once, in this transaction. Asking for the
+   * value the project already has changes nothing and uses nothing up.
+   *
+   * Nothing is started by this route, whatever the change: work a limit stopped falls to a
+   * person and stays there (decision 28's word for a ceiling; docs/SONRA.md P3-s). No job is put
+   * on the queue and no trace of a restart is written.
+   */
+  app.put(
+    '/api/projects/:projectId/ai-spending-limit',
+    async (request, reply): Promise<ProjectDetail> =>
+      runner.withCompany(request, reply, INSIDERS, async (context) => {
+        requireFounder(context);
+        const projectId = projectIdOf(request);
+        const body = projectAiSpendingLimitSchema.safeParse(request.body);
+        if (!body.success) {
+          throw invalidRequest();
+        }
+        const { client, session, companyId } = context;
+        const row = await projectOf(context, projectId);
+        const current = await readProjectAiSpending(client, projectId);
+        if (!current) {
+          throw founderOnly();
+        }
+        // "50" and "50.0" are the limit "50.00", the form the database gives back.
+        const next = body.data.limitUsd === null ? null : normalizeUsdLimit(body.data.limitUsd);
+        if (current.limit_usd === next) {
+          return detailOf(context, row);
+        }
+        // Raising and removing let agents spend more: the passkey, for this project and this
+        // value. Setting a first limit and lowering one only stop agents earlier.
+        if (loosensSpendingLimit(current.limit_usd, next)) {
+          await verifyStepUp({ client, session }, relyingParty, body.data.stepUp, {
+            purpose: 'project_ai_spending_limit',
+            companyId,
+            subjectId: projectId,
+            details: projectAiSpendingLimitDetails(next),
+          });
+        }
+        await client.query('savepoint set_spending_limit');
+        try {
+          await setProjectAiSpendingLimit(client, projectId, next);
+        } catch (error) {
+          await client.query('rollback to savepoint set_spending_limit');
+          const code = databaseErrorCode(error);
+          // invalid_authorization_specification: the limit was lowered between the read above
+          // and this call, so what was a lowering is a raise now; the panel asks for the passkey.
+          if (code === '28000') throw stepUpRequired();
+          // insufficient_privilege: the person is no longer the founder.
+          if (code === '42501') throw founderOnly();
+          if (code === 'P0002') throw notFound();
+          if (code === '22023') throw invalidRequest();
+          // deadlock_detected: as for the permission routes.
+          if (code === '40P01') throw limitBusy();
+          throw error;
+        }
+        return detailOf(context, await projectOf(context, projectId));
       }),
   );
 

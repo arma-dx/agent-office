@@ -24,6 +24,7 @@ import {
   removeProjectMilestone,
   setCustomerPermissions,
   setProjectAiPermission,
+  setProjectAiSpendingLimit,
   setProjectBudget,
   setProjectMemberRole,
   updateProject,
@@ -1691,6 +1692,49 @@ describe.skipIf(noDatabase)('statements of the AI spending limit', () => {
       await asPerson(tx, founderA);
       expect(await readProjectAiSpending(tx.client, ids.projectP)).toBeNull();
       expect(await readProjectAiSpending(tx.client, randomUUID())).toBeNull();
+    });
+  });
+
+  it('setProjectAiSpendingLimit: answers whether the value changed', async () => {
+    await inAdminTransaction(async (tx) => {
+      await asPerson(tx, founderA);
+      const limit = async () =>
+        (await readProjectAiSpending(tx.client, ids.projectA))?.limit_usd ?? null;
+      // A first limit; the same value again, however it is written; a lower one.
+      expect(await setProjectAiSpendingLimit(tx.client, ids.projectA, '5')).toBe(true);
+      expect(await limit()).toBe('5.00');
+      expect(await setProjectAiSpendingLimit(tx.client, ids.projectA, '5.00')).toBe(false);
+      expect(await setProjectAiSpendingLimit(tx.client, ids.projectA, '5.0')).toBe(false);
+      expect(await setProjectAiSpendingLimit(tx.client, ids.projectA, '2.5')).toBe(true);
+      expect(await limit()).toBe('2.50');
+      // A raise and a removal with the founder's passkey for this project.
+      await stepUp(tx, founderA, 'project_ai_spending_limit', ids.projectA);
+      expect(await setProjectAiSpendingLimit(tx.client, ids.projectA, '10')).toBe(true);
+      expect(await limit()).toBe('10.00');
+      await stepUp(tx, founderA, 'project_ai_spending_limit', ids.projectA);
+      expect(await setProjectAiSpendingLimit(tx.client, ids.projectA, null)).toBe(true);
+      expect(await limit()).toBeNull();
+      expect(await setProjectAiSpendingLimit(tx.client, ids.projectA, null)).toBe(false);
+      // The database's refusals reach the caller with their codes.
+      await setProjectAiSpendingLimit(tx.client, ids.projectA, '1');
+      const refusals: [ContextInput, string | null, string][] = [
+        [founderA, '2', '28000'],
+        [founderA, null, '28000'],
+        [founderA, '0', '22023'],
+        [employeeA, '0.50', '42501'],
+        [founderP, '0.50', 'P0002'],
+      ];
+      for (const [context, next, code] of refusals) {
+        await tx.setContext(context);
+        await tx.exec('savepoint refused');
+        await expect(
+          setProjectAiSpendingLimit(tx.client, ids.projectA, next),
+          `${String(next)} ${code}`,
+        ).rejects.toMatchObject({ code });
+        await tx.exec('rollback to savepoint refused');
+      }
+      await tx.setContext(founderA);
+      expect(await limit()).toBe('1.00');
     });
   });
 });
