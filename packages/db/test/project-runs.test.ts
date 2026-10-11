@@ -13,6 +13,7 @@ import {
   noDatabase,
   openTransaction,
   removeRequests,
+  restoreProjectA,
   untilBlocked,
   workerPool,
   type Tx,
@@ -781,8 +782,9 @@ describe.skipIf(noDatabase)('rule 12 across transactions', () => {
     mark = await auditMark();
   });
 
-  const restore = (): Promise<unknown> =>
-    adminQuery('update office.projects set ai_allowed = true where id = $1', [ids.projectA]);
+  // A committed close also stops the fixtures' own open run in the project.
+  const restore = (): Promise<void> =>
+    restoreProjectA(ids.projectA, ids.customerA, ids.runAProject);
 
   afterAll(async () => {
     await restore();

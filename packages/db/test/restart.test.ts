@@ -11,6 +11,7 @@ import {
   openAdminTransaction,
   openTransaction,
   removeRequests,
+  restoreProjectA,
   untilBlocked,
   type Tx,
 } from './helpers.ts';
@@ -115,10 +116,8 @@ describe.skipIf(noDatabase)('waiting work starts again', () => {
       await tx.exec(SWITCH, ['HAF-1', 'stopped']);
       await tx.exec(SWITCH, ['KOR-1', 'enabled']);
     });
-    await adminQuery('update office.projects set ai_allowed = true where id = $1', [ids.projectA]);
-    await adminQuery('update office.customers set ai_allowed = true where id = $1', [
-      ids.customerA,
-    ]);
+    // A committed close of a permission also stops the fixtures' own open run in project A.
+    await restoreProjectA(ids.projectA, ids.customerA, ids.runAProject);
   }
 
   afterEach(async () => {

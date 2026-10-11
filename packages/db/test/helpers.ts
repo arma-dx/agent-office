@@ -334,6 +334,31 @@ export async function removeRequests(
   }
 }
 
+/**
+ * Puts back what a committed close of an AI permission changes in the fixtures: the permission of
+ * project A and of its customer, and the fixtures' own open run in that project, which every such
+ * close stops (its trace goes with removeRequests). The flow lets nobody reopen a run, so the
+ * privileged role switches the triggers off for this one transaction.
+ */
+export async function restoreProjectA(projectId: string, customerId: string, runId: string) {
+  const client = new pg.Client({ connectionString: connectionString('admin') });
+  await client.connect();
+  try {
+    await client.query('begin');
+    await client.query(`set local session_replication_role = 'replica'`);
+    await client.query('update office.projects set ai_allowed = true where id = $1', [projectId]);
+    await client.query('update office.customers set ai_allowed = true where id = $1', [customerId]);
+    await client.query(
+      `update office.runs set status = 'running', finished_at = null, error_code = null
+       where id = $1`,
+      [runId],
+    );
+    await client.query('commit');
+  } finally {
+    await client.end();
+  }
+}
+
 /** The highest audit id now (see removeRequests). */
 export async function auditMark(): Promise<string> {
   const [row] = await adminQuery<{ id: string }>(
