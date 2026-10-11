@@ -1,6 +1,14 @@
 import type { ProjectDetail, ProjectMember, ProjectMemberRole } from '@agent-office/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useId, useLayoutEffect, useRef, useState, type RefObject } from 'react';
+import {
+  useCallback,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject,
+} from 'react';
 import { toast } from 'sonner';
 import {
   AlertDialog,
@@ -34,6 +42,7 @@ import {
   addProjectMember,
   memberCandidatesKey,
   memberCandidatesQueryOptions,
+  projectKey,
   removeProjectMember,
   setProjectMemberRole,
 } from '@/lib/projects/query';
@@ -41,6 +50,38 @@ import { useStoreProject } from '@/lib/projects/store';
 import { personName } from '@/lib/requests/labels';
 import { useCompany, useSession } from '@/lib/session';
 import { busyProps } from '@/lib/utils';
+
+// The API's answers that say the page is not the project any more: somebody else changed the
+// members or the roles after the page was read, the person's account was deactivated, or the
+// person or the project is gone.
+const STALE_PAGE = new Set([
+  'project_members_not_allowed',
+  'project_manager_protected',
+  'project_owner_fixed',
+  'project_roles_not_allowed',
+  'project_members_changed',
+  'member_not_allowed',
+  'not_found',
+]);
+
+/**
+ * After a member act the API refused, the project is read again: the page kept offering what the
+ * API had just refused (the menus, the buttons and the add form of a person who is no owner any
+ * more), and only one of the refusals asks the person to refresh. The refusal itself is still
+ * shown where the act was asked.
+ */
+function useReadAgainAfterRefusal(projectId: string): (error: unknown) => void {
+  const company = useCompany();
+  const queryClient = useQueryClient();
+  return useCallback(
+    (error: unknown) => {
+      if (error instanceof ApiError && error.code !== undefined && STALE_PAGE.has(error.code)) {
+        void queryClient.invalidateQueries({ queryKey: projectKey(company.companyId, projectId) });
+      }
+    },
+    [queryClient, company.companyId, projectId],
+  );
+}
 
 /**
  * The role control of a row: a menu of acts, not a select (8 October 2026, decision 44). A closed
@@ -149,6 +190,7 @@ function MemberRow({
 }) {
   const company = useCompany();
   const store = useStoreProject(company.companyId);
+  const readAgain = useReadAgainAfterRefusal(project.id);
   const nameId = useId();
   const name = personName(member);
   // Appointing and dismissing a manager: sent at once, and shown only when the API has stored it.
@@ -159,7 +201,10 @@ function MemberRow({
       store(updated);
       toast.success(roleGivenSentence(role, name));
     },
-    onError: notifyError,
+    onError: (error) => {
+      notifyError(error);
+      readAgain(error);
+    },
   });
   return (
     <li className="border-b border-line px-4 py-3 last:border-b-0">
@@ -209,7 +254,8 @@ function MemberRow({
  * October 2026, decision 4). The owner until now becomes a plain member, so the reader's own
  * controls may be gone afterwards: the focus then goes to the heading of the section. A
  * confirmation that is given up returns it to the menu button of the row (the menu item that
- * opened the confirmation is gone by then).
+ * opened the confirmation is gone by then), or to the heading when that button is gone too: a
+ * refusal makes the page read the project again, and the row may have lost its menu.
  */
 function HandOverDialog({
   project,
@@ -229,6 +275,7 @@ function HandOverDialog({
 }) {
   const company = useCompany();
   const store = useStoreProject(company.companyId);
+  const readAgain = useReadAgainAfterRefusal(project.id);
   const handed = useRef(false);
   const name = personName(member);
   const handOver = useMutation({
@@ -239,6 +286,7 @@ function HandOverDialog({
       toast.success(roleGivenSentence('owner', name));
       onClose();
     },
+    onError: readAgain,
   });
   return (
     <AlertDialog
@@ -250,8 +298,8 @@ function HandOverDialog({
       <AlertDialogContent
         onCloseAutoFocus={(event) => {
           event.preventDefault();
-          if (handed.current) heading.current?.focus();
-          else if (trigger?.isConnected) trigger.focus();
+          if (!handed.current && trigger?.isConnected) trigger.focus();
+          else heading.current?.focus();
         }}
       >
         <AlertDialogTitle>Sahiplik {name} adlı üyeye devredilsin mi?</AlertDialogTitle>
@@ -290,7 +338,8 @@ function HandOverDialog({
 /**
  * Takes a person off the project after a plain confirmation: no passkey (5 October 2026,
  * decision 4). The row and its button go away with the person, so the focus goes to the heading
- * of the section; a confirmation that is given up returns it to the button.
+ * of the section; a confirmation that is given up returns it to the button, or to the heading
+ * when the button is gone too (a refusal makes the page read the project again).
  */
 function RemoveMemberDialog({
   project,
@@ -307,6 +356,7 @@ function RemoveMemberDialog({
 }) {
   const company = useCompany();
   const store = useStoreProject(company.companyId);
+  const readAgain = useReadAgainAfterRefusal(project.id);
   const removed = useRef(false);
   const name = personName(member);
   const remove = useMutation({
@@ -317,6 +367,7 @@ function RemoveMemberDialog({
       toast.success(`${name} projeden çıkarıldı.`);
       onClose();
     },
+    onError: readAgain,
   });
   return (
     <AlertDialog
@@ -327,11 +378,11 @@ function RemoveMemberDialog({
     >
       <AlertDialogContent
         onCloseAutoFocus={(event) => {
-          if (removed.current) {
+          if (!removed.current) onCloseAutoFocus(event);
+          // The person was removed, or the button that asked is gone.
+          if (!event.defaultPrevented) {
             event.preventDefault();
             heading.current?.focus();
-          } else {
-            onCloseAutoFocus(event);
           }
         }}
       >
@@ -373,6 +424,30 @@ function RemoveMemberDialog({
 }
 
 /**
+ * Hands the focus to the heading of the section when what it holds goes away with the focus in
+ * it: the add form of a person who may not add any more (the project was read again after a
+ * refusal). A layout effect, as in RoleMenu: its cleanup runs while the content is still in the
+ * page.
+ */
+function KeepsFocus({
+  heading,
+  children,
+}: {
+  heading: RefObject<HTMLHeadingElement | null>;
+  children: ReactNode;
+}) {
+  const own = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const content = own.current;
+    const next = heading.current;
+    return () => {
+      if (content?.contains(document.activeElement)) next?.focus();
+    };
+  }, [heading]);
+  return <div ref={own}>{children}</div>;
+}
+
+/**
  * Adds a founder or an employee of the company who is not a member yet. The people come from the
  * API (active founders and employees); the database refuses anybody else whoever is named.
  */
@@ -387,6 +462,7 @@ function AddMember({
   const company = useCompany();
   const queryClient = useQueryClient();
   const store = useStoreProject(company.companyId);
+  const readAgain = useReadAgainAfterRefusal(project.id);
   const candidates = useQuery(memberCandidatesQueryOptions(company.companyId));
   const [chosen, setChosen] = useState('');
   const [missing, setMissing] = useState(false);
@@ -419,6 +495,7 @@ function AddMember({
         setChosen('');
         void queryClient.invalidateQueries({ queryKey: memberCandidatesKey(company.companyId) });
       }
+      readAgain(error);
     },
   });
 
@@ -590,7 +667,9 @@ export function ProjectMembers({ project }: { project: ProjectDetail }) {
         </>
       )}
       {project.actions.addMembers ? (
-        <AddMember project={project} heading={heading} />
+        <KeepsFocus heading={heading}>
+          <AddMember project={project} heading={heading} />
+        </KeepsFocus>
       ) : (
         <p className="text-sm text-ink-secondary">{MEMBERS_TEXT.whoManages}</p>
       )}

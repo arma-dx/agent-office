@@ -1611,6 +1611,9 @@ describe('projects: members', () => {
     );
     await section(2);
 
+    const reads = () => api.callsTo(`GET /projects/${PROJECT_ID}`).length;
+    expect(reads()).toBe(1);
+
     // A role given at once: the refusal is a message, the row and its line stay.
     await userEvent.click(
       within(await openRoleMenu('Ayşe Yılmaz')).getByRole('menuitem', { name: 'Yönetici yap' }),
@@ -1620,6 +1623,10 @@ describe('projects: members', () => {
     expect(screen.queryByText('Ayşe Yılmaz yönetici yapıldı.')).toBeNull();
     await waitFor(() => {
       expect(roleButton('Ayşe Yılmaz')).not.toHaveAttribute('aria-disabled');
+    });
+    // Every refusal makes the page read the project again (here it answers what it did before).
+    await waitFor(() => {
+      expect(reads()).toBe(2);
     });
 
     // The hand-over: the refusal is read in the confirmation, which stays open.
@@ -1631,12 +1638,19 @@ describe('projects: members', () => {
     expect(await within(dialog).findByRole('alert')).toHaveTextContent(OWNER_FIXED);
     expect(screen.getByRole('alertdialog')).toBeVisible();
     expect(screen.queryByText('Projenin yeni sahibi: Ayşe Yılmaz.')).toBeNull();
+    await waitFor(() => {
+      expect(reads()).toBe(3);
+    });
     await userEvent.click(within(dialog).getByRole('button', { name: 'Vazgeç' }));
     await waitFor(() => {
       expect(screen.queryByRole('alertdialog')).toBeNull();
     });
     expect(lineOf('Ayşe Yılmaz')).toBe('Üye, Çalışan');
     expect(lineOf(MINE)).toBe('Sahip, Kurucu');
+    // The row still has its menu, so the keyboard goes back to it.
+    await waitFor(() => {
+      expect(roleButton('Ayşe Yılmaz')).toHaveFocus();
+    });
 
     // A removal: both refusals are read in its confirmation.
     await userEvent.click(
@@ -1645,10 +1659,16 @@ describe('projects: members', () => {
     dialog = await screen.findByRole('alertdialog');
     await userEvent.click(within(dialog).getByRole('button', { name: 'Projeden çıkar' }));
     expect(await within(dialog).findByRole('alert')).toHaveTextContent(MANAGER_PROTECTED);
+    await waitFor(() => {
+      expect(reads()).toBe(4);
+    });
     api.handle(remove, () => apiError(409, 'project_members_changed', CHANGED));
     await userEvent.click(within(dialog).getByRole('button', { name: 'Projeden çıkar' }));
     await waitFor(() => {
       expect(within(dialog).getByRole('alert')).toHaveTextContent(CHANGED);
+    });
+    await waitFor(() => {
+      expect(reads()).toBe(5);
     });
     await userEvent.click(within(dialog).getByRole('button', { name: 'Vazgeç' }));
     await waitFor(() => {
@@ -1656,7 +1676,201 @@ describe('projects: members', () => {
     });
     expect(row('Ayşe Yılmaz')).toBeVisible();
     expect(screen.getByRole('region', { name: 'Üyeler 2' })).toBeVisible();
+    await waitFor(() => {
+      expect(
+        within(row('Ayşe Yılmaz')).getByRole('button', { name: 'Projeden çıkar' }),
+      ).toHaveFocus();
+    });
     expect(api.unexpected).toEqual([]);
+  });
+
+  // The ownership went to Çağan Ünal while the reader, the owner until then, had the page open.
+  const ROLES_REFUSED = 'Projede rolleri yalnızca projenin sahibi ya da kurucu değiştirebilir.';
+  const REMOVE_REFUSED =
+    'Projeden üye çıkarmayı yalnızca projenin sahibi, yöneticileri ve kurucu yapabilir.';
+  const ADD_REFUSED =
+    'Projeye üye eklemeyi yalnızca projenin sahibi, yöneticileri ve kurucu yapabilir.';
+  const AS_READ = [
+    person(FOUNDER_MEMBER, 'owner'),
+    person(AYSE, 'member'),
+    person(CAGAN, 'member'),
+  ];
+  const AS_STORED = [
+    person(FOUNDER_MEMBER, 'member'),
+    person(AYSE, 'member'),
+    person(CAGAN, 'owner'),
+  ];
+  /** The page of a plain member, with the keyboard on the heading of the section. */
+  async function expectPlainMemberPage(api: ReturnType<typeof mockApi>, members: HTMLElement) {
+    await waitFor(() => {
+      expect(api.callsTo(`GET /projects/${PROJECT_ID}`)).toHaveLength(2);
+    });
+    await waitFor(() => {
+      expect(lineOf('Çağan Ünal')).toBe('Sahip, Çalışan');
+    });
+    expect(lineOf(MINE)).toBe('Üye, Çalışan');
+    expect(within(members).queryByRole('button')).toBeNull();
+    expect(within(members).queryByRole('combobox')).toBeNull();
+    expect(within(members).getByText(MEMBERS_TEXT.whoManages)).toBeVisible();
+    await waitFor(() => {
+      expect(within(members).getByRole('heading', { level: 3 })).toHaveFocus();
+    });
+  }
+
+  it('members: after a refused role the project is read again: the page offers what the API allows now and the keyboard stays in the section', async () => {
+    const api = openAs('employee', AS_READ, {
+      [roleRoute(AYSE.userId)]: () => apiError(403, 'project_roles_not_allowed', ROLES_REFUSED),
+    });
+    const members = await section(3);
+    api.handle(`GET /projects/${PROJECT_ID}`, () => json(projectWithRoles(false, AS_STORED)));
+    // By keyboard, start to end: the menu button that gets the focus back goes away.
+    roleButton('Ayşe Yılmaz').focus();
+    await userEvent.keyboard('{Enter}');
+    await waitFor(() => {
+      expect(
+        within(screen.getByRole('menu')).getByRole('menuitem', { name: 'Yönetici yap' }),
+      ).toHaveFocus();
+    });
+    await userEvent.keyboard('{Enter}');
+    expect(await screen.findByText(ROLES_REFUSED)).toBeVisible();
+    await expectPlainMemberPage(api, members);
+    expect(api.unexpected).toEqual([]);
+  });
+
+  it('members: after a refused hand-over and a refused removal the project is read again under the confirmation; given up, the focus goes to the heading when the button that asked is gone', async () => {
+    let api = openAs('employee', AS_READ, {
+      [roleRoute(AYSE.userId)]: () => apiError(403, 'project_roles_not_allowed', ROLES_REFUSED),
+    });
+    let members = await section(3);
+    api.handle(`GET /projects/${PROJECT_ID}`, () => json(projectWithRoles(false, AS_STORED)));
+    await userEvent.click(
+      within(await openRoleMenu('Ayşe Yılmaz')).getByRole('menuitem', { name: 'Sahipliği devret' }),
+    );
+    let dialog = await screen.findByRole('alertdialog');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Sahipliği devret' }));
+    // The refusal is read where the act was asked, and the confirmation stays until given up.
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(ROLES_REFUSED);
+    await waitFor(() => {
+      expect(api.callsTo(`GET /projects/${PROJECT_ID}`)).toHaveLength(2);
+    });
+    expect(screen.getByRole('alertdialog')).toBeVisible();
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Vazgeç' }));
+    await waitFor(() => {
+      expect(screen.queryByRole('alertdialog')).toBeNull();
+    });
+    await expectPlainMemberPage(api, members);
+    expect(api.unexpected).toEqual([]);
+    cleanup();
+
+    const remove = `DELETE /projects/${PROJECT_ID}/members/${AYSE.userId}`;
+    api = openAs('employee', AS_READ, {
+      [remove]: () => apiError(403, 'project_members_not_allowed', REMOVE_REFUSED),
+    });
+    members = await section(3);
+    api.handle(`GET /projects/${PROJECT_ID}`, () => json(projectWithRoles(false, AS_STORED)));
+    await userEvent.click(
+      within(row('Ayşe Yılmaz')).getByRole('button', { name: 'Projeden çıkar' }),
+    );
+    dialog = await screen.findByRole('alertdialog');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Projeden çıkar' }));
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(REMOVE_REFUSED);
+    await waitFor(() => {
+      expect(api.callsTo(`GET /projects/${PROJECT_ID}`)).toHaveLength(2);
+    });
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => {
+      expect(screen.queryByRole('alertdialog')).toBeNull();
+    });
+    await expectPlainMemberPage(api, members);
+    expect(api.callsTo(remove)).toHaveLength(1);
+    expect(api.unexpected).toEqual([]);
+  });
+
+  it('members: after a refused add the project is read again: the add form of a person who may not add any more goes away and the focus goes to the heading', async () => {
+    const add = `PUT /projects/${PROJECT_ID}/members/${EMRE.userId}`;
+    const api = openAs('employee', [person(FOUNDER_MEMBER, 'manager'), person(CAGAN, 'owner')], {
+      'GET /projects/member-candidates': () =>
+        json({ people: [...CANDIDATES, { ...EMRE, role: 'employee' }] }),
+      [add]: () => apiError(403, 'project_members_not_allowed', ADD_REFUSED),
+    });
+    const members = await section(2);
+    // The owner took the reader's manager role meanwhile.
+    api.handle(`GET /projects/${PROJECT_ID}`, () =>
+      json(projectWithRoles(false, [person(FOUNDER_MEMBER, 'member'), person(CAGAN, 'owner')])),
+    );
+    const select = await within(members).findByRole('combobox', { name: 'Eklenecek kişi' });
+    await waitFor(() => {
+      expect(within(select).getAllByRole('option').length).toBeGreaterThan(1);
+    });
+    await userEvent.selectOptions(select, EMRE.userId);
+    await userEvent.click(within(members).getByRole('button', { name: 'Üye ekle' }));
+    expect(await screen.findByText(ADD_REFUSED)).toBeVisible();
+    await expectPlainMemberPage(api, members);
+    expect(api.callsTo(add)).toHaveLength(1);
+    expect(screen.queryByText('Emre Su projeye eklendi.')).toBeNull();
+    expect(api.unexpected).toEqual([]);
+  });
+
+  it('members: every answer that says the page is stale makes the page read the project again; a failure of the server does not', async () => {
+    const REFUSALS = [
+      [403, 'project_members_not_allowed', REMOVE_REFUSED],
+      [
+        403,
+        'project_manager_protected',
+        'Bir yöneticiyi projeden yalnızca projenin sahibi ya da kurucu çıkarabilir.',
+      ],
+      [
+        409,
+        'project_owner_fixed',
+        'Sahibin rolü doğrudan değiştirilemez. Sahipliği devretmek için başka bir üyeyi sahip yapın.',
+      ],
+      [403, 'project_roles_not_allowed', ROLES_REFUSED],
+      [
+        409,
+        'project_members_changed',
+        'Projenin üyeleri az önce değişti. Sayfayı yenileyip yeniden deneyin.',
+      ],
+      [409, 'member_not_allowed', 'Devre dışı bir hesaba projede rol verilemez.'],
+      [404, 'not_found', 'Aradığınız kayıt bulunamadı.'],
+    ] as const;
+    for (const [status, code, sentence] of REFUSALS) {
+      const api = openAs('employee', AS_READ, {
+        [roleRoute(AYSE.userId)]: () => apiError(status, code, sentence),
+      });
+      await section(3);
+      await userEvent.click(
+        within(await openRoleMenu('Ayşe Yılmaz')).getByRole('menuitem', { name: 'Yönetici yap' }),
+      );
+      expect(await screen.findByText(sentence), code).toBeVisible();
+      await waitFor(() => {
+        expect(api.callsTo(`GET /projects/${PROJECT_ID}`), code).toHaveLength(2);
+      });
+      expect(api.unexpected, code).toEqual([]);
+      cleanup();
+    }
+
+    // Not a statement about the project: nothing is read again, and the row keeps its controls.
+    const api = openAs('employee', AS_READ, {
+      [roleRoute(AYSE.userId)]: () =>
+        apiError(500, 'internal_error', 'Sunucuda bir sorun oluştu. Biraz sonra yeniden deneyin.'),
+    });
+    await section(3);
+    await userEvent.click(
+      within(await openRoleMenu('Ayşe Yılmaz')).getByRole('menuitem', { name: 'Yönetici yap' }),
+    );
+    expect(
+      await screen.findByText('Sunucuda bir sorun oluştu. Biraz sonra yeniden deneyin.'),
+    ).toBeVisible();
+    await waitFor(() => {
+      expect(roleButton('Ayşe Yılmaz')).not.toHaveAttribute('aria-disabled');
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(api.callsTo(`GET /projects/${PROJECT_ID}`)).toHaveLength(1);
+    expect(
+      within(row('Ayşe Yılmaz'))
+        .getAllByRole('button')
+        .map((button) => button.textContent),
+    ).toEqual(['Rolü değiştir', 'Projeden çıkar']);
   });
 });
 
