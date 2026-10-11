@@ -12,6 +12,7 @@ import {
   approvalDeskSchema,
   projectAiPermissionAnswerSchema,
   projectAiPermissionDetails,
+  projectAiSpendingLimitAnswerSchema,
   projectAiSpendingLimitDetails,
   requestDetailSchema,
   requestListSchema,
@@ -1460,9 +1461,8 @@ describe.skipIf(noDatabase)('a request from the first line to "done"', () => {
     }
     expect(await workerQueue.fetch(AGENT_RUN_QUEUE)).toEqual([]);
 
-    // The founder raises the limit with the passkey. Nothing starts by itself: no job is put on
-    // the queue, and the request now reads as work that did not start, for a person to give
-    // again.
+    // The founder raises the limit with the passkey (11 October decision 1): the request the limit
+    // held is started again by that very act, and the answer says so.
     const raised = await put(founder, `/api/projects/${projectId}/ai-spending-limit`, {
       limitUsd: '900000',
       stepUp: await signStepUp(server, founder, founderKey, {
@@ -1473,21 +1473,18 @@ describe.skipIf(noDatabase)('a request from the first line to "done"', () => {
       }),
     });
     expect(raised.statusCode, raised.body).toBe(200);
-    expect(await workerQueue.fetch(AGENT_RUN_QUEUE)).toEqual([]);
-    expect(await detail(founder, id)).toMatchObject({
-      stage: 'fell_to_person',
-      cause: 'not_started',
+    expect(projectAiSpendingLimitAnswerSchema.parse(raised.json())).toMatchObject({
+      restarted: 1,
       spendingLimitReached: false,
-      waitingForMe: true,
+    });
+    expect(await detail(founder, id)).toMatchObject({
+      stage: 'working',
+      cause: null,
+      turn: { kind: 'agent', code: 'SOS-2' },
+      spendingLimitReached: false,
     });
     expect((await runsOf(id)).map((run) => run.agent_code)).toEqual(['KOR-1']);
-
-    // The founder gives the work again ("Yönlendirmeyi düzelt"): the unit agent runs and submits.
-    const again = await post(founder, `/api/requests/${id}/routing`, {
-      unitCode: 'SOS',
-      agentCode: 'SOS-2',
-    });
-    expect(again.statusCode, again.body).toBe(200);
+    // The job the raise put on the queue: the unit agent runs and submits.
     expect(await work(new ScriptedModel([toolUse('submit_for_approval', RESULT)]))).toEqual({
       outcome: 'submitted',
       agent: 'SOS-2',

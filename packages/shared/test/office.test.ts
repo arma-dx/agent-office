@@ -346,6 +346,34 @@ describe('the office contract', () => {
     }
   });
 
+  // 11 October decision 1: the count before a raise or a removal of a project's spending limit.
+  it('the waiting work query also asks what a new spending limit of a project would start', () => {
+    const id = '00000000-0000-4000-8000-000000000001';
+    // With the new limit, written with two decimals; without it the limit is taken away.
+    expect(waitingWorkQuerySchema.parse({ spendingLimit: id, limitUsd: '500.00' })).toEqual({
+      spendingLimit: id,
+      limitUsd: '500.00',
+    });
+    expect(waitingWorkQuerySchema.parse({ spendingLimit: id })).toEqual({ spendingLimit: id });
+    for (const query of [
+      { limitUsd: '500.00' },
+      { spendingLimit: 'x' },
+      { spendingLimit: id, limitUsd: '500' },
+      { spendingLimit: id, limitUsd: '500.0' },
+      { spendingLimit: id, limitUsd: '500,00' },
+      { spendingLimit: id, limitUsd: '-5.00' },
+      { spendingLimit: id, limitUsd: '1000000.00' },
+      { spendingLimit: id, limitUsd: '' },
+      { spendingLimit: id, limitUsd: 500 },
+      // Not beside another scope.
+      { spendingLimit: id, project: id },
+      { spendingLimit: id, agent: 'HAF-2' },
+      { project: id, limitUsd: '500.00' },
+    ]) {
+      expect(waitingWorkQuerySchema.safeParse(query).success, JSON.stringify(query)).toBe(false);
+    }
+  });
+
   it('the answer is a count that is not negative', () => {
     expect(waitingWorkResponseSchema.parse({ waiting: 0 })).toEqual({ waiting: 0 });
     expect(waitingWorkResponseSchema.parse({ waiting: 4 })).toEqual({ waiting: 4 });

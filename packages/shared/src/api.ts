@@ -855,11 +855,23 @@ export type AgentOpenResponse = z.output<typeof agentOpenResponseSchema>;
  * GET /api/waiting-work?agent=<code> | ?project=<id> | ?customer=<id> (the founder): how many
  * waiting requests would start if that agent, that project's AI permission or that customer's AI
  * permission were opened now (8 October decision 49). Exactly one of the three.
+ *
+ * Or ?spendingLimit=<project id>[&limitUsd=<amount>]: how many would start if that project's AI
+ * spending limit were set to that amount now, or taken away when limitUsd is left out (11 October
+ * decision 1). The amount is written with two decimals, as projectAiSpendingLimitDetails writes
+ * it (normalizeUsdLimit).
  */
 export const waitingWorkQuerySchema = z.union([
   z.strictObject({ agent: agentCodeSchema }),
   z.strictObject({ project: z.uuid() }),
   z.strictObject({ customer: z.uuid() }),
+  z.strictObject({
+    spendingLimit: z.uuid(),
+    limitUsd: z
+      .string()
+      .regex(/^\d{1,6}\.\d{2}$/)
+      .optional(),
+  }),
 ]);
 export type WaitingWorkQuery = z.output<typeof waitingWorkQuerySchema>;
 

@@ -316,7 +316,8 @@ export const usdLimitSchema = z
  * PUT /api/projects/:projectId/ai-spending-limit (founder). limitUsd null takes the limit away.
  * Raising a limit and taking one away need a project_ai_spending_limit re-verification in stepUp
  * for this project with projectAiSpendingLimitDetails(limitUsd) (403 step_up_required without
- * it). A first limit and a lower limit need none.
+ * it), and start the work the limit held again (the answer says how many requests). A first
+ * limit and a lower limit need none and start nothing.
  */
 export const projectAiSpendingLimitSchema = z.strictObject({
   limitUsd: usdLimitSchema.nullable(),
@@ -540,3 +541,15 @@ export const projectAiPermissionAnswerSchema = projectDetailSchema.extend({
   restarted: z.number().int().nonnegative(),
 });
 export type ProjectAiPermissionAnswer = z.output<typeof projectAiPermissionAnswerSchema>;
+
+/**
+ * The answer of PUT /api/projects/:projectId/ai-spending-limit: the project, and how many waiting
+ * requests of it were started again because this request raised the limit or took it away
+ * (11 October decision 1; as for an opened AI permission, 8 October decision 49). 0 when the
+ * limit was set for the first time or lowered, did not change, is still reached, or nothing
+ * waited.
+ */
+export const projectAiSpendingLimitAnswerSchema = projectDetailSchema.extend({
+  restarted: z.number().int().nonnegative(),
+});
+export type ProjectAiSpendingLimitAnswer = z.output<typeof projectAiSpendingLimitAnswerSchema>;

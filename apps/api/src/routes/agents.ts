@@ -1,5 +1,6 @@
 import {
   countWaitingWork,
+  countWorkHeldBySpendingLimit,
   readAgentSwitch,
   setAgentSwitch,
   stopAgentIfOpen,
@@ -30,7 +31,8 @@ import type { RouteDeps } from '../services.ts';
  *
  *   PUT /api/agents/:agentCode/switch  { status: 'enabled' }
  *                                      { status: 'stopped', onlyIfOpen?: boolean }
- *   GET /api/waiting-work              ?agent=<code> | ?project=<id> | ?customer=<id>
+ *   GET /api/waiting-work              ?agent=<code> | ?project=<id> | ?customer=<id> |
+ *                                      ?spendingLimit=<project id>[&limitUsd=<amount>]
  *
  * A stopped agent takes no new work (the database refuses a new run and a routing to it), and the
  * runner ends its open run before the next step. Opening an agent starts the work that waited for
@@ -40,7 +42,8 @@ import type { RouteDeps } from '../services.ts';
  * agent_not_ready). The change is written to the audit log with the founder as the actor.
  *
  * The count is read for the confirmation of an opening (of an agent here, of an AI permission in
- * routes/projects.ts); it promises nothing: the answer of the opening says what started.
+ * routes/projects.ts) and of a raise or a removal of a project's AI spending limit (11 October
+ * decision 1); it promises nothing: the answer of the opening or of the raise says what started.
  *
  * "Her yerde durdur" (8 October decision 9) is not a route: every request runs in one company
  * (rule 9), so the panel sends one stop per company, each with `onlyIfOpen`. Such a stop changes
@@ -165,6 +168,17 @@ export function registerAgentRoutes(app: FastifyInstance, { runner, jobs }: Rout
       const query = waitingWorkQuerySchema.safeParse(request.query);
       if (!query.success) {
         throw invalidRequest();
+      }
+      if ('spendingLimit' in query.data) {
+        // What a new AI spending limit of that project (none: the limit is taken away) would
+        // start: nothing while that limit would still be reached.
+        return waitingWorkResponseSchema.parse({
+          waiting: await countWorkHeldBySpendingLimit(
+            client,
+            query.data.spendingLimit,
+            query.data.limitUsd ?? null,
+          ),
+        });
       }
       const scope =
         'agent' in query.data

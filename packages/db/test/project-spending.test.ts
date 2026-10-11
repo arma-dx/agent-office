@@ -23,7 +23,9 @@ import { createChallenge, openTestSession, stepUp } from './step-up.ts';
 // project; it is reached when that sum is equal to or above it. Only the founder sets it, through
 // the database's own function; raising it and taking it away ask for a passkey. No run row is
 // written in a project at its limit, and no opening starts work there (decision 49 is not
-// widened: raising the limit starts nothing by itself).
+// widened for any other opening). Raising the limit or taking it away starts the held work again
+// (11 October decision 1): the limit route asks the database for that restart, and a limit
+// changed without the panel starts nothing.
 //
 // Every rule here is the database's own. The cases that compare moments or need two connections
 // commit their steps; they remove their requests again and put the limit, the recorded cost of
@@ -795,6 +797,20 @@ describe.skipIf(noDatabase)('the AI spending limit across transactions', () => {
       return row?.waiting ?? -1;
     });
 
+  /** How many requests of the project a new limit (null: none) would start, as the founder asks. */
+  const held = (
+    limit: string | null,
+    as: ContextInput = founderA,
+    project: string = P,
+  ): Promise<number> =>
+    committed('app', as, async (tx) => {
+      const [row] = await tx.rows<{ waiting: number }>(
+        'select office.count_work_held_by_spending_limit($1, $2::numeric) as waiting',
+        [project, limit],
+      );
+      return row?.waiting ?? -1;
+    });
+
   const restartTraces = (task: string) =>
     adminQuery(
       `select 1 from office.audit_log
@@ -840,11 +856,25 @@ describe.skipIf(noDatabase)('the AI spending limit across transactions', () => {
     expect(await restart('HAF-1', null)).toEqual([]);
   });
 
-  it('waiting work: after the limit is raised nothing has started; a later opening of the agent starts the missed start', async () => {
+  it('waiting work: a limit raised by hand starts nothing by itself; the restart the limit route asks for starts what the limit held, and the count says so beforehand', async () => {
     const { inside, outside } = await heldByTheLimit();
+    // HAF-1 is still stopped: a raise would start nothing of it, and the count says so.
+    expect(await held('500.00')).toBe(0);
     await setSwitch('HAF-1', 'enabled');
     expect(await restart('HAF-1', null)).toEqual([outside]);
-    // The limit is raised (and, in a second round, taken away): the change itself calls nothing.
+    // What the confirmation of a raise is told, before anything changes: the project has spent
+    // 1.25, so a new limit at or under that starts nothing, and one above it (or none) starts
+    // the one request the limit holds.
+    expect(await held('1.25')).toBe(0);
+    expect(await held('0.75')).toBe(0);
+    expect(await held('1.26')).toBe(1);
+    expect(await held('500.00')).toBe(1);
+    expect(await held(null)).toBe(1);
+    // The count reads only: nothing was started by asking.
+    expect(await restartTraces(inside)).toEqual([]);
+    expect(await limitOf()).toBe('0.50');
+
+    // The limit is raised without the panel (an administrator): the change itself calls nothing.
     await limitByHand('500.00');
     expect(await restartTraces(inside)).toEqual([]);
     expect(
@@ -853,8 +883,58 @@ describe.skipIf(noDatabase)('the AI spending limit across transactions', () => {
         'HAF-1',
       ]),
     ).toEqual([]);
-    // The refused job is a missed start like any other: the count of a later opening of the
-    // agent names it, and that opening starts it (decision 49 for a missed start).
+    // The restart the limit route asks for after a raise (11 October decision 1): the project's
+    // waiting work, once.
+    expect(await restart(null, P)).toEqual([inside]);
+    expect(await restartTraces(inside)).toHaveLength(1);
+    expect(await restart(null, P)).toEqual([]);
+    expect(await waiting('HAF-1', null)).toBe(0);
+    expect(await held(null)).toBe(0);
+  });
+
+  it('waiting work: a run the limit stopped starts again when the limit is raised; a run that ended for another reason does not', async () => {
+    await setSwitch('HAF-1', 'enabled');
+    const stoppedByLimit = await routed(P);
+    const failed = await routed(P);
+    const startHaf = (task: string) =>
+      committed('worker', agentRun('HAF-1', P), async (tx) => {
+        const [run] = await tx.rows<{ id: string }>(RUN, [task, 'HAF-1', ids.cardHaf]);
+        return run?.id ?? '';
+      });
+    const endHaf = (run: string, status: string, code: string) =>
+      committed('worker', agentRun('HAF-1', P), (tx) =>
+        tx.exec(
+          `update office.runs set status = $2, finished_at = now(), error_code = $3 where id = $1`,
+          [run, status, code],
+        ),
+      );
+    const first = await startHaf(stoppedByLimit);
+    const second = await startHaf(failed);
+    // The project reaches its limit while both runs are open; the runner ends the first before
+    // its next model call, the second fails by itself.
+    await spentByHand('1.25');
+    await limitByHand('0.50');
+    await endHaf(first, 'stopped', 'spending_limit_reached');
+    await endHaf(second, 'failed', 'runner_error');
+    // While the limit holds nothing counts for any opening, and nothing starts.
+    expect(await waiting('HAF-1', null)).toBe(0);
+    expect(await waiting(null, P)).toBe(0);
+    expect(await restart(null, P)).toEqual([]);
+    // The raise would start exactly the run the limit stopped.
+    expect(await held('500.00')).toBe(1);
+    await limitByHand('500.00');
+    expect(await restart(null, P)).toEqual([stoppedByLimit]);
+    expect(await restartTraces(stoppedByLimit)).toHaveLength(1);
+    expect(await restartTraces(failed)).toEqual([]);
+    expect(await restart(null, P)).toEqual([]);
+  });
+
+  it('waiting work: when the limit was raised without the panel, a later opening of the agent starts what the limit held', async () => {
+    const { inside, outside } = await heldByTheLimit();
+    await setSwitch('HAF-1', 'enabled');
+    expect(await restart('HAF-1', null)).toEqual([outside]);
+    await limitByHand(null);
+    // Decision 49 for a missed start: the count of a later opening names it, and it starts it.
     expect(await waiting('HAF-1', null)).toBe(1);
     await setSwitch('HAF-1', 'stopped');
     await setSwitch('HAF-1', 'enabled');
@@ -863,6 +943,44 @@ describe.skipIf(noDatabase)('the AI spending limit across transactions', () => {
     // Started once: nothing waits any more.
     expect(await waiting('HAF-1', null)).toBe(0);
     expect(await restart('HAF-1', null)).toEqual([]);
+  });
+
+  it('the count before a raise is the founder’s, through the API only, and knows nothing of another company', async () => {
+    await heldByTheLimit();
+    await setSwitch('HAF-1', 'enabled');
+    const HELD = 'select office.count_work_held_by_spending_limit($1, $2::numeric) as waiting';
+    const refusedFor = async (role: 'app' | 'worker', context: ContextInput) => {
+      const open = await openTransaction(role, context);
+      try {
+        return (await open.tx.expectError(HELD, [P, '500'])).code;
+      } finally {
+        await open.rollback();
+      }
+    };
+    // A member, an employee who is none, an external person, nobody; an agent run in the
+    // founder's name.
+    for (const context of [employeeA, approverA, externalA, {}, { companyId: ids.arma }]) {
+      expect(await refusedFor('app', context), JSON.stringify(context)).toBe('42501');
+    }
+    expect(await refusedFor('app', { ...founderA, agentCode: 'KOR-1', projectId: P })).toBe(
+      '42501',
+    );
+    // The worker's role does not hold the function, in anybody's name.
+    expect(await refusedFor('worker', founderA)).toBe('42501');
+    // The founder of the other company: no such project there, so nothing waits.
+    expect(await held('500.00', founderP)).toBe(0);
+    expect(await held('500.00', founderA, ids.projectP)).toBe(0);
+    expect(await held('500.00', founderA, ids.projectANoAi)).toBe(0);
+    const open = await openTransaction('app', founderA);
+    try {
+      expect((await open.tx.expectError(HELD, [null, '500'])).code).toBe('22023');
+      // A limit that is no number counts nothing.
+      expect(await open.tx.rows(HELD, [P, 'NaN'])).toEqual([{ waiting: 0 }]);
+    } finally {
+      await open.rollback();
+    }
+    // In the founder's own company and project: the one request the limit holds.
+    expect(await held('500.00')).toBe(1);
   });
 
   it('the gate and a change of the limit wait for each other', async () => {

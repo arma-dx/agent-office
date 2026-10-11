@@ -541,6 +541,16 @@ Projeye yapay zekâ harcama sınırı (8 Ekim karar 17):
 - Şemalar: `usdLimitSchema`, `projectAiSpendingLimitSchema`, `projectAiSpendingLimitDetailsSchema`. İşlevler: `normalizeUsdLimit` ("50" ile "50.00" aynı sınırdır), `projectAiSpendingLimitDetails`, `loosensSpendingLimit` (değişiklik sınırı gevşetiyor mu: yükseltme ya da kaldırma), `spendingState` (kurucunun sayfasındaki durum: `no_limit`, `ok`, `near`, `reached`). Sabit: `SPENDING_WARN_SHARE` (0,8: harcama sınırın yüzde 80'ine ulaşınca `near`).
 - Veritabanı ifadeleri: `readProjectAiSpending` (sınır ve harcanan; yalnızca kurucuya), `setProjectAiSpendingLimit`; ifade satırlarında `spending_limit_reached` (proje, talep, onay ve talep sahibi onayı satırları). API'de `projectSpendingLimitReached`, `spendingLimitReached`, `limitBusy` (hata üreticileri).
 
+Sınır yükseltilince bekleyen işlerin başlaması (11 Ekim karar 1):
+
+- Sınır yükseltildiğinde ya da kaldırıldığında o projede sınırın beklettiği işler kendiliğinden yeniden başlar: çalışması sınır dolunca durdurulmuş olanlar ve işi sınır doluyken reddedilmiş olanlar. Sınır panel dışından (veritabanında elle) değiştirilirse hiçbir iş başlamaz.
+- İşlevler: `office.count_work_held_by_spending_limit(proje, sınır)` (sınır bu değere çekilirse, boşsa kaldırılırsa, kaç talebin başlayacağı; yeni sınır harcananın altında ya da ona eşitse 0; hiçbir şey yazmaz; yalnızca kurucu, yalnızca API rolü). `office.flow_waiting_work` yenilendi: sınır dolunca durdurulan çalışma (`spending_limit_reached`) artık bekleyen iş sayılır; dördüncü değişkeni `spending_limit` değerini de alır (sayım için sınırı dolmamış sayar). İşleri başlatan, var olan `office.restart_waiting_work` işlevidir (kapsamı o proje).
+- Uç nokta: `GET /api/waiting-work?spendingLimit=<proje kimliği>[&limitUsd=<tutar>]` (yalnızca kurucu; `limitUsd` iki ondalıkla yazılır, yazılmazsa sınırın kaldırılması sorulur; yanıtı `waiting`).
+- API yanıt alanı: `PUT /api/projects/:projectId/ai-spending-limit` yanıtında `restarted` (bu isteğin yeniden başlattığı talep sayısı; ilk kez sınır koymada, düşürmede ve sınır hâlâ doluyken 0). Şema: `projectAiSpendingLimitAnswerSchema`.
+- Veritabanı ifadesi: `countWorkHeldBySpendingLimit`. Yeniden başlatma `restartWaitingWork` ile, kapsam `projectId` verilerek yapılır.
+- Çalıştırıcı: sınır yüzünden reddedilen işin izi ve sınır dolunca durdurulan çalışmanın kaydı, yeniden başlatmanın aldığı kilidin arkasında, sınır bir kez daha okunduktan sonra yazılır; o sırada sınır yükseltildiyse iz yazılmaz ve iş sürer (durdurulan ajan ve kapalı izin için kurulan kuralın aynısı, `recordSwitchRefusal`).
+- Talebin insana düşme nedeni `spending_limit_interrupted` artık yalnızca şunu söyler: sınır dolu değil ama durdurulan iş yeniden başlamadı (o sırada ajan durdurulmuştu ya da sınır panel dışından değiştirildi).
+
 ## Notlar
 
 - Hata metinleri (veritabanı tetikleyicilerinin `raise exception` metinleri, geliştiriciye dönük iletiler) İngilizcedir. Kullanıcıya gösterilecek Türkçe metni API üretir; API hata metnine göre değil SQLSTATE koduna göre dallanır.

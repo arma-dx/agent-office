@@ -1060,9 +1060,11 @@ function scopeArguments(scope: OpeningScope): (string | null)[] {
 }
 
 /**
- * The founder opened an agent or an AI permission again (8 October decision 49): the database
- * picks the work that waited for it, writes the trace on each request and gives the ids back.
- * The caller puts one job per row on the queue in the same transaction. Exactly one scope.
+ * The founder opened an agent or an AI permission again (8 October decision 49), or raised or
+ * removed the AI spending limit of a project (11 October decision 1; the scope is that project):
+ * the database picks the work that waited for it, writes the trace on each request and gives the
+ * ids back. The caller puts one job per row on the queue in the same transaction. Exactly one
+ * scope.
  */
 export async function restartWaitingWork(
   client: Queryable,
@@ -1086,6 +1088,25 @@ export async function countWaitingWork(client: Queryable, scope: OpeningScope): 
   const { rows } = await client.query<{ waiting: number }>(
     'select office.count_waiting_work($1, $2, $3) as waiting',
     scopeArguments(scope),
+  );
+  return rows[0]?.waiting ?? 0;
+}
+
+/**
+ * How many waiting requests of a project would start if the founder set its AI spending limit to
+ * this value now (null: no limit): the number the confirmation of a raise or a removal shows
+ * before the founder confirms (11 October decision 1). The database counts by the rule of the
+ * restart; nothing is written. What starts after the change is office.restart_waiting_work for
+ * the project (restartWaitingWork with the project as its scope).
+ */
+export async function countWorkHeldBySpendingLimit(
+  client: Queryable,
+  projectId: string,
+  limitUsd: string | null,
+): Promise<number> {
+  const { rows } = await client.query<{ waiting: number }>(
+    'select office.count_work_held_by_spending_limit($1, $2::numeric) as waiting',
+    [projectId, limitUsd],
   );
   return rows[0]?.waiting ?? 0;
 }

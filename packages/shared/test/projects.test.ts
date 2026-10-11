@@ -38,6 +38,7 @@ import {
   milestoneSchema,
   projectAiPermissionAnswerSchema,
   projectAiPermissionSchema,
+  projectAiSpendingLimitAnswerSchema,
   projectAiSpendingLimitSchema,
   projectBudgetSchema,
   projectDetailSchema,
@@ -933,6 +934,25 @@ describe('the AI spending limit of a project', () => {
       expect(projectAiSpendingLimitSchema.safeParse(body).success, JSON.stringify(body)).toBe(
         false,
       );
+    }
+  });
+
+  // 11 October decision 1: the answer of a limit change says how many held requests it started.
+  it('the answer of a limit change is the project and the number of requests it started again', () => {
+    const answer = {
+      ...DETAIL,
+      aiSpending: { limitUsd: '500.00', spentUsd: '3.000000' },
+      restarted: 2,
+    };
+    expect(projectAiSpendingLimitAnswerSchema.parse(answer)).toEqual(answer);
+    expect(projectAiSpendingLimitAnswerSchema.parse({ ...DETAIL, restarted: 0 }).restarted).toBe(0);
+    // The count is the server's word: never left out, never a guess.
+    expect(projectAiSpendingLimitAnswerSchema.safeParse(DETAIL).success).toBe(false);
+    for (const restarted of [-1, 1.5, '2', null]) {
+      expect(
+        projectAiSpendingLimitAnswerSchema.safeParse({ ...DETAIL, restarted }).success,
+        String(restarted),
+      ).toBe(false);
     }
   });
 

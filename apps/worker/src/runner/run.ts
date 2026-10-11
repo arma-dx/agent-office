@@ -66,7 +66,9 @@ import {
  * is opened in that project (no run row, no model call; the job is refused with its reason, and
  * the database refuses the row behind the runner). A run that is open when the limit is reached
  * uses the answer it has already paid for (its tool call is executed) and ends before its next
- * model call, stopped with the code spending_limit_reached.
+ * model call, stopped with the code spending_limit_reached. When the founder raises the limit or
+ * takes it away, the work it held starts again by itself (11 October decision 1): the refusal
+ * and the stop are therefore written behind the lock a restart takes, as for a stopped agent.
  */
 
 export type RunOutcome =
@@ -428,13 +430,15 @@ export async function runAgentJob(
     return none(outcome);
   };
   /**
-   * The trace of a job that was refused because its agent is stopped or agents may not work in
-   * its project. The restart reads this trace (8 October decision 49), so it is never written
+   * The trace of a job that was refused because its agent is stopped, agents may not work in its
+   * project, or the project's AI spending limit is reached. The restart reads this trace
+   * (8 October decision 49; 11 October decision 1 for a raised limit), so it is never written
    * past an opening: the transaction asks the gate again (its row locks hold a change of the
-   * permission off until this transaction ends), takes the company's restart lock shared
-   * (office.restart_waiting_work takes the same key exclusively) and reads the switch again.
-   * Still closed: the trace is written, and an opening that waited behind this transaction
-   * finds it. Open now: nothing is written, and the caller opens the job again.
+   * permission or of the limit off until this transaction ends), takes the company's restart
+   * lock shared (office.restart_waiting_work takes the same key exclusively) and reads the
+   * switch and the limit again. Still closed: the trace is written, and an opening that waited
+   * behind this transaction finds it. Open now: nothing is written, and the caller opens the
+   * job again.
    *
    * The order is fixed: the gate, then the advisory lock, then the switch. (The gate takes row
    * locks an opening of a permission also takes; the advisory lock taken before the gate could
@@ -449,7 +453,16 @@ export async function runAgentJob(
         'select status from office.company_agents where agent_code = $1',
         [job.agentCode],
       );
-      if (agentSwitch.rows[0]?.status === 'enabled' && gate.ai_allowed) return 'open_now';
+      let limitHolds = false;
+      if (gate.project_id !== null) {
+        const limit = await client.query<{ reached: boolean | null }>(SPENDING_LIMIT_REACHED, [
+          gate.project_id,
+        ]);
+        limitHolds = limit.rows[0]?.reached !== false;
+      }
+      if (agentSwitch.rows[0]?.status === 'enabled' && gate.ai_allowed && !limitHolds) {
+        return 'open_now';
+      }
       await audit(client, 'run_refused', { recordType: 'task', recordId: job.taskId });
       return 'recorded';
     }).catch((): 'recorded' => 'recorded');
@@ -862,14 +875,17 @@ export async function runAgentJob(
       });
     });
   let opened = await openOnce();
-  // A job that is refused in the instant its switch is opened: the opening's restart saw no
-  // trace of it, and a trace written afterwards would leave the request at "çalışma başlamadı"
-  // with the agent open. The trace of these two refusals is therefore written behind the locks
-  // an opening takes, after the switches are read once more.
+  // A job that is refused in the instant its switch is opened (or the limit of its project is
+  // raised): the opening's restart saw no trace of it, and a trace written afterwards would
+  // leave the request at "çalışma başlamadı" with the agent open. The trace of these three
+  // refusals is therefore written behind the locks an opening takes, after the switches and the
+  // limit are read once more.
   let switchRefusalRecorded = false;
   if (
     opened.kind === 'refused' &&
-    (opened.outcome === 'agent_not_enabled' || opened.outcome === 'ai_not_allowed')
+    (opened.outcome === 'agent_not_enabled' ||
+      opened.outcome === 'ai_not_allowed' ||
+      opened.outcome === 'spending_limit_reached')
   ) {
     if ((await recordSwitchRefusal()) === 'open_now') {
       // The switch was opened in this instant and its restart saw no trace of this job: this job
@@ -1273,7 +1289,23 @@ export async function runAgentJob(
         // The answer that was paid for has been used: its tool call was executed, or the model
         // ended without one. One more model call would be needed, and the AI spending limit of
         // the project does not allow it (8 October decision 17).
-        return await finish('stopped', 'stopped', { errorCode: 'spending_limit_reached' });
+        // A raise of the limit restarts the work of a run that is already stopped and passes
+        // by a run that is still open (11 October decision 1), so the stop is written behind
+        // the lock every restart of the company takes, after the limit is read once more, as
+        // for a stopped agent below. Still reached: the run ends in this transaction, and a
+        // raise that waits for the lock finds it stopped and starts the work again. Raised
+        // meanwhile: its restart passed this open run by, and the run goes on.
+        const stopped = await agentStep(deps.pool, context, async (client) => {
+          await client.query(RESTART_LOCK_SHARED, [job.companyId]);
+          const limit = await client.query<{ reached: boolean | null }>(SPENDING_LIMIT_REACHED, [
+            context.projectId,
+          ]);
+          if (limit.rows[0]?.reached === false) return false;
+          await writeEnd(client, 'stopped', 'stopped', { errorCode: 'spending_limit_reached' });
+          return true;
+        });
+        if (stopped) return ended('stopped', 'stopped', 'spending_limit_reached');
+        spending.limitReached = false;
       }
       const params: ModelRequest = {
         // From the card version, never a literal in code.

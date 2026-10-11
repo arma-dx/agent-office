@@ -44,10 +44,17 @@ type AnyFunction = (...args: unknown[]) => unknown;
  * A pool whose statements can be met by something else at a chosen point: `before` runs once, just
  * ahead of the first statement of a transaction whose text contains `marker` (another connection
  * commits something, or the statement is made to fail: what `before` throws is thrown instead of
- * sending it). Everything else goes to the pool unchanged.
+ * sending it). With `nth` it is the nth such statement instead of the first. Everything else goes
+ * to the pool unchanged.
  */
-export function meeting(pool: pg.Pool, marker: string, before: () => Promise<void>): pg.Pool {
+export function meeting(
+  pool: pg.Pool,
+  marker: string,
+  before: () => Promise<void>,
+  nth = 1,
+): pg.Pool {
   let met = false;
+  let seen = 0;
   const through = (target: object, property: string | symbol): unknown => {
     const value: unknown = Reflect.get(target, property, target);
     return typeof value === 'function' ? (value as AnyFunction).bind(target) : value;
@@ -58,8 +65,11 @@ export function meeting(pool: pg.Pool, marker: string, before: () => Promise<voi
         if (property !== 'query') return through(target, property);
         return async (...args: unknown[]): Promise<unknown> => {
           if (!met && typeof args[0] === 'string' && args[0].includes(marker)) {
-            met = true;
-            await before();
+            seen += 1;
+            if (seen === nth) {
+              met = true;
+              await before();
+            }
           }
           return (target.query as AnyFunction).apply(target, args);
         };

@@ -141,10 +141,12 @@ export const requestCauseSchema = z.enum([
   // outside the panel.
   'ai_permission_interrupted',
   // The request is inside a project whose AI spending limit is reached (8 October decision 17).
-  // Nothing runs there until the founder raises the limit; raising it starts nothing by itself.
+  // Nothing runs there until the founder raises the limit or takes it away; then the waiting
+  // work starts again by itself (11 October decision 1).
   'spending_limit_reached',
-  // The limit is no longer reached, and the run it stopped was not started again: a person gives
-  // the work again.
+  // The limit is no longer reached, and the run it stopped was not started again: its agent was
+  // stopped at that moment (opening the agent starts it), or the limit was changed outside the
+  // panel.
   'spending_limit_interrupted',
   // cancelled
   // Returned to its requester by the routing: the coordinator named the unit, and no open agent

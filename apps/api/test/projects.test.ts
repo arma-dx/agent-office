@@ -7,6 +7,7 @@ import {
   customerSchema,
   memberChangeDetails,
   projectAiPermissionDetails,
+  projectAiSpendingLimitAnswerSchema,
   projectAiSpendingLimitDetails,
   projectDetailSchema,
   projectListSchema,
@@ -2955,6 +2956,8 @@ describe.skipIf(noDatabase)('projects', () => {
         actions: { setAiSpendingLimit: true },
       });
       expect(await storedLimit(project.id)).toBe('25.00');
+      // A first limit starts nothing: the answer says so.
+      expect(projectAiSpendingLimitAnswerSchema.parse(first.json()).restarted).toBe(0);
       // Lower, and lower again to the smallest limit there is.
       for (const [sent, kept] of [
         ['10.5', '10.50'],
@@ -2962,7 +2965,10 @@ describe.skipIf(noDatabase)('projects', () => {
       ] as const) {
         const lowered = await setLimit(founder, project.id, { limitUsd: sent });
         expect(lowered.statusCode, lowered.body).toBe(200);
-        expect(projectDetailSchema.parse(lowered.json()).aiSpending?.limitUsd).toBe(kept);
+        expect(projectAiSpendingLimitAnswerSchema.parse(lowered.json())).toMatchObject({
+          aiSpending: { limitUsd: kept },
+          restarted: 0,
+        });
         expect(await storedLimit(project.id)).toBe(kept);
       }
       expect(await limitTrace(project.id)).toEqual([
@@ -3022,9 +3028,10 @@ describe.skipIf(noDatabase)('projects', () => {
       const stepUp = await confirmLimit(project.id, '50.00');
       const raised = await setLimit(founder, project.id, { limitUsd: '50', stepUp });
       expect(raised.statusCode, raised.body).toBe(200);
-      expect(projectDetailSchema.parse(raised.json()).aiSpending).toEqual({
-        limitUsd: '50.00',
-        spentUsd: '0',
+      // (Nothing waited in this project: what a raise starts is tested with the requests.)
+      expect(projectAiSpendingLimitAnswerSchema.parse(raised.json())).toMatchObject({
+        aiSpending: { limitUsd: '50.00', spentUsd: '0' },
+        restarted: 0,
       });
       expect(await challengeState(stepUp.challengeId)).toMatchObject({ consumed: true });
       // The same signed answer raises nothing a second time, here or in the other project.
@@ -3121,7 +3128,10 @@ describe.skipIf(noDatabase)('projects', () => {
       ]) {
         const same = await setLimit(founder, project.id, body);
         expect(same.statusCode, same.body).toBe(200);
-        expect(projectDetailSchema.parse(same.json()).aiSpending?.limitUsd).toBe('10.00');
+        expect(projectAiSpendingLimitAnswerSchema.parse(same.json())).toMatchObject({
+          aiSpending: { limitUsd: '10.00' },
+          restarted: 0,
+        });
       }
       expect(await challengeState(unused.challengeId)).toMatchObject({ consumed: false });
       // No limit to remove: the same.

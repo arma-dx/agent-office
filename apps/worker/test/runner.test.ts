@@ -3843,4 +3843,162 @@ describe.skipIf(noDatabase)('a project at its AI spending limit', () => {
       },
     ]);
   });
+
+  // A raise of the limit starts the held work again (11 October decision 1), as an opened agent
+  // does (8 October decision 49). The raise and its restart as the route does them: the limit as
+  // an administrator writes it (a person's raise asks for a passkey, which the API's own tests
+  // cover), then the founder's restart of the project's waiting work, in one transaction.
+  async function raiseAndRestart(projectId: string): Promise<string[]> {
+    const client = await testPools().admin.connect();
+    try {
+      await client.query('begin');
+      await client.query('update office.projects set ai_spend_limit_usd = null where id = $1', [
+        projectId,
+      ]);
+      await client.query(
+        `select set_config('app.company_id', $1, true), set_config('app.user_id', $2, true)`,
+        [ids.arma, ids.founder],
+      );
+      const work = await client.query<{ task_id: string }>(
+        'select task_id from office.restart_waiting_work(null, $1, null)',
+        [projectId],
+      );
+      await client.query('commit');
+      return work.rows.map((row) => row.task_id);
+    } catch (error) {
+      await client.query('rollback');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  const stopTraces = async (taskId: string) =>
+    (
+      await admin<{ event: string }>(
+        `select event from office.audit_log
+         where record_type = 'task' and record_id = $1
+           and event in ('run_stopped', 'run_restarted', 'run_refused')
+         order by id`,
+        [taskId],
+      )
+    ).map((row) => row.event);
+
+  /** A request of the project that the coordinator routed to SOS-2 with one cheap call. */
+  async function routedIn(projectId: string): Promise<string> {
+    const taskId = await openIn(projectId);
+    const first = await runner(new ScriptedModel([toolUse('route_task', ROUTE_TO_SOS)]));
+    expect((await runAgentJob(first.deps, job(taskId, 'KOR-1', ids.employee))).outcome).toBe(
+      'routed',
+    );
+    return taskId;
+  }
+
+  it('a job refused for the limit just before the limit is raised starts the work itself', async () => {
+    const projectId = await project(LIMIT);
+    await spent(projectId, '2');
+    const taskId = await openIn(projectId);
+    const model = new ScriptedModel([toolUse('route_task', ROUTE_TO_SOS)]);
+    const { deps, log } = await runner(model);
+    // The runner has read the limit as reached and refused the job. Before it writes the trace
+    // of that refusal the founder raises the limit: that restart finds no trace of this job.
+    let restarted: string[] | undefined;
+    const pool = meeting(
+      deps.pool,
+      'office.request_run_gate',
+      async () => {
+        restarted = await raiseAndRestart(projectId);
+      },
+      2,
+    );
+    const result = await runAgentJob({ ...deps, pool }, job(taskId, 'KOR-1', ids.employee));
+    expect(restarted).toEqual([]);
+    // Behind the locks the limit reads "not reached": no trace is written that nothing would
+    // answer, and this job is what starts the work.
+    expect(result).toMatchObject({ outcome: 'routed', modelCalls: 1 });
+    expect(await stopTraces(taskId)).toEqual([]);
+    expect(log.map((line) => line.event)).not.toContain('run_refused');
+    expect((await runsOf(taskId)).map((run) => [run.agent_code, run.status])).toEqual([
+      ['KOR-1', 'completed'],
+    ]);
+  });
+
+  it('a limit raised just before the run it reached would be stopped: the run goes on', async () => {
+    const projectId = await project(LIMIT);
+    const taskId = await routedIn(projectId);
+    // The first answer reaches the limit and ends in prose; the second would submit the result.
+    const model = new ScriptedModel([
+      text('Önce düşünüyorum.', COSTLY),
+      toolUse('submit_for_approval', RESULT),
+    ]);
+    const { deps, jobs } = await runner(model);
+    // The runner has read the limit as reached. Before it takes the restart lock the founder
+    // raises the limit: that restart passes this open run by.
+    let restarted: string[] | undefined;
+    const pool = meeting(deps.pool, 'pg_advisory_xact_lock_shared', async () => {
+      restarted = await raiseAndRestart(projectId);
+    });
+    const result = await runAgentJob({ ...deps, pool }, job(taskId, 'SOS-2', ids.employee));
+    expect(restarted).toEqual([]);
+    // Behind the lock the limit reads "not reached": nothing is left that would start the work
+    // again, so the run is not closed. It makes its next call and submits.
+    expect(result).toMatchObject({ outcome: 'submitted', modelCalls: 2 });
+    expect(await runRow(result.runId)).toMatchObject({ status: 'completed', error_code: null });
+    expect(await stopTraces(taskId)).toEqual([]);
+    expect(jobs.sent).toEqual([]);
+    expect(await statusOf(taskId)).toBe('awaiting_approval');
+  });
+
+  it('a limit raised while the stop of the run it reached is being written: the raise waits and restarts the work', async () => {
+    /** Resolves when a statement of the founder's raise waits for a lock. */
+    async function untilRaiseWaits(): Promise<void> {
+      for (let attempt = 0; attempt < 500; attempt += 1) {
+        const waiting = await admin(
+          `select 1 from pg_catalog.pg_stat_activity
+           where application_name = 'worker-test-admin' and wait_event_type = 'Lock'
+             and state = 'active'`,
+        );
+        if (waiting.length > 0) return;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      throw new Error('The raise never waited');
+    }
+    const projectId = await project(LIMIT);
+    const taskId = await routedIn(projectId);
+    const model = new ScriptedModel([
+      text('Önce düşünüyorum.', COSTLY),
+      toolUse('submit_for_approval', RESULT),
+    ]);
+    const { deps, jobs } = await runner(model);
+    // The runner holds the restart lock and is about to write the stop. The founder raises the
+    // limit now: the restart of that raise waits for the lock (without it, it would run at once
+    // and pass the open run by, and the request would wait for a person beside a raised limit).
+    let raising: Promise<string[]> | undefined;
+    const pool = meeting(
+      deps.pool,
+      'set status = $2, finished_at = now(), error_code = $3',
+      async () => {
+        raising = raiseAndRestart(projectId);
+        await Promise.race([untilRaiseWaits(), raising]);
+      },
+    );
+    const result = await runAgentJob({ ...deps, pool }, job(taskId, 'SOS-2', ids.employee));
+    // The stop was written in the transaction that held the lock ...
+    expect(result).toMatchObject({ outcome: 'stopped', modelCalls: 1 });
+    expect(await runRow(result.runId)).toMatchObject({
+      status: 'stopped',
+      error_code: 'spending_limit_reached',
+      input_tokens: COSTLY.input,
+    });
+    // ... so the raise found a stopped run and called for its work again.
+    expect(await raising).toEqual([taskId]);
+    expect(await stopTraces(taskId)).toEqual(['run_stopped', 'run_restarted']);
+    // The runner itself sends nothing: the job is the raise's.
+    expect(jobs.sent).toEqual([]);
+    expect(model.remaining).toBe(1);
+    const again = await runner(new ScriptedModel([toolUse('submit_for_approval', RESULT)]));
+    expect(await runAgentJob(again.deps, job(taskId, 'SOS-2', ids.employee))).toMatchObject({
+      outcome: 'submitted',
+    });
+  });
 });

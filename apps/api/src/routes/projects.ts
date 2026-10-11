@@ -50,6 +50,7 @@ import {
   projectAiPermissionAnswerSchema,
   projectAiPermissionDetails,
   projectAiPermissionSchema,
+  projectAiSpendingLimitAnswerSchema,
   projectAiSpendingLimitDetails,
   projectAiSpendingLimitSchema,
   projectApprovalsSchema,
@@ -67,6 +68,7 @@ import {
   type CustomerPermissionsAnswer,
   type ProjectActor,
   type ProjectAiPermissionAnswer,
+  type ProjectAiSpendingLimitAnswer,
   type ProjectApprovals,
   type ProjectDetail,
   type ProjectList,
@@ -921,13 +923,15 @@ export function registerProjectRoutes(
    * from its own request, and the database uses it up once, in this transaction. Asking for the
    * value the project already has changes nothing and uses nothing up.
    *
-   * Nothing is started by this route, whatever the change: work a limit stopped falls to a
-   * person and stays there (decision 28's word for a ceiling; docs/SONRA.md P3-s). No job is put
-   * on the queue and no trace of a restart is written.
+   * A raise and a removal start the work the limit held again, in the same transaction
+   * (11 October decision 1; as an opened AI permission does, 8 October decision 49): the requests
+   * whose run the limit stopped and the ones whose job it refused. Each is a new, paid run, and
+   * the answer says how many. The database decides which: nothing starts while the new limit is
+   * still reached by what the project has spent. A first limit and a lower one start nothing.
    */
   app.put(
     '/api/projects/:projectId/ai-spending-limit',
-    async (request, reply): Promise<ProjectDetail> =>
+    async (request, reply): Promise<ProjectAiSpendingLimitAnswer> =>
       runner.withCompany(request, reply, INSIDERS, async (context) => {
         requireFounder(context);
         const projectId = projectIdOf(request);
@@ -944,11 +948,15 @@ export function registerProjectRoutes(
         // "50" and "50.0" are the limit "50.00", the form the database gives back.
         const next = body.data.limitUsd === null ? null : normalizeUsdLimit(body.data.limitUsd);
         if (current.limit_usd === next) {
-          return detailOf(context, row);
+          return projectAiSpendingLimitAnswerSchema.parse({
+            ...(await detailOf(context, row)),
+            restarted: 0,
+          });
         }
         // Raising and removing let agents spend more: the passkey, for this project and this
         // value. Setting a first limit and lowering one only stop agents earlier.
-        if (loosensSpendingLimit(current.limit_usd, next)) {
+        const loosens = loosensSpendingLimit(current.limit_usd, next);
+        if (loosens) {
           await verifyStepUp({ client, session }, relyingParty, body.data.stepUp, {
             purpose: 'project_ai_spending_limit',
             companyId,
@@ -956,9 +964,14 @@ export function registerProjectRoutes(
             details: projectAiSpendingLimitDetails(next),
           });
         }
+        let restarted = 0;
         await client.query('savepoint set_spending_limit');
         try {
-          await setProjectAiSpendingLimit(client, projectId, next);
+          const changed = await setProjectAiSpendingLimit(client, projectId, next);
+          // 11 October decision 1: a raise and a removal start the work the limit held again.
+          if (loosens && changed) {
+            restarted = await startWaitingWork(client, jobs, companyId, { projectId });
+          }
         } catch (error) {
           await client.query('rollback to savepoint set_spending_limit');
           const code = databaseErrorCode(error);
@@ -973,7 +986,10 @@ export function registerProjectRoutes(
           if (code === '40P01') throw limitBusy();
           throw error;
         }
-        return detailOf(context, await projectOf(context, projectId));
+        return projectAiSpendingLimitAnswerSchema.parse({
+          ...(await detailOf(context, await projectOf(context, projectId))),
+          restarted,
+        });
       }),
   );
 
