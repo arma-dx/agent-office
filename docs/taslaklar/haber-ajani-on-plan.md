@@ -1,6 +1,6 @@
 # Haber ve bilgi toplama ajanı: ön plan
 
-> Not (8 Ekim 2026): kurucu bu ön planın sekiz sorusunu yanıtladı: 1a 2a 3a 4a 5c 6a 7b 8a (`docs/kararlar/2026-10-08.md`, karar 36-43). Aşağıdaki metin kurucuya sunulduğu hâliyle saklanıyor; "önerim" yazan yerlerde geçerli olan kararlardır. Ajan "birden çok ajanın sırayla çalışması" adımıyla birlikte kurulur (karar 42).
+> Not (8 Ekim 2026): kurucu bu ön planın sekiz sorusunu yanıtladı: 1a 2a 3a 4a 5c 6a 7b 8a (`docs/kararlar/2026-10-08.md`, karar 36-43). Aşağıdaki metin kurucuya sunulduğu hâliyle saklanıyor; "önerim" yazan yerlerde geçerli olan kararlardır. Ajan "birden çok ajanın sırayla çalışması" adımıyla birlikte kurulur (karar 42). Dikkat: aşağıdaki metinde soru 7'nin harfleri kurucuya sohbette sunulan kısa sorudakinden farklıdır; kurucunun gördüğü soruda b seçeneği "birden çok ajan adımıyla birlikte" idi ve karar 42 onu kaydeder.
 
 8 Ekim 2026, karar 35 için. Sen "evet" demeden hiçbir şey kurulmaz. Sonda sekiz soru var; her birinde önerim yazılı.
 
