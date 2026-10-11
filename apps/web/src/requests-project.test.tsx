@@ -476,6 +476,65 @@ describe('Yeni talep: the project', () => {
     expect(api.callsTo('GET /projects')).toHaveLength(2);
   });
 
+  it('form: Yeniden dene by keyboard stays where it is while the list is read again, says that it is busy, and hands the focus to the field when the list arrives', async () => {
+    const failed = () => apiError(409, 'invalid_request', 'Liste şu anda okunamadı.');
+    let answer: (response: Response) => void = () => undefined;
+    let reads = 0;
+    const api = mockApi(
+      handlers(() => {
+        reads += 1;
+        // The first read fails at once; every later one waits for the test.
+        if (reads === 1) return failed();
+        return new Promise<Response>((resolve) => {
+          answer = resolve;
+        });
+      }),
+    );
+    await openList();
+    const dialog = await openForm();
+    const alert = await within(dialog).findByRole('alert');
+    const retry = within(alert).getByRole('button', { name: 'Yeniden dene' });
+    retry.focus();
+    await userEvent.keyboard('{Enter}');
+    await waitFor(() => {
+      expect(api.callsTo('GET /projects')).toHaveLength(2);
+    });
+    // While the list is read again: the same button, in the document, busy and still focused.
+    await waitFor(() => {
+      expect(retry).toHaveAttribute('aria-disabled', 'true');
+    });
+    expect(retry).toBeInTheDocument();
+    expect(retry).toHaveFocus();
+    expect(within(dialog).getAllByRole('alert')).toHaveLength(1);
+    // A second Enter while it is busy asks nothing.
+    await userEvent.keyboard('{Enter}');
+    expect(api.callsTo('GET /projects')).toHaveLength(2);
+
+    // It fails again: the same button, not a new one, and the focus has not moved.
+    answer(failed());
+    await waitFor(() => {
+      expect(retry).not.toHaveAttribute('aria-disabled');
+    });
+    expect(within(within(dialog).getByRole('alert')).getByRole('button')).toBe(retry);
+    expect(retry).toHaveFocus();
+    expect(within(dialog).getByRole('alert')).toHaveTextContent(LIST_FAILED);
+
+    // It succeeds: the notice goes, and the focus is on the field the person wanted to use.
+    await userEvent.keyboard('{Enter}');
+    await waitFor(() => {
+      expect(api.callsTo('GET /projects')).toHaveLength(3);
+    });
+    answer(json({ projects: [LANSMAN], truncated: false }));
+    const field = within(dialog).getByRole('combobox', { name: 'Proje' });
+    await waitFor(() => {
+      expect(within(dialog).queryByRole('alert')).toBeNull();
+    });
+    expect(labels(field)).toEqual(['Proje yok', 'Lansman']);
+    await waitFor(() => {
+      expect(field).toHaveFocus();
+    });
+  });
+
   it('form: with a project chosen nothing is sent before the list has said that it takes a request; when the list failed the API decides', async () => {
     let answer: (response: Response) => void = () => undefined;
     const api = mockApi(

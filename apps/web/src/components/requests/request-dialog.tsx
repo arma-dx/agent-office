@@ -8,6 +8,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
 import {
   useCallback,
+  useEffect,
   useId,
   useMemo,
   useRef,
@@ -199,6 +200,20 @@ function RequestDialog({
   // with the two permissions of rule 12.
   const projects = useQuery({ ...projectsQueryOptions(company.companyId), staleTime: 0 });
   const options = projects.data ? projectOptions(projects.data.projects) : [];
+  // A list that could not be read is being read again: the notice and its button stay while that
+  // goes on (a query without data is "pending" again while it is read, and a button that
+  // disappears under the keyboard takes the focus with it), and the field takes the focus when
+  // the list has arrived.
+  const [retried, setRetried] = useState(false);
+  const focusProject = useRef(false);
+  const projectBox = useRef<HTMLSelectElement>(null);
+  const listFailed = projects.isError || (retried && projects.isPending);
+  useEffect(() => {
+    if (focusProject.current && projects.isSuccess) {
+      focusProject.current = false;
+      projectBox.current?.focus();
+    }
+  }, [projects.isSuccess]);
   const chosen =
     project === null ? null : (options.find((option) => option.id === project.id) ?? null);
   // The chosen project (a draft's, a preset, or one chosen before the list was read again) is no
@@ -353,6 +368,7 @@ function RequestDialog({
               Proje
             </label>
             <NativeSelect
+              ref={projectBox}
               id={projectId}
               value={project?.id ?? ''}
               disabled={projects.isPending}
@@ -398,7 +414,7 @@ function RequestDialog({
                 seçin.
               </p>
             ) : null}
-            {projects.isError ? (
+            {listFailed ? (
               <div role="alert" className="flex flex-col items-start gap-1.5 text-sm">
                 <p>
                   Proje listesi alınamadı. Talebi projesiz gönderebilir ya da listeyi yeniden
@@ -409,7 +425,10 @@ function RequestDialog({
                   variant="outline"
                   {...busyProps(projects.isFetching)}
                   onClick={() => {
-                    if (!projects.isFetching) void projects.refetch();
+                    if (projects.isFetching) return;
+                    setRetried(true);
+                    focusProject.current = true;
+                    void projects.refetch();
                   }}
                 >
                   Yeniden dene
