@@ -8,6 +8,9 @@ import {
   CAUSE_SENTENCE,
   CAUSE_SHORT,
   CHANGES_HELD,
+  CHANGES_HELD_BY_LIMIT,
+  CHANGES_HELD_BY_LIMIT_FOR_REQUESTER,
+  LIMIT_FOR_OTHERS,
   OPEN_PROJECT,
   OPEN_REQUESTS_GO_ON,
   PROJECT_REQUESTS_GO_ON,
@@ -268,7 +271,7 @@ describe('the sentences decision 49 changed', () => {
 
   it('çalışma başlamadı reads as a job the runner refused although the agent is open', () => {
     expect(CAUSE_SENTENCE.not_started).toBe(
-      'Ajanın çalışması başlatılamadı: ajan açık olduğu hâlde çalıştırıcı işi başlatmadı (ajanın kartı okunamadı, iş verildikten sonra talep değişti ya da çalıştırıcı işi o an alamadı).',
+      'Ajanın çalışması başlatılamadı: ajan açık olduğu hâlde çalıştırıcı işi başlatmadı (ajanın kartı okunamadı, iş verildikten sonra talep değişti, projenin harcama sınırı o an doluydu ya da çalıştırıcı işi o an alamadı).',
     );
     // The way on is unchanged: a person gives the work to an agent again.
     expect(CAUSE_NEXT.not_started).toBe(
@@ -301,6 +304,67 @@ describe('the sentences decision 49 changed', () => {
         /kendiliğinden (yeniden )?başlatmaz|kendiliğinden başlamaz|yeniden ele almaz/,
       );
     }
+  });
+});
+
+// 8 October decision 17 and 11 October decision 1: a project's AI spending limit holds its
+// requests while it is reached, and raising it starts the held work again.
+describe('the sentences of a reached spending limit', () => {
+  it('says why the request waits, in the words every screen uses', () => {
+    expect(CAUSE_SHORT.spending_limit_reached).toBe('harcama sınırı doldu');
+    expect(CAUSE_SHORT.spending_limit_interrupted).toBe('sınır dolunca durdu');
+    expect(CAUSE_SENTENCE.spending_limit_reached).toBe(
+      'Bu talebin projesinde yapay zekâ harcama sınırı doldu. Ajanlar bu projede yeni çalışma başlatmaz; süren çalışma bir sonraki adımında durur.',
+    );
+    expect(CAUSE_SENTENCE.spending_limit_interrupted).toBe(
+      'Projenin yapay zekâ harcama sınırı dolduğu için ajanın çalışması durduruldu. Sınır artık dolu değil, ama iş kendiliğinden yeniden başlamadı.',
+    );
+  });
+
+  it('the founder is told where the limit is raised and that raising it starts the waiting work', () => {
+    expect(CAUSE_FOR_FOUNDER.spending_limit_reached).toBe(
+      'Sınırı projenin sayfasındaki "Çalışmalar" sekmesinden yükseltebilirsiniz; passkey ister. Sınır yükselince bekleyen iş kendiliğinden yeniden başlar. İş gerekmiyorsa talebi durdurabilirsiniz.',
+    );
+    // While it holds, the routing cannot be corrected: no way on is named for it.
+    expect(CAUSE_NEXT.spending_limit_reached).toBeUndefined();
+    // Everybody else is told who raises it, and never an amount.
+    expect(LIMIT_FOR_OTHERS).toBe('Talep kayıtlı. Harcama sınırını yalnızca kurucu yükseltir.');
+    expect(LIMIT_FOR_OTHERS).not.toMatch(/\d|\$|dolar/);
+  });
+
+  it('a run the limit stopped that did not start again has the way on of every such request', () => {
+    expect(CAUSE_NEXT.spending_limit_interrupted).toBe(
+      '"Yönlendirmeyi düzelt" ile işi bir ajana yeniden verin; yeni bir çalışma başlar. İş gerekmiyorsa talebi kapatabilirsiniz.',
+    );
+  });
+
+  it('a waiting result is not held by the limit: only asking for changes is, and both cards say so', () => {
+    expect(CHANGES_HELD_BY_LIMIT).toBe(
+      'Bu projenin yapay zekâ harcama sınırı doldu: sınır yükseltilene kadar düzeltme istenemez. Sonucu onaylayabilir ya da reddedebilirsiniz.',
+    );
+    expect(CHANGES_HELD_BY_LIMIT_FOR_REQUESTER).toBe(
+      'Bu projenin yapay zekâ harcama sınırı doldu: sınır yükseltilene kadar düzeltme istenemez. Sonuç istediğiniz gibiyse onaylayabilirsiniz.',
+    );
+  });
+
+  it('a list row and the stage line read the short cause', () => {
+    const held = requestDetail({
+      status: 'in_progress',
+      stage: 'fell_to_person',
+      cause: 'spending_limit_reached',
+      turn: { kind: 'founder' },
+      waitingForMe: true,
+      project: PROJECT_REF,
+      spendingLimitReached: true,
+      approval: null,
+    });
+    expect(stageText(summaryOf(held))).toBe('Sizden bekleniyor: harcama sınırı doldu');
+    expect(stageText(summaryOf({ ...held, waitingForMe: false }))).toBe(
+      'İnsana düştü: harcama sınırı doldu',
+    );
+    expect(stageText(summaryOf({ ...held, cause: 'spending_limit_interrupted' }))).toBe(
+      'Sizden bekleniyor: sınır dolunca durdu',
+    );
   });
 });
 

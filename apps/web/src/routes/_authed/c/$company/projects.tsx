@@ -64,8 +64,14 @@ function ProjectRow({ project, company }: { project: ProjectSummary; company: st
           <span className="hidden w-14 text-ink-secondary tabular-nums xl:block">
             {memberCountText(project.memberCount)}
           </span>
-          <span className={cn('w-36', !project.agentsMayWork && 'text-ink-secondary')}>
-            {agentsWord(project.agentsMayWork)}
+          {/* In the secondary ink whenever the word is not "Ajanlar çalışabilir". */}
+          <span
+            className={cn(
+              'w-36',
+              (!project.agentsMayWork || project.spendingLimitReached) && 'text-ink-secondary',
+            )}
+          >
+            {agentsWord(project.agentsMayWork, project.spendingLimitReached)}
           </span>
           <span className="w-20 text-right text-xs text-ink-secondary tabular-nums">
             {project.targetDate ? (

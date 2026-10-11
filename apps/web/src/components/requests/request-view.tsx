@@ -30,6 +30,9 @@ import {
   CAUSE_NEXT,
   CAUSE_SENTENCE,
   CHANGES_HELD,
+  CHANGES_HELD_BY_LIMIT,
+  CHANGES_HELD_BY_LIMIT_FOR_REQUESTER,
+  LIMIT_FOR_OTHERS,
   OPEN_PROJECT,
   REASON_LABEL,
   RESULT_HELD,
@@ -97,14 +100,16 @@ function AgentText({ label, children }: { label: string; children: string }) {
 
 /**
  * From a held request or a held result to the project's page, where the founder opens the
- * permission. Used inside a banner, so it takes the banner's link colour.
+ * permission, or (`tab` "runs") to its "Çalışmalar" tab, where the founder raises the AI spending
+ * limit. Used inside a banner, so it takes the banner's link colour.
  */
-function OpenProjectLink({ projectId }: { projectId: string }) {
+function OpenProjectLink({ projectId, tab }: { projectId: string; tab?: 'runs' }) {
   const company = useCompany();
   return (
     <Link
       to="/c/$company/projects/$projectId"
       params={{ company: company.code, projectId }}
+      search={tab ? { tab } : {}}
       className="self-start font-medium text-brand-active underline underline-offset-4"
     >
       {OPEN_PROJECT}
@@ -266,6 +271,10 @@ function ReasonDialog({
  * While agents may not work in the request's project (rule 12; 8 October decision 46) the result
  * is held: it is read and can be rejected, but "Onayla" and "Düzeltme iste" do nothing and say
  * why. Both stay focusable, like every busy control; the API and the database refuse them anyway.
+ *
+ * While the AI spending limit of the project is reached (decision 17) only "Düzeltme iste" is
+ * held, with its own sentence: it calls for a new run, and approving and rejecting do not. When
+ * the permission holds the result too, its banner says everything and this sentence is left out.
  */
 export function ApprovalCardView({
   card,
@@ -279,7 +288,10 @@ export function ApprovalCardView({
   const headingId = useId();
   const hintId = useId();
   const heldId = useId();
+  const limitId = useId();
   const held = !card.agentsMayWork;
+  // Said only while the permission does not hold the result already.
+  const limitHeld = card.spendingLimitReached && !held;
   const [selected, setSelected] = useState<string | null>(null);
   const [dialog, setDialog] = useState<'changes_requested' | 'rejected' | 'passkey' | null>(null);
   useDecisionDialog(dialog !== null);
@@ -396,6 +408,11 @@ export function ApprovalCardView({
           </div>
         </InlineBanner>
       ) : null}
+      {limitHeld ? (
+        <p id={limitId} className="text-sm text-ink-secondary">
+          {CHANGES_HELD_BY_LIMIT}
+        </p>
+      ) : null}
       <div className="flex flex-wrap items-center gap-2">
         <Button
           size="lg"
@@ -419,10 +436,10 @@ export function ApprovalCardView({
         <Button
           variant="outline"
           size="lg"
-          {...busyProps(decide.isPending || held)}
-          aria-describedby={held ? heldId : undefined}
+          {...busyProps(decide.isPending || held || limitHeld)}
+          aria-describedby={held ? heldId : limitHeld ? limitId : undefined}
           onClick={() => {
-            if (decide.isPending || held) return;
+            if (decide.isPending || held || limitHeld) return;
             focus.remember();
             setDialog('changes_requested');
           }}
@@ -576,6 +593,7 @@ export function AcceptanceCardView({
   approver,
   returnsToAgent,
   agentsMayWork,
+  spendingLimitReached,
   inPlaceOf,
 }: {
   requestId: string;
@@ -596,6 +614,12 @@ export function AcceptanceCardView({
    */
   agentsMayWork: boolean;
   /**
+   * True while the AI spending limit of the request's project is reached (decision 17): "İstediğim
+   * bu değil" is held for the same reason, with the limit's sentence. When agents may not work
+   * either, the permission's sentence is the one that is said.
+   */
+  spendingLimitReached: boolean;
+  /**
    * Set when the reader is the founder and answers in the place of a requester who can no longer
    * read the request (8 October decision 45): the requester, who is named above the question.
    * Null when the reader answers for their own request. The buttons and what they send are the
@@ -610,6 +634,8 @@ export function AcceptanceCardView({
   const inPlaceId = useId();
   // What both buttons are described by: in whose place, and (the second button) why it is held.
   const described = (...ids: (string | false)[]) => ids.filter(Boolean).join(' ') || undefined;
+  // "İstediğim bu değil" calls for a run: held while no run can start in the project.
+  const changesHeld = !agentsMayWork || spendingLimitReached;
   const [asking, setAsking] = useState(false);
   useDecisionDialog(asking);
   const catchUp = useCatchUp(requestId);
@@ -644,11 +670,11 @@ export function AcceptanceCardView({
           {userMessage(decide.error)}
         </p>
       ) : null}
-      {agentsMayWork ? null : (
+      {changesHeld ? (
         <p id={heldId} className="text-sm text-ink-secondary">
-          {CHANGES_HELD}
+          {agentsMayWork ? CHANGES_HELD_BY_LIMIT_FOR_REQUESTER : CHANGES_HELD}
         </p>
-      )}
+      ) : null}
       <div className="flex flex-wrap gap-2">
         <Button
           size="lg"
@@ -663,10 +689,10 @@ export function AcceptanceCardView({
         <Button
           variant="outline"
           size="lg"
-          {...busyProps(decide.isPending || !agentsMayWork)}
-          aria-describedby={described(inPlaceOf !== null && inPlaceId, !agentsMayWork && heldId)}
+          {...busyProps(decide.isPending || changesHeld)}
+          aria-describedby={described(inPlaceOf !== null && inPlaceId, changesHeld && heldId)}
           onClick={() => {
-            if (decide.isPending || !agentsMayWork) return;
+            if (decide.isPending || changesHeld) return;
             focus.remember();
             setAsking(true);
           }}
@@ -722,6 +748,28 @@ export function FellNotice({ request, isFounder }: { request: RequestDetail; isF
             </>
           ) : (
             <p className="text-ink-secondary">{AI_CLOSED_FOR_OTHERS}</p>
+          )}
+        </div>
+      </InlineBanner>
+    );
+  }
+  // Held by a reached AI spending limit (decision 17): the same shape. The way on is the founder's
+  // too, on the "Çalışmalar" tab of the project; everybody else is told who raises the limit, and
+  // never an amount.
+  if (request.cause === 'spending_limit_reached') {
+    return (
+      <InlineBanner tone="warning">
+        <div className="flex flex-col gap-2">
+          <p>{CAUSE_SENTENCE.spending_limit_reached}</p>
+          {isFounder ? (
+            <>
+              <p>{CAUSE_FOR_FOUNDER.spending_limit_reached}</p>
+              {request.project ? (
+                <OpenProjectLink projectId={request.project.id} tab="runs" />
+              ) : null}
+            </>
+          ) : (
+            <p className="text-ink-secondary">{LIMIT_FOR_OTHERS}</p>
           )}
         </div>
       </InlineBanner>

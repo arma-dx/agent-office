@@ -106,12 +106,36 @@ export const UNAVAILABLE = {
 } as const;
 
 /**
- * Whether agents may work in a project, in the one pair of words the list and the page use. It is
- * rule 12 as a whole: the project's own permission and, if it has a customer, the customer's.
+ * Whether agents may work in a project, in the one set of words the list and the page use. It is
+ * rule 12 as a whole: the project's own permission and, if it has a customer, the customer's. A
+ * project where they may, and whose AI spending limit is reached (8 October 2026, decision 17),
+ * says that instead: no run starts there until the founder raises the limit. The permission is
+ * said first: while it is closed the limit changes nothing.
  */
-export function agentsWord(agentsMayWork: boolean): string {
-  return agentsMayWork ? 'Ajanlar çalışabilir' : 'Ajanlar çalışamaz';
+export function agentsWord(agentsMayWork: boolean, spendingLimitReached = false): string {
+  if (!agentsMayWork) return 'Ajanlar çalışamaz';
+  return spendingLimitReached ? 'Harcama sınırı doldu' : 'Ajanlar çalışabilir';
 }
+
+/**
+ * The AI spending limit of a project is reached: the banner above the tabs of its page, for the
+ * founder (who raises it on the "Çalışmalar" tab) and for everybody else. Never an amount: the
+ * members learn that the limit is reached and nothing of what was spent (docs/SONRA.md P3-v).
+ */
+export const LIMIT_REACHED = {
+  founder:
+    'Bu projenin yapay zekâ harcama sınırı doldu: ajanlar yeni çalışma başlatmıyor. Sınırı "Çalışmalar" sekmesinden yükseltebilirsiniz.',
+  others:
+    'Bu projenin yapay zekâ harcama sınırı doldu: ajanlar yeni çalışma başlatmıyor. Sınırı yalnızca kurucu yükseltir.',
+} as const;
+
+/** Why the "Talepler" tab of such a project offers no new request, in the same two voices. */
+export const NO_REQUEST_AT_LIMIT = {
+  founder:
+    'Bu projenin yapay zekâ harcama sınırı dolduğu için talep açılamaz. Sınırı "Çalışmalar" sekmesinden yükseltebilirsiniz.',
+  others:
+    'Bu projenin yapay zekâ harcama sınırı dolduğu için talep açılamaz. Sınırı kurucu yükseltir.',
+} as const;
 
 /** The same, as the sentence of the project page, with the reason when agents may not work. */
 export function agentsSentence(project: { aiAllowed: boolean; agentsMayWork: boolean }): string {
@@ -131,7 +155,7 @@ export function projectRowSentence(project: ProjectSummary, now?: number): strin
     PROJECT_STATUS[project.status].label,
     project.customer ? `Müşteri: ${project.customer.name}` : null,
     memberCountText(project.memberCount),
-    agentsWord(project.agentsMayWork),
+    agentsWord(project.agentsMayWork, project.spendingLimitReached),
     project.targetDate ? `Hedef tarih: ${formatDay(project.targetDate, now)}` : null,
   ]
     .filter((part) => part !== null)

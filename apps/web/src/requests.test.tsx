@@ -1695,7 +1695,7 @@ describe('the page of a request', () => {
       ...overrides,
     });
   const NOT_STARTED =
-    'Ajanın çalışması başlatılamadı: ajan açık olduğu hâlde çalıştırıcı işi başlatmadı (ajanın kartı okunamadı, iş verildikten sonra talep değişti ya da çalıştırıcı işi o an alamadı).';
+    'Ajanın çalışması başlatılamadı: ajan açık olduğu hâlde çalıştırıcı işi başlatmadı (ajanın kartı okunamadı, iş verildikten sonra talep değişti, projenin harcama sınırı o an doluydu ya da çalıştırıcı işi o an alamadı).';
 
   it('a request whose run was never started tells the one who can act how the work is given again', async () => {
     mockApi({

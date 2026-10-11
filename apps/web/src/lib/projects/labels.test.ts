@@ -1,9 +1,14 @@
 import { describe, expect, it } from 'vitest';
+import { project } from '../../test/project-fixtures.ts';
 import {
+  agentsWord,
   approvalLine,
   handOverDescription,
+  LIMIT_REACHED,
   memberLine,
+  NO_REQUEST_AT_LIMIT,
   PROJECT_ROLE,
+  projectRowSentence,
   ROLE_ACT,
   ROLE_ACT_ORDER,
   roleGivenSentence,
@@ -127,5 +132,45 @@ describe('project labels: a result in the list of approvals', () => {
       'SOS-2 sonucunu Eski üye onayladı.',
     );
     expect(line('rejected', 2, null)).toBe('SOS-2 sonucunu Eski üye reddetti.');
+  });
+});
+
+describe('project labels: a reached AI spending limit (8 October decision 17)', () => {
+  it('the word of a project: the permission first, then the limit, then that agents may work', () => {
+    expect(agentsWord(true)).toBe('Ajanlar çalışabilir');
+    expect(agentsWord(false)).toBe('Ajanlar çalışamaz');
+    expect(agentsWord(true, true)).toBe('Harcama sınırı doldu');
+    // While agents may not work the limit changes nothing, and is not what is said.
+    expect(agentsWord(false, true)).toBe('Ajanlar çalışamaz');
+    expect(agentsWord(true, false)).toBe('Ajanlar çalışabilir');
+  });
+
+  it("the row's sentence names the limit in the place of the word about agents", () => {
+    const open = { aiAllowed: true, agentsMayWork: true, customer: null, targetDate: null };
+    expect(projectRowSentence(project({ ...open, spendingLimitReached: true }))).toBe(
+      'Depo otomasyonu. Sürüyor. 2 üye. Harcama sınırı doldu.',
+    );
+    expect(projectRowSentence(project(open))).toBe(
+      'Depo otomasyonu. Sürüyor. 2 üye. Ajanlar çalışabilir.',
+    );
+  });
+
+  it('the banner of the page and the reason of the Talepler tab, for the founder and for the others', () => {
+    expect(LIMIT_REACHED).toEqual({
+      founder:
+        'Bu projenin yapay zekâ harcama sınırı doldu: ajanlar yeni çalışma başlatmıyor. Sınırı "Çalışmalar" sekmesinden yükseltebilirsiniz.',
+      others:
+        'Bu projenin yapay zekâ harcama sınırı doldu: ajanlar yeni çalışma başlatmıyor. Sınırı yalnızca kurucu yükseltir.',
+    });
+    expect(NO_REQUEST_AT_LIMIT).toEqual({
+      founder:
+        'Bu projenin yapay zekâ harcama sınırı dolduğu için talep açılamaz. Sınırı "Çalışmalar" sekmesinden yükseltebilirsiniz.',
+      others:
+        'Bu projenin yapay zekâ harcama sınırı dolduğu için talep açılamaz. Sınırı kurucu yükseltir.',
+    });
+    // Nobody but the founder is told an amount or where the limit is set.
+    for (const text of [LIMIT_REACHED.others, NO_REQUEST_AT_LIMIT.others]) {
+      expect(text).not.toMatch(/\d|\$|dolar|sekme/);
+    }
   });
 });

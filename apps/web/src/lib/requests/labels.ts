@@ -80,7 +80,7 @@ export const CAUSE_SENTENCE: Record<RequestCause, string> = {
   // Read only while the agent is open and after no restart made the missed start good: the job
   // was refused for a reason the switch does not explain.
   not_started:
-    'Ajanın çalışması başlatılamadı: ajan açık olduğu hâlde çalıştırıcı işi başlatmadı (ajanın kartı okunamadı, iş verildikten sonra talep değişti ya da çalıştırıcı işi o an alamadı).',
+    'Ajanın çalışması başlatılamadı: ajan açık olduğu hâlde çalıştırıcı işi başlatmadı (ajanın kartı okunamadı, iş verildikten sonra talep değişti, projenin harcama sınırı o an doluydu ya da çalıştırıcı işi o an alamadı).',
   no_submission: 'Ajan sonucu onaya sunmadan çalışmasını bitirdi.',
   run_failed: 'Ajanın çalışması bir hata nedeniyle tamamlanamadı.',
   run_interrupted: 'Talep değiştiği için ajanın çalışması yarıda kesildi.',
@@ -129,8 +129,9 @@ export const RETURNED_NEXT =
  * again and starts a new run. Two ways stop by a switch (a stopped agent, a closed coordinator):
  * opening the switch starts the work again (8 October decision 49), and the sentence says so.
  * Every other way on is "Yönlendirmeyi düzelt". A closed request (returned, cancelled, stopped,
- * rejected) has no way on and no entry. A request held by a closed AI permission has none either:
- * while it holds, the routing cannot be corrected.
+ * rejected) has no way on and no entry. A request held by a closed AI permission has none either,
+ * and neither has one held by a reached spending limit: while they hold, the routing cannot be
+ * corrected.
  */
 export const CAUSE_NEXT: Partial<Record<RequestCause, string>> = {
   coordinator_closed:
@@ -157,6 +158,10 @@ export const CAUSE_NEXT: Partial<Record<RequestCause, string>> = {
   // moment, or the permission was opened outside the panel.
   ai_permission_interrupted:
     'Ajan kapalıysa Ofis görünümünden açıldığında iş kendiliğinden başlar. Ajan açıksa "Yönlendirmeyi düzelt" ile işi yeniden verin.',
+  // The limit is not reached any more and the work did not start again: the limit was changed
+  // outside the panel, or the step's agent was stopped when it was raised.
+  spending_limit_interrupted:
+    '"Yönlendirmeyi düzelt" ile işi bir ajana yeniden verin; yeni bir çalışma başlar. İş gerekmiyorsa talebi kapatabilirsiniz.',
 };
 
 /** What only the founder is told, because only the founder can remove the cause. */
@@ -172,6 +177,9 @@ export const CAUSE_FOR_FOUNDER: Partial<Record<RequestCause, string>> = {
     'Kart taslak durumunda; deneme durumunda ve talep kurucuya ait değil; ya da kart, proje içindeki talepte çalışmaya açık değil (project_context alanı). Kart depoda değiştirilir.',
   ai_permission_closed:
     'İzni projenin sayfasından açabilirsiniz; passkey ister. İzin açılınca bekleyen iş kendiliğinden yeniden başlar. İş gerekmiyorsa talebi durdurabilirsiniz.',
+  // 11 October decision 1: raising the limit or taking it away starts the held work again.
+  spending_limit_reached:
+    'Sınırı projenin sayfasındaki "Çalışmalar" sekmesinden yükseltebilirsiniz; passkey ister. Sınır yükselince bekleyen iş kendiliğinden yeniden başlar. İş gerekmiyorsa talebi durdurabilirsiniz.',
 };
 
 /**
@@ -179,6 +187,23 @@ export const CAUSE_FOR_FOUNDER: Partial<Record<RequestCause, string>> = {
  * project's requests already reads "Ajanlar çalışamaz" on the project's page.
  */
 export const AI_CLOSED_FOR_OTHERS = 'Talep kayıtlı. Yapay zekâ iznini yalnızca kurucu açar.';
+
+/**
+ * A request held by a reached AI spending limit, for a reader who cannot raise it. Never an
+ * amount: the members learn that the limit is reached and nothing more (docs/SONRA.md P3-v).
+ */
+export const LIMIT_FOR_OTHERS = 'Talep kayıtlı. Harcama sınırını yalnızca kurucu yükseltir.';
+
+/**
+ * A result that waits while the AI spending limit of its project is reached (decision 17): unlike
+ * a closed AI permission the limit does not hold the result, which is approved, rejected and
+ * accepted as always; only what calls for a new run is held. Said in the approval card, and in
+ * the acceptance card in the requester's words.
+ */
+export const CHANGES_HELD_BY_LIMIT =
+  'Bu projenin yapay zekâ harcama sınırı doldu: sınır yükseltilene kadar düzeltme istenemez. Sonucu onaylayabilir ya da reddedebilirsiniz.';
+export const CHANGES_HELD_BY_LIMIT_FOR_REQUESTER =
+  'Bu projenin yapay zekâ harcama sınırı doldu: sınır yükseltilene kadar düzeltme istenemez. Sonuç istediğiniz gibiyse onaylayabilirsiniz.';
 
 /** The link from a held request or a held result to the page where the permission is opened. */
 export const OPEN_PROJECT = 'Projeyi aç';

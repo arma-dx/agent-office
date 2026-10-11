@@ -94,6 +94,7 @@ const PROJECT_REFUSALS: readonly (string | undefined)[] = [
   'project_not_available',
   'project_closed',
   'project_ai_not_allowed',
+  'project_spending_limit_reached',
 ];
 
 const WHO_READS = {
@@ -222,8 +223,10 @@ function RequestDialog({
   // A project is chosen and the list that says whether it takes a request is still on its way.
   const projectUnknown = project !== null && projects.isPending;
   const founder = company.role === 'founder';
-  // An offered project cannot be chosen: the form says why, and who can change that.
-  const disabledOffered = options.some((option) => option.disabled);
+  // An offered project cannot be chosen: the form says why, and who can change that. One line for
+  // each reason that is offered.
+  const permissionHeld = options.some((option) => option.held === 'permission');
+  const limitHeld = options.some((option) => option.held === 'limit');
 
   const send = useMutation({
     mutationFn: (sent: CreateRequest) => createRequest(company.companyId, sent),
@@ -376,7 +379,8 @@ function RequestDialog({
               aria-invalid={gone}
               aria-describedby={[
                 `${projectId}-help`,
-                disabledOffered ? `${projectId}-closed` : null,
+                permissionHeld ? `${projectId}-closed` : null,
+                limitHeld ? `${projectId}-limit` : null,
                 gone ? `${projectId}-problem` : null,
               ]
                 .filter(Boolean)
@@ -442,12 +446,20 @@ function RequestDialog({
                   : 'Üyesi olduğunuz açık proje yok.'
                 : 'İsteğe bağlı. Proje seçerseniz talebi yalnızca o projenin üyeleri ve kurucu görür, ajanlar da o projenin içinde çalışır. Proje, talep gönderildikten sonra değiştirilemez.'}
             </p>
-            {disabledOffered ? (
+            {permissionHeld ? (
               <p id={`${projectId}-closed`} className="text-sm text-ink-secondary">
                 Ajanların çalışamadığı projede talep açılamaz.{' '}
                 {founder
                   ? 'Yapay zekâ iznini projenin sayfasından açabilirsiniz.'
                   : 'Yapay zekâ iznini kurucu açar.'}
+              </p>
+            ) : null}
+            {limitHeld ? (
+              <p id={`${projectId}-limit`} className="text-sm text-ink-secondary">
+                Harcama sınırı dolan projede talep açılamaz.{' '}
+                {founder
+                  ? 'Sınırı projenin sayfasından yükseltebilirsiniz.'
+                  : 'Sınırı kurucu yükseltir.'}
               </p>
             ) : null}
           </div>

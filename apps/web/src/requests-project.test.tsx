@@ -1657,7 +1657,7 @@ describe('the page of a request that waits for a switch', () => {
     expect(stageLine()).toContain('Aşama: Sizden bekleniyor: çalışma başlamadı');
     expect(
       within(main).getByText(
-        'Ajanın çalışması başlatılamadı: ajan açık olduğu hâlde çalıştırıcı işi başlatmadı (ajanın kartı okunamadı, iş verildikten sonra talep değişti ya da çalıştırıcı işi o an alamadı).',
+        'Ajanın çalışması başlatılamadı: ajan açık olduğu hâlde çalıştırıcı işi başlatmadı (ajanın kartı okunamadı, iş verildikten sonra talep değişti, projenin harcama sınırı o an doluydu ya da çalıştırıcı işi o an alamadı).',
       ),
     ).toBeVisible();
     // Opening an agent does not start this one: a person gives the work again.

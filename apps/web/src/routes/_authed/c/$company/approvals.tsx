@@ -124,6 +124,7 @@ function ApprovalsScreen() {
                 requestId={card.requestId}
                 returnsToAgent={card.returnsToAgent}
                 agentsMayWork={card.agentsMayWork}
+                spendingLimitReached={card.spendingLimitReached}
                 inPlaceOf={card.forRequester}
                 approver={card.result.approvedBy ? personName(card.result.approvedBy) : null}
               />

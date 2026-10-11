@@ -5,6 +5,7 @@ import { RequestGroups } from '@/components/requests/request-list';
 import { EmptyState, ErrorMessage, LoadingRows } from '@/components/states';
 import { Button } from '@/components/ui/button';
 import { userMessage } from '@/lib/api';
+import { NO_REQUEST_AT_LIMIT } from '@/lib/projects/labels';
 import { useBackgroundRefresh } from '@/lib/refresh';
 import { useOpenRequestDialogFor } from '@/lib/requests/dialog';
 import { fetchRequests, requestsKey, requestsQueryOptions } from '@/lib/requests/query';
@@ -17,8 +18,9 @@ import { useCompany } from '@/lib/session';
  * founder read all of its requests, so there is no "only mine" switch here.
  *
  * A project that takes no request says why instead of offering the button: a closed project
- * (decision 48: its open requests run on to their end and stay listed here), and a project where
- * agents may not work (rule 12), in the founder's words or in an employee's.
+ * (decision 48: its open requests run on to their end and stay listed here), a project where
+ * agents may not work (rule 12), and a project whose AI spending limit is reached (decision 17),
+ * each in the founder's words or in an employee's.
  *
  * The list moves by itself (agents work on it), so it is refreshed every half minute with a
  * background request, which does not extend the session's idle time (rule 3).
@@ -45,7 +47,9 @@ export function ProjectRequests({ project }: { project: ProjectDetail }): ReactN
             ? 'Yapay zekâ iznini özellikler panelinden açabilirsiniz.'
             : 'Yapay zekâ iznini kurucu açar.'
         }`
-      : null;
+      : project.spendingLimitReached
+        ? NO_REQUEST_AT_LIMIT[company.role === 'founder' ? 'founder' : 'others']
+        : null;
   const open =
     openFor !== null && blocked === null ? (
       <Button

@@ -44,6 +44,7 @@ describe('what the request form offers under Proje', () => {
       name: 'Cari mutabakat',
       label: 'Cari mutabakat',
       disabled: false,
+      held: null,
     });
   });
 
@@ -65,9 +66,46 @@ describe('what the request form offers under Proje', () => {
         name: 'Depo otomasyonu',
         label: 'Depo otomasyonu (ajanlar çalışamaz)',
         disabled: true,
+        held: 'permission',
       },
-      { id: ID(1), name: 'Lansman', label: 'Lansman', disabled: false },
-      { id: ID(3), name: 'Rota planı', label: 'Rota planı (ajanlar çalışamaz)', disabled: true },
+      { id: ID(1), name: 'Lansman', label: 'Lansman', disabled: false, held: null },
+      {
+        id: ID(3),
+        name: 'Rota planı',
+        label: 'Rota planı (ajanlar çalışamaz)',
+        disabled: true,
+        held: 'permission',
+      },
+    ]);
+  });
+
+  it('a project whose AI spending limit is reached is offered disabled, with that reason; the permission is said first', () => {
+    const options = projectOptions([
+      open(1, 'Lansman', { spendingLimitReached: true }),
+      open(2, 'Çağrı merkezi'),
+      // Agents may not work there and the limit is reached too: the permission is the reason.
+      open(3, 'Depo otomasyonu', {
+        aiAllowed: false,
+        agentsMayWork: false,
+        spendingLimitReached: true,
+      }),
+    ]);
+    expect(options).toEqual([
+      { id: ID(2), name: 'Çağrı merkezi', label: 'Çağrı merkezi', disabled: false, held: null },
+      {
+        id: ID(3),
+        name: 'Depo otomasyonu',
+        label: 'Depo otomasyonu (ajanlar çalışamaz)',
+        disabled: true,
+        held: 'permission',
+      },
+      {
+        id: ID(1),
+        name: 'Lansman',
+        label: 'Lansman (harcama sınırı doldu)',
+        disabled: true,
+        held: 'limit',
+      },
     ]);
   });
 

@@ -19,6 +19,7 @@ import { ProjectRuns } from '@/components/projects/project-runs';
 import { ProjectTile } from '@/components/projects/project-tile';
 import { PageLabel } from '@/components/shell/page-label';
 import { PropertiesPanel } from '@/components/shell/properties-panel';
+import { InlineBanner } from '@/components/inline-banner';
 import { EmptyState, ErrorMessage, LoadingRows } from '@/components/states';
 import { StatusBadge } from '@/components/status';
 import { TabBar } from '@/components/tab-bar';
@@ -27,7 +28,7 @@ import { Tabs, TabsContent } from '@/components/ui/tabs';
 import { ApiError, userMessage } from '@/lib/api';
 import { useReturnFocus } from '@/lib/focus';
 import { useWideWindow } from '@/lib/office/use-wide-window';
-import { agentsSentence, UNAVAILABLE } from '@/lib/projects/labels';
+import { agentsSentence, LIMIT_REACHED, UNAVAILABLE } from '@/lib/projects/labels';
 import { projectQueryOptions } from '@/lib/projects/query';
 import { useCompany } from '@/lib/session';
 
@@ -147,6 +148,13 @@ function ProjectPage({ project }: { project: ProjectDetail }) {
       <p role="status" className="text-sm">
         {agentsSentence(project)}
       </p>
+      {/* The AI spending limit is reached (decision 17): said to every reader of the project,
+          above every tab; who raises it is said in the reader's own voice. Never an amount. */}
+      {project.spendingLimitReached ? (
+        <InlineBanner tone="warning" compact>
+          {LIMIT_REACHED[project.actions.setAiSpendingLimit ? 'founder' : 'others']}
+        </InlineBanner>
+      ) : null}
       {project.closed ? (
         <p className="text-sm text-ink-secondary">
           Bu proje kapalı. Yeniden açmak için Projeyi düzenle ile durumunu Beklemede, Planlandı ya

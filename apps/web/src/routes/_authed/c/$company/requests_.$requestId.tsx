@@ -241,6 +241,7 @@ function RequestScreen() {
           requestId={request.id}
           returnsToAgent={request.acceptance.returnsToAgent}
           agentsMayWork={request.agentsMayWork}
+          spendingLimitReached={request.spendingLimitReached}
           inPlaceOf={request.acceptance.inPlaceOfRequester ? request.requester : null}
           approver={request.result?.approvedBy ? personName(request.result.approvedBy) : null}
         />
