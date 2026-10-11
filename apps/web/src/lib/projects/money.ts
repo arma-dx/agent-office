@@ -63,6 +63,16 @@ export function remainingUsd(limitUsd: string, spentUsd: string): string {
 }
 
 /**
+ * A dollar amount with up to six decimals, rounded UP to whole cents ("0.004000" is "0.01",
+ * "0.000000" is "0.00"). What is left of a limit is shown this way: rounded to the nearest cent
+ * it would read "$0,00" for a limit that is not reached yet, beside a sentence that says so.
+ */
+export function upToCentsUsd(amountUsd: string): string {
+  const cents = (micros(amountUsd) + 9_999n) / 10_000n;
+  return `${String(cents / 100n)}.${String(cents % 100n).padStart(2, '0')}`;
+}
+
+/**
  * A limit that is not above what was spent is reached the moment it is saved. The two amounts are
  * compared exactly, never as floating point numbers.
  */

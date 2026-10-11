@@ -6,6 +6,7 @@ import {
   limitAlreadyReached,
   parseAmountInput,
   remainingUsd,
+  upToCentsUsd,
 } from './money.ts';
 
 describe('money as the panel writes and reads it', () => {
@@ -64,6 +65,23 @@ describe('money as the panel writes and reads it', () => {
     // Not a floating point subtraction: 0.3 - 0.1 is 0.2.
     expect(remainingUsd('0.3', '0.1')).toBe('0.200000');
     expect(formatMoney(remainingUsd('25.00', '1.674690'), 'USD')).toBe('$23,33');
+  });
+
+  it('what is left is shown rounded up to the cent: zero only when nothing is left', () => {
+    expect(upToCentsUsd('0.000001')).toBe('0.01');
+    expect(upToCentsUsd('0.004000')).toBe('0.01');
+    expect(upToCentsUsd('0.010000')).toBe('0.01');
+    expect(upToCentsUsd('0.010001')).toBe('0.02');
+    expect(upToCentsUsd('0.000000')).toBe('0.00');
+    expect(upToCentsUsd('0')).toBe('0.00');
+    expect(upToCentsUsd('23.325310')).toBe('23.33');
+    expect(upToCentsUsd('5')).toBe('5.00');
+    expect(upToCentsUsd('999999.990000')).toBe('999999.99');
+    // Half a cent below the limit: not reached, and not "nothing left".
+    expect(formatMoney(upToCentsUsd(remainingUsd('5.00', '4.996000')), 'USD')).toBe('$0,01');
+    // Reached, or passed by a call in flight: nothing left.
+    expect(formatMoney(upToCentsUsd(remainingUsd('25.00', '25.004100')), 'USD')).toBe('$0,00');
+    expect(formatMoney(upToCentsUsd(remainingUsd('25', '25')), 'USD')).toBe('$0,00');
   });
 
   it('a limit that is not above what was spent is reached at once', () => {

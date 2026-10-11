@@ -29,6 +29,7 @@ import {
   formatMoney,
   limitAlreadyReached,
   remainingUsd,
+  upToCentsUsd,
 } from '@/lib/projects/money';
 import { projectKey, projectRunsKey, setProjectAiSpendingLimit } from '@/lib/projects/query';
 import { useStoreProject } from '@/lib/projects/store';
@@ -340,7 +341,8 @@ export function SpendingLimit({ project }: { project: ProjectDetail }) {
           <div className="flex flex-col gap-0.5">
             <dt className="text-xs text-ink-secondary">Kalan</dt>
             <dd className="font-medium tabular-nums">
-              {formatMoney(remainingUsd(spending.limitUsd, spending.spentUsd), 'USD')}
+              {/* Up to the cent: zero is written only when nothing is left. */}
+              {formatMoney(upToCentsUsd(remainingUsd(spending.limitUsd, spending.spentUsd)), 'USD')}
             </dd>
           </div>
         )}

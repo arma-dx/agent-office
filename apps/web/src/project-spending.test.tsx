@@ -258,6 +258,17 @@ describe('projects: the founder and the AI spending limit', () => {
         },
       ],
       [
+        // Half a cent below the limit: not reached, so what is left is not written as zero
+        // (the amount is rounded up to the cent).
+        withSpending('5.00', '4.996000'),
+        {
+          spent: '$5,00',
+          limit: '$5,00',
+          left: '$0,01',
+          line: "Harcama, sınırın yüzde 80'ine ulaştı.",
+        },
+      ],
+      [
         // Reached is the server's word; the sum has passed the limit by a call in flight.
         withSpending('25.00', '25.004100', true),
         {
