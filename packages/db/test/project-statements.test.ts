@@ -3,6 +3,8 @@ import { afterAll, describe, expect, it } from 'vitest';
 import type { ContextInput } from '../src/context.ts';
 import {
   addProjectMember,
+  addProjectMilestone,
+  changeProjectMilestone,
   insertCustomer,
   insertProject,
   listCustomers,
@@ -14,14 +16,26 @@ import {
   readCustomer,
   readProject,
   removeProjectMember,
+  removeProjectMilestone,
   setCustomerPermissions,
   setProjectAiPermission,
+  setProjectBudget,
   setProjectMemberRole,
   updateProject,
   type NewProject,
 } from '../src/projects.ts';
 import { ids } from './fixtures.ts';
-import { closePools, inTransaction, noDatabase, type Tx } from './helpers.ts';
+import {
+  adminQuery,
+  auditMark,
+  closePools,
+  inTransaction,
+  noDatabase,
+  openTransaction,
+  removeRequests,
+  untilBlocked,
+  type Tx,
+} from './helpers.ts';
 import { stepUp } from './step-up.ts';
 
 // The statements the API runs for the Projects section, with the API's restricted role. What a
@@ -529,5 +543,318 @@ describe.skipIf(noDatabase)('statements of the Projects section', () => {
         expect(await readCompanyKind(tx.client)).toBeNull();
       }
     });
+  });
+});
+
+// Step 3 of the Projects section (8 October decision 17): the budget and the milestones.
+describe.skipIf(noDatabase)('statements of the budget and the milestones', () => {
+  afterAll(closePools);
+
+  const ADD_MEMBER =
+    'insert into office.project_members (company_id, project_id, user_id) values ($1, $2, $3)';
+
+  /** projectA with employeeA its owner, approverA a manager and sharedEmployee a plain member. */
+  async function projectWithRoles(tx: Tx): Promise<void> {
+    await tx.setContext(founderA);
+    await tx.exec(ADD_MEMBER, [ids.arma, ids.projectA, ids.approverA]);
+    await tx.exec(ADD_MEMBER, [ids.arma, ids.projectA, ids.sharedEmployee]);
+    await setProjectMemberRole(tx.client, ids.projectA, ids.employeeA, 'owner');
+    await setProjectMemberRole(tx.client, ids.projectA, ids.approverA, 'manager');
+  }
+
+  const sharedA: ContextInput = { companyId: ids.arma, userId: ids.sharedEmployee };
+
+  async function milestones(tx: Tx): Promise<unknown> {
+    return (await readProject(tx.client, ids.projectA))?.milestones;
+  }
+
+  it('readProject: the budget is in the row for the owner, a manager and the founder, and null for a plain member', async () => {
+    await inTransaction(async (tx) => {
+      await projectWithRoles(tx);
+      expect(
+        await setProjectBudget(tx.client, ids.projectA, { amount: '150000.5', currency: 'TRY' }),
+      ).toBe(1);
+      for (const context of [founderA, employeeA, approverA]) {
+        await tx.setContext(context);
+        expect(await readProject(tx.client, ids.projectA), context.userId ?? '').toMatchObject({
+          budget: '150000.50',
+          budget_currency: 'TRY',
+          milestones: [],
+        });
+        const listed = (await listProjects(tx.client, 100)).find((row) => row.id === ids.projectA);
+        expect(listed).toMatchObject({ budget: '150000.50', budget_currency: 'TRY' });
+      }
+      // A plain member reads the project, and neither the amount nor its currency.
+      await tx.setContext(sharedA);
+      const row = await readProject(tx.client, ids.projectA);
+      expect(row).toMatchObject({ budget: null, budget_currency: null, milestones: [] });
+      expect(JSON.stringify(row)).not.toContain('150000');
+      const listed = (await listProjects(tx.client, 100)).find(
+        (candidate) => candidate.id === ids.projectA,
+      );
+      expect(listed).toMatchObject({ budget: null, budget_currency: null });
+      // A project without a budget: null for the founder too.
+      await tx.setContext(founderA);
+      expect(await readProject(tx.client, ids.projectANoAi)).toMatchObject({
+        budget: null,
+        budget_currency: null,
+      });
+    });
+  });
+
+  it('setProjectBudget: sets, changes and clears; 0 rows for a project the person cannot read', async () => {
+    await inTransaction(async (tx) => {
+      await tx.setContext(founderA);
+      const steps: [{ amount: string; currency: string } | null, string | null, string | null][] = [
+        [{ amount: '1', currency: 'USD' }, '1.00', 'USD'],
+        [{ amount: '999999999999.99', currency: 'EUR' }, '999999999999.99', 'EUR'],
+        [{ amount: '0.01', currency: 'EUR' }, '0.01', 'EUR'],
+        [null, null, null],
+        // Clearing a budget that is not there is not an error.
+        [null, null, null],
+      ];
+      for (const [budget, amount, currency] of steps) {
+        expect(await setProjectBudget(tx.client, ids.projectA, budget)).toBe(1);
+        expect(await readProject(tx.client, ids.projectA)).toMatchObject({
+          budget: amount,
+          budget_currency: currency,
+        });
+      }
+      // The other company's founder, an employee who is no member, an external person, nobody.
+      for (const context of [founderP, employeeP, approverA, externalA, ...NOBODY]) {
+        await tx.setContext(context);
+        expect(
+          await setProjectBudget(tx.client, ids.projectA, { amount: '5', currency: 'TRY' }),
+          JSON.stringify(context),
+        ).toBe(0);
+      }
+      await tx.setContext(founderA);
+      expect(await setProjectBudget(tx.client, randomUUID(), null)).toBe(0);
+      expect(await readProject(tx.client, ids.projectA)).toMatchObject({ budget: null });
+      // A plain member is refused by the database, not by a missing row.
+      await tx.setContext(employeeA);
+      await tx.exec('savepoint refused');
+      await expect(
+        setProjectBudget(tx.client, ids.projectA, { amount: '5', currency: 'TRY' }),
+      ).rejects.toMatchObject({ code: '42501' });
+      await tx.exec('rollback to savepoint refused');
+    });
+  });
+
+  it('addProjectMilestone: adds at the end, stores the id in lower case, adds nothing for an id that is there and nothing to a full list', async () => {
+    await inTransaction(async (tx) => {
+      // A plain member keeps the milestones.
+      await tx.setContext(employeeA);
+      const first = randomUUID();
+      const second = randomUUID();
+      expect(
+        await addProjectMilestone(tx.client, ids.projectA, {
+          id: first,
+          name: 'Tasarım onayı',
+          date: '2026-11-15',
+        }),
+      ).toBe(1);
+      // The same id again (a repeated send) adds nothing, whatever else it says.
+      expect(
+        await addProjectMilestone(tx.client, ids.projectA, {
+          id: first,
+          name: 'Başka',
+          date: null,
+        }),
+      ).toBe(0);
+      expect(
+        await addProjectMilestone(tx.client, ids.projectA, {
+          id: first.toUpperCase(),
+          name: 'Başka',
+          date: null,
+        }),
+      ).toBe(0);
+      expect(
+        await addProjectMilestone(tx.client, ids.projectA, {
+          id: second.toUpperCase(),
+          name: 'Yayın',
+          date: null,
+        }),
+      ).toBe(1);
+      expect(await milestones(tx)).toEqual([
+        { id: first, name: 'Tasarım onayı', date: '2026-11-15', done: false },
+        { id: second, name: 'Yayın', date: null, done: false },
+      ]);
+      // A name the database does not take is its check's refusal.
+      await tx.exec('savepoint refused');
+      await expect(
+        addProjectMilestone(tx.client, ids.projectA, { id: randomUUID(), name: ' ', date: null }),
+      ).rejects.toMatchObject({ code: '23514' });
+      await tx.exec('rollback to savepoint refused');
+      // Nobody who cannot change the project adds one.
+      for (const context of [
+        approverA,
+        externalA,
+        founderP,
+        { ...founderA, agentCode: 'KOR-1', projectId: ids.projectA },
+        ...NOBODY,
+      ]) {
+        await tx.setContext(context);
+        expect(
+          await addProjectMilestone(tx.client, ids.projectA, {
+            id: randomUUID(),
+            name: 'x',
+            date: null,
+          }),
+          JSON.stringify(context),
+        ).toBe(0);
+      }
+      // Up to 50; the 51st adds nothing.
+      await tx.setContext(founderA);
+      for (let n = 3; n <= 50; n += 1) {
+        expect(
+          await addProjectMilestone(tx.client, ids.projectA, {
+            id: randomUUID(),
+            name: `Adım ${String(n)}`,
+            date: null,
+          }),
+        ).toBe(1);
+      }
+      expect(
+        await addProjectMilestone(tx.client, ids.projectA, {
+          id: randomUUID(),
+          name: 'Bir fazla',
+          date: null,
+        }),
+      ).toBe(0);
+      expect(await milestones(tx)).toHaveLength(50);
+    });
+  });
+
+  it('changeProjectMilestone: changes only the fields that were sent, of the one entry, and keeps the order; 0 rows for an unknown id', async () => {
+    await inTransaction(async (tx) => {
+      await tx.setContext(employeeA);
+      const [a, b, c] = [randomUUID(), randomUUID(), randomUUID()];
+      await addProjectMilestone(tx.client, ids.projectA, { id: a, name: 'Bir', date: null });
+      await addProjectMilestone(tx.client, ids.projectA, {
+        id: b,
+        name: 'İki',
+        date: '2026-11-15',
+      });
+      await addProjectMilestone(tx.client, ids.projectA, { id: c, name: 'Üç', date: null });
+      const others = [
+        { id: a, name: 'Bir', date: null, done: false },
+        { id: c, name: 'Üç', date: null, done: false },
+      ];
+      const steps: [Parameters<typeof changeProjectMilestone>[3], Record<string, unknown>][] = [
+        [{ done: true }, { name: 'İki', date: '2026-11-15', done: true }],
+        [{ name: 'İki (müşteri)' }, { name: 'İki (müşteri)', date: '2026-11-15', done: true }],
+        // null clears the day; undefined leaves it.
+        [{ date: null }, { name: 'İki (müşteri)', date: null, done: true }],
+        [
+          { date: undefined, done: false },
+          { name: 'İki (müşteri)', date: null, done: false },
+        ],
+        [
+          { name: 'Son', date: '2027-01-31', done: true },
+          { name: 'Son', date: '2027-01-31', done: true },
+        ],
+      ];
+      for (const [changes, expected] of steps) {
+        // The id as the panel may send it: any letter case.
+        expect(
+          await changeProjectMilestone(tx.client, ids.projectA, b.toUpperCase(), changes),
+          JSON.stringify(changes),
+        ).toBe(1);
+        expect(await milestones(tx)).toEqual([others[0], { id: b, ...expected }, others[1]]);
+      }
+      expect(
+        await changeProjectMilestone(tx.client, ids.projectA, randomUUID(), { done: true }),
+      ).toBe(0);
+      for (const changes of [{ name: '  ' }, { date: '2026-02-30' }]) {
+        await tx.exec('savepoint refused');
+        await expect(
+          changeProjectMilestone(tx.client, ids.projectA, b, changes),
+        ).rejects.toMatchObject({ code: '23514' });
+        await tx.exec('rollback to savepoint refused');
+      }
+      for (const context of [approverA, externalA, founderP, ...NOBODY]) {
+        await tx.setContext(context);
+        expect(
+          await changeProjectMilestone(tx.client, ids.projectA, b, { done: false }),
+          JSON.stringify(context),
+        ).toBe(0);
+      }
+      await tx.setContext(employeeA);
+      expect(await milestones(tx)).toEqual([
+        others[0],
+        { id: b, name: 'Son', date: '2027-01-31', done: true },
+        others[1],
+      ]);
+    });
+  });
+
+  it('removeProjectMilestone: removes the one entry; 0 rows the second time', async () => {
+    await inTransaction(async (tx) => {
+      await tx.setContext(employeeA);
+      const [a, b] = [randomUUID(), randomUUID()];
+      await addProjectMilestone(tx.client, ids.projectA, { id: a, name: 'Bir', date: null });
+      await addProjectMilestone(tx.client, ids.projectA, { id: b, name: 'İki', date: null });
+      for (const context of [approverA, externalA, founderP, ...NOBODY]) {
+        await tx.setContext(context);
+        expect(
+          await removeProjectMilestone(tx.client, ids.projectA, a),
+          JSON.stringify(context),
+        ).toBe(0);
+      }
+      await tx.setContext(employeeA);
+      expect(await removeProjectMilestone(tx.client, ids.projectA, a.toUpperCase())).toBe(1);
+      expect(await milestones(tx)).toEqual([{ id: b, name: 'İki', date: null, done: false }]);
+      expect(await removeProjectMilestone(tx.client, ids.projectA, a)).toBe(0);
+      // The last one leaves an empty list, not a null.
+      expect(await removeProjectMilestone(tx.client, ids.projectA, b)).toBe(1);
+      expect(await milestones(tx)).toEqual([]);
+      expect(await removeProjectMilestone(tx.client, ids.projectA, b)).toBe(0);
+    });
+  });
+
+  it('two people who add a milestone at the same moment both find their entry', async () => {
+    // Two connections that commit: the list is put back and the audit rows removed at the end.
+    const mark = await auditMark();
+    const first = await openTransaction('app', employeeA);
+    const second = await openTransaction('app', founderA);
+    const [one, two] = [randomUUID(), randomUUID()];
+    try {
+      expect(
+        await addProjectMilestone(first.tx.client, ids.projectA, {
+          id: one,
+          name: 'Birinci',
+          date: null,
+        }),
+      ).toBe(1);
+      // The second add waits for the first transaction and then adds to the list as the first
+      // left it: the statement builds the list itself, it does not write back a list it read.
+      const waiting = addProjectMilestone(second.tx.client, ids.projectA, {
+        id: two,
+        name: 'İkinci',
+        date: '2026-12-01',
+      });
+      await untilBlocked(second.pid);
+      await first.commit();
+      expect(await waiting).toBe(1);
+      await second.commit();
+      expect(
+        await adminQuery('select milestones from office.projects where id = $1', [ids.projectA]),
+      ).toEqual([
+        {
+          milestones: [
+            { id: one, name: 'Birinci', date: null, done: false },
+            { id: two, name: 'İkinci', date: '2026-12-01', done: false },
+          ],
+        },
+      ]);
+    } finally {
+      await first.rollback();
+      await second.rollback();
+      await adminQuery(`update office.projects set milestones = '[]' where id = $1`, [
+        ids.projectA,
+      ]);
+      await removeRequests([], mark);
+    }
   });
 });

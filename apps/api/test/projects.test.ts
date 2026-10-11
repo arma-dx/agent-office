@@ -904,6 +904,7 @@ describe.skipIf(noDatabase)('projects', () => {
     expect(forFounder.actions).toEqual({
       edit: true,
       addMembers: true,
+      setBudget: true,
       setAiPermission: true,
       setCustomerPermissions: true,
     });
@@ -2314,6 +2315,548 @@ describe.skipIf(noDatabase)('projects', () => {
     expect(await read(employee, projectId)).toMatchObject({
       aiAllowed: false,
       agentsMayWork: false,
+    });
+  });
+
+  // Step 3 of the Projects section (8 October decision 17): the budget and the milestones.
+  describe('budget and milestones', () => {
+    const BUDGET_REFUSED =
+      'Projenin bütçesini yalnızca projenin sahibi, yöneticileri ve kurucu değiştirebilir.';
+
+    const setBudget = (session: string, projectId: string, budget: unknown, company?: string) =>
+      call(session, 'PUT', `/api/projects/${projectId}/budget`, { budget }, company);
+
+    /** A project of the employee (its owner) with a manager (holder) and a plain member (newcomer). */
+    async function staffed(name: string): Promise<ProjectDetail> {
+      const project = await open(employee, { name, memberIds: [ids.holder, ids.newcomer] });
+      return giveRole(employee, project.id, ids.holder, 'manager');
+    }
+
+    async function stored(projectId: string) {
+      const [row] = await adminQuery<{
+        budget: string | null;
+        budget_currency: string | null;
+        milestones: unknown[];
+      }>(
+        'select budget::text as budget, budget_currency, milestones from office.projects where id = $1',
+        [projectId],
+      );
+      if (!row) {
+        throw new Error('No such project');
+      }
+      return row;
+    }
+
+    async function trace(projectId: string): Promise<{ event: string; user_id: string | null }[]> {
+      return adminQuery(
+        `select event, user_id from office.audit_log
+         where project_id = $1 and event ~ '^project_(budget|milestones)_' order by id`,
+        [projectId],
+      );
+    }
+
+    const milestonesUrl = (projectId: string, milestoneId?: string): string =>
+      `/api/projects/${projectId}/milestones${milestoneId === undefined ? '' : `/${milestoneId}`}`;
+
+    /** Sends a milestone request and expects the whole project back. */
+    async function milestone(
+      session: string,
+      method: Method,
+      url: string,
+      payload?: object,
+    ): Promise<ProjectDetail> {
+      const res = await call(session, method, url, payload);
+      expect(res.statusCode, res.body).toBe(200);
+      return projectDetailSchema.parse(res.json());
+    }
+
+    /**
+     * Runs a request of the server while a change of somebody else, made behind a lock on the
+     * project row, has not committed yet: the route reads the project as it was, its update waits
+     * for the row and then meets the change.
+     */
+    async function whileProjectIsHeld(
+      projectId: string,
+      change: (admin: {
+        query(sql: string, values?: unknown[]): Promise<unknown>;
+      }) => Promise<void>,
+      request: () => Promise<LightMyRequestResponse>,
+    ): Promise<LightMyRequestResponse> {
+      const admin = await adminPool.connect();
+      let pending: Promise<LightMyRequestResponse>;
+      try {
+        await admin.query('begin');
+        await admin.query('select 1 from office.projects where id = $1 for update', [projectId]);
+        await change(admin);
+        pending = request();
+        await untilServerWaits();
+        await admin.query('commit');
+      } catch (error) {
+        await admin.query('rollback');
+        throw error;
+      } finally {
+        admin.release();
+      }
+      return pending;
+    }
+
+    it('PUT budget: the owner, a manager and the founder set and clear it; the answer carries it for them', async () => {
+      const project = await staffed('Bütçesi olan proje');
+      expect(project.budget).toEqual({ visible: true, value: null });
+      expect(project.actions.setBudget).toBe(true);
+      const setters: [string, { amount: string; currency: string }, string][] = [
+        [employee, { amount: '150000.5', currency: 'TRY' }, '150000.50'],
+        [colleague, { amount: '99', currency: 'USD' }, '99.00'],
+        [founder, { amount: '2500000.00', currency: 'EUR' }, '2500000.00'],
+      ];
+      for (const [session, budget, amount] of setters) {
+        const res = await setBudget(session, project.id, budget);
+        expect(res.statusCode, res.body).toBe(200);
+        const answer = projectDetailSchema.parse(res.json());
+        // The whole project, as every change answers.
+        expect(answer).toMatchObject({
+          id: project.id,
+          name: 'Bütçesi olan proje',
+          memberCount: 3,
+        });
+        expect(answer.budget).toEqual({
+          visible: true,
+          value: { amount, currency: budget.currency },
+        });
+        expect(answer.actions.setBudget).toBe(true);
+        expect(await stored(project.id)).toMatchObject({
+          budget: amount,
+          budget_currency: budget.currency,
+        });
+      }
+      // Each of the three reads what the last one set; the founder is no member of the project.
+      for (const session of [employee, colleague, founder]) {
+        expect((await read(session, project.id)).budget).toEqual({
+          visible: true,
+          value: { amount: '2500000.00', currency: 'EUR' },
+        });
+      }
+      // null takes the budget away; taking away what is not there is no error.
+      for (const session of [colleague, founder]) {
+        const res = await setBudget(session, project.id, null);
+        expect(res.statusCode, res.body).toBe(200);
+        expect(projectDetailSchema.parse(res.json()).budget).toEqual({
+          visible: true,
+          value: null,
+        });
+        expect(await stored(project.id)).toMatchObject({ budget: null, budget_currency: null });
+      }
+    });
+
+    it("PUT budget: a plain member is told 403 project_budget_not_allowed and nothing changes; a non-member and an unknown project are 404; an external person gets the section's answer", async () => {
+      const project = await staffed('Bütçesine dokunulmayan proje');
+      await setBudget(employee, project.id, { amount: '500', currency: 'TRY' });
+      for (const budget of [{ amount: '1', currency: 'USD' }, null]) {
+        const res = await setBudget(third, project.id, budget);
+        expect(res.statusCode, res.body).toBe(403);
+        expect(errorCode(res)).toBe('project_budget_not_allowed');
+        expect(messageOf(res)).toBe(BUDGET_REFUSED);
+      }
+      // A project of the employee alone: the colleague is no member of it.
+      const own = await open(employee, { name: 'Tek kişilik proje' });
+      const hidden: [string, string, string?][] = [
+        [colleague, own.id],
+        [founder, project.id, ids.pillika],
+        [founder, PILLIKA_PROJECT],
+        [employee, randomUUID()],
+        [employee, 'not-an-id'],
+      ];
+      for (const [session, id, company] of hidden) {
+        const res = await setBudget(session, id, { amount: '1', currency: 'USD' }, company);
+        expect(res.statusCode, id).toBe(404);
+        expect(errorCode(res)).toBe('not_found');
+      }
+      const routes: [Method, string, object?][] = [
+        ['PUT', `/api/projects/${project.id}/budget`, { budget: null }],
+        ['POST', milestonesUrl(project.id), { id: randomUUID(), name: 'Dış kişi' }],
+        ['PATCH', milestonesUrl(project.id, randomUUID()), { done: true }],
+        ['DELETE', milestonesUrl(project.id, randomUUID())],
+      ];
+      for (const [method, url, payload] of routes) {
+        const res = await call(external, method, url, payload);
+        expect(res.statusCode, `${method} ${url}`).toBe(403);
+        expect(errorCode(res), `${method} ${url}`).toBe('insiders_only');
+      }
+      expect(await stored(project.id)).toEqual({
+        budget: '500.00',
+        budget_currency: 'TRY',
+        milestones: [],
+      });
+      expect(await stored(own.id)).toMatchObject({ budget: null });
+      expect(await stored(PILLIKA_PROJECT)).toMatchObject({ budget: null });
+    });
+
+    it("GET project: a plain member's answer has budget.visible false and no amount anywhere in its body", async () => {
+      const project = await staffed('Bütçesi gizli proje');
+      await setBudget(founder, project.id, { amount: '7654321.09', currency: 'EUR' });
+      const res = await call(third, 'GET', `/api/projects/${project.id}`);
+      expect(res.statusCode, res.body).toBe(200);
+      const detail = projectDetailSchema.parse(res.json());
+      expect(detail.budget).toEqual({ visible: false });
+      expect(detail.actions.setBudget).toBe(false);
+      // The raw body, before any schema dropped a field.
+      expect(res.json()).toMatchObject({ budget: { visible: false } });
+      expect(Object.keys(res.json<{ budget: object }>().budget)).toEqual(['visible']);
+      for (const text of ['7654321', 'EUR', 'amount', 'currency']) {
+        expect(res.body, text).not.toContain(text);
+      }
+      // Neither does the answer of a change the member makes, nor the list.
+      const changed = await call(third, 'PATCH', `/api/projects/${project.id}`, { color: 'teal' });
+      expect(changed.statusCode, changed.body).toBe(200);
+      const added = await call(third, 'POST', milestonesUrl(project.id), {
+        id: randomUUID(),
+        name: 'Üyenin adımı',
+      });
+      expect(added.statusCode, added.body).toBe(200);
+      const list = await call(third, 'GET', '/api/projects');
+      for (const body of [changed.body, added.body, list.body]) {
+        expect(body).not.toContain('7654321');
+      }
+      // Made a manager, the same person reads it.
+      await giveRole(founder, project.id, ids.newcomer, 'manager');
+      expect((await read(third, project.id)).budget).toEqual({
+        visible: true,
+        value: { amount: '7654321.09', currency: 'EUR' },
+      });
+    });
+
+    it('PUT budget: 400 for an amount of 0, three decimals, a comma, a number, an unknown currency, a missing currency and an extra field', async () => {
+      const project = await staffed('Bütçesi doğrulanan proje');
+      await setBudget(employee, project.id, { amount: '500', currency: 'TRY' });
+      const refused: unknown[] = [
+        { budget: { amount: '0', currency: 'TRY' } },
+        { budget: { amount: '0.00', currency: 'TRY' } },
+        { budget: { amount: '-5', currency: 'TRY' } },
+        { budget: { amount: '1.234', currency: 'TRY' } },
+        { budget: { amount: '1,5', currency: 'TRY' } },
+        { budget: { amount: 100, currency: 'TRY' } },
+        { budget: { amount: 'NaN', currency: 'TRY' } },
+        { budget: { amount: '1000000000000', currency: 'TRY' } },
+        { budget: { amount: '100', currency: 'GBP' } },
+        { budget: { amount: '100' } },
+        { budget: { currency: 'TRY' } },
+        { budget: { amount: '100', currency: 'TRY', note: 'x' } },
+        { budget: { amount: '100', currency: 'TRY' }, stepUp: {} },
+        { budget: '100' },
+        { amount: '100', currency: 'TRY' },
+        {},
+      ];
+      for (const payload of refused) {
+        const res = await call(
+          employee,
+          'PUT',
+          `/api/projects/${project.id}/budget`,
+          payload as object,
+        );
+        expect(res.statusCode, JSON.stringify(payload)).toBe(400);
+        expect(errorCode(res)).toBe('invalid_request');
+      }
+      const empty = await call(employee, 'PUT', `/api/projects/${project.id}/budget`);
+      expect(empty.statusCode).toBe(400);
+      expect(await stored(project.id)).toMatchObject({ budget: '500.00', budget_currency: 'TRY' });
+    });
+
+    it('PUT budget: 403 when the role is taken while the change is on its way, 404 when the person is removed; nothing is stored', async () => {
+      const project = await staffed('Bütçesi değişirken rolü alınan');
+      const demoted = await whileProjectIsHeld(
+        project.id,
+        async (admin) => {
+          await admin.query(
+            `update office.project_members set role = 'member' where project_id = $1 and user_id = $2`,
+            [project.id, ids.holder],
+          );
+        },
+        () => setBudget(colleague, project.id, { amount: '10', currency: 'TRY' }),
+      );
+      expect(demoted.statusCode, demoted.body).toBe(403);
+      expect(errorCode(demoted)).toBe('project_budget_not_allowed');
+      expect(messageOf(demoted)).toBe(BUDGET_REFUSED);
+
+      await giveRole(employee, project.id, ids.holder, 'manager');
+      const removed = await whileProjectIsHeld(
+        project.id,
+        async (admin) => {
+          await admin.query(
+            'delete from office.project_members where project_id = $1 and user_id = $2',
+            [project.id, ids.holder],
+          );
+        },
+        () => setBudget(colleague, project.id, { amount: '10', currency: 'TRY' }),
+      );
+      expect(removed.statusCode, removed.body).toBe(404);
+      expect(errorCode(removed)).toBe('not_found');
+      expect(await stored(project.id)).toMatchObject({ budget: null, budget_currency: null });
+    });
+
+    it('milestones: a member adds, renames, sets and clears the day, ticks and removes; every answer is the whole project', async () => {
+      const project = await staffed('Adımları olan proje');
+      expect(project.milestones).toEqual([]);
+      const [first, second] = [randomUUID(), randomUUID()];
+      // The plain member keeps the milestones, like the other fields of the project.
+      let answer = await milestone(third, 'POST', milestonesUrl(project.id), {
+        id: first,
+        name: '  Tasarım onayı ',
+        date: '2026-11-15',
+      });
+      expect(answer.milestones).toEqual([
+        { id: first, name: 'Tasarım onayı', date: '2026-11-15', done: false },
+      ]);
+      // The whole project, with what the reader may see of it.
+      expect(answer).toMatchObject({
+        id: project.id,
+        name: 'Adımları olan proje',
+        memberCount: 3,
+        budget: { visible: false },
+        actions: { edit: true, setBudget: false },
+      });
+      expect(answer.members).toHaveLength(3);
+      // The founder adds one without a day; an id sent in upper case is stored in lower case.
+      answer = await milestone(founder, 'POST', milestonesUrl(project.id), {
+        id: second.toUpperCase(),
+        name: 'Yayın',
+      });
+      expect(answer.milestones).toEqual([
+        { id: first, name: 'Tasarım onayı', date: '2026-11-15', done: false },
+        { id: second, name: 'Yayın', date: null, done: false },
+      ]);
+      const steps: [string, object, object][] = [
+        [third, { name: 'Tasarım onayı (müşteri)' }, { name: 'Tasarım onayı (müşteri)' }],
+        [colleague, { date: '2026-12-01' }, { date: '2026-12-01' }],
+        [employee, { date: null }, { date: null }],
+        [third, { done: true }, { done: true }],
+        [
+          third,
+          { done: false, name: 'Son ad', date: '2027-01-31' },
+          { done: false, name: 'Son ad', date: '2027-01-31' },
+        ],
+      ];
+      let expected = {
+        id: first,
+        name: 'Tasarım onayı',
+        date: '2026-11-15' as string | null,
+        done: false,
+      };
+      for (const [session, change, result] of steps) {
+        // The id as a link may carry it: any letter case.
+        answer = await milestone(
+          session,
+          'PATCH',
+          milestonesUrl(project.id, first.toUpperCase()),
+          change,
+        );
+        expected = { ...expected, ...result };
+        expect(answer.milestones, JSON.stringify(change)).toEqual([
+          expected,
+          { id: second, name: 'Yayın', date: null, done: false },
+        ]);
+        expect(answer.id).toBe(project.id);
+      }
+      answer = await milestone(third, 'DELETE', milestonesUrl(project.id, first));
+      expect(answer.milestones).toEqual([{ id: second, name: 'Yayın', date: null, done: false }]);
+      expect(answer).toMatchObject({ id: project.id, memberCount: 3 });
+      expect((await stored(project.id)).milestones).toEqual(answer.milestones);
+      // Every reader of the project reads them.
+      for (const session of [employee, colleague, third, founder]) {
+        expect((await read(session, project.id)).milestones).toEqual(answer.milestones);
+      }
+    });
+
+    it('milestones: the same add sent twice adds one entry; the 51st is 409 milestone_limit; changing one that was removed is 409 milestone_not_found; removing one that is gone answers the page', async () => {
+      const project = await staffed('Adımları dolan proje');
+      const first = { id: randomUUID(), name: 'İlk adım', date: null };
+      const once = await milestone(third, 'POST', milestonesUrl(project.id), first);
+      // A repeated send, also with other words: nothing is added, the page is answered as it is.
+      for (const body of [first, { ...first, name: 'Başka ad', date: '2026-12-01' }]) {
+        const again = await milestone(third, 'POST', milestonesUrl(project.id), body);
+        expect(again.milestones).toEqual(once.milestones);
+      }
+      expect(once.milestones).toEqual([{ ...first, done: false }]);
+
+      // Changing and removing one that is gone.
+      const gone = randomUUID();
+      const change = await call(third, 'PATCH', milestonesUrl(project.id, gone), { done: true });
+      expect(change.statusCode, change.body).toBe(409);
+      expect(errorCode(change)).toBe('milestone_not_found');
+      expect(messageOf(change)).toBe(
+        'Bu kilometre taşı az önce silindi. Sayfayı yenileyip yeniden deneyin.',
+      );
+      const removed = await milestone(third, 'DELETE', milestonesUrl(project.id, gone));
+      expect(removed.milestones).toEqual(once.milestones);
+
+      // Filled up to 50 as an administrator would; the 51st is refused, a repeated send of one
+      // that is there is still answered.
+      const full = [
+        { ...first, done: false },
+        ...Array.from({ length: 49 }, (_, n) => ({
+          id: randomUUID(),
+          name: `Adım ${String(n + 2)}`,
+          date: null,
+          done: false,
+        })),
+      ];
+      await adminQuery('update office.projects set milestones = $2::jsonb where id = $1', [
+        project.id,
+        JSON.stringify(full),
+      ]);
+      const over = await call(third, 'POST', milestonesUrl(project.id), {
+        id: randomUUID(),
+        name: 'Bir fazla',
+      });
+      expect(over.statusCode, over.body).toBe(409);
+      expect(errorCode(over)).toBe('milestone_limit');
+      expect(messageOf(over)).toBe(
+        'Bir projede en çok 50 kilometre taşı olabilir. Yenisini eklemek için birini silin.',
+      );
+      expect((await milestone(third, 'POST', milestonesUrl(project.id), first)).milestones).toEqual(
+        full,
+      );
+      expect((await stored(project.id)).milestones).toHaveLength(50);
+      // One removed makes room for one.
+      await milestone(third, 'DELETE', milestonesUrl(project.id, first.id));
+      const fits = await milestone(third, 'POST', milestonesUrl(project.id), {
+        id: randomUUID(),
+        name: 'Yer açıldı',
+      });
+      expect(fits.milestones).toHaveLength(50);
+    });
+
+    it('milestones: 400 for an empty name, 121 characters, a day that does not exist and an empty change; 404 for a project of the other company and for a malformed id', async () => {
+      const project = await staffed('Adımları doğrulanan proje');
+      const first = randomUUID();
+      await milestone(employee, 'POST', milestonesUrl(project.id), { id: first, name: 'İlk adım' });
+      const badAdds: object[] = [
+        { name: 'Kimliksiz' },
+        { id: 'not-an-id', name: 'Adım' },
+        { id: randomUUID() },
+        { id: randomUUID(), name: '' },
+        { id: randomUUID(), name: '   ' },
+        { id: randomUUID(), name: 'x'.repeat(121) },
+        { id: randomUUID(), name: 'Ad\u202eım' },
+        { id: randomUUID(), name: 'Adım', date: '2026-02-30' },
+        { id: randomUUID(), name: 'Adım', date: '0000-01-01' },
+        { id: randomUUID(), name: 'Adım', date: '15.11.2026' },
+        { id: randomUUID(), name: 'Adım', done: true },
+        { id: randomUUID(), name: 'Adım', owner: ids.employee },
+      ];
+      for (const payload of badAdds) {
+        const res = await call(employee, 'POST', milestonesUrl(project.id), payload);
+        expect(res.statusCode, JSON.stringify(payload)).toBe(400);
+        expect(errorCode(res)).toBe('invalid_request');
+      }
+      const badChanges: object[] = [
+        {},
+        { name: '' },
+        { name: 'x'.repeat(121) },
+        { date: '2026-02-30' },
+        { done: 'yes' },
+        { done: null },
+        { done: true, id: randomUUID() },
+      ];
+      for (const payload of badChanges) {
+        const res = await call(employee, 'PATCH', milestonesUrl(project.id, first), payload);
+        expect(res.statusCode, JSON.stringify(payload)).toBe(400);
+        expect(errorCode(res)).toBe('invalid_request');
+      }
+      expect((await call(employee, 'POST', milestonesUrl(project.id))).statusCode).toBe(400);
+      expect((await call(employee, 'PATCH', milestonesUrl(project.id, first))).statusCode).toBe(
+        400,
+      );
+
+      // A project the person cannot read answers 404 on every route, like one that is not there.
+      const own = await open(employee, { name: 'Adımları gizli proje' });
+      await milestone(employee, 'POST', milestonesUrl(own.id), { id: first, name: 'Gizli adım' });
+      const hidden: [string, string, string?][] = [
+        [colleague, own.id],
+        [founder, project.id, ids.pillika],
+        [founder, PILLIKA_PROJECT],
+        [employee, randomUUID()],
+        [employee, 'not-an-id'],
+      ];
+      for (const [session, id, company] of hidden) {
+        const routes: [Method, string, object?][] = [
+          ['POST', milestonesUrl(id), { id: randomUUID(), name: 'Ele geçirildi' }],
+          ['PATCH', milestonesUrl(id, first), { done: true }],
+          ['DELETE', milestonesUrl(id, first)],
+        ];
+        for (const [method, url, payload] of routes) {
+          const res = await call(session, method, url, payload, company);
+          expect(res.statusCode, `${method} ${url}`).toBe(404);
+          expect(errorCode(res)).toBe('not_found');
+          expect(res.body).not.toContain('Gizli adım');
+        }
+      }
+      // A milestone id that is not an id.
+      for (const method of ['PATCH', 'DELETE'] as const) {
+        const res = await call(employee, method, milestonesUrl(project.id, 'not-an-id'), {
+          done: true,
+        });
+        expect(res.statusCode, method).toBe(404);
+        expect(errorCode(res)).toBe('not_found');
+      }
+      expect((await stored(project.id)).milestones).toEqual([
+        { id: first, name: 'İlk adım', date: null, done: false },
+      ]);
+      expect((await stored(own.id)).milestones).toEqual([
+        { id: first, name: 'Gizli adım', date: null, done: false },
+      ]);
+      expect((await stored(PILLIKA_PROJECT)).milestones).toEqual([]);
+    });
+
+    it('budget and milestones: every change leaves its audit row with the person as the actor', async () => {
+      const project = await staffed('İzi tutulan bütçe');
+      const first = randomUUID();
+      await setBudget(colleague, project.id, { amount: '10', currency: 'TRY' });
+      // The same value again, a refused change and a refused body write nothing.
+      await setBudget(colleague, project.id, { amount: '10.00', currency: 'TRY' });
+      await setBudget(third, project.id, { amount: '20', currency: 'TRY' });
+      await setBudget(employee, project.id, { amount: '0', currency: 'TRY' });
+      await setBudget(founder, project.id, null);
+      await milestone(third, 'POST', milestonesUrl(project.id), { id: first, name: 'İlk adım' });
+      // A repeated send, a change of one that is not there and a removal of one that is gone.
+      await milestone(third, 'POST', milestonesUrl(project.id), { id: first, name: 'İlk adım' });
+      await call(third, 'PATCH', milestonesUrl(project.id, randomUUID()), { done: true });
+      await milestone(third, 'DELETE', milestonesUrl(project.id, randomUUID()));
+      await milestone(employee, 'PATCH', milestonesUrl(project.id, first), { done: true });
+      await milestone(founder, 'DELETE', milestonesUrl(project.id, first));
+      expect(await trace(project.id)).toEqual([
+        { event: 'project_budget_changed', user_id: ids.holder },
+        { event: 'project_budget_changed', user_id: ids.founder },
+        { event: 'project_milestones_changed', user_id: ids.newcomer },
+        { event: 'project_milestones_changed', user_id: ids.employee },
+        { event: 'project_milestones_changed', user_id: ids.founder },
+      ]);
+    });
+
+    it('POST and PATCH /api/projects still take no budget and no milestones: each has its own route', async () => {
+      const project = await staffed('Alanları ayrı proje');
+      for (const extra of [
+        { budget: 100 },
+        { budget: { amount: '100', currency: 'TRY' } },
+        { milestones: [] },
+      ]) {
+        const created = await call(employee, 'POST', '/api/projects', {
+          id: randomUUID(),
+          name: 'Bütçeyle açılan',
+          ...extra,
+        });
+        expect(created.statusCode, JSON.stringify(extra)).toBe(400);
+        const changed = await call(employee, 'PATCH', `/api/projects/${project.id}`, {
+          name: 'Bütçeyle değişen',
+          ...extra,
+        });
+        expect(changed.statusCode, JSON.stringify(extra)).toBe(400);
+      }
+      expect(await stored(project.id)).toEqual({
+        budget: null,
+        budget_currency: null,
+        milestones: [],
+      });
+      expect((await read(employee, project.id)).name).toBe('Alanları ayrı proje');
     });
   });
 });

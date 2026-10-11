@@ -11,6 +11,9 @@ import { taskPersonSchema } from './tasks.ts';
  * No body here sets the AI permission of a project except the one made for it, and none sets a
  * customer's contract permissions except the founder's two (a customer added with a new project,
  * and the permissions route).
+ *
+ * Step 3 (decision 17): the budget and the milestones of a project. Neither is a field of the
+ * bodies that open or change a project: each has its own route and its own body.
  */
 
 // The fixed sets -----------------------------------------------------------------------------------
@@ -103,6 +106,86 @@ export const projectDescriptionSchema = z
 export const projectDaySchema = z.iso
   .date()
   .refine((day) => !day.startsWith('0000-'), { message: 'Must not be in the year 0000' });
+
+/** The currencies a project's budget can be in (the database holds the same three). */
+export const budgetCurrencySchema = z.enum(['TRY', 'USD', 'EUR']);
+export type BudgetCurrency = z.output<typeof budgetCurrencySchema>;
+export const BUDGET_CURRENCIES = budgetCurrencySchema.options;
+
+/**
+ * An amount of money as text: digits, a dot and at most two decimals, above zero. Text and not a
+ * number, so that no amount is ever rounded on its way. At most twelve digits before the dot
+ * (projects.budget is numeric(14, 2)).
+ */
+export const budgetAmountSchema = z
+  .string()
+  .regex(/^(0|[1-9]\d{0,11})(\.\d{1,2})?$/)
+  .refine((amount) => Number(amount) > 0, { message: 'Must be above zero' });
+
+/** The money of a project (docs/SONRA.md P-t): never the cost of AI. */
+export const projectBudgetSchema = z.strictObject({
+  amount: budgetAmountSchema,
+  currency: budgetCurrencySchema,
+});
+export type ProjectBudget = z.output<typeof projectBudgetSchema>;
+
+/** PUT /api/projects/:projectId/budget (the owner, a manager, the founder). null takes it away. */
+export const setProjectBudgetSchema = z.strictObject({ budget: projectBudgetSchema.nullable() });
+export type SetProjectBudget = z.input<typeof setProjectBudgetSchema>;
+
+export const MILESTONE_NAME_MAX = 120;
+export const MILESTONE_MAX = 50;
+
+export const milestoneNameSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(MILESTONE_NAME_MAX)
+  .refine((name) => !hasHiddenCharacter(name), NO_HIDDEN);
+
+/** A milestone of a project: a name, an optional day and whether it is reached. */
+export const milestoneSchema = z.object({
+  id: z.uuid(),
+  name: z.string(),
+  date: projectDaySchema.nullable(),
+  done: z.boolean(),
+});
+export type Milestone = z.output<typeof milestoneSchema>;
+
+/** POST /api/projects/:projectId/milestones. The panel chooses the id: a repeated send adds nothing. */
+export const createMilestoneSchema = z.strictObject({
+  id: z.uuid(),
+  name: milestoneNameSchema,
+  date: projectDaySchema.nullable().default(null),
+});
+export type CreateMilestone = z.input<typeof createMilestoneSchema>;
+
+/** PATCH /api/projects/:projectId/milestones/:milestoneId: at least one field. */
+export const updateMilestoneSchema = z
+  .strictObject({
+    name: milestoneNameSchema.optional(),
+    date: projectDaySchema.nullable().optional(),
+    done: z.boolean().optional(),
+  })
+  .refine((body) => body.name !== undefined || body.date !== undefined || body.done !== undefined, {
+    message: 'At least one field is required',
+  });
+export type UpdateMilestone = z.input<typeof updateMilestoneSchema>;
+
+/**
+ * The milestones in the order the page shows them: by day, the ones without a day last; entries
+ * of one day, and the ones without a day, in the order they were added.
+ */
+export function sortedMilestones(milestones: readonly Milestone[]): Milestone[] {
+  return milestones
+    .map((milestone, index) => ({ milestone, index }))
+    .toSorted(
+      (a, b) =>
+        (a.milestone.date ?? '9999-12-31').localeCompare(b.milestone.date ?? '9999-12-31') ||
+        a.index - b.index,
+    )
+    .map((entry) => entry.milestone);
+}
 
 /**
  * The customer of a new project (decision 16): none, one that exists, or a new one by name. The
@@ -362,11 +445,21 @@ export const projectDetailSchema = projectSummarySchema.extend({
   // null: written without a person (an administrator).
   createdBy: taskPersonSchema.nullable(),
   members: z.array(projectMemberSchema),
+  // The money of the project. `visible: false` for a reader who is neither its owner, nor a
+  // manager of it, nor the founder: the amount is not in the answer at all.
+  budget: z.discriminatedUnion('visible', [
+    z.object({ visible: z.literal(false) }),
+    z.object({ visible: z.literal(true), value: projectBudgetSchema.nullable() }),
+  ]),
+  // In the order they were added; the page sorts them (sortedMilestones).
+  milestones: z.array(milestoneSchema),
   actions: z.object({
-    // Name, description, customer, status, colour, icon, target date.
+    // Name, description, customer, status, colour, icon, target date; and the milestones.
     edit: z.boolean(),
     // The reader may add members: the owner, a manager, the founder.
     addMembers: z.boolean(),
+    // The owner, a manager, the founder.
+    setBudget: z.boolean(),
     // The founder alone.
     setAiPermission: z.boolean(),
     setCustomerPermissions: z.boolean(),

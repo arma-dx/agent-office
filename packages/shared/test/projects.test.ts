@@ -18,6 +18,11 @@ import {
   PROJECT_MEMBER_MAX,
   PROJECT_NAME_MAX,
   PROJECT_STATUSES,
+  BUDGET_CURRENCIES,
+  MILESTONE_MAX,
+  MILESTONE_NAME_MAX,
+  budgetAmountSchema,
+  createMilestoneSchema,
   createProjectSchema,
   customerPermissionsAnswerSchema,
   customerPermissionsSchema,
@@ -25,14 +30,20 @@ import {
   mayAddProjectMembers,
   memberRemoval,
   memberRoleChanges,
+  milestoneSchema,
   projectAiPermissionAnswerSchema,
   projectAiPermissionSchema,
+  projectBudgetSchema,
   projectDetailSchema,
   projectMemberRoleSchema,
   projectMemberSchema,
+  setProjectBudgetSchema,
   setProjectMemberRoleSchema,
+  sortedMilestones,
+  updateMilestoneSchema,
   updateProjectSchema,
   type MemberRemoval,
+  type Milestone,
   type ProjectActor,
   type ProjectMemberRole,
 } from '../src/projects.ts';
@@ -347,9 +358,12 @@ describe('the contracts of the Projects section', () => {
           roleChanges: [],
         },
       ],
+      budget: { visible: false },
+      milestones: [],
       actions: {
         edit: true,
         addMembers: true,
+        setBudget: false,
         setAiPermission: false,
         setCustomerPermissions: false,
       },
@@ -518,8 +532,15 @@ describe('the owner, the managers and the members of a project', () => {
       createdAt: '2026-10-08T09:00:00.000Z',
       createdBy: null,
       members: [person],
+      budget: { visible: false },
+      milestones: [],
     };
-    const actions = { edit: true, setAiPermission: false, setCustomerPermissions: false };
+    const actions = {
+      edit: true,
+      setBudget: false,
+      setAiPermission: false,
+      setCustomerPermissions: false,
+    };
     expect(
       projectDetailSchema.safeParse({ ...detail, actions: { ...actions, addMembers: false } })
         .success,
@@ -555,6 +576,253 @@ describe('the owner, the managers and the members of a project', () => {
       { role: 'manager', projectRole: 'owner' },
     ]) {
       expect(setProjectMemberRoleSchema.safeParse(body).success, JSON.stringify(body)).toBe(false);
+    }
+  });
+});
+
+// Step 3 of the Projects section (8 October decision 17): the budget and the milestones of a
+// project. The database holds the same shapes (projects_budget_shape, office.milestones_valid).
+describe('the budget and the milestones of a project', () => {
+  const DETAIL = {
+    id: uuid(1),
+    name: 'Yeni site',
+    status: 'planned',
+    closed: false,
+    color: 'gray',
+    icon: 'folder',
+    targetDate: null,
+    aiAllowed: false,
+    agentsMayWork: false,
+    customer: null,
+    memberCount: 0,
+    description: null,
+    createdAt: '2026-10-08T09:00:00.000Z',
+    createdBy: null,
+    members: [],
+    budget: { visible: false },
+    milestones: [],
+    actions: {
+      edit: true,
+      addMembers: false,
+      setBudget: false,
+      setAiPermission: false,
+      setCustomerPermissions: false,
+    },
+  };
+
+  it('a budget is an amount above zero with at most two decimals and one of three currencies', () => {
+    expect(BUDGET_CURRENCIES).toEqual(['TRY', 'USD', 'EUR']);
+    for (const amount of [
+      '1',
+      '0.5',
+      '0.01',
+      '125000.50',
+      '10',
+      '999999999999',
+      '999999999999.99',
+    ]) {
+      expect(budgetAmountSchema.parse(amount), amount).toBe(amount);
+      for (const currency of BUDGET_CURRENCIES) {
+        expect(projectBudgetSchema.parse({ amount, currency })).toEqual({ amount, currency });
+      }
+    }
+    for (const amount of [
+      '0',
+      '0.0',
+      '0.00',
+      '-1',
+      '+1',
+      '1.234',
+      '1,5',
+      '1.',
+      '.5',
+      '01',
+      '1e3',
+      ' 1',
+      '1 ',
+      '',
+      'NaN',
+      'Infinity',
+      // Thirteen digits before the dot.
+      '1000000000000',
+      1,
+      1.5,
+      null,
+    ]) {
+      expect(budgetAmountSchema.safeParse(amount).success, String(amount)).toBe(false);
+    }
+    for (const budget of [
+      { amount: '10' },
+      { currency: 'TRY' },
+      { amount: '10', currency: 'GBP' },
+      { amount: '10', currency: 'try' },
+      { amount: '10', currency: null },
+      { amount: 10, currency: 'TRY' },
+      { amount: '10', currency: 'TRY', rate: '1' },
+    ]) {
+      expect(projectBudgetSchema.safeParse(budget).success, JSON.stringify(budget)).toBe(false);
+    }
+  });
+
+  it('the budget body takes a budget or null and nothing else', () => {
+    const budget = { amount: '150000.00', currency: 'TRY' };
+    expect(setProjectBudgetSchema.parse({ budget })).toEqual({ budget });
+    expect(setProjectBudgetSchema.parse({ budget: null })).toEqual({ budget: null });
+    for (const body of [
+      {},
+      budget,
+      { budget: '150000.00' },
+      { budget: { amount: '0', currency: 'TRY' } },
+      { budget, stepUp: STEP_UP },
+      { budget, currency: 'TRY' },
+      { budget: null, milestones: [] },
+    ]) {
+      expect(setProjectBudgetSchema.safeParse(body).success, JSON.stringify(body)).toBe(false);
+    }
+    // Neither the body that opens a project nor the one that changes it takes a budget or
+    // milestones: each has its own route.
+    for (const extra of [{ budget }, { budget: 100 }, { milestones: [] }]) {
+      expect(
+        createProjectSchema.safeParse({ id: uuid(1), name: 'Yeni site', ...extra }).success,
+        JSON.stringify(extra),
+      ).toBe(false);
+      expect(
+        updateProjectSchema.safeParse({ name: 'Yeni site', ...extra }).success,
+        JSON.stringify(extra),
+      ).toBe(false);
+    }
+  });
+
+  it('a milestone has a trimmed name of 1 to 120 characters, an optional real day and no other field', () => {
+    expect(MILESTONE_NAME_MAX).toBe(120);
+    expect(MILESTONE_MAX).toBe(50);
+    expect(createMilestoneSchema.parse({ id: uuid(5), name: '  Tasarım onayı ' })).toEqual({
+      id: uuid(5),
+      name: 'Tasarım onayı',
+      date: null,
+    });
+    expect(
+      createMilestoneSchema.parse({ id: uuid(5), name: 'a'.repeat(120), date: '2028-02-29' }),
+    ).toEqual({ id: uuid(5), name: 'a'.repeat(120), date: '2028-02-29' });
+    for (const body of [
+      { name: 'Yayın' },
+      { id: 'first', name: 'Yayın' },
+      { id: uuid(5) },
+      { id: uuid(5), name: '' },
+      { id: uuid(5), name: '   ' },
+      { id: uuid(5), name: 'a'.repeat(121) },
+      { id: uuid(5), name: 'Ya\u202eyın' },
+      { id: uuid(5), name: 'Ya\u0000yın' },
+      { id: uuid(5), name: 'Yayın', date: '2026-02-30' },
+      { id: uuid(5), name: 'Yayın', date: '0000-01-01' },
+      { id: uuid(5), name: 'Yayın', date: '2026-01-01T00:00:00Z' },
+      { id: uuid(5), name: 'Yayın', date: '' },
+      // A new milestone is not reached; "done" is set by a change.
+      { id: uuid(5), name: 'Yayın', done: true },
+      { id: uuid(5), name: 'Yayın', owner: uuid(3) },
+    ]) {
+      expect(createMilestoneSchema.safeParse(body).success, JSON.stringify(body)).toBe(false);
+    }
+    // The answer's entry: the four fields the database stores.
+    const stored = { id: uuid(5), name: 'Yayın', date: null, done: true };
+    expect(milestoneSchema.parse(stored)).toEqual(stored);
+    for (const field of ['id', 'name', 'date', 'done'] as const) {
+      const without = Object.fromEntries(Object.entries(stored).filter(([name]) => name !== field));
+      expect(milestoneSchema.safeParse(without).success, field).toBe(false);
+    }
+    expect(milestoneSchema.safeParse({ ...stored, date: '2026-13-01' }).success).toBe(false);
+  });
+
+  it('a milestone change needs at least one field', () => {
+    expect(updateMilestoneSchema.parse({ done: true })).toEqual({ done: true });
+    expect(updateMilestoneSchema.parse({ name: ' Yeni ad ' })).toEqual({ name: 'Yeni ad' });
+    // null clears the day; a field left out is not changed.
+    expect(updateMilestoneSchema.parse({ date: null })).toEqual({ date: null });
+    expect(updateMilestoneSchema.parse({ name: 'Ad', date: '2026-11-15', done: false })).toEqual({
+      name: 'Ad',
+      date: '2026-11-15',
+      done: false,
+    });
+    for (const body of [
+      {},
+      { name: '' },
+      { name: 'a'.repeat(121) },
+      { date: '2026-02-30' },
+      { done: 'yes' },
+      { done: null },
+      { id: uuid(6), done: true },
+      { done: true, note: 'x' },
+    ]) {
+      expect(updateMilestoneSchema.safeParse(body).success, JSON.stringify(body)).toBe(false);
+    }
+  });
+
+  it('milestones are shown by day, the ones without a day last, ties in the order they were added', () => {
+    const entry = (n: number, date: string | null): Milestone => ({
+      id: uuid(n),
+      name: `Adım ${String(n)}`,
+      date,
+      done: false,
+    });
+    const added = [
+      entry(1, null),
+      entry(2, '2026-12-01'),
+      entry(3, '2026-11-15'),
+      entry(4, null),
+      entry(5, '2026-11-15'),
+      entry(6, '2025-01-01'),
+    ];
+    const before = added.map((milestone) => ({ ...milestone }));
+    expect(sortedMilestones(added).map((milestone) => milestone.id)).toEqual(
+      [6, 3, 5, 2, 1, 4].map(uuid),
+    );
+    // The list it was given is not reordered.
+    expect(added).toEqual(before);
+    expect(sortedMilestones([])).toEqual([]);
+  });
+
+  it('the project detail says whether the budget is visible, and carries no amount when it is not', () => {
+    const milestones = [{ id: uuid(5), name: 'Yayın', date: '2026-12-01', done: false }];
+    for (const budget of [
+      { visible: false },
+      { visible: true, value: null },
+      { visible: true, value: { amount: '150000.00', currency: 'TRY' } },
+    ]) {
+      const detail = { ...DETAIL, budget, milestones };
+      expect(projectDetailSchema.parse(detail), JSON.stringify(budget)).toEqual(detail);
+    }
+    // An amount sent beside "not visible" does not survive the parse.
+    const hidden = projectDetailSchema.parse({
+      ...DETAIL,
+      budget: { visible: false, value: { amount: '150000.00', currency: 'TRY' } },
+    });
+    expect(hidden.budget).toEqual({ visible: false });
+    expect(JSON.stringify(hidden)).not.toContain('150000');
+    for (const budget of [
+      undefined,
+      null,
+      {},
+      { visible: true },
+      { visible: true, value: { amount: '150000.00' } },
+      { visible: true, value: { amount: 150000, currency: 'TRY' } },
+      { visible: 'yes', value: null },
+      { amount: '150000.00', currency: 'TRY' },
+    ]) {
+      expect(
+        projectDetailSchema.safeParse({ ...DETAIL, budget }).success,
+        JSON.stringify(budget),
+      ).toBe(false);
+    }
+    // The milestones and the budget action are part of every answer.
+    const without = (object: Record<string, unknown>, field: string) =>
+      Object.fromEntries(Object.entries(object).filter(([name]) => name !== field));
+    expect(projectDetailSchema.safeParse(without(DETAIL, 'milestones')).success).toBe(false);
+    expect(
+      projectDetailSchema.safeParse({ ...DETAIL, actions: without(DETAIL.actions, 'setBudget') })
+        .success,
+    ).toBe(false);
+    for (const code of ['project_budget_not_allowed', 'milestone_limit', 'milestone_not_found']) {
+      expect(apiErrorCodeSchema.safeParse(code).success, code).toBe(true);
     }
   });
 });

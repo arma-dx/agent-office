@@ -1,5 +1,7 @@
 import {
   addProjectMember,
+  addProjectMilestone,
+  changeProjectMilestone,
   insertCustomer,
   insertProject,
   listCustomers,
@@ -12,8 +14,10 @@ import {
   readCustomer,
   readProject,
   removeProjectMember,
+  removeProjectMilestone,
   setCustomerPermissions,
   setProjectAiPermission,
+  setProjectBudget,
   setProjectMemberRole,
   updateProject,
   type ProjectChanges,
@@ -21,6 +25,7 @@ import {
 } from '@agent-office/db';
 import {
   PROJECT_LIST_LIMIT,
+  createMilestoneSchema,
   createProjectSchema,
   customerListSchema,
   customerPermissionDetails,
@@ -29,6 +34,7 @@ import {
   mayAddProjectMembers,
   memberRemoval,
   memberRoleChanges,
+  milestoneSchema,
   projectAiPermissionAnswerSchema,
   projectAiPermissionDetails,
   projectAiPermissionSchema,
@@ -37,7 +43,9 @@ import {
   projectMemberCandidatesSchema,
   projectMemberRoleSchema,
   projectSummarySchema,
+  setProjectBudgetSchema,
   setProjectMemberRoleSchema,
+  updateMilestoneSchema,
   updateProjectSchema,
   type CustomerList,
   type CustomerPermissionsAnswer,
@@ -45,6 +53,7 @@ import {
   type ProjectAiPermissionAnswer,
   type ProjectDetail,
   type ProjectList,
+  type Milestone,
   type ProjectMemberRole,
   type ProjectSummary,
 } from '@agent-office/shared';
@@ -63,8 +72,8 @@ import { startWaitingWork } from '../restart.ts';
 import type { RouteDeps } from '../services.ts';
 
 /**
- * The Projects section (8 October decisions 11 and 14 to 22), step 1, and the owner and the
- * managers of a project (decision 44).
+ * The Projects section (8 October decisions 11 and 14 to 22), step 1, the owner and the
+ * managers of a project (decision 44), and of step 3 (decision 17) the budget and the milestones.
  *
  *   GET   /api/projects                    the projects the person may read, open ones first
  *   POST  /api/projects                    a founder or an employee opens a project and is its
@@ -79,6 +88,11 @@ import type { RouteDeps } from '../services.ts';
  *   PUT    /api/projects/:projectId/members/:userId/role  the owner or the founder gives a role
  *   PUT   /api/projects/:projectId/ai-permission      the founder opens (with a passkey) or
  *                                                     closes the AI permission of a project
+ *   PUT    /api/projects/:projectId/budget            the owner, a manager or the founder sets
+ *                                                     or takes away the budget
+ *   POST   /api/projects/:projectId/milestones        a member or the founder adds a milestone
+ *   PATCH  /api/projects/:projectId/milestones/:milestoneId   ... changes one
+ *   DELETE /api/projects/:projectId/milestones/:milestoneId   ... removes one
  *   GET   /api/customers                   the customers of the company to choose from, by name
  *   PATCH /api/customers/:customerId/permissions      the founder sets the contract permissions
  *                                                     of a customer (the AI one with a passkey)
@@ -103,6 +117,7 @@ const INSIDERS = { founderOnly: false, insidersOnly: true } as const;
 
 const projectParams = z.object({ projectId: z.uuid() });
 const memberParams = z.object({ projectId: z.uuid(), userId: z.uuid() });
+const milestoneParams = z.object({ projectId: z.uuid(), milestoneId: z.uuid() });
 const customerParams = z.object({ customerId: z.uuid() });
 
 const privateSpace = (): ApiError =>
@@ -180,6 +195,27 @@ const membersChanged = (): ApiError =>
 const roleNotForPerson = (): ApiError =>
   new ApiError(409, 'member_not_allowed', 'Devre dışı bir hesaba projede rol verilemez.');
 
+const budgetNotAllowed = (): ApiError =>
+  new ApiError(
+    403,
+    'project_budget_not_allowed',
+    'Projenin bütçesini yalnızca projenin sahibi, yöneticileri ve kurucu değiştirebilir.',
+  );
+
+const milestoneLimit = (): ApiError =>
+  new ApiError(
+    409,
+    'milestone_limit',
+    'Bir projede en çok 50 kilometre taşı olabilir. Yenisini eklemek için birini silin.',
+  );
+
+const milestoneNotFound = (): ApiError =>
+  new ApiError(
+    409,
+    'milestone_not_found',
+    'Bu kilometre taşı az önce silindi. Sayfayı yenileyip yeniden deneyin.',
+  );
+
 const customerLocked = (): ApiError =>
   new ApiError(
     409,
@@ -227,6 +263,27 @@ function memberOf(request: FastifyRequest): { projectId: string; userId: string 
   return { projectId: params.data.projectId, userId: params.data.userId.toLowerCase() };
 }
 
+function milestoneOf(request: FastifyRequest): { projectId: string; milestoneId: string } {
+  const params = milestoneParams.safeParse(request.params);
+  if (!params.success) {
+    throw notFound();
+  }
+  return {
+    projectId: params.data.projectId,
+    milestoneId: params.data.milestoneId.toLowerCase(),
+  };
+}
+
+/** The milestones of a project as the database stores them, checked against the contract. */
+function milestonesOf(row: ProjectRow): Milestone[] {
+  return z.array(milestoneSchema).parse(row.milestones);
+}
+
+/** Who sees and changes the money of a project: the founder, its owner, its managers. */
+function managesBudget(actor: ProjectActor): boolean {
+  return actor.founder || actor.projectRole === 'owner' || actor.projectRole === 'manager';
+}
+
 /** Rule 12 as a whole: the project's permission and, if it has a customer, the customer's. */
 function agentsMayWork(row: ProjectRow): boolean {
   return row.ai_allowed && (row.customer_id === null || row.customer_ai_allowed === true);
@@ -270,7 +327,9 @@ function actorOf(context: CompanyContext, row: ProjectRow): ProjectActor {
  * the founder, and roles are given by the owner and the founder (decision 44): every member of
  * the answer says what the reader may do with it. The permissions are the founder's alone. Of the
  * customer an employee gets the name and whether its AI permission is open (the page must say why
- * agents do not work), never the automated processing permission.
+ * agents do not work), never the automated processing permission. The budget is in the answer
+ * only for who may change it (the founder, the owner, a manager); the statement already left the
+ * amount out of the row for anybody else. The milestones are every reader's.
  */
 async function detailOf(context: CompanyContext, row: ProjectRow): Promise<ProjectDetail> {
   const { client } = context;
@@ -311,9 +370,20 @@ async function detailOf(context: CompanyContext, row: ProjectRow): Promise<Proje
         roleChanges: memberRoleChanges(actor, target),
       };
     }),
+    budget: managesBudget(actor)
+      ? {
+          visible: true,
+          value:
+            row.budget !== null && row.budget_currency !== null
+              ? { amount: row.budget, currency: row.budget_currency }
+              : null,
+        }
+      : { visible: false },
+    milestones: milestonesOf(row),
     actions: {
       edit: true,
       addMembers: mayAddProjectMembers(actor),
+      setBudget: managesBudget(actor),
       setAiPermission: row.reader_is_founder,
       setCustomerPermissions: row.reader_is_founder && row.customer_id !== null,
     },
@@ -765,6 +835,128 @@ export function registerProjectRoutes(
           ...(await detailOf(context, await projectOf(context, projectId))),
           restarted,
         });
+      }),
+  );
+
+  /**
+   * The budget of a project: its money, never the cost of AI (docs/SONRA.md P-t). Set, changed
+   * and (null) taken away by the owner of the project, its managers and the founder; a plain
+   * member neither sees nor changes it. The database's guard is the rule; the route says so
+   * before anything is written. No passkey: the budget is a record, not an approval.
+   */
+  app.put('/api/projects/:projectId/budget', async (request, reply): Promise<ProjectDetail> =>
+    runner.withCompany(request, reply, INSIDERS, async (context) => {
+      const projectId = projectIdOf(request);
+      const body = setProjectBudgetSchema.safeParse(request.body);
+      if (!body.success) {
+        throw invalidRequest();
+      }
+      const { client } = context;
+      const row = await projectOf(context, projectId);
+      if (!managesBudget(actorOf(context, row))) {
+        throw budgetNotAllowed();
+      }
+      let changed: number;
+      await client.query('savepoint set_budget');
+      try {
+        changed = await setProjectBudget(client, projectId, body.data.budget);
+      } catch (error) {
+        await client.query('rollback to savepoint set_budget');
+        const code = databaseErrorCode(error);
+        if (code === '42501') {
+          // insufficient_privilege: between the read above and the write the person lost the
+          // project (404) or the role that lets them change its money.
+          await projectOf(context, projectId);
+          throw budgetNotAllowed();
+        }
+        // check_violation, numeric_value_out_of_range: the contract refuses these first.
+        if (code === '23514' || code === '22003') throw invalidRequest();
+        throw error;
+      }
+      if (changed === 0) {
+        // The person lost the project meanwhile.
+        throw notFound();
+      }
+      return detailOf(context, await projectOf(context, projectId));
+    }),
+  );
+
+  /**
+   * A member or the founder adds a milestone: a name and an optional day (decision 17). The panel
+   * chooses the id, so a send that is repeated adds nothing and answers the page as it is. A
+   * project holds at most 50.
+   */
+  app.post('/api/projects/:projectId/milestones', async (request, reply): Promise<ProjectDetail> =>
+    runner.withCompany(request, reply, INSIDERS, async (context) => {
+      const projectId = projectIdOf(request);
+      const body = createMilestoneSchema.safeParse(request.body);
+      if (!body.success) {
+        throw invalidRequest();
+      }
+      const { client } = context;
+      await projectOf(context, projectId);
+      const id = body.data.id.toLowerCase();
+      let added: number;
+      await client.query('savepoint add_milestone');
+      try {
+        added = await addProjectMilestone(client, projectId, {
+          id,
+          name: body.data.name,
+          date: body.data.date,
+        });
+      } catch (error) {
+        await client.query('rollback to savepoint add_milestone');
+        if (databaseErrorCode(error) === '23514') throw invalidRequest();
+        throw error;
+      }
+      const row = await projectOf(context, projectId);
+      if (added === 0 && !milestonesOf(row).some((milestone) => milestone.id === id)) {
+        // Not a repeated send: the list is full.
+        throw milestoneLimit();
+      }
+      return detailOf(context, row);
+    }),
+  );
+
+  /** A member or the founder changes a milestone: its name, its day (null clears it), done. */
+  app.patch(
+    '/api/projects/:projectId/milestones/:milestoneId',
+    async (request, reply): Promise<ProjectDetail> =>
+      runner.withCompany(request, reply, INSIDERS, async (context) => {
+        const { projectId, milestoneId } = milestoneOf(request);
+        const body = updateMilestoneSchema.safeParse(request.body);
+        if (!body.success) {
+          throw invalidRequest();
+        }
+        const { client } = context;
+        await projectOf(context, projectId);
+        let changed: number;
+        await client.query('savepoint change_milestone');
+        try {
+          changed = await changeProjectMilestone(client, projectId, milestoneId, body.data);
+        } catch (error) {
+          await client.query('rollback to savepoint change_milestone');
+          if (databaseErrorCode(error) === '23514') throw invalidRequest();
+          throw error;
+        }
+        const row = await projectOf(context, projectId);
+        if (changed === 0) {
+          // Somebody removed it meanwhile.
+          throw milestoneNotFound();
+        }
+        return detailOf(context, row);
+      }),
+  );
+
+  /** A member or the founder removes a milestone. One that is gone already answers the page. */
+  app.delete(
+    '/api/projects/:projectId/milestones/:milestoneId',
+    async (request, reply): Promise<ProjectDetail> =>
+      runner.withCompany(request, reply, INSIDERS, async (context) => {
+        const { projectId, milestoneId } = milestoneOf(request);
+        await projectOf(context, projectId);
+        await removeProjectMilestone(context.client, projectId, milestoneId);
+        return detailOf(context, await projectOf(context, projectId));
       }),
   );
 

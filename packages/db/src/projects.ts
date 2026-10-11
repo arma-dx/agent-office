@@ -9,6 +9,10 @@ import type { Queryable } from './queryable.ts';
  * Nothing here sets the AI permission of a project or a contract permission of a customer except
  * the two calls of the database's own functions, which ask for the founder and, to open an AI
  * permission, for a passkey re-verification recorded in the same transaction.
+ *
+ * Step 3 (decision 17): the budget and the milestones. The budget is in the row only for a reader
+ * who may change it (the founder, the owner, a manager): the statement leaves the amount out for
+ * a plain member, as the API leaves a customer's fields out (docs/SONRA.md P1-e).
  */
 
 export interface ProjectRow {
@@ -21,6 +25,11 @@ export interface ProjectRow {
   icon: string;
   // YYYY-MM-DD: read as text, a day has no time zone.
   target_date: string | null;
+  // Text, never a number; null for a reader who may not see the budget, and when there is none.
+  budget: string | null;
+  budget_currency: string | null;
+  // As stored: [{ id, name, date, done }]; the route parses it with the contract.
+  milestones: unknown;
   ai_allowed: boolean;
   customer_id: string | null;
   customer_name: string | null;
@@ -36,7 +45,15 @@ export interface ProjectRow {
 
 const PROJECT_SQL = `
   select p.id, p.name, p.description, p.status, p.closed, p.color, p.icon,
-         p.target_date::text as target_date, p.ai_allowed,
+         p.target_date::text as target_date,
+         case when office.is_founder()
+                or coalesce(office.project_role(p.id) in ('owner', 'manager'), false)
+              then p.budget::text end as budget,
+         case when office.is_founder()
+                or coalesce(office.project_role(p.id) in ('owner', 'manager'), false)
+              then p.budget_currency end as budget_currency,
+         p.milestones,
+         p.ai_allowed,
          c.id as customer_id, c.name as customer_name, c.ai_allowed as customer_ai_allowed,
          c.automated_processing_allowed as customer_automated_processing_allowed,
          (
@@ -162,6 +179,113 @@ export async function updateProject(
       changes.targetDate !== undefined,
       changes.targetDate ?? null,
     ],
+  );
+  return result.rowCount ?? 0;
+}
+
+/**
+ * Sets or (null) takes away the budget of a project (8 October decision 17). The database asks for
+ * the owner, a manager or the founder (42501 for a plain member) and for an amount with a
+ * currency (23514). Returns the number of rows (0: the person may not read the project, or it
+ * does not exist).
+ */
+export async function setProjectBudget(
+  client: Queryable,
+  projectId: string,
+  budget: { amount: string; currency: string } | null,
+): Promise<number> {
+  const result = await client.query(
+    `update office.projects p set budget = $2::numeric, budget_currency = $3
+     where p.id = $1 and p.company_id = office.ctx_company_id()`,
+    [projectId, budget?.amount ?? null, budget?.currency ?? null],
+  );
+  return result.rowCount ?? 0;
+}
+
+// The three milestone statements build the new list inside ONE update each: two people who change
+// two entries at the same moment both keep their change (the second waits for the first and reads
+// the list as the first left it). Never read the list, change it here and write it back.
+const HAS_MILESTONE = `exists (
+     select 1 from jsonb_array_elements(p.milestones) e where e.value ->> 'id' = ($2::uuid)::text)`;
+
+/**
+ * Adds a milestone at the end of the list, not reached yet. Returns the number of rows: 0 when the
+ * id is in the list already (a repeated send), the list is full (50), or the person may not
+ * change the project. The id is stored in lower case, whatever was sent.
+ */
+export async function addProjectMilestone(
+  client: Queryable,
+  projectId: string,
+  milestone: { id: string; name: string; date: string | null },
+): Promise<number> {
+  const result = await client.query(
+    `update office.projects p
+        set milestones = p.milestones || jsonb_build_array(
+          jsonb_build_object('id', ($2::uuid)::text, 'name', $3::text, 'date', $4::text, 'done', false))
+      where p.id = $1 and p.company_id = office.ctx_company_id()
+        and jsonb_array_length(p.milestones) < 50
+        and not ${HAS_MILESTONE}`,
+    [projectId, milestone.id, milestone.name, milestone.date],
+  );
+  return result.rowCount ?? 0;
+}
+
+/**
+ * Changes the fields that were sent of one milestone; every field comes with a flag that says
+ * whether it was sent (a day sent as null is cleared). The order of the list stays. Returns the
+ * number of rows (0: no such entry, or the person may not change the project).
+ */
+export async function changeProjectMilestone(
+  client: Queryable,
+  projectId: string,
+  milestoneId: string,
+  changes: {
+    name?: string | undefined;
+    date?: string | null | undefined;
+    done?: boolean | undefined;
+  },
+): Promise<number> {
+  const result = await client.query(
+    `update office.projects p
+        set milestones = (
+          select jsonb_agg(
+            case when e.value ->> 'id' = ($2::uuid)::text then jsonb_build_object(
+              'id', e.value -> 'id',
+              'name', case when $3::boolean then to_jsonb($4::text) else e.value -> 'name' end,
+              'date', case when $5::boolean then to_jsonb($6::text) else e.value -> 'date' end,
+              'done', case when $7::boolean then to_jsonb($8::boolean) else e.value -> 'done' end)
+            else e.value end
+            order by e.ordinality)
+          from jsonb_array_elements(p.milestones) with ordinality e)
+      where p.id = $1 and p.company_id = office.ctx_company_id() and ${HAS_MILESTONE}`,
+    [
+      projectId,
+      milestoneId,
+      changes.name !== undefined,
+      changes.name ?? null,
+      changes.date !== undefined,
+      changes.date ?? null,
+      changes.done !== undefined,
+      changes.done ?? null,
+    ],
+  );
+  return result.rowCount ?? 0;
+}
+
+/** Takes one milestone off the list; 0 rows when it is not there (or the person may not). */
+export async function removeProjectMilestone(
+  client: Queryable,
+  projectId: string,
+  milestoneId: string,
+): Promise<number> {
+  const result = await client.query(
+    `update office.projects p
+        set milestones = coalesce((
+          select jsonb_agg(e.value order by e.ordinality)
+          from jsonb_array_elements(p.milestones) with ordinality e
+          where e.value ->> 'id' <> ($2::uuid)::text), '[]'::jsonb)
+      where p.id = $1 and p.company_id = office.ctx_company_id() and ${HAS_MILESTONE}`,
+    [projectId, milestoneId],
   );
   return result.rowCount ?? 0;
 }

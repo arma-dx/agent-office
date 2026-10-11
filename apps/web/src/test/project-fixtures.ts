@@ -108,9 +108,13 @@ export function projectDetail(overrides: Partial<ProjectDetail> = {}): ProjectDe
     createdAt: AT,
     createdBy: { userId: USER_ID, name: 'Ömer Kadıoğlu' },
     members,
+    // The budget and the milestones of step 3: nothing of either until a test gives some.
+    budget: { visible: false },
+    milestones: [],
     actions: {
       edit: true,
       addMembers: true,
+      setBudget: false,
       setAiPermission: true,
       setCustomerPermissions: true,
     },

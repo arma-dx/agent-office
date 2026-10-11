@@ -103,6 +103,12 @@ export const apiErrorCodeSchema = z.enum([
   'project_roles_not_allowed',
   // The members changed between the read and the act; the page is read again.
   'project_members_changed',
+  // The budget of a project is changed by its owner, its managers and the founder.
+  'project_budget_not_allowed',
+  // A project holds at most 50 milestones.
+  'milestone_limit',
+  // The milestone was removed meanwhile; the page is read again.
+  'milestone_not_found',
 ]);
 export type ApiErrorCode = z.output<typeof apiErrorCodeSchema>;
 
