@@ -522,6 +522,7 @@ Projenin onayları (8 Ekim karar 17):
 - Sonuç durumu (bu listede): `pending` (onay bekliyor), `approved`, `changes_requested`, `rejected`, `closed` (beklerken talep değişti; karar verilmeden kapandı).
 - Şemalar: `projectApprovalSchema`, `projectApprovalsSchema` (`packages/shared/src/project-sections.ts`). Sabit: `PROJECT_APPROVAL_LIST_LIMIT` (200).
 - Veritabanı ifadeleri: `listProjectApprovals` (satır türü `ProjectApprovalRow`), `readerSeesUndecided` (okuyan kişinin şirkette onay hakkı var mı; `office.can_approve`).
+- Panel: proje sayfasında `?tab=approvals` ("Onaylar" sekmesi). Panel işlevleri: `fetchProjectApprovals` ve `projectApprovalsQueryOptions` (istek; anahtarı `projectApprovalsKey`), `approvalLine` (bir sonucun tek cümlesi: ajan koduyla, karar veren kişinin adıyla; ajanın yazdığı metin yok).
 
 Projeye yapay zekâ harcama sınırı (8 Ekim karar 17):
 

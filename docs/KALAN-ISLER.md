@@ -51,6 +51,8 @@ Henüz olmayanlar: veritabanı (göç dosyası yok), giriş, işlevli ekran (yal
 
 12 Ekim 2026 (devam): adım 3'ün ikinci parçası kuruldu: ajan çalışmaları ve maliyeti. Proje sayfasında "Çalışmalar" sekmesi var: projeyi görebilen herkes o projenin en yeni 200 ajan çalışmasını görür (talep, ajan, başlangıç, süre, sonuç); token sayılarını, çalışma başına maliyeti ve toplamı yalnızca kurucu görür. Listede ajanın yazdığı hiçbir metin yoktur; liste yarım dakikada bir kendiliğinden yenilenir. Türetilen seçimler `docs/SONRA.md` içinde P3-h ila P3-j; hepsi kurucu onayı bekliyor. Yeni göç (`20261008102800_project_runs_index.sql`) yalnızca bir dizin ekler.
 
+12 Ekim 2026 (devam): adım 3'ün üçüncü parçası kuruldu: onaylar. Proje sayfasında "Onaylar" sekmesi var: o projenin taleplerinde birim onayına sunulan sonuçlar, "Karar bekleyenler" ve "Karar verilenler" diye iki grupta listelenir. Satır talebin sayfasını açar; karar sekmede verilmez ve listede ajanın yazdığı hiçbir metin yoktur. Onay hakkı olmayan üye yalnızca onaylanmış sonuçları görür ve sekme bunu söyler. Türetilen seçimler `docs/SONRA.md` içinde P3-k ve P3-l; ikisi de kurucu onayı bekliyor. Bu parça için göç yok.
+
 ## Sprint 0
 
 ### 0.1 Arayüz temeli
@@ -432,7 +434,7 @@ Adım 3: proje sayfasının öteki bölümleri (karar 17; her biri ayrı küçü
 
 - [x] Bütçe ve kilometre taşları (bütçeyi sahip, yöneticiler ve kurucu görür ve değiştirir, 12 Ekim karar 2; para birimi her seferinde seçilir, SONRA P3-c; yapay zekâ maliyeti bütçeden düşülmez, SONRA P3-d; kilometre taşlarını her üye tutar, SONRA P3-e, P3-f)
 - [x] Ajan çalışmaları ve maliyeti ("Çalışmalar" sekmesi: en yeni 200 çalışma; token ve maliyeti yalnızca kurucu görür; listede ajan metni yok, SONRA P3-h ila P3-j)
-- [ ] Onaylar
+- [x] Onaylar ("Onaylar" sekmesi: karar burada verilmez, satır talebi açar; bekleyen ve onaylanmayan sonucu yalnızca onay verebilen görür, SONRA P3-k, P3-l; göç yok)
 - [ ] Projenin notları (Notlar işiyle birlikte) (adım 3'te kurulmadı: Notlar işi (1.3) bekleniyor; proje sayfasında not sekmesi yok)
 - [ ] Projeye yapay zekâ harcama sınırı: aşılınca o projede ajanlar durur
 - [ ] `20261008102700_project_budget_and_milestones.sql` göçünün yerel veritabanına ve test ortamına uygulanması
