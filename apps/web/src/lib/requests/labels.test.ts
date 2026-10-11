@@ -23,6 +23,7 @@ import {
   acceptInPlace,
   answeredInPlace,
   dueText,
+  limitWaitingWorkSentence,
   restartedSentence,
   rowSentence,
   stageText,
@@ -431,6 +432,53 @@ describe('the sentence of an opening: counting, none, a number, not counted', ()
       expect(waitingWorkSentence(kind, 'unknown')).toBe(
         `Bekleyen talepler sayılamadı. ${WAITING_WORK_IF_ANY[kind]}`,
       );
+    }
+  });
+});
+
+// 11 October decision 1: raising or removing a project's AI spending limit starts the held work
+// again, and the confirmation says how many requests before the founder confirms.
+describe('the sentence of a raised or removed spending limit', () => {
+  const PAID = 'her biri ücretli bir yapay zekâ çalışmasıdır.';
+
+  it('says that the count is on its way in the words of every opening', () => {
+    expect(limitWaitingWorkSentence('raise', 'counting')).toBe('Bekleyen talepler sayılıyor.');
+    expect(limitWaitingWorkSentence('remove', 'counting')).toBe('Bekleyen talepler sayılıyor.');
+  });
+
+  it('names the number twice and the act that starts the runs', () => {
+    expect(limitWaitingWorkSentence('raise', 3)).toBe(
+      `Bu projede 3 talep bekliyor. Sınırı yükseltince 3 talebin çalışması hemen yeniden başlar; ${PAID}`,
+    );
+    expect(limitWaitingWorkSentence('remove', 1)).toBe(
+      `Bu projede 1 talep bekliyor. Sınırı kaldırınca 1 talebin çalışması hemen yeniden başlar; ${PAID}`,
+    );
+  });
+
+  it('says that nothing starts when the count is zero, and never that no request waits', () => {
+    expect(limitWaitingWorkSentence('raise', 0)).toBe(
+      'Bu projede yeniden başlayacak talep yok; sınırı yükseltmek hiçbir çalışmayı başlatmaz.',
+    );
+    expect(limitWaitingWorkSentence('remove', 0)).toBe(
+      'Bu projede yeniden başlayacak talep yok; sınırı kaldırmak hiçbir çalışmayı başlatmaz.',
+    );
+    expect(limitWaitingWorkSentence('raise', 0)).not.toMatch(/bekleyen talep yok/);
+  });
+
+  it('says so when the count could not be read, and what may start', () => {
+    expect(limitWaitingWorkSentence('raise', 'unknown')).toBe(
+      `Bekleyen talepler sayılamadı. Bu projede bekleyen talep varsa sınırı yükseltince hemen yeniden başlar; ${PAID}`,
+    );
+    expect(limitWaitingWorkSentence('remove', 'unknown')).toBe(
+      `Bekleyen talepler sayılamadı. Bu projede bekleyen talep varsa sınırı kaldırınca hemen yeniden başlar; ${PAID}`,
+    );
+  });
+
+  it('no text of the limit says any more that a raise starts nothing by itself', () => {
+    for (const act of ['raise', 'remove'] as const) {
+      for (const waiting of ['counting', 'unknown', 0, 2] as const) {
+        expect(limitWaitingWorkSentence(act, waiting)).not.toMatch(/kendiliğinden başlamaz/);
+      }
     }
   });
 });

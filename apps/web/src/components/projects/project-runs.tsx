@@ -2,6 +2,7 @@ import type { ProjectDetail, ProjectRun, RunUsage } from '@agent-office/shared';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import type { ReactNode } from 'react';
+import { SpendingLimit } from '@/components/projects/spending-limit';
 import { EmptyState, ErrorMessage, LoadingRows } from '@/components/states';
 import { StatusBadge } from '@/components/status';
 import {
@@ -125,8 +126,21 @@ function RunRow({ run, company, costs }: { run: ProjectRun; company: string; cos
  *
  * Runs move by themselves, so the list is refreshed every half minute with a background request,
  * which does not extend the session's idle time (rule 3).
+ *
+ * Above the list, whatever its state, stands the founder's block: what the project's agents have
+ * spent and the AI spending limit (components/projects/spending-limit.tsx). Its figures come with
+ * the project, so it is there while the runs are still being read, and when they cannot be.
  */
 export function ProjectRuns({ project }: { project: ProjectDetail }): ReactNode {
+  return (
+    <div className="flex flex-col gap-5">
+      <SpendingLimit project={project} />
+      <RunList project={project} />
+    </div>
+  );
+}
+
+function RunList({ project }: { project: ProjectDetail }): ReactNode {
   const company = useCompany();
   const list = useQuery(projectRunsQueryOptions(company.companyId, project.id));
   useBackgroundRefresh({

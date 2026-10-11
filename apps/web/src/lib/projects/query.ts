@@ -6,6 +6,8 @@ import {
   customerPermissionsSchema,
   projectAiPermissionAnswerSchema,
   projectAiPermissionSchema,
+  projectAiSpendingLimitAnswerSchema,
+  projectAiSpendingLimitSchema,
   projectApprovalsSchema,
   projectDetailSchema,
   projectListSchema,
@@ -22,6 +24,8 @@ import {
   type CustomerPermissionsAnswer,
   type ProjectAiPermission,
   type ProjectAiPermissionAnswer,
+  type ProjectAiSpendingLimit,
+  type ProjectAiSpendingLimitAnswer,
   type ProjectApprovals,
   type ProjectBudget,
   type ProjectDetail,
@@ -317,6 +321,28 @@ export function setProjectAiPermission(
     method: 'PUT',
     body,
     schema: projectAiPermissionAnswerSchema,
+    companyId,
+  });
+}
+
+/**
+ * The founder sets, changes or (limitUsd null) takes away the AI spending limit of a project
+ * (8 October 2026, decision 17). Raising it and taking it away carry a project_ai_spending_limit
+ * re-verification for this project and this value; a first limit and a lower one carry none. The
+ * answer is the project and `restarted`: how many requests the limit held this change started
+ * again (11 October decision 1); 0 for a first and a lower limit.
+ */
+export function setProjectAiSpendingLimit(
+  companyId: string,
+  projectId: string,
+  change: ProjectAiSpendingLimit,
+): Promise<ProjectAiSpendingLimitAnswer> {
+  const id = z.uuid().parse(projectId);
+  const body = projectAiSpendingLimitSchema.parse(change);
+  return apiRequest(`/projects/${id}/ai-spending-limit`, {
+    method: 'PUT',
+    body,
+    schema: projectAiSpendingLimitAnswerSchema,
     companyId,
   });
 }

@@ -2,8 +2,9 @@
 // Source: ui/src/pages/ProjectDetail.tsx (the header: tile, name, status) at commit
 // dd868ed125cd709506dd9b29fca640a44d580501. License text: THIRD_PARTY_NOTICES.md.
 // Changes: tabs of our own (the requests of the project, its milestones, its agent runs, its
-// approvals, its settings) in the address; no inline editing, no star, no plugin slots; the budget is in the properties panel;
-// the properties go to the shell's panel; members and the AI permission are ours; Turkish texts.
+// approvals, its settings) in the address; no inline editing, no star, no plugin slots; the
+// budget is in the properties panel; the AI spending limit is in the "Çalışmalar" tab; the
+// properties go to the shell's panel; members and the AI permission are ours; Turkish texts.
 import type { MembershipSummary, ProjectDetail } from '@agent-office/shared';
 import { useQuery } from '@tanstack/react-query';
 import { createFileRoute, Link } from '@tanstack/react-router';

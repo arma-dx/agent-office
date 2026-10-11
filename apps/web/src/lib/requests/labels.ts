@@ -323,6 +323,39 @@ export function waitingWorkSentence(
   return `${where} ${count} talep bekliyor. ${kind === 'agent' ? 'Ajanı' : 'İzni'} açınca ${count} talebin çalışması hemen yeniden başlar; her biri ücretli bir yapay zekâ çalışmasıdır.`;
 }
 
+/** The two changes of a project's AI spending limit that start held work again. */
+export type LimitLoosening = 'raise' | 'remove';
+
+/**
+ * What the confirmation of a raised or removed AI spending limit says about the work it starts
+ * (11 October 2026, decision 1): the same sentence an opening says, with the act named. The
+ * number is the database's, for the limit that is being confirmed: it is 0 while that limit would
+ * still be reached by what the project has spent.
+ */
+export function limitWaitingWorkSentence(
+  act: LimitLoosening,
+  waiting: number | 'counting' | 'unknown',
+): string {
+  if (waiting === 'counting') {
+    return 'Bekleyen talepler sayılıyor.';
+  }
+  const paid = 'her biri ücretli bir yapay zekâ çalışmasıdır.';
+  if (waiting === 'unknown') {
+    return `Bekleyen talepler sayılamadı. Bu projede bekleyen talep varsa ${
+      act === 'raise' ? 'sınırı yükseltince' : 'sınırı kaldırınca'
+    } hemen yeniden başlar; ${paid}`;
+  }
+  if (waiting === 0) {
+    return `Bu projede yeniden başlayacak talep yok; ${
+      act === 'raise' ? 'sınırı yükseltmek' : 'sınırı kaldırmak'
+    } hiçbir çalışmayı başlatmaz.`;
+  }
+  const count = String(waiting);
+  return `Bu projede ${count} talep bekliyor. ${
+    act === 'raise' ? 'Sınırı yükseltince' : 'Sınırı kaldırınca'
+  } ${count} talebin çalışması hemen yeniden başlar; ${paid}`;
+}
+
 /**
  * What the toast says after an opening that started work again: the number the API answered, which
  * can differ from the number the confirmation showed (a request was routed, closed or stopped in

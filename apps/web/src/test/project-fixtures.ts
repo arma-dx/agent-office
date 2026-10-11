@@ -269,7 +269,12 @@ export function projectRequestsRoute(projectId: string = PROJECT_ID): string {
 
 /** The key of the count an opening confirmation reads (GET /waiting-work with one scope). */
 export function waitingWorkRoute(
-  scope: { agent: string } | { project: string } | { customer: string },
+  scope:
+    | { agent: string }
+    | { project: string }
+    | { customer: string }
+    // What a new AI spending limit of the project would start; without limitUsd: its removal.
+    | { spendingLimit: string; limitUsd?: string },
 ): string {
   return `GET /waiting-work?${new URLSearchParams(scope).toString()}`;
 }

@@ -5,6 +5,8 @@ import {
   budgetOf,
   budgetValues,
   createProjectBody,
+  limitFormSchema,
+  limitOf,
   milestoneFormSchema,
   NEW_CUSTOMER,
   newProjectValues,
@@ -249,5 +251,33 @@ describe('budget form', () => {
       amount: '999999999999.99',
       currency: 'USD',
     });
+  });
+});
+
+describe('spending limit form', () => {
+  const problem = (limit: string): string | undefined => {
+    const result = limitFormSchema.safeParse({ limit });
+    return result.success ? undefined : result.error.issues[0]?.message;
+  };
+
+  it('says in Turkish what is wrong with the limit', () => {
+    expect(problem('')).toBe('Sınırı yazın.');
+    expect(problem('   ')).toBe('Sınırı yazın.');
+    const SHAPE = 'Sınırı 25,00 biçiminde yazın; sıfırdan büyük ve en çok 999.999,99 olmalı.';
+    // A dot as the decimal sign, three decimals, zero, a word, a million.
+    for (const limit of ['25.5', '1,234', '0', '0,00', 'elli', '1000000', '1.000.000,00']) {
+      expect(problem(limit), limit).toBe(SHAPE);
+    }
+    for (const limit of ['25', '25,5', '25,00', '0,01', '999.999,99', ' 50 ']) {
+      expect(problem(limit), limit).toBeUndefined();
+    }
+  });
+
+  it('reads what was typed as the amount the API takes, also while it is typed', () => {
+    expect(limitOf('25,5')).toBe('25.5');
+    expect(limitOf('1.250,00')).toBe('1250.00');
+    expect(limitOf('25,')).toBeNull();
+    expect(limitOf('')).toBeNull();
+    expect(limitOf('1000000')).toBeNull();
   });
 });

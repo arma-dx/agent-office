@@ -203,6 +203,35 @@ export const milestoneFormSchema = z.object({
 });
 export type MilestoneFormValues = z.output<typeof milestoneFormSchema>;
 
+/** The whole digits an AI spending limit holds: at most 999999.99 (usdLimitSchema). */
+const LIMIT_WHOLE_DIGITS = 6;
+
+/**
+ * The form of a project's AI spending limit: one amount in US dollars, as a person types it. The
+ * limits are the shared contract's (usdLimitSchema), said in Turkish before anything is sent.
+ */
+export const limitFormSchema = z.object({
+  limit: z.string().superRefine((text, context) => {
+    if (text.trim() === '') {
+      context.addIssue({ code: 'custom', message: 'Sınırı yazın.' });
+    } else if (parseAmountInput(text, LIMIT_WHOLE_DIGITS) === null) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Sınırı 25,00 biçiminde yazın; sıfırdan büyük ve en çok 999.999,99 olmalı.',
+      });
+    }
+  }),
+});
+export type LimitFormValues = z.output<typeof limitFormSchema>;
+
+/**
+ * What was typed as a limit, as the API takes it ("25.5"), or null while it is not a limit: also
+ * read while the person types, for the warning about a limit that is reached at once.
+ */
+export function limitOf(text: string): string | null {
+  return parseAmountInput(text, LIMIT_WHOLE_DIGITS);
+}
+
 /** The whole digits a budget holds (projects.budget is numeric(14, 2)). */
 const BUDGET_WHOLE_DIGITS = 12;
 

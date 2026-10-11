@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { amountInputText, formatCount, formatMoney, parseAmountInput } from './money.ts';
+import {
+  amountInputText,
+  formatCount,
+  formatMoney,
+  limitAlreadyReached,
+  parseAmountInput,
+  remainingUsd,
+} from './money.ts';
 
 describe('money as the panel writes and reads it', () => {
   it('an amount is read the Turkish way', () => {
@@ -46,5 +53,23 @@ describe('money as the panel writes and reads it', () => {
     expect(formatCount(6800)).toBe('6.800');
     expect(formatCount(0)).toBe('0');
     expect(formatCount(1234567)).toBe('1.234.567');
+  });
+
+  it('what is left of a limit is exact and never below zero', () => {
+    expect(remainingUsd('25.00', '1.674690')).toBe('23.325310');
+    expect(remainingUsd('25', '25')).toBe('0.000000');
+    // The sum can pass the limit by the calls that were in flight.
+    expect(remainingUsd('25.00', '25.004100')).toBe('0.000000');
+    expect(remainingUsd('999999.99', '0')).toBe('999999.990000');
+    // Not a floating point subtraction: 0.3 - 0.1 is 0.2.
+    expect(remainingUsd('0.3', '0.1')).toBe('0.200000');
+    expect(formatMoney(remainingUsd('25.00', '1.674690'), 'USD')).toBe('$23,33');
+  });
+
+  it('a limit that is not above what was spent is reached at once', () => {
+    expect(limitAlreadyReached('5.00', '5.000000')).toBe(true);
+    expect(limitAlreadyReached('5', '5.000001')).toBe(true);
+    expect(limitAlreadyReached('5.01', '5.009999')).toBe(false);
+    expect(limitAlreadyReached('0.01', '0')).toBe(false);
   });
 });

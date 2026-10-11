@@ -45,3 +45,27 @@ export function amountInputText(amount: string): string {
   const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
   return decimals === '' ? grouped : `${grouped},${decimals}`;
 }
+
+/** A dollar amount with up to six decimals in millionths of a dollar: exact, whatever its size. */
+function micros(amount: string): bigint {
+  const [whole = '0', decimals = ''] = amount.split('.');
+  return BigInt(whole) * 1_000_000n + BigInt(decimals.padEnd(6, '0').slice(0, 6));
+}
+
+/**
+ * What is left of a limit after what was spent, as a dollar amount with six decimals; never below
+ * zero (the sum can pass the limit by the model calls that were in flight when it was reached).
+ */
+export function remainingUsd(limitUsd: string, spentUsd: string): string {
+  const left = micros(limitUsd) - micros(spentUsd);
+  const shown = left > 0n ? left : 0n;
+  return `${String(shown / 1_000_000n)}.${String(shown % 1_000_000n).padStart(6, '0')}`;
+}
+
+/**
+ * A limit that is not above what was spent is reached the moment it is saved. The two amounts are
+ * compared exactly, never as floating point numbers.
+ */
+export function limitAlreadyReached(limitUsd: string, spentUsd: string): boolean {
+  return micros(limitUsd) <= micros(spentUsd);
+}
