@@ -76,7 +76,10 @@ afterEach(() => {
 });
 
 const LIST = '/c/armadx/projects';
-const PAGE = `/c/armadx/projects/${PROJECT_ID}`;
+// A project's page opens on its "Talepler" tab; the description and the members are on "Ayarlar",
+// which is in the address.
+const PROJECT_PATH = `/c/armadx/projects/${PROJECT_ID}`;
+const PAGE = `${PROJECT_PATH}?tab=settings`;
 
 function listOf(...projects: ReturnType<typeof project>[]): Handler {
   return () => json({ projects, truncated: false });
@@ -275,7 +278,8 @@ describe('projects: the list', () => {
     expect(link).toHaveClass('row-link');
     await userEvent.click(link);
     expect(await screen.findByRole('heading', { level: 2, name: 'Depo otomasyonu' })).toBeVisible();
-    expect(currentLocation(router).pathname).toBe(PAGE);
+    // The row opens the project on its first tab: the address names no tab.
+    expect(currentLocation(router)).toEqual({ pathname: PROJECT_PATH, search: {} });
   });
 
   it("list: a row reads Ajanlar çalışabilir only when the project's and its customer's permissions are both open", async () => {
@@ -2922,6 +2926,10 @@ describe('projects: a new project', () => {
             members: [FOUNDER_MEMBER],
           });
           api.handle(`GET /projects/${body.id}`, () => json(created));
+          // The page opens on the requests of the new project: there are none yet.
+          api.handle(`GET /requests?project=${body.id}`, () =>
+            json({ requests: [], truncated: false }),
+          );
           return json(created, 201);
         },
         ...extra,

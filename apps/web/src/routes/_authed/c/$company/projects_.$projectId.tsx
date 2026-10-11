@@ -1,8 +1,9 @@
 // Parts adapted from Paperclip (MIT License, Copyright (c) 2025 Paperclip AI).
 // Source: ui/src/pages/ProjectDetail.tsx (the header: tile, name, status) at commit
 // dd868ed125cd709506dd9b29fca640a44d580501. License text: THIRD_PARTY_NOTICES.md.
-// Changes: no tabs, no inline editing, no star, no plugin slots, no budget chip; the properties go
-// to the shell's panel; members and the AI permission are ours; Turkish texts.
+// Changes: two tabs of our own (the requests of the project, and its settings) in the address; no
+// inline editing, no star, no plugin slots, no budget chip; the properties go to the shell's
+// panel; members and the AI permission are ours; Turkish texts.
 import type { MembershipSummary, ProjectDetail } from '@agent-office/shared';
 import { useQuery } from '@tanstack/react-query';
 import { createFileRoute, Link } from '@tanstack/react-router';
@@ -11,12 +12,15 @@ import { z } from 'zod';
 import { EditProjectDialog } from '@/components/projects/edit-project-dialog';
 import { ProjectMembers } from '@/components/projects/project-members';
 import { ProjectProperties } from '@/components/projects/project-properties';
+import { ProjectRequests } from '@/components/projects/project-requests';
 import { ProjectTile } from '@/components/projects/project-tile';
 import { PageLabel } from '@/components/shell/page-label';
 import { PropertiesPanel } from '@/components/shell/properties-panel';
 import { EmptyState, ErrorMessage, LoadingRows } from '@/components/states';
 import { StatusBadge } from '@/components/status';
+import { TabBar } from '@/components/tab-bar';
 import { Button } from '@/components/ui/button';
+import { Tabs, TabsContent } from '@/components/ui/tabs';
 import { ApiError, userMessage } from '@/lib/api';
 import { useReturnFocus } from '@/lib/focus';
 import { useWideWindow } from '@/lib/office/use-wide-window';
@@ -25,12 +29,22 @@ import { projectQueryOptions } from '@/lib/projects/query';
 import { useCompany } from '@/lib/session';
 
 /**
- * One project (8 October 2026, decision 17): its name and status, whether agents may work in it,
- * its description and its members; the properties are in the shell's panel. Everything on the page
- * comes from one answer of the API, already cut to what the reader may read: a project the reader
- * cannot see is the same screen as one that does not exist.
+ * One project (8 October 2026, decision 17): its name and status and whether agents may work in
+ * it, then two tabs. "Talepler" (shown first) lists the requests of the project and opens a new
+ * one in it; "Ayarlar" holds its description and its members. The properties are in the shell's
+ * panel on both. The project comes from one answer of the API, already cut to what the reader may
+ * read: a project the reader cannot see is the same screen as one that does not exist.
+ *
+ * The tab is in the address: "Talepler" has no search parameter, so every link to a project opens
+ * it; `?tab=settings` opens "Ayarlar" and survives a reload. A value the page does not know opens
+ * "Talepler".
  */
+const searchSchema = z.object({
+  tab: z.enum(['requests', 'settings']).optional().catch(undefined),
+});
+
 export const Route = createFileRoute('/_authed/c/$company/projects_/$projectId')({
+  validateSearch: (search) => searchSchema.parse(search),
   // The list the project belongs to: the top bar links back to it, and a change of company opens
   // it there (a project of one company does not exist in the other).
   staticData: {
@@ -95,6 +109,8 @@ function ProjectPage({ project }: { project: ProjectDetail }) {
   const wide = useWideWindow();
   const [editing, setEditing] = useState(false);
   const editFocus = useReturnFocus();
+  const { tab = 'requests' } = Route.useSearch();
+  const navigate = Route.useNavigate();
   return (
     <article className="mx-auto flex max-w-3xl flex-col gap-5">
       <PageLabel>{project.name}</PageLabel>
@@ -130,18 +146,43 @@ function ProjectPage({ project }: { project: ProjectDetail }) {
         </p>
       ) : null}
 
-      <section className="flex flex-col gap-1">
-        <h3 className="text-[0.9375rem] font-semibold">Açıklama</h3>
-        {project.description ? (
-          <p dir="auto" className="text-sm break-words whitespace-pre-wrap">
-            {project.description}
-          </p>
-        ) : (
-          <p className="text-sm text-ink-secondary">Açıklama yazılmamış.</p>
-        )}
-      </section>
+      {/* The selected tab is marked by the accent line and by aria-selected, never by colour
+          alone; changing the tab moves no focus and replaces the address, so that Back leaves the
+          project instead of walking through its tabs. */}
+      <Tabs
+        value={tab}
+        onValueChange={(next) => {
+          void navigate({
+            search: next === 'settings' ? { tab: 'settings' } : {},
+            replace: true,
+          });
+        }}
+      >
+        <TabBar
+          label="Proje bölümleri"
+          items={[
+            { value: 'requests', label: 'Talepler' },
+            { value: 'settings', label: 'Ayarlar' },
+          ]}
+        />
+        <TabsContent value="requests">
+          <ProjectRequests project={project} />
+        </TabsContent>
+        <TabsContent value="settings" className="flex flex-col gap-5">
+          <section className="flex flex-col gap-1">
+            <h3 className="text-[0.9375rem] font-semibold">Açıklama</h3>
+            {project.description ? (
+              <p dir="auto" className="text-sm break-words whitespace-pre-wrap">
+                {project.description}
+              </p>
+            ) : (
+              <p className="text-sm text-ink-secondary">Açıklama yazılmamış.</p>
+            )}
+          </section>
 
-      <ProjectMembers project={project} />
+          <ProjectMembers project={project} />
+        </TabsContent>
+      </Tabs>
 
       <PropertiesPanel open={wide}>
         <ProjectProperties project={project} />

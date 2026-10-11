@@ -245,7 +245,15 @@ export function sessionAs(membership: MembershipSummary): Handler {
   return sessionHandler({ memberships: [membership], lastCompanyId: membership.companyId });
 }
 
-/** The read routes of the section, answering the fixtures; a test replaces what it is about. */
+/** The key of the request list of a project (the "Talepler" tab of its page). */
+export function projectRequestsRoute(projectId: string = PROJECT_ID): string {
+  return `GET /requests?project=${projectId}`;
+}
+
+/**
+ * The read routes of the section, answering the fixtures; a test replaces what it is about. The
+ * project has no request unless a test gives some.
+ */
 export function projectHandlers(
   detail: ProjectDetail = projectDetail(),
   extra: Record<string, Handler> = {},
@@ -254,6 +262,7 @@ export function projectHandlers(
     'GET /session': sessionHandler(),
     'GET /projects': () => json({ projects: [project()], truncated: false }),
     [`GET /projects/${detail.id}`]: () => json(detail),
+    [projectRequestsRoute(detail.id)]: () => json({ requests: [], truncated: false }),
     'GET /projects/member-candidates': () => json({ people: CANDIDATES }),
     'GET /customers': () => json({ customers: CUSTOMERS }),
     ...extra,

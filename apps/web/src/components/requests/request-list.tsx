@@ -12,16 +12,23 @@ import { cn } from '@/lib/utils';
  * screen and by the "Talepler" tab of a project's page, so that a request reads the same in both.
  * Nothing in a row is a control: nobody sets a status, a unit or an agent by hand (7 October
  * decisions 2 and 7).
+ *
+ * `dense` is the row of a narrow column (a project's page, which is 768 px at most and shares the
+ * window with the properties panel): at every window width it has the columns the wide row keeps
+ * below 1280 px (the stage and the turn), and the due day goes under the title instead of beside
+ * it, so that the title, the one thing that tells two rows apart, keeps its room.
  */
 
 function RequestRow({
   request,
   company,
   showProject,
+  dense,
 }: {
   request: RequestSummary;
   company: string;
   showProject: boolean;
+  dense: boolean;
 }) {
   const turn = turnText(request.turn, request.waitingForMe);
   const due = dueText(request);
@@ -30,8 +37,9 @@ function RequestRow({
     <ListRow
       leading={<StatusIcon kind="task" status={request.status} labelled />}
       title={request.title}
+      {...(dense && due ? { subtitle: due } : {})}
       meta={
-        project || due ? (
+        !dense && (project || due) ? (
           <>
             {/* The project's name gives way to the title below 1280 px, like the unit code and the
                 time; it is on the request's page and in the row's own sentence. Next to a due day
@@ -75,27 +83,41 @@ function RequestRow({
           {/* Below 1280 px the fixed columns give way to the title, the one thing that tells two
               rows apart: the unit code and the time are dropped (both are on the request's page)
               and the stage gets a narrower column. */}
+          {dense ? null : (
+            <span
+              className="hidden w-14 text-xs text-ink-secondary xl:block"
+              title={request.unit?.name}
+            >
+              {request.unit?.code ?? ''}
+            </span>
+          )}
           <span
-            className="hidden w-14 text-xs text-ink-secondary xl:block"
-            title={request.unit?.name}
-          >
-            {request.unit?.code ?? ''}
-          </span>
-          <span
-            className={cn('w-44 truncate xl:w-64', !request.waitingForMe && 'text-ink-secondary')}
+            className={cn(
+              'w-44 truncate',
+              !dense && 'xl:w-64',
+              !request.waitingForMe && 'text-ink-secondary',
+            )}
             title={stageText(request)}
           >
             {stageText(request)}
           </span>
-          <span className={cn('w-24 truncate xl:w-32', request.waitingForMe && 'font-semibold')}>
+          <span
+            className={cn(
+              'w-24 truncate',
+              !dense && 'xl:w-32',
+              request.waitingForMe && 'font-semibold',
+            )}
+          >
             {turn ?? ''}
           </span>
-          <time
-            dateTime={request.updatedAt}
-            className="hidden w-20 text-right text-xs text-ink-secondary tabular-nums xl:block"
-          >
-            {formatWhen(request.updatedAt)}
-          </time>
+          {dense ? null : (
+            <time
+              dateTime={request.updatedAt}
+              className="hidden w-20 text-right text-xs text-ink-secondary tabular-nums xl:block"
+            >
+              {formatWhen(request.updatedAt)}
+            </time>
+          )}
         </>
       }
     />
@@ -107,20 +129,25 @@ function Group({
   requests,
   company,
   showProject,
+  dense,
+  headingLevel,
 }: {
   title: string;
   requests: RequestSummary[];
   company: string;
   showProject: boolean;
+  dense: boolean;
+  headingLevel: 2 | 3;
 }) {
   const headingId = useId();
   if (requests.length === 0) return null;
+  const Heading = headingLevel === 2 ? 'h2' : 'h3';
   return (
     <section aria-labelledby={headingId} className="flex flex-col gap-1">
-      <h2 id={headingId} className="px-2 text-sm font-semibold">
+      <Heading id={headingId} className="px-2 text-sm font-semibold">
         {title}{' '}
         <span className="font-normal text-ink-secondary tabular-nums">{requests.length}</span>
-      </h2>
+      </Heading>
       <ul className="flex flex-col">
         {requests.map((request) => (
           <RequestRow
@@ -128,6 +155,7 @@ function Group({
             request={request}
             company={company}
             showProject={showProject}
+            dense={dense}
           />
         ))}
       </ul>
@@ -145,12 +173,18 @@ export function RequestGroups({
   requests,
   company,
   showProject,
+  dense = false,
+  headingLevel = 2,
 }: {
   requests: readonly RequestSummary[];
   /** The company's short code, for the links. */
   company: string;
   /** False on a project's own page, where every row is of that project. */
   showProject: boolean;
+  /** The row of a narrow column; see the top of the file. */
+  dense?: boolean;
+  /** The level of the group headings: 2 on a screen of its own, 3 inside a page's section. */
+  headingLevel?: 2 | 3;
 }): ReactNode {
   const waiting = requests
     .filter((request) => request.waitingForMe)
@@ -162,7 +196,7 @@ export function RequestGroups({
   const running = requests.filter(
     (request) => !request.waitingForMe && request.stage !== 'done' && request.stage !== 'cancelled',
   );
-  const groups = { company, showProject };
+  const groups = { company, showProject, dense, headingLevel };
   return (
     <>
       <p role="status" className="sr-only">
