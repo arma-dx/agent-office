@@ -37,7 +37,9 @@ import {
 } from '@/lib/projects/query';
 import { useStoreProject } from '@/lib/projects/store';
 import { WAITING_WORK_IF_ANY, personName } from '@/lib/requests/labels';
+import { approvalDeskKey } from '@/lib/requests/query';
 import { useCompany } from '@/lib/session';
+import { sidebarCountsKey, todayKey } from '@/lib/today/query';
 import { busyProps } from '@/lib/utils';
 
 // The names take a fixed column, so every value starts at the same place.
@@ -59,8 +61,9 @@ type PermissionChange =
 /**
  * A confirmation without a passkey: closing any permission, and the automated processing
  * permission either way. Closing only stops agents or automatic jobs; the confirmation says what
- * stops. The safe button has the focus, and the dialog cannot be closed while its request is on
- * its way.
+ * stops: for an AI permission the runs under way, the open requests and the results that wait
+ * (rule 12; 8 October decisions 46 and 47). The safe button has the focus, and the dialog cannot
+ * be closed while its request is on its way.
  */
 function PlainConfirmation({
   title,
@@ -173,6 +176,22 @@ function Permissions({ project }: { project: ProjectDetail }) {
     asker.current?.focus();
   };
 
+  // An AI permission that opens or closes moves the stage of every open request of the project
+  // (or of the customer's projects): held, or free again. Everything that shows a request reads
+  // again: the lists (the project's own tab among them), every request page, Bugün, the two
+  // counts of the sidebar and the approval desk.
+  function afterAiChange(): void {
+    for (const queryKey of [
+      ['company', company.companyId, 'requests'],
+      ['company', company.companyId, 'request'],
+      todayKey(company.companyId),
+      sidebarCountsKey(company.companyId),
+      approvalDeskKey(company.companyId),
+    ]) {
+      void queryClient.invalidateQueries({ queryKey });
+    }
+  }
+
   // A customer's permissions hold for all its projects: every project page of the company, the
   // list and the customers are read again, and the dialog waits for this page's new answer.
   async function afterCustomerChange(): Promise<void> {
@@ -218,6 +237,7 @@ function Permissions({ project }: { project: ProjectDetail }) {
             });
           } else {
             store(result);
+            afterAiChange();
           }
           close();
         }}
@@ -239,10 +259,11 @@ function Permissions({ project }: { project: ProjectDetail }) {
     dialog = (
       <PlainConfirmation
         title={`${project.name} için yapay zekâ izni kapatılsın mı?`}
-        description="Ajanlar bu projede artık çalışamaz. İzni yeniden açmak passkey ister."
+        description="Ajanlar bu projede artık çalışamaz: süren çalışmalar durdurulur, açık talepler bekler ve bekleyen sonuçlar izin açılana kadar onaylanamaz. İzni yeniden açmak passkey ister."
         confirmLabel="İzni kapat"
         run={async () => {
           store(await setProjectAiPermission(company.companyId, project.id, { allowed: false }));
+          afterAiChange();
         }}
         onClose={close}
         onCloseAutoFocus={returnFocus}
@@ -266,6 +287,7 @@ function Permissions({ project }: { project: ProjectDetail }) {
             aiAllowed: true,
             stepUp,
           });
+          afterAiChange();
           await afterCustomerChange();
           return undefined;
         }}
@@ -281,7 +303,7 @@ function Permissions({ project }: { project: ProjectDetail }) {
       customer_ai_off: {
         title: `${confirmed.name} için yapay zekâ izni kapatılsın mı?`,
         description:
-          'Bu müşterinin bütün projelerinde ajanlar artık çalışamaz. İzni yeniden açmak passkey ister.',
+          'Bu müşterinin bütün projelerinde ajanlar artık çalışamaz: süren çalışmalar durdurulur, açık talepler bekler ve bekleyen sonuçlar izin açılana kadar onaylanamaz. İzni yeniden açmak passkey ister.',
         confirmLabel: 'İzni kapat',
         permissions: { aiAllowed: false },
       },
@@ -306,6 +328,8 @@ function Permissions({ project }: { project: ProjectDetail }) {
         confirmLabel={text.confirmLabel}
         run={async () => {
           await setCustomerPermissions(company.companyId, confirmed.id, text.permissions);
+          // The automated processing permission moves no request: agents do not read it.
+          if (pending === 'customer_ai_off') afterAiChange();
           await afterCustomerChange();
         }}
         onClose={close}

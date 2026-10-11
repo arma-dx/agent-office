@@ -46,6 +46,7 @@ import {
   projectDetail,
   projectForEmployee,
   projectHandlers,
+  projectRequestsRoute,
   projectWithRoles,
   roleHandlers,
   roleRoute,
@@ -60,6 +61,9 @@ import {
   stepUpIssuer,
 } from './test/passkeys.ts';
 import { currentLocation, renderApp } from './test/render-app.tsx';
+import { REQUEST_ID, requestDetail, summaryOf } from './test/request-fixtures.ts';
+import { approvalDeskKey, requestKey } from './lib/requests/query.ts';
+import { todayKey } from './lib/today/query.ts';
 
 vi.mock('@simplewebauthn/browser', () => ({
   startAuthentication: vi.fn(),
@@ -1893,6 +1897,12 @@ describe('projects: permissions', () => {
   };
   const AI = `PUT /projects/${PROJECT_ID}/ai-permission`;
   const CONTRACT = `PATCH /customers/${CUSTOMER_ID}/permissions`;
+  // What closing an AI permission does to the work under way (rule 12; 8 October decisions 46
+  // and 47), said before the founder confirms.
+  const CLOSING_PROJECT =
+    'Ajanlar bu projede artık çalışamaz: süren çalışmalar durdurulur, açık talepler bekler ve bekleyen sonuçlar izin açılana kadar onaylanamaz. İzni yeniden açmak passkey ister.';
+  const CLOSING_CUSTOMER =
+    'Bu müşterinin bütün projelerinde ajanlar artık çalışamaz: süren çalışmalar durdurulur, açık talepler bekler ve bekleyen sonuçlar izin açılana kadar onaylanamaz. İzni yeniden açmak passkey ister.';
   const aiSection = () => within(panel()).getByRole('region', { name: 'Yapay zekâ izni' });
   const contractSection = () =>
     within(panel()).getByRole('region', { name: 'Müşterinin sözleşmesi' });
@@ -2055,9 +2065,7 @@ describe('projects: permissions', () => {
     const dialog = await screen.findByRole('alertdialog', {
       name: 'Depo otomasyonu için yapay zekâ izni kapatılsın mı?',
     });
-    expect(dialog).toHaveTextContent(
-      'Ajanlar bu projede artık çalışamaz. İzni yeniden açmak passkey ister.',
-    );
+    expect(dialog).toHaveTextContent(CLOSING_PROJECT);
     // Closing starts nothing: only an opening speaks of waiting work.
     expect(dialog).not.toHaveTextContent(/yeniden başlar|ücretli/);
     // The safe button has the focus; giving up sends nothing and returns the focus to the switch.
@@ -2437,9 +2445,7 @@ describe('projects: permissions', () => {
     const dialog = await screen.findByRole('alertdialog', {
       name: 'Beta Lojistik için yapay zekâ izni kapatılsın mı?',
     });
-    expect(dialog).toHaveTextContent(
-      'Bu müşterinin bütün projelerinde ajanlar artık çalışamaz. İzni yeniden açmak passkey ister.',
-    );
+    expect(dialog).toHaveTextContent(CLOSING_CUSTOMER);
     await userEvent.click(within(dialog).getByRole('button', { name: 'İzni kapat' }));
     await closed();
     expect(api.callsTo(CONTRACT).map((call) => call.body)).toEqual([{ aiAllowed: false }]);
@@ -2463,6 +2469,165 @@ describe('projects: permissions', () => {
     expect(
       within(contractSection()).getByText('İzinleri yalnızca kurucu değiştirir.'),
     ).toBeVisible();
+  });
+
+  it('permissions: closing says what happens to the work under way, and the requests are read again afterwards', async () => {
+    const stepUp = stepUpIssuer();
+    const IN_PROJECT = { id: PROJECT_ID, name: 'Depo otomasyonu' };
+    const working = requestDetail({
+      status: 'in_progress',
+      stage: 'working',
+      turn: { kind: 'agent', code: 'SOS-2', name: 'Sosyal İçerik Yazım Ajanı' },
+      waitingForMe: false,
+      approval: null,
+      project: IN_PROJECT,
+    });
+    const held = requestDetail({
+      status: 'in_progress',
+      stage: 'fell_to_person',
+      cause: 'ai_permission_closed',
+      turn: { kind: 'founder' },
+      waitingForMe: true,
+      approval: null,
+      project: IN_PROJECT,
+      agentsMayWork: false,
+    });
+    // What the API holds: the two permissions, and the request as they leave it.
+    let customer = { ...CUSTOMER_OPEN };
+    let aiAllowed = true;
+    const mayWork = () => aiAllowed && customer.aiAllowed;
+    const detail = () => projectDetail({ aiAllowed, agentsMayWork: mayWork(), customer });
+    const REQUESTS = projectRequestsRoute();
+    const api = mockApi(
+      projectHandlers(detail(), {
+        'POST /step-up/options': stepUp.handler,
+        [`GET /projects/${PROJECT_ID}`]: () => json(detail()),
+        [REQUESTS]: () =>
+          json({ requests: [summaryOf(mayWork() ? working : held)], truncated: false }),
+        [AI]: (call) => {
+          aiAllowed = (call.body as { allowed: boolean }).allowed;
+          return json({ ...detail(), restarted: 0 });
+        },
+        [CONTRACT]: (call) => {
+          customer = { ...customer, ...(call.body as Partial<typeof customer>) };
+          return json({ ...customer, restarted: 0 });
+        },
+      }),
+    );
+    // The founder is on the "Talepler" tab: the list is on screen beside the switches.
+    const { queryClient } = renderApp(PROJECT_PATH);
+    const list = () => screen.getByRole('tabpanel', { name: 'Talepler' });
+    expect(await screen.findByRole('region', { name: 'Sürenler 1' })).toBeVisible();
+    // What else shows a request and is not on screen now: a request's page, Bugün, the desk.
+    const elsewhere = [
+      requestKey(ARMADX.companyId, REQUEST_ID),
+      todayKey(ARMADX.companyId),
+      approvalDeskKey(ARMADX.companyId),
+    ];
+    const seed = () => {
+      for (const key of elsewhere) queryClient.setQueryData(key, { seeded: true });
+    };
+    const stale = () => elsewhere.map((key) => queryClient.getQueryState(key)?.isInvalidated);
+    const counts = () => api.callsTo('GET /today/counts').length;
+    const lists = () => api.callsTo(REQUESTS).length;
+
+    // Closing the project's permission.
+    seed();
+    let before = { counts: counts(), lists: lists() };
+    await userEvent.click(aiSwitch());
+    let dialog = await screen.findByRole('alertdialog', {
+      name: 'Depo otomasyonu için yapay zekâ izni kapatılsın mı?',
+    });
+    expect(within(dialog).getByText(CLOSING_PROJECT)).toBeVisible();
+    // Nothing is read again before the change is stored.
+    expect(stale()).toEqual([false, false, false]);
+    await userEvent.click(within(dialog).getByRole('button', { name: 'İzni kapat' }));
+    await closed();
+    // The list beside the switch shows the request as it is now: held, and the founder's.
+    expect(
+      await within(list()).findByRole('link', {
+        name: 'LinkedIn için gönderi yaz, Sizden bekleniyor: yapay zekâ izni kapalı, sıra sizde',
+      }),
+    ).toBeVisible();
+    expect(lists()).toBe(before.lists + 1);
+    await waitFor(() => {
+      expect(counts()).toBe(before.counts + 1);
+    });
+    expect(stale()).toEqual([true, true, true]);
+
+    // Opening it again (a passkey): the requests are read again too.
+    seed();
+    before = { counts: counts(), lists: lists() };
+    await userEvent.click(aiSwitch());
+    await userEvent.click(
+      await ready(
+        within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'İzni aç' }),
+      ),
+    );
+    await closed();
+    expect(await within(list()).findByRole('region', { name: 'Sürenler 1' })).toBeVisible();
+    expect(lists()).toBe(before.lists + 1);
+    expect(stale()).toEqual([true, true, true]);
+
+    // Closing the customer's permission holds the requests of all its projects.
+    seed();
+    before = { counts: counts(), lists: lists() };
+    await userEvent.click(
+      within(contractSection()).getByRole('switch', {
+        name: 'Sözleşme yapay zekâ kullanımına izin veriyor',
+      }),
+    );
+    dialog = await screen.findByRole('alertdialog', {
+      name: 'Beta Lojistik için yapay zekâ izni kapatılsın mı?',
+    });
+    expect(within(dialog).getByText(CLOSING_CUSTOMER)).toBeVisible();
+    await userEvent.click(within(dialog).getByRole('button', { name: 'İzni kapat' }));
+    await closed();
+    expect(
+      await within(list()).findByRole('region', { name: 'Sizden beklenenler 1' }),
+    ).toBeVisible();
+    expect(lists()).toBe(before.lists + 1);
+    expect(stale()).toEqual([true, true, true]);
+
+    // Opening the customer's permission again (a passkey) frees them.
+    seed();
+    before = { counts: counts(), lists: lists() };
+    await userEvent.click(
+      within(contractSection()).getByRole('switch', {
+        name: 'Sözleşme yapay zekâ kullanımına izin veriyor',
+      }),
+    );
+    await userEvent.click(
+      await ready(
+        within(
+          await screen.findByRole('alertdialog', {
+            name: 'Beta Lojistik için yapay zekâ izni açılsın mı?',
+          }),
+        ).getByRole('button', { name: 'İzni aç' }),
+      ),
+    );
+    await closed();
+    expect(await within(list()).findByRole('region', { name: 'Sürenler 1' })).toBeVisible();
+    expect(lists()).toBe(before.lists + 1);
+    expect(stale()).toEqual([true, true, true]);
+
+    // The automated processing permission moves no request: agents do not read it.
+    seed();
+    before = { counts: counts(), lists: lists() };
+    await userEvent.click(
+      within(contractSection()).getByRole('switch', {
+        name: 'Sözleşme kodla otomatik işlemeye izin veriyor',
+      }),
+    );
+    dialog = await screen.findByRole('alertdialog', {
+      name: 'Beta Lojistik için kodla otomatik işleme izni açılsın mı?',
+    });
+    expect(dialog).not.toHaveTextContent(/süren çalışmalar|bekleyen/);
+    await userEvent.click(within(dialog).getByRole('button', { name: 'İzni aç' }));
+    await closed();
+    expect(api.callsTo(CONTRACT).at(-1)?.body).toEqual({ automatedProcessingAllowed: true });
+    expect(lists()).toBe(before.lists);
+    expect(stale()).toEqual([false, false, false]);
   });
 });
 
