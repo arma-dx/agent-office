@@ -31,11 +31,13 @@ export function apiError(status: number, code: ApiErrorCode, message: string): R
 /**
  * What the shell itself asks for: on every page of a company the two counts of the sidebar (the
  * "Bugün" and "Onaylar" rows), and when the "Yeni talep" form opens whether a request can be sent
- * now. The Bugün screen, which many tests open, asks for its list, and the Onaylar screen for its
- * desk. A test that is not about them gets nothing waiting and an open door.
+ * now and which projects it can be opened in. The Bugün screen, which many tests open, asks for
+ * its list, and the Onaylar screen for its desk. A test that is not about them gets nothing
+ * waiting, an open door and no project.
  */
 const SHELL_HANDLERS: Record<string, Handler> = {
   'GET /approvals': () => json({ approvals: [], acceptances: [] }),
+  'GET /projects': () => json({ projects: [], truncated: false }),
   'GET /requests/intake': () => json({ open: true, reason: null }),
   'GET /today': () =>
     json({

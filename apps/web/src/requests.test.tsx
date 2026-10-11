@@ -105,10 +105,14 @@ describe('Yeni talep', () => {
       }),
     );
     const dialog = await screen.findByRole('dialog', { name: 'Yeni talep' });
-    // One text box (the optional due day is a date field, not a text box), and no control that
-    // would choose a unit, an agent or an approver.
+    // One text box (the optional due day is a date field, not a text box) and one choice, the
+    // optional project (8 October decisions 11 and 17); no control that would choose a unit, an
+    // agent or an approver.
     expect(within(dialog).getAllByRole('textbox')).toHaveLength(1);
-    expect(within(dialog).queryByRole('combobox')).toBeNull();
+    expect(within(dialog).getAllByRole('combobox')).toEqual([
+      within(dialog).getByRole('combobox', { name: 'Proje' }),
+    ]);
+    expect(within(dialog).queryByLabelText(/Birim|Ajan|Onaylayıcı/)).toBeNull();
     // What the form says before anything is sent: where the text goes and who will be able to
     // read the request. It tells and does not warn: personal and customer data may be written
     // (8 October decision 5), so nothing in the form says what not to write.

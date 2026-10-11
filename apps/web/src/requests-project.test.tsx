@@ -1,4 +1,6 @@
+import { COMPANY_HEADER } from '@agent-office/shared';
 import { startAuthentication } from '@simplewebauthn/browser';
+import { QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -13,15 +15,30 @@ import {
   RESULT_HELD_FOR_OTHERS,
 } from './lib/requests/labels.ts';
 import { formatDay } from './lib/dates.ts';
-import { clearDrafts } from './lib/drafts.ts';
-import { ARMADX, json, mockApi, sessionHandler } from './test/mock-api.ts';
+import { RequestDialogProvider } from './components/requests/request-dialog.tsx';
+import { clearDrafts, draftKey } from './lib/drafts.ts';
+import { createQueryClient } from './lib/query.ts';
+import { useOpenRequestDialog, useOpenRequestDialogFor } from './lib/requests/dialog.ts';
+import { CompanyContext, SessionContext } from './lib/session.ts';
+import {
+  apiError,
+  ARMADX,
+  json,
+  mockApi,
+  sessionBody,
+  sessionHandler,
+  USER_ID,
+  type ApiCall,
+  type Handler,
+} from './test/mock-api.ts';
 import { ASSERTION } from './test/passkeys.ts';
-import { PROJECT_ID } from './test/project-fixtures.ts';
+import { project, PROJECT_ID } from './test/project-fixtures.ts';
 import {
   APPROVAL_CARD,
   APPROVAL_ID,
   DEFAULT_JOURNEY,
   EMPLOYEE,
+  FOUNDER,
   PROJECT_REF,
   REQUEST_ID,
   RESULT,
@@ -29,6 +46,7 @@ import {
   summaryOf,
 } from './test/request-fixtures.ts';
 import { renderApp } from './test/render-app.tsx';
+import { renderInRouter } from './test/render-in-router.tsx';
 
 // The browser's passkey prompt: the person confirms, unless a test says otherwise.
 vi.mock('@simplewebauthn/browser', () => ({
@@ -92,6 +110,593 @@ function heldRequest(overrides: Parameters<typeof requestDetail>[0] = {}) {
 }
 
 const HELD_CARD = { ...APPROVAL_CARD, project: PROJECT_REF, agentsMayWork: false };
+
+// The "Proje" field of the form (8 October decisions 11 and 17). The form offers what the API lists
+// for the person (GET /projects: every project of the company for the founder, the member's own
+// for an employee); what it offers and how is decided in lib/requests/project-options.ts.
+describe('Yeni talep: the project', () => {
+  const LANSMAN = project({
+    id: PROJECT_ID,
+    name: 'Lansman',
+    aiAllowed: true,
+    agentsMayWork: true,
+    customer: null,
+  });
+  const OTHER_ID = 'a2222222-2222-4222-8222-222222222222';
+  const CAGRI = project({
+    id: OTHER_ID,
+    name: 'Çağrı merkezi',
+    aiAllowed: true,
+    agentsMayWork: true,
+    customer: null,
+  });
+  const NO_AI = project({
+    id: 'a3333333-3333-4333-8333-333333333333',
+    name: 'Depo otomasyonu',
+    aiAllowed: false,
+    agentsMayWork: false,
+  });
+  const CLOSED = project({
+    id: 'a4444444-4444-4444-8444-444444444444',
+    name: 'Arşiv taşıma',
+    status: 'completed',
+    closed: true,
+    aiAllowed: true,
+    agentsMayWork: true,
+    customer: null,
+  });
+  const HELP =
+    'İsteğe bağlı. Proje seçerseniz talebi yalnızca o projenin üyeleri ve kurucu görür, ajanlar da o projenin içinde çalışır. Proje, talep gönderildikten sonra değiştirilemez.';
+  const FOR_COMPANY =
+    'Talep metni yapay zekâ modeline gönderilir. Talebi ve onaylanan sonucunu şirketteki kurucu ve çalışanlar görebilir.';
+  const FOR_PROJECT =
+    'Talep metni yapay zekâ modeline gönderilir. Talebi ve onaylanan sonucunu yalnızca bu projenin üyeleri ve kurucu görebilir.';
+  const GONE = 'Bu projede artık talep açılamıyor. Başka bir proje ya da "Proje yok" seçin.';
+  const LIST_FAILED =
+    'Proje listesi alınamadı. Talebi projesiz gönderebilir ya da listeyi yeniden okuyabilirsiniz.';
+
+  const created = requestDetail({
+    status: 'open',
+    stage: 'routing',
+    turn: { kind: 'agent', code: 'KOR-1', name: 'Ofis Koordinatörü' },
+    waitingForMe: false,
+    unit: null,
+    agent: null,
+    journey: [],
+    approval: null,
+    requester: FOUNDER,
+    actions: { cancel: true, stop: false, reroute: false },
+  });
+  /** The record the API answers holds what it was sent. */
+  const storedFrom = (call: ApiCall) => {
+    const sent = call.body as { text: string; projectId?: string };
+    return {
+      ...created,
+      text: sent.text,
+      project: sent.projectId === undefined ? null : { id: sent.projectId, name: 'Lansman' },
+    };
+  };
+  const listOf =
+    (...projects: ReturnType<typeof project>[]): Handler =>
+    () =>
+      json({ projects, truncated: false });
+  const handlers = (projects: Handler, session: Handler = sessionHandler()) => ({
+    'GET /session': session,
+    'GET /requests': () => json({ requests: [], truncated: false }),
+    'GET /requests?mine=true': () => json({ requests: [], truncated: false }),
+    'GET /projects': projects,
+    'POST /requests': (call: ApiCall) => json(storedFrom(call), 201),
+    [`GET /requests/${REQUEST_ID}`]: () => json(created),
+  });
+
+  async function openList(): Promise<void> {
+    renderApp('/c/armadx/requests');
+    await screen.findByRole('heading', { name: /Henüz talep yok|Açık talebiniz yok/ });
+  }
+  async function openForm(): Promise<HTMLElement> {
+    await userEvent.click(
+      within(screen.getByRole('navigation', { name: 'Ana menü' })).getByRole('button', {
+        name: 'Yeni talep',
+      }),
+    );
+    return screen.findByRole('dialog', { name: 'Yeni talep' });
+  }
+  async function closeForm(): Promise<void> {
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).toBeNull();
+    });
+  }
+  /** The select once the list has been read. */
+  async function projectField(dialog: HTMLElement): Promise<HTMLSelectElement> {
+    const field = within(dialog).getByRole<HTMLSelectElement>('combobox', { name: 'Proje' });
+    await waitFor(() => {
+      expect(field).toBeEnabled();
+    });
+    return field;
+  }
+  const labels = (field: HTMLElement) =>
+    within(field)
+      .getAllByRole('option')
+      .map((option) => option.textContent);
+  const whoReads = (dialog: HTMLElement) =>
+    within(dialog).getByText(/yapay zekâ modeline gönderilir/);
+  const sendButton = (dialog: HTMLElement) =>
+    within(dialog).getByRole('button', { name: 'Talebi gönder' });
+  const textBox = (dialog: HTMLElement) =>
+    within(dialog).getByRole('textbox', { name: 'Ne istiyorsunuz?' });
+
+  it('form: Proje offers the open projects by name, with Proje yok first, and no closed project', async () => {
+    const api = mockApi(handlers(listOf(LANSMAN, CLOSED, CAGRI)));
+    await openList();
+    const dialog = await openForm();
+    const field = await projectField(dialog);
+    expect(labels(field)).toEqual(['Proje yok', 'Çağrı merkezi', 'Lansman']);
+    expect(field).toHaveValue('');
+    expect(field).not.toBeRequired();
+    expect(field).toBeValid();
+    expect(field).toHaveAccessibleDescription(HELP);
+    // The one choice the form offers: still no control for a unit, an agent or an approver.
+    expect(within(dialog).getAllByRole('combobox')).toEqual([field]);
+    // It stands after the text and before the due day.
+    const controls = [...dialog.querySelectorAll('textarea, select, input')];
+    expect(controls).toEqual([
+      textBox(dialog),
+      field,
+      within(dialog).getByLabelText('Son tarih (isteğe bağlı)'),
+    ]);
+    // The list is asked for the selected company when the form opens; the focus stays on the text.
+    const [call] = api.callsTo('GET /projects');
+    expect(call?.headers.get(COMPANY_HEADER)).toBe(ARMADX.companyId);
+    expect(textBox(dialog)).toHaveFocus();
+    expect(within(dialog).queryByRole('alert')).toBeNull();
+    expect(api.unexpected).toEqual([]);
+  });
+
+  it('form: a project where agents may not work is offered disabled, and the help says who opens the permission, in the founder’s words and in an employee’s', async () => {
+    const CLOSED_HELP = 'Ajanların çalışamadığı projede talep açılamaz.';
+    mockApi(handlers(listOf(NO_AI, LANSMAN)));
+    await openList();
+    let dialog = await openForm();
+    let field = await projectField(dialog);
+    expect(labels(field)).toEqual(['Proje yok', 'Depo otomasyonu (ajanlar çalışamaz)', 'Lansman']);
+    const offered = within(field).getByRole('option', {
+      name: 'Depo otomasyonu (ajanlar çalışamaz)',
+    });
+    expect(offered).toBeDisabled();
+    expect(within(field).getByRole('option', { name: 'Lansman' })).toBeEnabled();
+    // It cannot be chosen.
+    await userEvent.selectOptions(field, NO_AI.id).catch(() => undefined);
+    expect(field).toHaveValue('');
+    expect(field).toHaveAccessibleDescription(
+      `${HELP} ${CLOSED_HELP} Yapay zekâ iznini projenin sayfasından açabilirsiniz.`,
+    );
+    expect(whoReads(dialog)).toHaveTextContent(FOR_COMPANY);
+    cleanup();
+
+    mockApi(handlers(listOf(NO_AI, LANSMAN), sessionHandler(EMPLOYEE_SESSION)));
+    await openList();
+    dialog = await openForm();
+    field = await projectField(dialog);
+    expect(field).toHaveAccessibleDescription(
+      `${HELP} ${CLOSED_HELP} Yapay zekâ iznini kurucu açar.`,
+    );
+    expect(dialog).not.toHaveTextContent(/projenin sayfasından açabilirsiniz/);
+    cleanup();
+
+    // Nothing offered is disabled: the second line is not shown.
+    mockApi(handlers(listOf(LANSMAN)));
+    await openList();
+    dialog = await openForm();
+    field = await projectField(dialog);
+    expect(field).toHaveAccessibleDescription(HELP);
+    expect(dialog).not.toHaveTextContent(CLOSED_HELP);
+  });
+
+  it('form: with no open project the field says so and the request is sent without one', async () => {
+    const api = mockApi(handlers(listOf(CLOSED)));
+    await openList();
+    let dialog = await openForm();
+    let field = await projectField(dialog);
+    expect(labels(field)).toEqual(['Proje yok']);
+    expect(field).toHaveAccessibleDescription('Bu şirkette açık proje yok.');
+    expect(dialog).not.toHaveTextContent(HELP);
+    await userEvent.type(textBox(dialog), 'Bir gönderi yaz');
+    await userEvent.click(sendButton(dialog));
+    await waitFor(() => {
+      expect(api.callsTo('POST /requests')).toHaveLength(1);
+    });
+    // A request without a project carries no key for it.
+    expect(api.callsTo('POST /requests')[0]?.body).toEqual({
+      id: expect.stringMatching(/^[0-9a-f-]{36}$/) as string,
+      text: 'Bir gönderi yaz',
+    });
+    cleanup();
+
+    // An employee is offered the projects they are a member of.
+    mockApi(handlers(listOf(), sessionHandler(EMPLOYEE_SESSION)));
+    await openList();
+    dialog = await openForm();
+    field = await projectField(dialog);
+    expect(field).toHaveAccessibleDescription('Üyesi olduğunuz açık proje yok.');
+  });
+
+  it('form: choosing a project changes who will read the request, and the request carries projectId; without a project no projectId key is sent', async () => {
+    const api = mockApi(handlers(listOf(LANSMAN, CAGRI)));
+    await openList();
+    const dialog = await openForm();
+    const field = await projectField(dialog);
+    const notice = whoReads(dialog);
+    expect(notice.textContent).toBe(FOR_COMPANY);
+    // Said when it changes, and the text box stays described by it.
+    expect(notice).toHaveAttribute('aria-live', 'polite');
+    await userEvent.selectOptions(field, 'Lansman');
+    expect(field).toHaveValue(PROJECT_ID);
+    expect(notice.textContent).toBe(FOR_PROJECT);
+    expect(textBox(dialog)).toHaveAccessibleDescription(new RegExp(`${FOR_PROJECT}$`));
+    // Back to no project: the whole company reads it again, and the form says so.
+    await userEvent.selectOptions(field, 'Proje yok');
+    expect(notice.textContent).toBe(FOR_COMPANY);
+    await userEvent.selectOptions(field, 'Lansman');
+    await userEvent.type(textBox(dialog), 'Lansman duyurusu yaz');
+    await userEvent.click(sendButton(dialog));
+    await waitFor(() => {
+      expect(api.callsTo('POST /requests')).toHaveLength(1);
+    });
+    expect(api.callsTo('POST /requests')[0]?.body).toEqual({
+      id: expect.stringMatching(/^[0-9a-f-]{36}$/) as string,
+      text: 'Lansman duyurusu yaz',
+      projectId: PROJECT_ID,
+    });
+    // The record is what was sent: nothing more is said.
+    expect(await screen.findByText('Yönlendiriliyor')).toBeVisible();
+    expect(screen.queryByText(/ilk gönderdiğiniz hâliyle kayıtlı/)).toBeNull();
+    expect(api.unexpected).toEqual([]);
+  });
+
+  it('form: the draft keeps the project; a kept project that is no longer offered is said and nothing is sent', async () => {
+    let offered = [LANSMAN, CAGRI];
+    const api = mockApi(handlers(() => json({ projects: offered, truncated: false })));
+    await openList();
+    let dialog = await openForm();
+    await userEvent.selectOptions(await projectField(dialog), 'Lansman');
+    await userEvent.type(textBox(dialog), 'Lansman duyurusu yaz');
+    await closeForm();
+
+    dialog = await openForm();
+    let field = await projectField(dialog);
+    expect(field).toHaveValue(PROJECT_ID);
+    expect(textBox(dialog)).toHaveValue('Lansman duyurusu yaz');
+    expect(whoReads(dialog)).toHaveTextContent(FOR_PROJECT);
+    // A change of the project alone is kept too, with the text.
+    await userEvent.selectOptions(field, 'Çağrı merkezi');
+    await closeForm();
+    dialog = await openForm();
+    expect(await projectField(dialog)).toHaveValue(OTHER_ID);
+    await userEvent.selectOptions(await projectField(dialog), 'Lansman');
+    await closeForm();
+
+    // Meanwhile the founder closed the project's AI permission: the option is there, disabled.
+    offered = [{ ...LANSMAN, aiAllowed: false, agentsMayWork: false }, CAGRI];
+    dialog = await openForm();
+    field = await projectField(dialog);
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(GONE);
+    expect(field).toHaveValue(PROJECT_ID);
+    expect(field).toBeInvalid();
+    expect(field).toHaveAccessibleDescription(new RegExp(`${GONE.replace(/[".]/g, '.')}$`));
+    const send = sendButton(dialog);
+    expect(send).toHaveAttribute('aria-disabled', 'true');
+    expect(send).toHaveAccessibleDescription(GONE);
+    await userEvent.click(send);
+    await userEvent.click(textBox(dialog));
+    await userEvent.keyboard('{Control>}{Enter}{/Control}');
+    expect(api.callsTo('POST /requests')).toHaveLength(0);
+    // Nothing is lost.
+    expect(textBox(dialog)).toHaveValue('Lansman duyurusu yaz');
+    await closeForm();
+
+    // And a project that was closed is no longer in the list at all: the field still shows what
+    // was chosen, by its name, and says the same.
+    offered = [CAGRI];
+    dialog = await openForm();
+    field = await projectField(dialog);
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(GONE);
+    expect(labels(field)).toEqual(['Proje yok', 'Çağrı merkezi', 'Lansman']);
+    expect(field).toHaveValue(PROJECT_ID);
+    // Another choice clears it, and the request goes where the person now chose.
+    await userEvent.selectOptions(field, 'Proje yok');
+    expect(within(dialog).queryByRole('alert')).toBeNull();
+    expect(labels(field)).toEqual(['Proje yok', 'Çağrı merkezi']);
+    expect(sendButton(dialog)).not.toHaveAttribute('aria-disabled');
+    await userEvent.click(sendButton(dialog));
+    await waitFor(() => {
+      expect(api.callsTo('POST /requests')).toHaveLength(1);
+    });
+    expect(api.callsTo('POST /requests')[0]?.body).toEqual({
+      id: expect.stringMatching(/^[0-9a-f-]{36}$/) as string,
+      text: 'Lansman duyurusu yaz',
+    });
+  });
+
+  it('form: a draft written before the form had a project, or with a project that cannot be read, keeps its text', async () => {
+    mockApi(handlers(listOf(LANSMAN)));
+    await openList();
+    const key = draftKey(USER_ID, ARMADX.companyId, 'request');
+    sessionStorage.setItem(key, JSON.stringify({ id: REQUEST_ID, text: 'Eski taslak' }));
+    let dialog = await openForm();
+    expect(textBox(dialog)).toHaveValue('Eski taslak');
+    expect(await projectField(dialog)).toHaveValue('');
+    await closeForm();
+    sessionStorage.setItem(
+      key,
+      JSON.stringify({ id: REQUEST_ID, text: 'Bozuk projeli taslak', project: { id: 'x' } }),
+    );
+    dialog = await openForm();
+    expect(textBox(dialog)).toHaveValue('Bozuk projeli taslak');
+    expect(await projectField(dialog)).toHaveValue('');
+    expect(within(dialog).queryByRole('alert')).toBeNull();
+  });
+
+  it('form: the list being read and the list that failed, with a retry that works', async () => {
+    let answer: (response: Response) => void = () => undefined;
+    const api = mockApi(
+      handlers(
+        () =>
+          new Promise<Response>((resolve) => {
+            answer = resolve;
+          }),
+      ),
+    );
+    await openList();
+    const dialog = await openForm();
+    const field = within(dialog).getByRole('combobox', { name: 'Proje' });
+    // Being read: the field is there (the form does not jump when the list arrives) and says so.
+    expect(field).toBeDisabled();
+    expect(field).toHaveAttribute('aria-busy', 'true');
+    expect(labels(field)).toEqual(['Projeler okunuyor']);
+    expect(within(dialog).queryByRole('alert')).toBeNull();
+    // A request without a project does not wait for the list.
+    expect(sendButton(dialog)).not.toHaveAttribute('aria-disabled');
+
+    // The list could not be read: said, with a way to read it again; "Proje yok" stays.
+    // A refusal the panel does not ask again by itself (a failure of the server is retried first).
+    answer(apiError(409, 'invalid_request', 'Liste şu anda okunamadı.'));
+    const alert = await within(dialog).findByRole('alert');
+    expect(alert).toHaveTextContent(LIST_FAILED);
+    expect(field).toBeEnabled();
+    expect(field).toHaveAttribute('aria-busy', 'false');
+    expect(labels(field)).toEqual(['Proje yok']);
+    expect(sendButton(dialog)).not.toHaveAttribute('aria-disabled');
+    api.handle('GET /projects', listOf(LANSMAN));
+    await userEvent.click(within(alert).getByRole('button', { name: 'Yeniden dene' }));
+    await waitFor(() => {
+      expect(labels(field)).toEqual(['Proje yok', 'Lansman']);
+    });
+    expect(within(dialog).queryByRole('alert')).toBeNull();
+    expect(api.callsTo('GET /projects')).toHaveLength(2);
+  });
+
+  it('form: with a project chosen nothing is sent before the list has said that it takes a request; when the list failed the API decides', async () => {
+    let answer: (response: Response) => void = () => undefined;
+    const api = mockApi(
+      handlers(
+        () =>
+          new Promise<Response>((resolve) => {
+            answer = resolve;
+          }),
+      ),
+    );
+    await openList();
+    sessionStorage.setItem(
+      draftKey(USER_ID, ARMADX.companyId, 'request'),
+      JSON.stringify({
+        id: REQUEST_ID,
+        text: 'Lansman duyurusu yaz',
+        dueDate: '',
+        project: { id: PROJECT_ID, name: 'Lansman' },
+      }),
+    );
+    const dialog = await openForm();
+    const field = within(dialog).getByRole('combobox', { name: 'Proje' });
+    // The field shows what is chosen, by the name the draft kept.
+    expect(labels(field)).toEqual(['Projeler okunuyor', 'Lansman']);
+    expect(field).toHaveValue(PROJECT_ID);
+    const send = sendButton(dialog);
+    expect(send).toHaveAttribute('aria-disabled', 'true');
+    expect(send).toHaveAccessibleDescription('Projeler okunuyor');
+    await userEvent.click(send);
+    expect(api.callsTo('POST /requests')).toHaveLength(0);
+
+    // A refusal the panel does not ask again by itself (a failure of the server is retried first).
+    answer(apiError(409, 'invalid_request', 'Liste şu anda okunamadı.'));
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(LIST_FAILED);
+    expect(labels(field)).toEqual(['Proje yok', 'Lansman']);
+    expect(field).toHaveValue(PROJECT_ID);
+    expect(send).not.toHaveAttribute('aria-disabled');
+    await userEvent.click(send);
+    await waitFor(() => {
+      expect(api.callsTo('POST /requests')).toHaveLength(1);
+    });
+    expect(api.callsTo('POST /requests')[0]?.body).toEqual({
+      id: REQUEST_ID,
+      text: 'Lansman duyurusu yaz',
+      projectId: PROJECT_ID,
+    });
+  });
+
+  it.each([
+    {
+      code: 'project_not_available' as const,
+      message: 'Bu proje yok ya da size açık değil. Başka bir proje seçin.',
+      after: [CAGRI],
+    },
+    {
+      code: 'project_closed' as const,
+      message: 'Bu proje kapalı. Kapalı projede yeni talep açılamaz.',
+      after: [{ ...LANSMAN, status: 'completed' as const, closed: true }, CAGRI],
+    },
+    {
+      code: 'project_ai_not_allowed' as const,
+      message:
+        'Bu projede talep açılamaz: projenin yapay zekâ izni kapalı. İzni kurucu, projenin sayfasından açar.',
+      after: [{ ...LANSMAN, aiAllowed: false, agentsMayWork: false }, CAGRI],
+    },
+  ])(
+    'form: a refusal of the API ($code) shows its sentence, keeps the text and reads the projects again',
+    async ({ code, message, after }) => {
+      let offered = [LANSMAN, CAGRI];
+      const api = mockApi({
+        ...handlers(() => json({ projects: offered, truncated: false })),
+        'POST /requests': () => {
+          // The project changed between the list and the send.
+          offered = after;
+          return apiError(409, code, message);
+        },
+      });
+      await openList();
+      const dialog = await openForm();
+      const field = await projectField(dialog);
+      await userEvent.selectOptions(field, 'Lansman');
+      await userEvent.type(textBox(dialog), 'Lansman duyurusu yaz');
+      await userEvent.click(sendButton(dialog));
+      // The API's own sentence, in the form's alert.
+      expect(await within(dialog).findByText(message)).toBeVisible();
+      expect(textBox(dialog)).toHaveValue('Lansman duyurusu yaz');
+      // The list is read again, and the field then says by itself that the project takes none.
+      await waitFor(() => {
+        expect(api.callsTo('GET /projects')).toHaveLength(2);
+      });
+      expect(await within(dialog).findByText(GONE)).toBeVisible();
+      expect(field).toHaveValue(PROJECT_ID);
+      expect(sendButton(dialog)).toHaveAttribute('aria-disabled', 'true');
+      // The draft stays with the text and the project.
+      await closeForm();
+      const again = await openForm();
+      expect(textBox(again)).toHaveValue('Lansman duyurusu yaz');
+      expect(await projectField(again)).toHaveValue(PROJECT_ID);
+    },
+  );
+
+  it('form: another refusal does not read the projects again', async () => {
+    const api = mockApi({
+      ...handlers(listOf(LANSMAN)),
+      'POST /requests': () => apiError(500, 'internal_error', 'Beklenmeyen bir hata oluştu.'),
+    });
+    await openList();
+    const dialog = await openForm();
+    await userEvent.selectOptions(await projectField(dialog), 'Lansman');
+    await userEvent.type(textBox(dialog), 'Lansman duyurusu yaz');
+    await userEvent.click(sendButton(dialog));
+    expect(await within(dialog).findByText('Beklenmeyen bir hata oluştu.')).toBeVisible();
+    expect(api.callsTo('GET /projects')).toHaveLength(1);
+    expect(within(dialog).queryByText(GONE)).toBeNull();
+  });
+
+  it('form: after a send whose answer was lost, a project chosen since is said not to have been taken', async () => {
+    // The first send was stored without a project and its answer lost. The person then chose a
+    // project: the API answers the first record, which the whole company reads.
+    let stored: ReturnType<typeof storedFrom> | null = null;
+    const api = mockApi({
+      ...handlers(listOf(LANSMAN)),
+      'POST /requests': (call) => {
+        if (stored === null) {
+          stored = storedFrom(call);
+          throw new TypeError('Failed to fetch');
+        }
+        return json(stored, 201);
+      },
+      [`GET /requests/${REQUEST_ID}`]: () => json(stored),
+    });
+    await openList();
+    const dialog = await openForm();
+    const field = await projectField(dialog);
+    await userEvent.type(textBox(dialog), 'Bir gönderi yaz');
+    await userEvent.click(sendButton(dialog));
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(
+      'Sunucuya ulaşılamadı. Bağlantınızı kontrol edip yeniden deneyin.',
+    );
+    await userEvent.selectOptions(field, 'Lansman');
+    await userEvent.click(sendButton(dialog));
+    expect(await screen.findByText('Yönlendiriliyor')).toBeVisible();
+    expect(api.callsTo('POST /requests').map((call) => call.body)).toEqual([
+      { id: expect.stringMatching(/^[0-9a-f-]{36}$/) as string, text: 'Bir gönderi yaz' },
+      {
+        id: expect.stringMatching(/^[0-9a-f-]{36}$/) as string,
+        text: 'Bir gönderi yaz',
+        projectId: PROJECT_ID,
+      },
+    ]);
+    expect(
+      await screen.findByText(
+        'Talep ilk gönderdiğiniz hâliyle kayıtlı; sonradan yaptığınız değişiklik alınmadı. Değiştirmek için bu talebi iptal edip yenisini gönderin.',
+      ),
+    ).toBeVisible();
+  });
+
+  // The button of a project's page opens the form through the second opener of the shell.
+  it('form: opened from a project’s page the project is chosen, and the draft’s text is kept', async () => {
+    function Opener() {
+      const openFor = useOpenRequestDialogFor();
+      const open = useOpenRequestDialog();
+      return (
+        <>
+          <button type="button" onClick={() => openFor?.({ id: OTHER_ID, name: 'Çağrı merkezi' })}>
+            Bu projede talep aç
+          </button>
+          <button type="button" onClick={open ?? undefined}>
+            Yeni talep
+          </button>
+        </>
+      );
+    }
+    mockApi(handlers(listOf(LANSMAN, CAGRI)));
+    // A draft with another project: the page's project wins, the text stays.
+    sessionStorage.setItem(
+      draftKey(USER_ID, ARMADX.companyId, 'request'),
+      JSON.stringify({
+        id: REQUEST_ID,
+        text: 'Yarım kalan metin',
+        dueDate: '',
+        project: { id: PROJECT_ID, name: 'Lansman' },
+      }),
+    );
+    renderInRouter(
+      <QueryClientProvider client={createQueryClient()}>
+        <SessionContext value={sessionBody()}>
+          <CompanyContext value={ARMADX}>
+            <RequestDialogProvider>
+              <Opener />
+            </RequestDialogProvider>
+          </CompanyContext>
+        </SessionContext>
+      </QueryClientProvider>,
+    );
+    const opener = await screen.findByRole('button', { name: 'Bu projede talep aç' });
+    await userEvent.click(opener);
+    let dialog = await screen.findByRole('dialog', { name: 'Yeni talep' });
+    // Before the list is read the field already shows the project, by the name the page gave.
+    const early = within(dialog).getByRole('combobox', { name: 'Proje' });
+    expect(early).toHaveValue(OTHER_ID);
+    expect(within(early).getByRole('option', { name: 'Çağrı merkezi' })).toBeVisible();
+    const field = await projectField(dialog);
+    expect(field).toHaveValue(OTHER_ID);
+    expect(textBox(dialog)).toHaveValue('Yarım kalan metin');
+    expect(whoReads(dialog)).toHaveTextContent(FOR_PROJECT);
+    await waitFor(() => {
+      expect(textBox(dialog)).toHaveFocus();
+    });
+    // The focus goes back to the button that opened the form.
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).toBeNull();
+      expect(opener).toHaveFocus();
+    });
+    // The plain opener presets nothing: the draft's own project is chosen.
+    await userEvent.click(screen.getByRole('button', { name: 'Yeni talep' }));
+    dialog = await screen.findByRole('dialog', { name: 'Yeni talep' });
+    expect(await projectField(dialog)).toHaveValue(PROJECT_ID);
+  });
+});
 
 describe('Talepler with requests inside projects', () => {
   it('list: a row names its project from 1280 px and in its link’s name', async () => {
