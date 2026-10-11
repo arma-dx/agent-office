@@ -32,8 +32,12 @@ import { decisionDialogOpen } from './hold.ts';
  * refresh (lib/refresh.ts): such a request does not extend the session's idle time (rule 3).
  */
 
-export const requestsKey = (companyId: string, mine: boolean) =>
-  ['company', companyId, 'requests', { mine }] as const;
+/**
+ * `projectId`: the requests of one project (its page); null: every request the person reads. Both
+ * lie under ['company', companyId, 'requests'], which a change of any request invalidates.
+ */
+export const requestsKey = (companyId: string, mine: boolean, projectId: string | null = null) =>
+  ['company', companyId, 'requests', { mine, project: projectId }] as const;
 export const requestKey = (companyId: string, requestId: string) =>
   ['company', companyId, 'request', requestId] as const;
 export const approvalDeskKey = (companyId: string) => ['company', companyId, 'approvals'] as const;
@@ -41,19 +45,29 @@ export const approvalDeskKey = (companyId: string) => ['company', companyId, 'ap
 export function fetchRequests(
   companyId: string,
   mine: boolean,
-  options: { signal?: AbortSignal; background?: boolean } = {},
+  options: { signal?: AbortSignal; background?: boolean; projectId?: string } = {},
 ): Promise<RequestList> {
-  return apiRequest(`/requests${mine ? '?mine=true' : ''}`, {
+  const { projectId, ...rest } = options;
+  // An id only, never a name or a text.
+  const query = new URLSearchParams();
+  if (mine) query.set('mine', 'true');
+  if (projectId !== undefined) query.set('project', projectId);
+  const search = query.toString();
+  return apiRequest(`/requests${search === '' ? '' : `?${search}`}`, {
     schema: requestListSchema,
     companyId,
-    ...options,
+    ...rest,
   });
 }
 
-export function requestsQueryOptions(companyId: string, mine: boolean) {
+export function requestsQueryOptions(companyId: string, mine: boolean, projectId?: string) {
   return queryOptions({
-    queryKey: requestsKey(companyId, mine),
-    queryFn: ({ signal }) => fetchRequests(companyId, mine, { signal }),
+    queryKey: requestsKey(companyId, mine, projectId ?? null),
+    queryFn: ({ signal }) =>
+      fetchRequests(companyId, mine, {
+        signal,
+        ...(projectId === undefined ? {} : { projectId }),
+      }),
   });
 }
 

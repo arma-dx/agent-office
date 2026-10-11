@@ -12,6 +12,7 @@ import {
   RESULT_HELD_FOR_FOUNDER,
   RESULT_HELD_FOR_OTHERS,
 } from './lib/requests/labels.ts';
+import { formatDay } from './lib/dates.ts';
 import { clearDrafts } from './lib/drafts.ts';
 import { ARMADX, json, mockApi, sessionHandler } from './test/mock-api.ts';
 import { ASSERTION } from './test/passkeys.ts';
@@ -25,6 +26,7 @@ import {
   REQUEST_ID,
   RESULT,
   requestDetail,
+  summaryOf,
 } from './test/request-fixtures.ts';
 import { renderApp } from './test/render-app.tsx';
 
@@ -90,6 +92,70 @@ function heldRequest(overrides: Parameters<typeof requestDetail>[0] = {}) {
 }
 
 const HELD_CARD = { ...APPROVAL_CARD, project: PROJECT_REF, agentsMayWork: false };
+
+describe('Talepler with requests inside projects', () => {
+  it('list: a row names its project from 1280 px and in its link’s name', async () => {
+    const inProject = requestDetail({
+      status: 'in_progress',
+      stage: 'working',
+      turn: { kind: 'agent', code: 'SOS-2', name: 'Sosyal İçerik Yazım Ajanı' },
+      waitingForMe: false,
+      project: PROJECT_REF,
+      dueDate: '2026-10-20',
+    });
+    const plain = requestDetail({
+      id: '77777777-7777-4777-8777-777777777777',
+      title: 'Kasım bülteni',
+      status: 'in_progress',
+      stage: 'working',
+      turn: { kind: 'agent', code: 'SOS-2', name: 'Sosyal İçerik Yazım Ajanı' },
+      waitingForMe: false,
+    });
+    const noDay = requestDetail({
+      id: '88888888-8888-4888-8888-888888888888',
+      title: 'Ekim duyurusu',
+      status: 'in_progress',
+      stage: 'working',
+      turn: { kind: 'agent', code: 'SOS-2', name: 'Sosyal İçerik Yazım Ajanı' },
+      waitingForMe: false,
+      project: PROJECT_REF,
+    });
+    mockApi({
+      'GET /session': sessionHandler(),
+      'GET /requests': () =>
+        json({ requests: [inProject, plain, noDay].map(summaryOf), truncated: false }),
+    });
+    renderApp('/c/armadx/requests');
+    const link = await screen.findByRole('link', { name: /^LinkedIn için gönderi yaz/ });
+    // The name is said to a screen reader after the title, at every width.
+    expect(link).toHaveAccessibleName(
+      `LinkedIn için gönderi yaz, proje Lansman, Ajan çalışıyor, sıra SOS-2, Son tarih: ${formatDay('2026-10-20')}`,
+    );
+    const row = link.closest('li');
+    if (!row) throw new Error('No row');
+    const name = within(row).getByText('Lansman');
+    // jsdom lays nothing out; the classes are the contract of the widths. Next to a due day the
+    // name shows from 1440 px: at 1280 px the two marks together would leave the title no room.
+    expect(name).toHaveClass('hidden', 'min-[1440px]:block', 'max-w-40', 'truncate');
+    expect(name).not.toHaveClass('xl:block');
+    // Under the row's link: a `title` attribute would never be shown.
+    expect(name).not.toHaveAttribute('title');
+    // The name stands before the due day, which keeps its own rule.
+    expect(row.textContent).toMatch(/Lansman.*Son tarih:/);
+    // Without a due day the name shows from 1280 px and gives way to the title below, like the
+    // unit code and the time.
+    const bare = screen.getByRole('link', { name: /^Ekim duyurusu/ }).closest('li');
+    if (!bare) throw new Error('No row');
+    expect(within(bare).getByText('Lansman')).toHaveClass('hidden', 'xl:block', 'max-w-40');
+    expect(within(bare).getByText('Lansman')).not.toHaveClass('min-[1440px]:block');
+    // A request without a project names none.
+    const other = screen.getByRole('link', { name: /^Kasım bülteni/ });
+    expect(other).toHaveAccessibleName('Kasım bülteni, Ajan çalışıyor, sıra SOS-2');
+    expect(other.closest('li')).not.toHaveTextContent(/Lansman|proje/i);
+    // Still a row of words: no control.
+    expect(within(screen.getByRole('main')).queryAllByRole('combobox')).toEqual([]);
+  });
+});
 
 describe('the page of a request inside a project', () => {
   it('page: the header links to the project', async () => {

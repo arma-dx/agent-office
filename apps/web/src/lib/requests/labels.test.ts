@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { requestDetail, summaryOf } from '../../test/request-fixtures.ts';
+import { PROJECT_REF, requestDetail, summaryOf } from '../../test/request-fixtures.ts';
 import { textWidth } from '../../test/text-width.ts';
 import {
   AI_CLOSED_FOR_OTHERS,
@@ -69,15 +69,16 @@ describe('the due day of a request in words', () => {
     expect(
       rowSentence(
         summaryOf({ ...working, delayed: true, dueDate: '2026-10-05', overdue: true }),
+        false,
         NOW,
       ),
     ).toBe(
       'LinkedIn için gönderi yaz, Ajan çalışıyor (gecikti), sıra SOS-2, Son tarihi geçti: 5 Eki',
     );
-    expect(rowSentence(summaryOf({ ...working, dueDate: '2026-10-20' }), NOW)).toBe(
+    expect(rowSentence(summaryOf({ ...working, dueDate: '2026-10-20' }), false, NOW)).toBe(
       'LinkedIn için gönderi yaz, Ajan çalışıyor, sıra SOS-2, Son tarih: 20 Eki',
     );
-    expect(rowSentence(summaryOf(working), NOW)).toBe(
+    expect(rowSentence(summaryOf(working), false, NOW)).toBe(
       'LinkedIn için gönderi yaz, Ajan çalışıyor, sıra SOS-2',
     );
     for (const overdue of [true, false]) {
@@ -85,9 +86,34 @@ describe('the due day of a request in words', () => {
     }
   });
 
+  it('the row’s sentence names the project after the title, only where the row shows it', () => {
+    const working = requestDetail({
+      status: 'in_progress',
+      stage: 'working',
+      turn: { kind: 'agent', code: 'SOS-2', name: 'Sosyal İçerik Yazım Ajanı' },
+      waitingForMe: false,
+      approval: null,
+      project: PROJECT_REF,
+      dueDate: '2026-10-20',
+    });
+    // The Talepler screen: the row shows the project's name.
+    expect(rowSentence(summaryOf(working), true, NOW)).toBe(
+      'LinkedIn için gönderi yaz, proje Lansman, Ajan çalışıyor, sıra SOS-2, Son tarih: 20 Eki',
+    );
+    // A project's own page: every row is of that project.
+    expect(rowSentence(summaryOf(working), false, NOW)).toBe(
+      'LinkedIn için gönderi yaz, Ajan çalışıyor, sıra SOS-2, Son tarih: 20 Eki',
+    );
+    expect(rowSentence(summaryOf(working))).not.toMatch(/proje/);
+    // A request without a project names none, wherever it is listed.
+    expect(rowSentence(summaryOf({ ...working, project: null, dueDate: null }), true, NOW)).toBe(
+      'LinkedIn için gönderi yaz, Ajan çalışıyor, sıra SOS-2',
+    );
+  });
+
   it('leaves the title of a row room next to a day that has passed, at 1024 px', () => {
-    // Below 1280 px only "Son tarihi geçti: ..." is shown after the title (routes/.../
-    // requests.tsx). The row at 1024 px: 1024 less the sidebar (240), the page's padding (48) and
+    // Below 1280 px only "Son tarihi geçti: ..." is shown after the title (components/requests/
+    // request-list.tsx; the project's name is hidden there too). The row at 1024 px: 1024 less the sidebar (240), the page's padding (48) and
     // the row's own (16) is 720 px; the status icon with its gap takes 24, the stage and turn
     // columns with their gaps 288 (w-44, w-24), the gaps around the mark 16. The mark is 12 px
     // text at weight 500, drawn a little wider than the weight the table of widths holds: 5 % is
@@ -96,6 +122,25 @@ describe('the due day of a request in words', () => {
     const widest = dueText({ dueDate: '2025-12-30', overdue: true }, NOW);
     if (widest === null) throw new Error('No due text');
     expect(ROW - textWidth(widest, 12) * 1.05).toBeGreaterThan(200);
+  });
+
+  it('leaves the title of a row room next to the name of its project, at 1280 px and at 1440 px', () => {
+    // From 1280 px the row shows every column (components/requests/request-list.tsx): the content
+    // is the window less the sidebar (240), the page's padding (48) and the row's own (16); the
+    // status icon with its gap takes 24, the unit, stage, turn and time columns with their gaps
+    // 552 (w-14, w-64, w-32, w-20), the gaps around the marks 16. The project's name is cut at
+    // 160 px (max-w-40).
+    const row = (window: number) => window - 240 - 48 - 16 - 24 - 552 - 16;
+    const PROJECT = 160;
+    // Without a due day the name shows from 1280 px.
+    expect(row(1280) - PROJECT).toBeGreaterThan(200);
+    // With a due day both marks and the gap between them would leave the title next to nothing
+    // at 1280 px, so the name waits for 1440 px there.
+    const widest = dueText({ dueDate: '2025-12-30', overdue: true }, NOW);
+    if (widest === null) throw new Error('No due text');
+    const due = textWidth(widest, 12) * 1.05;
+    expect(row(1280) - PROJECT - 8 - due).toBeLessThan(100);
+    expect(row(1440) - PROJECT - 8 - due).toBeGreaterThan(200);
   });
 });
 

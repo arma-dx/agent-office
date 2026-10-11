@@ -357,11 +357,20 @@ export function dueText(
   return `${request.overdue ? 'Son tarihi geçti' : 'Son tarih'}: ${formatDay(request.dueDate, now)}`;
 }
 
-/** The accessible sentence of a list row. */
-export function rowSentence(request: RequestSummary, now: number = Date.now()): string {
+/**
+ * The accessible sentence of a list row. `withProject`: the row shows the name of the request's
+ * project (the Talepler screen), so the sentence names it after the title; on a project's own
+ * page every row is of that project and none names it.
+ */
+export function rowSentence(
+  request: RequestSummary,
+  withProject = false,
+  now: number = Date.now(),
+): string {
   const turn = turnText(request.turn, request.waitingForMe);
   const due = dueText(request, now);
-  return `${request.title}, ${stageText(request)}${
+  const project = withProject && request.project ? `, proje ${request.project.name}` : '';
+  return `${request.title}${project}, ${stageText(request)}${
     turn === null ? '' : `, sıra ${turn === 'Sizde' ? 'sizde' : turn}`
   }${due === null ? '' : `, ${due}`}`;
 }
