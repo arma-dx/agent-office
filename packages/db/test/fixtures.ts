@@ -82,6 +82,10 @@ export const ids = {
   requestP: id(124),
   requestRunP: id(125),
   requestApprovalP: id(126),
+
+  // One file a member added to a project, per company (the bytes are in no storage).
+  projectFileA: id(131),
+  projectFileP: id(132),
 } as const;
 
 /** The credential id of the founder's passkey in the fixtures. */
@@ -226,6 +230,16 @@ export async function loadFixtures(client: pg.Client): Promise<void> {
       ('${ids.arma}', '${ids.projectA}', '${ids.employeeA}'),
       ('${ids.arma}', '${ids.projectANoAi}', '${ids.employeeA}'),
       ('${ids.pillika}', '${ids.projectP}', '${ids.employeeP}');
+
+    ${contextSql(ids.arma, ids.employeeA)}
+    insert into office.files (id, company_id, project_id, kind, name, mime_type, size_bytes, sha256)
+      values ('${ids.projectFileA}', '${ids.arma}', '${ids.projectA}', 'project_file',
+        'Şartname.pdf', 'application/pdf', 1200, repeat('a', 64));
+    ${contextSql(ids.pillika, ids.employeeP)}
+    insert into office.files (id, company_id, project_id, kind, name, mime_type, size_bytes, sha256)
+      values ('${ids.projectFileP}', '${ids.pillika}', '${ids.projectP}', 'project_file',
+        'İstasyon listesi.xlsx',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 3400, repeat('b', 64));
     ${contextSql(ids.pillika, ids.founder)}
 
     insert into office.work_types (company_id, code, name, baseline_minutes) values
