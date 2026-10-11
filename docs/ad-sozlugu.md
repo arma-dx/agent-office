@@ -446,6 +446,44 @@ Projede sahip, yönetici ve üye ayrımıyla (8 Ekim karar 44) eklenen adlar:
 - Çalıştırıcı: `run_facts` bloğunda `dueDate` (talebin son tarihi, veri olarak)
 - Panel: `components/requests/request-comments.tsx` (`RequestComments`: talep sayfasında "Yorumlar" bölümü); taslak anahtarı `comment.<talep kimliği>`; talep taslağında `dueDate`; `dueText` (son tarihin cümlesi); `addRequestComment` (yorum gönderme isteği); test yardımcıları `comment`, `withComments`
 
+## 0.4c adım 2 ile eklenen adlar: proje içinde talep (karşılığı olan eski Türkçe ad yok)
+
+Proje içinde talep ve kural 12 (8 Ekim karar 11, 17, 46, 47, 48):
+
+- İşlevler: `office.project_allows_ai(proje)` (o projede ajanlar şu an çalışabilir mi: projenin ve varsa müşterisinin yapay zekâ izni açık mı; proje yoksa her zaman evet), `office.request_run_gate(talep)` (çalıştırıcının her çalışmanın başında sorduğu soru; yanıtı `run_as`, `project_id`, `ai_allowed`), `office.stop_runs_without_ai_permission` (izin kapanınca o projedeki açık çalışmaları kapatan tetikleyici işlevi), `office.hold_result_without_ai_permission` (izin kapalıyken projeye ait sonucun onaylanmasını reddeden tetikleyici işlevi), `office.add_usage_to_stopped_run` (izin kapanınca durdurulmuş çalışmaya, o sırada yanıtlanan model çağrısının token ve maliyetini ekler; başka hiçbir şeyi değiştirmez).
+- `office.check_task` kapalı projede (Tamamlandı ya da İptal) yeni talebi de reddeder (`23514`); açık talepler sürer.
+- Kapı yanıtının alanları: `run_as` (çalışmanın adına koşacağı kişi), `project_id` (talebin projesi), `ai_allowed` (o projede ajanlar çalışabilir mi).
+- Tetikleyiciler: `stop_runs_without_ai_permission` (`projects` ve `customers`; izin kapandığı işlemin içinde çalışmaları durdurur), `ai_permission_holds_result` (`approvals`; izin kapalıyken projeye ait sonucun onayı `55000` ile reddedilir, ret serbesttir; düzeltme isteğini ve yönlendirme düzeltmesini API reddeder).
+- Satır kuralları (yalnızca tetikleyicilerin sahibi `office_trigger` için): `permission_stops` (izin kapanınca çalışmayı kapatma), `permission_stop_records` (bu kapatmanın iz kaydı), `permission_stop_usage` (durdurulmuş çalışmaya kullanım ekleme).
+- Çalışma hata kodu: `ai_permission_closed` (çalışmayı izin kapanması durdurdu; durum `stopped`).
+- Çalıştırıcı sonucu: `ai_not_allowed` (izin kapalı; çalışma açılmaz, model çağrılmaz, iz kaydına `run_refused` düşer). Günlük olayı: `run_usage_unrecorded` (yanıtlanan çağrının sayıları hiçbir çalışma kaydına yazılamadı; yalnızca sayılar, metin yok).
+- Talebin insana düşme nedenleri: `ai_permission_closed` ("yapay zekâ izni kapalı"; izin açılana kadar hiçbir şey çalışmaz), `ai_permission_interrupted` ("izin kapanınca durdu"; izin yeniden açık ama iş yeniden başlamadı).
+- API hata kodları: `project_not_available` (proje yok ya da kişiye açık değil), `project_closed` (kapalı projede talep açılamaz), `project_ai_not_allowed` (projenin ya da müşterisinin izni kapalı; cümle hangisi olduğunu söyler), `ai_permission_closed` (izin kapalıyken sonuç onaylanamaz, düzeltme istenemez, yönlendirme düzeltilemez), `permission_busy` (izin değişikliği başka bir işlemle çakıştı; hiçbir şey değişmedi).
+- API alanları: `POST /api/requests` gövdesinde isteğe bağlı `projectId`; talep yanıtlarında `project` (`id`, `name`) ve `agentsMayWork` (o talebin projesinde ajanlar şu an çalışabilir mi; onay kartında ve talep sahibi onayı kartında da var). Sorgu: `GET /api/requests?project=<kimlik>` (tek projenin talepleri; kişinin okuyamadığı projede boş liste).
+- Veritabanı ifade satırlarında: `project_name`, `agents_may_work`. API'de `projectDoor` (talep açılmadan önce projeye bakar, neden açılamadığını söyler).
+- Kart alanı `project_context`, çalıştırıcıda: `if_available` kuruldu (talebin projesi varsa o bağlamda, yoksa projesiz koşar; KOR-1 ve SOS-2); alanı olmayan kart yalnızca projesiz talepte koşar; `required` ve `per_project` henüz kurulmadı, böyle kart çalışmaz (`card_not_runnable`).
+- Çalıştırıcı: `run_facts` bloğunda `project` (talebin projesinin adı, veri olarak); iz kayıtlarında `project_id` çalışmanın bağlamındaki projedir.
+
+Çalışmanın kimin adına koştuğu (8 Ekim karar 45):
+
+- İşlevler: `office.person_reads_request(şirket, proje, kişi)` (kişi o talebi hâlâ okuyabilir mi), `office.acting_founder(şirket)` (yerine geçecek kurucu: üyeliği en eski olan etkin kurucu), `office.request_run_identity(talep)` (çalışmanın adına koşacağı kişi: talebi okuyabildiği sürece talep sahibi, okuyamıyorsa kurucu), `office.hand_run_over` (kişisi artık bu olmayan açık çalışmayı kapatır; çalıştırıcı aynı işi yeniden kuyruğa koyar).
+- `office.check_run_request`: talep üzerindeki çalışma yalnızca veritabanının söylediği kişi adına açılır; başka ad `42501` ile reddedilir.
+- Sütun: `requester_approvals.decided_by_user_id` (talep sahibi onayını kimin verdiği: talep sahibi ya da onun yerine kurucu). Satır kuralı: `founder_decides_for_requester` (talep sahibi talebi okuyamıyorken onayını kurucu verir).
+- Çalışma hata kodu: `identity_changed` (çalışma sürerken kişisi değişti; çalışma durduruldu ve iş yeniden çağrıldı).
+- API alanları: `requesterReads` (talep sahibi talebi hâlâ okuyabiliyor mu), `acceptance.inPlaceOfRequester` (okuyan kişi onayı talep sahibinin yerine veriyor), onay masasında `forRequester` (kimin yerine), yolculukta `decidedBy` (talep sahibi dışında biri yanıtladıysa kim). Veritabanı ifade satırlarında: `requester_reads`, `reader_stands_in`, `decided_by_user_id`.
+- İş kuyruğundaki `userId` talebi isteyen kişidir (talep sahibi); çalışmanın kimin adına koşacağını söylemez.
+
+Bekleyen işlerin kendiliğinden başlaması (8 Ekim karar 49):
+
+- İşlevler: `office.flow_waiting_work` (bir ajanı ya da izni bekleyen işleri seçen kural; dördüncü değişkeni `p_as_if_open`, sayım için o düğmeyi açık sayar: `agent`, `project`, `customer`), `office.restart_waiting_work(ajan, proje, müşteri)` (tam biri verilir; seçtiği her talebe `run_restarted` izini yazar ve kimlikleri döner; yalnızca kurucu, yalnızca API rolü), `office.count_waiting_work(ajan, proje, müşteri)` (o düğme açılırsa kaç talebin başlayacağı; hiçbir şey yazmaz).
+- İz kaydı olayı: `run_restarted` (talebin işi yeniden çağrıldı). Satır kuralları: `reserved_restart_event` (bu olayı API isteği ve ajan çalışması yazamaz), `restart_records` (yeniden başlatmanın kendi kaydı), `flow_reads_restarts` (akış bu kayıtları okur). Dizin: `audit_log_restarts`.
+- `office.request_flow_facts` yanıtında `restarted_at` (işin en son yeniden çağrıldığı an); aşama hesabında `awaitedSince` bunu da kapsar.
+- Veritabanı ifadeleri: `restartWaitingWork`, `countWaitingWork` (kapsam türü `OpeningScope`: `agentCode`, `projectId` ya da `customerId`; satır türü `WorkToRestart`); `setAgentSwitch` yanıtında `opened` (düğmeyi bu çağrı açtı); `setProjectAiPermission` değerin değişip değişmediğini döner.
+- API: `apps/api/src/restart.ts` içinde `startWaitingWork` (seçilen her talep için bir iş kuyruğa konur; açma, izler ve işler aynı işlemde saklanır). Uç nokta `GET /api/waiting-work?agent=<kod> | ?project=<kimlik> | ?customer=<kimlik>` (yalnızca kurucu; yanıtı `waiting`).
+- Şemalar: `agentOpenResponseSchema`, `projectAiPermissionAnswerSchema`, `customerPermissionsAnswerSchema` (üçünde de `restarted`: bu isteğin yeniden başlattığı talep sayısı), `waitingWorkQuerySchema`, `waitingWorkResponseSchema`.
+- Çalıştırıcı: `recordSwitchRefusal` (durdurulmuş ajan ya da kapalı izin yüzünden reddedilen işin izini, açma işlemini bekleyerek yazar; o sırada düğme açıldıysa iz yazmaz, işi kendisi başlatır).
+- Panelde (`apps/web/src/lib/requests/labels.ts`): `OpeningKind` (`agent`, `project`, `customer`), `waitingWorkSentence` (açma onayında bekleyen taleplerin cümlesi: sayılıyor, yok, sayı, sayılamadı), `WAITING_WORK_IF_ANY` (sayı okunmadan söylenen cümle).
+
 ## Notlar
 
 - Hata metinleri (veritabanı tetikleyicilerinin `raise exception` metinleri, geliştiriciye dönük iletiler) İngilizcedir. Kullanıcıya gösterilecek Türkçe metni API üretir; API hata metnine göre değil SQLSTATE koduna göre dallanır.
