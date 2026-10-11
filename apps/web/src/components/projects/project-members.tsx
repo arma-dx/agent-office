@@ -530,9 +530,12 @@ export function ProjectMembers({ project }: { project: ProjectDetail }) {
   const hasOwner = members.some((member) => member.projectRole === 'owner');
   const readerOwns = reader?.projectRole === 'owner';
   // At most one hint: the hand-over for who gives roles, who removes a manager for a manager.
+  // The hand-over's menu is named only when a row has it with that act in it.
+  const handOverOffered = members.some((member) => member.roleChanges.includes('owner'));
   let hint: string | null = null;
-  if ((founder || readerOwns) && hasOwner) hint = MEMBERS_TEXT.handOverHint;
-  else if (!founder && reader?.projectRole === 'manager') hint = MEMBERS_TEXT.managerHint;
+  if ((founder || readerOwns) && hasOwner) {
+    hint = handOverOffered ? MEMBERS_TEXT.handOverHint : MEMBERS_TEXT.ownerStaysHint;
+  } else if (!founder && reader?.projectRole === 'manager') hint = MEMBERS_TEXT.managerHint;
   return (
     <section aria-labelledby={headingId} className="flex flex-col gap-3">
       {/* The heading takes the focus when a row's controls go away. */}

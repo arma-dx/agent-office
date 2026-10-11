@@ -1389,10 +1389,19 @@ describe('projects: members', () => {
       'Sahip projeden çıkarılamaz. Sahipliği devretmek için bir üyenin "Rolü değiştir" menüsünü kullanın.';
     const MANAGER =
       'Bir yöneticiyi projeden yalnızca sahip ya da kurucu çıkarır; rolleri de onlar verir.';
+    const OWNER_STAYS = 'Sahip projeden çıkarılamaz.';
     const hints = (members: HTMLElement) => [
       within(members).queryByText(HAND_OVER) !== null,
       within(members).queryByText(MANAGER) !== null,
     ];
+    /** No sentence of the section names the menu, and the short sentence stands under the list. */
+    const onlyThatTheOwnerStays = (members: HTMLElement) => {
+      expect(hints(members)).toEqual([false, false]);
+      expect(within(members).queryByText(/Rolü değiştir/)).toBeNull();
+      expect(within(members).getByRole('list').nextElementSibling).toBe(
+        within(members).getByText(OWNER_STAYS),
+      );
+    };
 
     // The owner.
     openAs('employee', [person(FOUNDER_MEMBER, 'owner'), person(AYSE, 'manager')]);
@@ -1416,10 +1425,43 @@ describe('projects: members', () => {
     expect(hints(members)).toEqual([true, false]);
     cleanup();
 
+    // No row offers a hand-over: the sentence does not send the reader to a menu that no row
+    // has. The owner alone (every project opened without naming a colleague) ...
+    openAs('employee', [person(FOUNDER_MEMBER, 'owner')]);
+    members = await section(1);
+    expect(within(members).queryByRole('button', { name: 'Rolü değiştir' })).toBeNull();
+    onlyThatTheOwnerStays(members);
+    cleanup();
+    // ... the founder who is no member of such a project ...
+    openAs('founder', [person(AYSE, 'owner')]);
+    members = await section(1);
+    expect(within(members).queryByRole('button', { name: 'Rolü değiştir' })).toBeNull();
+    onlyThatTheOwnerStays(members);
+    cleanup();
+    // ... and an owner whose other members are all deactivated: the one menu there dismisses a
+    // manager and hands nothing over.
+    openAs('employee', [
+      person(FOUNDER_MEMBER, 'owner'),
+      person(AYSE, 'manager', { active: false }),
+      person(CAGAN, 'member', { active: false }),
+    ]);
+    members = await section(3);
+    expect(itemsOf(await openRoleMenu('Ayşe Yılmaz'))).toEqual(['Yöneticilikten al']);
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => {
+      expect(screen.queryByRole('menu')).toBeNull();
+    });
+    expect(hints(members)).toEqual([false, false]);
+    expect(within(members).getByRole('list').nextElementSibling).toBe(
+      within(members).getByText(OWNER_STAYS),
+    );
+    cleanup();
+
     // A manager.
     openAs('employee', [person(FOUNDER_MEMBER, 'manager'), person(AYSE, 'owner')]);
     members = await section(2);
     expect(hints(members)).toEqual([false, true]);
+    expect(within(members).queryByText(OWNER_STAYS)).toBeNull();
     cleanup();
 
     // Not the founder who is a manager of a project without an owner: the founder removes
@@ -1436,6 +1478,7 @@ describe('projects: members', () => {
     openAs('employee', [person(FOUNDER_MEMBER, 'member'), person(AYSE, 'owner')]);
     members = await section(2);
     expect(hints(members)).toEqual([false, false]);
+    expect(within(members).queryByText(OWNER_STAYS)).toBeNull();
   });
 
   it("members: the founder who is no member manages every row except the owner's button, and reads the founder's words in the hand-over", async () => {

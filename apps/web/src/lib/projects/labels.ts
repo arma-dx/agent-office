@@ -193,6 +193,9 @@ export function roleGivenSentence(role: ProjectMemberRole, name: string): string
   return `Projenin yeni sahibi: ${name}.`;
 }
 
+// Why the owner's row has no button, for a reader who gives roles.
+const OWNER_STAYS = 'Sahip projeden çıkarılamaz.';
+
 /**
  * The fixed sentences of the members part of the project page: who manages the members, and what
  * a row without a button means.
@@ -200,9 +203,12 @@ export function roleGivenSentence(role: ProjectMemberRole, name: string): string
 export const MEMBERS_TEXT = {
   noOwnerForFounder: 'Bu projenin sahibi yok. Bir üyeyi sahip yapabilirsiniz.',
   noOwner: 'Bu projenin sahibi yok. Sahibi kurucu atar.',
-  // For a reader who gives roles: the owner's row has no button, the way is the hand-over.
-  handOverHint:
-    'Sahip projeden çıkarılamaz. Sahipliği devretmek için bir üyenin "Rolü değiştir" menüsünü kullanın.',
+  // For a reader who gives roles: the owner's row has no button, the way is the hand-over. The
+  // menu is named only while a row offers the hand-over in it.
+  handOverHint: `${OWNER_STAYS} Sahipliği devretmek için bir üyenin "Rolü değiştir" menüsünü kullanın.`,
+  // The same reader when no row offers a hand-over (the owner is the only member, or every other
+  // member's account is deactivated): a sentence must not send the reader to a menu no row has.
+  ownerStaysHint: OWNER_STAYS,
   // For a manager: why a manager's row has no button.
   managerHint:
     'Bir yöneticiyi projeden yalnızca sahip ya da kurucu çıkarır; rolleri de onlar verir.',
