@@ -1766,6 +1766,58 @@ describe.skipIf(noDatabase)('projects', () => {
     });
   });
 
+  it('409 project_members_changed when the member is removed and added again while their removal is on its way; nobody is removed', async () => {
+    const project = await open(employee, {
+      name: 'Çıkarırken yeniden eklenen',
+      memberIds: [ids.newcomer],
+    });
+    // Somebody else removes the member and adds them again, not committed yet. No table lock
+    // here: the route's delete must meet the ROW it read, wait for it and find it gone, while
+    // the row that replaces it is none it saw. It removes nothing, and the rule read again says
+    // the owner may remove this plain member: neither a refusal nor a missing person explains
+    // the empty delete.
+    const admin = await adminPool.connect();
+    let pending: Promise<LightMyRequestResponse>;
+    try {
+      await admin.query('begin');
+      const gone = await admin.query(
+        'delete from office.project_members where project_id = $1 and user_id = $2',
+        [project.id, ids.newcomer],
+      );
+      expect(gone.rowCount).toBe(1);
+      await admin.query(
+        'insert into office.project_members (company_id, project_id, user_id) values ($1, $2, $3)',
+        [ids.arma, project.id, ids.newcomer],
+      );
+      pending = call(employee, 'DELETE', `/api/projects/${project.id}/members/${ids.newcomer}`);
+      await untilServerWaits();
+      await admin.query('commit');
+    } catch (error) {
+      await admin.query('rollback');
+      throw error;
+    } finally {
+      admin.release();
+    }
+    const res = await pending;
+    expect(res.statusCode, res.body).toBe(409);
+    expect(errorCode(res)).toBe('project_members_changed');
+    expect(messageOf(res)).toBe(
+      'Projenin üyeleri az önce değişti. Sayfayı yenileyip yeniden deneyin.',
+    );
+    expect(await storedRoles(project.id)).toEqual({
+      [ids.employee]: 'owner',
+      [ids.newcomer]: 'member',
+    });
+    // The same request, sent again as the sentence asks, removes the person.
+    const again = await call(
+      employee,
+      'DELETE',
+      `/api/projects/${project.id}/members/${ids.newcomer}`,
+    );
+    expect(again.statusCode, again.body).toBe(200);
+    expect(await storedRoles(project.id)).toEqual({ [ids.employee]: 'owner' });
+  });
+
   it('409 project_customer_locked when the customer of a project with an open AI permission is changed, removed or replaced by a new one, for a member and for the founder; nothing is written, no customer is added; the other fields of the same body are not changed either', async () => {
     const first = { kind: 'new', id: randomUUID(), name: 'Kilitli projenin müşterisi' };
     const project = await open(employee, { name: 'Kilitli proje', customer: first });
