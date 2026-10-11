@@ -176,7 +176,9 @@ function RunList({ project }: { project: ProjectDetail }): ReactNode {
         Bu projede {totals.runCount} ajan çalışması var.
       </p>
       {totals.usage ? <Totals usage={totals.usage} /> : null}
-      <Table className="table-fixed">
+      {/* The browser sizes the columns: each fixed column keeps the width its content needs
+          ("Sürüyor" is wider than a duration), and the first one takes the rest. */}
+      <Table>
         <TableCaption className="sr-only">
           Bu projedeki ajan çalışmaları, en yenisi üstte
         </TableCaption>

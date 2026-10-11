@@ -103,6 +103,14 @@ describe('projects: the agent runs of a project', () => {
     const list = await table();
     expect(within(await tabPanel()).getByText('Bu projede 3 ajan çalışması var.')).toBeVisible();
     expect(heads(list)).toEqual(['Talep', 'Başladı', 'Süre', 'Sonuç']);
+    // The widths are hints: a column must be able to grow to its content ("Sürüyor" in the
+    // duration column), so the table is not laid out with fixed columns; the first cell takes
+    // the rest and cuts a long title.
+    expect(list).not.toHaveClass('table-fixed');
+    expect(within(rows(list)[0] as HTMLElement).getAllByRole('cell')[0]).toHaveClass(
+      'w-full',
+      'max-w-0',
+    );
     for (const head of within(list).getAllByRole('columnheader')) {
       expect(head).toHaveAttribute('scope', 'col');
     }
