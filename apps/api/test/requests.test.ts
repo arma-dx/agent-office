@@ -12,6 +12,7 @@ import {
   apiErrorSchema,
   approvalDecisionDetails,
   approvalDeskSchema,
+  memberChangeDetails,
   officeAgentSchema,
   officeResponseSchema,
   projectDetailSchema,
@@ -71,6 +72,29 @@ const rightHolderAccount = {
   hd: 'armadx.test',
 } as const;
 
+// Two more people of this file's own, employees of Arma DX: one is made an external person and
+// one is removed from the company (8 October decision 45).
+const LEAVERS = {
+  external: {
+    id: '00000000-0000-4000-8000-000000000904',
+    name: 'Dış Kişi Yapılan',
+    account: {
+      email: 'made.external@armadx.test',
+      sub: 'sub-made-external',
+      hd: 'armadx.test',
+    },
+    // What the person is answered when they ask for their request afterwards.
+    refusal: [403, 'insiders_only'],
+  },
+  removed: {
+    id: '00000000-0000-4000-8000-000000000905',
+    name: 'Şirketten Çıkarılan',
+    account: { email: 'removed@armadx.test', sub: 'sub-removed', hd: 'armadx.test' },
+    // Their only membership went, and their sessions with it.
+    refusal: [401, 'unauthenticated'],
+  },
+} as const;
+
 describe.skipIf(noDatabase)('requests', () => {
   let server: TestServer;
   let founder: string;
@@ -126,7 +150,8 @@ describe.skipIf(noDatabase)('requests', () => {
       update office.agent_definitions set current_version_id = null
         where code in ('KOR-1', 'HAF-2');
       alter table office.memberships disable trigger require_step_up;
-      delete from office.memberships where user_id = '${RIGHT_HOLDER}';
+      delete from office.memberships
+        where user_id in ('${RIGHT_HOLDER}', '${LEAVERS.external.id}', '${LEAVERS.removed.id}');
       alter table office.memberships enable trigger require_step_up;
     `);
     await workerPool.end();
@@ -4263,6 +4288,360 @@ describe.skipIf(noDatabase)('requests', () => {
       expect(await listed(founder, `?project=${made.id}`)).toEqual(
         expect.arrayContaining([first.id, second.id]),
       );
+    });
+
+    // A request that goes on in the founder's name (8 October decision 45) ------------------------
+    describe('a request that goes on in the founder’s name', () => {
+      /** The founder's project with the employee as a plain member: a member can be removed. */
+      async function shared(name: string, memberIds: string[] = []): Promise<ProjectDetail> {
+        const made = await project(founder, { name, memberIds: [ids.employee, ...memberIds] });
+        await allowAi(made.id);
+        return made;
+      }
+
+      /** The owner (here the founder) takes the employee out of the project. */
+      async function takeOut(projectId: string): Promise<void> {
+        const res = await send(
+          server,
+          founder,
+          'DELETE',
+          `/api/projects/${projectId}/members/${ids.employee}`,
+          { company: ids.arma },
+        );
+        expect(res.statusCode, res.body).toBe(200);
+      }
+
+      /** The employee's request in the project with a result the founder approved. */
+      async function approvedIn(projectId: string): Promise<{ id: string; approvalId: string }> {
+        const made = await submittedIn(projectId);
+        const res = await post(founder, `/api/approvals/${made.approvalId}/decision`, {
+          decision: 'approved',
+          selectedOption: 'A',
+        });
+        expect(res.statusCode, res.body).toBe(200);
+        return made;
+      }
+
+      const today = async (session: string): Promise<Today> =>
+        todaySchema.parse((await get(session, '/api/today')).json());
+      const counts = async (session: string): Promise<SidebarCounts> =>
+        sidebarCountsSchema.parse((await get(session, '/api/today/counts')).json());
+      const desk = async (session: string) =>
+        approvalDeskSchema.parse((await get(session, '/api/approvals')).json());
+      const answers = (detail: RequestDetail) =>
+        detail.journey.flatMap((item) => (item.kind === 'acceptance' ? [item] : []));
+
+      it('a requester taken out of the project gets 404 for their request; the request stays theirs for everybody who reads it', async () => {
+        const made = await shared('Talep sahibi çıkarılan proje', [ids.holder]);
+        const id = await routedIn(made.id);
+        const theirs = {
+          id,
+          requester: { userId: ids.employee },
+          project: { id: made.id },
+          stage: 'working',
+          turn: { kind: 'agent', code: 'HAF-2' },
+        };
+        expect(await read(founder, id)).toMatchObject({ ...theirs, requesterReads: true });
+        await takeOut(made.id);
+
+        for (const [method, url, payload] of [
+          ['GET', `/api/requests/${id}`, undefined],
+          ['POST', `/api/requests/${id}/close`, {}],
+          ['POST', `/api/requests/${id}/acceptance`, { decision: 'approved' }],
+          ['POST', `/api/requests/${id}/comments`, { id: randomUUID(), body: 'x' }],
+        ] as const) {
+          const res =
+            method === 'GET' ? await get(employee, url) : await post(employee, url, payload);
+          expect([res.statusCode, errorCode(res)], url).toEqual([404, 'not_found']);
+        }
+        expect(await listed(employee)).not.toContain(id);
+        expect(await listed(employee, '?mine=true')).not.toContain(id);
+
+        // For those who read it nothing changed hands: the requester is still named, the work
+        // goes on, and only the detail says that the requester does not read it any more.
+        for (const reader of [founder, colleague]) {
+          expect(await read(reader, id)).toMatchObject({ ...theirs, requesterReads: false });
+          const row = requestListSchema
+            .parse((await get(reader, `/api/requests?project=${made.id}`)).json())
+            .requests.find((request) => request.id === id);
+          expect(row).toMatchObject({ ...theirs });
+        }
+        expect(
+          await adminQuery('select requester_user_id from office.tasks where id = $1', [id]),
+        ).toEqual([{ requester_user_id: ids.employee }]);
+        // It is nobody's own request now: the founder's "mine" does not hold it.
+        expect(await listed(founder, '?mine=true')).not.toContain(id);
+      });
+
+      it('the founder is asked for the requester’s approval in their place and gives it; the journey names who answered', async () => {
+        const made = await shared('Onayı kurucuya kalan proje');
+        const { id } = await approvedIn(made.id);
+        const waitsForRequester = {
+          stage: 'requester_approval',
+          turn: { kind: 'person', userId: ids.employee },
+          requesterReads: true,
+        };
+        expect(await read(founder, id)).toMatchObject({
+          ...waitsForRequester,
+          waitingForMe: false,
+          acceptance: null,
+        });
+        expect(await read(employee, id)).toMatchObject({
+          ...waitsForRequester,
+          waitingForMe: true,
+          acceptance: { round: 1, returnsToAgent: true, inPlaceOfRequester: false },
+        });
+        expect((await desk(founder)).acceptances.map((item) => item.requestId)).not.toContain(id);
+        expect((await today(founder)).expected.map((item) => item.id)).not.toContain(id);
+        const before = await counts(founder);
+
+        await takeOut(made.id);
+        const detail = await read(founder, id);
+        expect(detail).toMatchObject({
+          status: 'awaiting_approval',
+          stage: 'requester_approval',
+          turn: { kind: 'founder' },
+          waitingForMe: true,
+          requester: { userId: ids.employee },
+          requesterReads: false,
+          acceptance: { round: 1, returnsToAgent: true, inPlaceOfRequester: true },
+        });
+        const card = (await desk(founder)).acceptances.find((item) => item.requestId === id);
+        expect(card).toMatchObject({
+          requestId: id,
+          round: 1,
+          forRequester: { userId: ids.employee, name: 'Çalışan' },
+        });
+        expect((await today(founder)).expected.find((item) => item.id === id)).toMatchObject({
+          stage: 'requester_approval',
+        });
+        expect(await counts(founder)).toEqual({
+          today: before.today + 1,
+          approvals: before.approvals + 1,
+        });
+
+        const accepted = await post(founder, `/api/requests/${id}/acceptance`, {
+          decision: 'approved',
+        });
+        expect(accepted.statusCode, accepted.body).toBe(200);
+        const done = requestDetailSchema.parse(accepted.json());
+        expect(done).toMatchObject({
+          status: 'done',
+          requester: { userId: ids.employee },
+          requesterReads: false,
+          acceptance: null,
+        });
+        expect(answers(done)).toMatchObject([
+          { status: 'approved', decidedBy: { userId: ids.founder } },
+        ]);
+        expect(
+          await adminQuery(
+            `select requester_user_id, decided_by_user_id, status
+             from office.requester_approvals where task_id = $1`,
+            [id],
+          ),
+        ).toEqual([
+          { requester_user_id: ids.employee, decided_by_user_id: ids.founder, status: 'approved' },
+        ]);
+        expect(await counts(founder)).toEqual(before);
+        // A requester who answers themselves is not named a second time.
+        const own = await approvedIn((await workable({ name: 'Kendi yanıtladığı proje' })).id);
+        const mine = await post(employee, `/api/requests/${own.id}/acceptance`, {
+          decision: 'approved',
+        });
+        expect(answers(requestDetailSchema.parse(mine.json()))).toMatchObject([
+          { status: 'approved', decidedBy: null },
+        ]);
+      });
+
+      it('the founder cannot give the requester’s approval while the requester reads the request', async () => {
+        const made = await shared('Onayı talep sahibinde kalan proje', [RIGHT_HOLDER]);
+        const { id } = await approvedIn(made.id);
+        const refused = async (session: string): Promise<unknown[]> => {
+          const res = await post(session, `/api/requests/${id}/acceptance`, {
+            decision: 'approved',
+          });
+          return [res.statusCode, errorCode(res)];
+        };
+        // The requester can answer themselves: nobody answers for them.
+        expect(await refused(founder)).toEqual([409, 'approval_closed']);
+        expect(await refused(rightHolder)).toEqual([409, 'approval_closed']);
+        expect((await read(founder, id)).stage).toBe('requester_approval');
+
+        await takeOut(made.id);
+        // Standing in is the founder's alone: the approval right does not give it.
+        expect(await refused(rightHolder)).toEqual([409, 'approval_closed']);
+        expect(await read(rightHolder, id)).toMatchObject({
+          stage: 'requester_approval',
+          turn: { kind: 'founder' },
+          waitingForMe: false,
+          requesterReads: false,
+          acceptance: null,
+        });
+        expect((await desk(rightHolder)).acceptances.map((item) => item.requestId)).not.toContain(
+          id,
+        );
+        expect(
+          await adminQuery('select status from office.requester_approvals where task_id = $1', [
+            id,
+          ]),
+        ).toEqual([{ status: 'pending' }]);
+        // Added back, the requester answers again and the founder does not.
+        const back = await put(founder, `/api/projects/${made.id}/members/${ids.employee}`, {});
+        expect(back.statusCode, back.body).toBe(200);
+        expect(await refused(founder)).toEqual([409, 'approval_closed']);
+        expect(await read(founder, id)).toMatchObject({
+          turn: { kind: 'person', userId: ids.employee },
+          requesterReads: true,
+          acceptance: null,
+        });
+        const own = await post(employee, `/api/requests/${id}/acceptance`, {
+          decision: 'approved',
+        });
+        expect(own.statusCode, own.body).toBe(200);
+      });
+
+      it('the founder asks for changes in the requester’s place: the job names the requester and the step is active again', async () => {
+        const made = await shared('Düzeltmeyi kurucunun istediği proje');
+        const { id } = await approvedIn(made.id);
+        await takeOut(made.id);
+        const before = server.jobs.sent.length;
+        const res = await post(founder, `/api/requests/${id}/acceptance`, {
+          decision: 'changes_requested',
+          note: 'Açılış tarihi de yazsın.',
+        });
+        expect(res.statusCode, res.body).toBe(200);
+        const detail = requestDetailSchema.parse(res.json());
+        expect(detail).toMatchObject({
+          status: 'in_progress',
+          stage: 'revising',
+          turn: { kind: 'agent', code: 'HAF-2' },
+          requester: { userId: ids.employee },
+          requesterReads: false,
+          acceptance: null,
+        });
+        expect(answers(detail)).toMatchObject([
+          {
+            status: 'changes_requested',
+            decidedBy: { userId: ids.founder },
+            note: 'Açılış tarihi de yazsın.',
+          },
+        ]);
+        // The job is the one a requester's own change request sends: it names the requester. In
+        // whose name the run goes is the database's answer when the run opens.
+        expect(server.jobs.sent.slice(before)).toEqual([
+          { companyId: ids.arma, userId: ids.employee, taskId: id, agentCode: 'HAF-2' },
+        ]);
+        expect(
+          await adminQuery(
+            'select status, agent_code from office.task_routings where task_id = $1',
+            [id],
+          ),
+        ).toEqual([{ status: 'active', agent_code: 'HAF-2' }]);
+      });
+
+      it('a requester who is made an external person or removed from the company: the same answers', async () => {
+        await freshPasskey(server, founder, founderKey, ids.founder, 'Kurucu telefonu');
+        await adminExec(
+          Object.values(LEAVERS)
+            .map(
+              (person) => `
+          insert into office.users (id, name) values ('${person.id}', '${person.name}')
+            on conflict do nothing;
+          insert into office.user_emails (email, user_id)
+            values ('${person.account.email}', '${person.id}') on conflict do nothing;
+          insert into office.memberships (company_id, user_id, role)
+            values ('${ids.arma}', '${person.id}', 'employee') on conflict do nothing;`,
+            )
+            .join('\n'),
+        );
+        const confirm = (userId: string, change: Parameters<typeof memberChangeDetails>[0]) =>
+          signStepUp(server, founder, founderKey, {
+            purpose: 'membership_change',
+            companyId: ids.arma,
+            subjectId: userId,
+            details: memberChangeDetails(change),
+          });
+
+        for (const [person, leave] of [
+          [
+            LEAVERS.external,
+            async () =>
+              send(server, founder, 'PATCH', `/api/members/${LEAVERS.external.id}`, {
+                company: ids.arma,
+                payload: {
+                  role: 'external',
+                  stepUp: await confirm(LEAVERS.external.id, { role: 'external' }),
+                },
+              }),
+          ],
+          [
+            LEAVERS.removed,
+            async () =>
+              send(server, founder, 'DELETE', `/api/members/${LEAVERS.removed.id}`, {
+                company: ids.arma,
+                payload: { stepUp: await confirm(LEAVERS.removed.id, 'remove') },
+              }),
+          ],
+        ] as const) {
+          const session = await sessionOf(server, person.account);
+          // One request still at its agent, one with an approved result; neither in a project.
+          const working = await open(session);
+          await route(working.id, person.id);
+          const waiting = await open(session);
+          await route(waiting.id, person.id);
+          const approved = await post(
+            founder,
+            `/api/approvals/${await submit(waiting.id, person.id)}/decision`,
+            { decision: 'approved', selectedOption: 'A' },
+          );
+          expect(approved.statusCode, approved.body).toBe(200);
+          expect(await read(session, waiting.id)).toMatchObject({
+            waitingForMe: true,
+            requesterReads: true,
+          });
+
+          const left = await leave();
+          expect(left.statusCode, left.body).toBeLessThan(300);
+          // The person reads neither request any more.
+          for (const id of [working.id, waiting.id]) {
+            const res = await get(session, `/api/requests/${id}`);
+            expect([res.statusCode, errorCode(res)], person.name).toEqual(person.refusal);
+          }
+          // The requests go on, still their requester's. A person who is no member of the
+          // company any more has no name for anybody in it (the rule of people's names; the
+          // page then says so itself).
+          const name = person === LEAVERS.removed ? null : person.name;
+          expect(await read(founder, working.id), person.name).toMatchObject({
+            status: 'in_progress',
+            stage: 'working',
+            turn: { kind: 'agent', code: 'HAF-2' },
+            requester: { userId: person.id, name },
+            requesterReads: false,
+          });
+          expect(await read(founder, waiting.id), person.name).toMatchObject({
+            stage: 'requester_approval',
+            turn: { kind: 'founder' },
+            waitingForMe: true,
+            requester: { userId: person.id },
+            requesterReads: false,
+            acceptance: { round: 1, returnsToAgent: true, inPlaceOfRequester: true },
+          });
+          expect(
+            (await desk(founder)).acceptances.find((item) => item.requestId === waiting.id),
+            person.name,
+          ).toMatchObject({ forRequester: { userId: person.id, name } });
+          const accepted = await post(founder, `/api/requests/${waiting.id}/acceptance`, {
+            decision: 'approved',
+          });
+          expect(accepted.statusCode, accepted.body).toBe(200);
+          const done = requestDetailSchema.parse(accepted.json());
+          expect(done.status).toBe('done');
+          expect(answers(done)).toMatchObject([
+            { status: 'approved', decidedBy: { userId: ids.founder } },
+          ]);
+        }
+      });
     });
   });
 });

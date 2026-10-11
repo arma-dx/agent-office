@@ -265,8 +265,10 @@ async function intakeOf(client: Queryable, role: Role): Promise<RequestIntake> {
  * Calls for the agent's run after a change request: the job of the agent of the active step, in
  * the requester's name. A stopped agent takes no new work, so nothing is put on the queue for it;
  * the trace run_not_started is written instead (ids only), and the request page reads from it that
- * the work stays with a person, also after the agent is opened again (opening an agent starts
- * nothing; the person routes the request again). No active step: nothing is called for.
+ * the work stays with a person; the trace is what the restart reads when the agent is opened again
+ * (8 October decision 49). The job names the requester, whoever asked for the change; in whose
+ * name the run goes is the database's answer when the run opens (decision 45). No active step:
+ * nothing is called for.
  */
 async function runAgain(
   client: Queryable,
@@ -668,7 +670,8 @@ export function registerRequestRoutes(
         if (code === DEADLOCK) throw requestChanged();
         throw error;
       }
-      // The run's identity stays the requester, whoever corrected the routing.
+      // The job names the requester, whoever corrected the routing; in whose name the run goes
+      // is the database's answer when the run opens (decision 45).
       await jobs.send(client, {
         companyId,
         userId: before.requester_user_id,
@@ -683,6 +686,13 @@ export function registerRequestRoutes(
     }),
   );
 
+  /**
+   * The requester's answer to the approved result. While the requester cannot read the request
+   * (taken out of its project, made an external person, removed from the company, deactivated)
+   * the founder gives it in their place (8 October decision 45): the database decides who may
+   * (two row policies) and writes who decided. A change request still calls for the same agent,
+   * and the job still names the requester.
+   */
   app.post('/api/requests/:requestId/acceptance', async (request, reply): Promise<RequestDetail> =>
     runner.withCompany(request, reply, INSIDERS, async (context) => {
       const requestId = requestIdOf(request);
@@ -722,8 +732,9 @@ export function registerRequestRoutes(
         throw error;
       }
       if (!decided) {
-        // Nothing of this request waits for this person: not the requester, already answered, or
-        // closed by a stop or a new routing.
+        // Nothing of this request waits for this person: not the requester (or the founder,
+        // while the requester can still answer themselves), already answered, or closed by a
+        // stop or a new routing.
         throw approvalClosed();
       }
       if (body.data.decision === 'changes_requested') {
