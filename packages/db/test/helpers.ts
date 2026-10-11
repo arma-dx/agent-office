@@ -228,6 +228,47 @@ export async function openTransaction(
 }
 
 /**
+ * The same on a connection of the privileged role, without a context: for a step only an
+ * administrator makes (an AI permission opened without a passkey) inside a transaction the test
+ * holds open. The test goes on as a restricted role with asRole.
+ */
+export async function openAdminTransaction(): Promise<OpenTransaction> {
+  const pool = new pg.Pool({ connectionString: connectionString('admin'), max: 1 });
+  const client = await pool.connect();
+  let ended = false;
+  const end = async (statement: 'commit' | 'rollback'): Promise<void> => {
+    if (ended) {
+      return;
+    }
+    ended = true;
+    try {
+      await client.query(statement);
+      client.release();
+    } catch (error) {
+      client.release(error instanceof Error ? error : new Error(statement));
+      throw error;
+    } finally {
+      await pool.end();
+    }
+  };
+  try {
+    await client.query('begin');
+    const tx = new Tx(client);
+    const [backend] = await tx.rows<{ pid: number }>('select pg_backend_pid() as pid');
+    return {
+      tx,
+      pid: backend?.pid ?? 0,
+      commit: () => end('commit'),
+      rollback: () => end('rollback'),
+    };
+  } catch (error) {
+    await rollbackAndRelease(client);
+    await pool.end();
+    throw error;
+  }
+}
+
+/**
  * Resolves when the statement that connection runs waits for a lock another transaction holds.
  * The test starts a statement without awaiting it, waits here, and then lets the other
  * transaction go on: the order of the two is then fixed, not left to timing.
