@@ -162,8 +162,9 @@ describe('the due day of a request in words', () => {
     expect(title(1280 - 240 - 48 - 320)).toBeGreaterThan(200);
     // At 1440 px and above the page has its full width.
     expect(title(768)).toBeGreaterThan(200);
-    // The longest stage the list shows: a request that fell to the reader for a closed AI
-    // permission (8 October decision 47): the cause the founder comes to this page for.
+    // A request that fell to the reader for a closed AI permission (8 October decision 47): the
+    // cause the founder comes to this page for. (A few older causes are longer than the column
+    // of either row, docs/SONRA.md P2-ad.)
     const held = stageText({
       stage: 'fell_to_person',
       cause: 'ai_permission_closed',

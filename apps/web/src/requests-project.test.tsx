@@ -907,6 +907,9 @@ describe('the page of a request inside a project', () => {
     expect(await screen.findByText(CAUSE_SENTENCE.ai_permission_closed)).toBeVisible();
     expect(stageLine()).toContain('Aşama: İnsana düştü: yapay zekâ izni kapalı Sıra: Kurucu');
     expect(screen.getByText(AI_CLOSED_FOR_OTHERS)).toBeVisible();
+    // The line about a held RESULT belongs to a result that waits for the unit's approval: this
+    // request has none yet, so nothing says "sonuç onaylanamaz".
+    expect(screen.queryByText(RESULT_HELD_FOR_OTHERS)).toBeNull();
     expect(AI_CLOSED_FOR_OTHERS).toBe('Talep kayıtlı. Yapay zekâ iznini yalnızca kurucu açar.');
     expect(screen.queryByRole('link', { name: 'Projeyi aç' })).toBeNull();
     expect(screen.getByRole('main')).not.toHaveTextContent(
@@ -1063,6 +1066,9 @@ describe('the page of a request inside a project', () => {
     renderApp(REQUEST_PAGE);
     const card = await screen.findByRole('region', { name: 'Sonuç hazır' });
     expect(within(card).getByText(CHANGES_HELD)).toBeVisible();
+    // The unit has approved this result: the requester is not told above their own card that
+    // the result cannot be approved.
+    expect(screen.queryByText(RESULT_HELD_FOR_OTHERS)).toBeNull();
     const notThis = within(card).getByRole('button', { name: 'İstediğim bu değil' });
     expect(notThis).toHaveAttribute('aria-disabled', 'true');
     expect(notThis).toHaveAccessibleDescription(CHANGES_HELD);
