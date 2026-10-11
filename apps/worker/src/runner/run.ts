@@ -66,7 +66,8 @@ import {
  * is opened in that project (no run row, no model call; the job is refused with its reason, and
  * the database refuses the row behind the runner). A run that is open when the limit is reached
  * uses the answer it has already paid for (its tool call is executed) and ends before its next
- * model call, stopped with the code spending_limit_reached. When the founder raises the limit or
+ * model call, stopped with the code spending_limit_reached; the limit is read after every model
+ * call and again before every further one. When the founder raises the limit or
  * takes it away, the work it held starts again by itself (11 October decision 1): the refusal
  * and the stop are therefore written behind the lock a restart takes, as for a stopped agent.
  */
@@ -249,8 +250,8 @@ const RESTART_LOCK_SHARED = `select pg_advisory_xact_lock_shared(
   hashtextextended('office.restart:' || ($1::uuid)::text, 0))`;
 
 // Is the AI spending limit of this project reached now (8 October decision 17): the database's
-// own answer for an agent run, a yes or a no. The runner asks at the start of a run and after
-// every model call, and reads anything but "no" as reached.
+// own answer for an agent run, a yes or a no. The runner asks at the start of a run, after every
+// model call and once more before every further call, and reads anything but "no" as reached.
 const SPENDING_LIMIT_REACHED = 'select office.project_spending_limit_reached($1) as reached';
 
 function sqlState(error: unknown): string | undefined {
@@ -947,7 +948,8 @@ export async function runAgentJob(
   let reminded = false;
   // The AI spending limit of the run's project was read as reached after a model call (decision
   // 17): the answer that was paid for is still used, and no further model call is made. (Set
-  // inside a step of the run.)
+  // inside a step of the run. A "no" here is not the last word: the limit is read again before
+  // every further call.)
   const spending = { limitReached: false };
 
   type EndStatus = 'completed' | 'failed' | 'limit_reached' | 'stopped';
@@ -1285,10 +1287,15 @@ export async function runAgentJob(
       if (left <= 0 || controller.signal.aborted) {
         return await finish('limit_reached', 'limit_reached', { errorCode: 'time_limit' });
       }
-      if (spending.limitReached) {
+      if (spending.limitReached || (modelCalls > 0 && (context.projectId ?? null) !== null)) {
         // The answer that was paid for has been used: its tool call was executed, or the model
         // ended without one. One more model call would be needed, and the AI spending limit of
         // the project does not allow it (8 October decision 17).
+        // Asked again before every further call of a run in a project, also when the run's own
+        // read after its last call said "not reached": that read saw only what was committed,
+        // so another run of the project that recorded its call at the same moment, or a limit
+        // that was lowered since, is seen here and not one paid answer later. Not before the
+        // first call: the limit was read just before the run row was written.
         // A raise of the limit restarts the work of a run that is already stopped and passes
         // by a run that is still open (11 October decision 1), so the stop is written behind
         // the lock every restart of the company takes, after the limit is read once more, as

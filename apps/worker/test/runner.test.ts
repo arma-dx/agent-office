@@ -3411,9 +3411,10 @@ describe.skipIf(noDatabase)('a request inside a project', () => {
 });
 
 // The AI spending limit of a project (8 October decision 17). The runner asks the database at
-// the start of every run on a request inside a project and after every model call. At the limit
-// no run starts: no run row, no model call. A run that is open when the limit is reached uses the
-// answer it has already paid for and ends before its next model call.
+// the start of every run on a request inside a project, after every model call and again before
+// every further call. At the limit no run starts: no run row, no model call. A run that is open
+// when the limit is reached uses the answer it has already paid for and ends before its next
+// model call.
 describe.skipIf(noDatabase)('a project at its AI spending limit', () => {
   afterAll(closeTestPools);
 
@@ -3729,6 +3730,17 @@ describe.skipIf(noDatabase)('a project at its AI spending limit', () => {
       'routed',
     );
     expect(asked.count).toBe(2);
+    // A run with two model calls asks once more between them: before the run row, after the
+    // first call, before the second call and after it.
+    asked.count = 0;
+    const fourth = await runner(
+      new ScriptedModel([text('Bir dakika.'), toolUse('submit_for_approval', RESULT)]),
+      { pool: counting() },
+    );
+    expect((await runAgentJob(fourth.deps, job(inProject, 'SOS-2', ids.employee))).outcome).toBe(
+      'submitted',
+    );
+    expect(asked.count).toBe(4);
   });
 
   it('a limit the database gives no answer for is read as reached', async () => {
@@ -3999,6 +4011,102 @@ describe.skipIf(noDatabase)('a project at its AI spending limit', () => {
     const again = await runner(new ScriptedModel([toolUse('submit_for_approval', RESULT)]));
     expect(await runAgentJob(again.deps, job(taskId, 'SOS-2', ids.employee))).toMatchObject({
       outcome: 'submitted',
+    });
+  });
+
+  // The limit is asked again before every further model call, not only after the run's own
+  // call: what another run of the project recorded meanwhile, or a limit that was lowered,
+  // stops the run before it pays for one more answer.
+  it('a run stops before its next model call when another run of the project reached the limit meanwhile', async () => {
+    // One call of the unit agent with these tokens, then its result with a call that costs
+    // nothing: the cost of the first is measured in a project without a limit, with the card's
+    // own prices.
+    const CALL = { input: 1_000_000, output: 0 };
+    const FREE = { input: 0, output: 0 };
+    const script = () =>
+      new ScriptedModel([text('Bir dakika.', CALL), toolUse('submit_for_approval', RESULT, FREE)]);
+    const measured = await runner(script());
+    const alone = await runAgentJob(
+      measured.deps,
+      job(await routedIn(await project(null)), 'SOS-2', ids.employee),
+    );
+    expect(alone).toMatchObject({ outcome: 'submitted', modelCalls: 2 });
+    const cost = Number((await runRow(alone.runId)).cost_usd);
+
+    // Two requests of one project, each routed to the unit agent. One such call fits under the
+    // limit, two do not.
+    const projectId = await project(null);
+    const tasks = [await routedIn(projectId), await routedIn(projectId)] as const;
+    const limit = (cost * 1.5).toFixed(2);
+    expect(Number(limit)).toBeGreaterThan(cost * 1.2);
+    expect(Number(limit)).toBeLessThan(cost * 1.8);
+    await setLimit(projectId, limit);
+
+    // Both runs get their answer at the same moment: each has written the cost of its call and
+    // asks for the limit before the other has committed, so each reads "not reached" (the
+    // second question of a run is the one after its first model call; the first is its start).
+    const gate = (): { opened: Promise<void>; open: () => void } => {
+      let open: () => void = () => undefined;
+      const opened = new Promise<void>((resolve) => {
+        open = resolve;
+      });
+      return { opened, open };
+    };
+    const wrote = [gate(), gate()] as const;
+    const models = [script(), script()] as const;
+    const both = async (index: 0 | 1) => {
+      const pool = meeting(
+        testPools().worker,
+        'project_spending_limit_reached',
+        async () => {
+          wrote[index].open();
+          await wrote[index === 0 ? 1 : 0].opened;
+        },
+        2,
+      );
+      const { deps } = await runner(models[index], { pool });
+      return runAgentJob(deps, job(tasks[index], 'SOS-2', ids.employee));
+    };
+    const results = await Promise.all([both(0), both(1)]);
+    // Committed, the two costs are at the limit, and the database says so before either run
+    // sends its second call: both stop there, each after the one answer it paid for.
+    expect(await reached(projectId)).toBe(true);
+    for (const index of [0, 1] as const) {
+      expect(results[index]).toMatchObject({ outcome: 'stopped', modelCalls: 1 });
+      expect(models[index].requests).toHaveLength(1);
+      expect(models[index].remaining).toBe(1);
+      expect(await runRow(results[index].runId)).toMatchObject({
+        status: 'stopped',
+        error_code: 'spending_limit_reached',
+        input_tokens: CALL.input,
+      });
+      expect(await stopTraces(tasks[index])).toEqual(['run_stopped']);
+    }
+  });
+
+  it('a limit lowered below what was spent stops an open run before its next model call', async () => {
+    const projectId = await project('100.00');
+    await spent(projectId, '2');
+    const taskId = await routedIn(projectId);
+    const model = new ScriptedModel([
+      text('Önce düşünüyorum.'),
+      toolUse('submit_for_approval', RESULT),
+    ]);
+    const { deps } = await runner(model);
+    // After the first answer the limit read "not reached". Before the run asks again for its
+    // second call, the founder lowers the limit below what the project has spent.
+    let lowered = false;
+    const pool = meeting(deps.pool, 'pg_advisory_xact_lock_shared', async () => {
+      lowered = true;
+      await setLimit(projectId, LIMIT);
+    });
+    const result = await runAgentJob({ ...deps, pool }, job(taskId, 'SOS-2', ids.employee));
+    expect(lowered).toBe(true);
+    expect(result).toMatchObject({ outcome: 'stopped', modelCalls: 1 });
+    expect(model.remaining).toBe(1);
+    expect(await runRow(result.runId)).toMatchObject({
+      status: 'stopped',
+      error_code: 'spending_limit_reached',
     });
   });
 });
