@@ -66,6 +66,7 @@ const TABS: [name: string, value: string | undefined][] = [
   ['Talepler', undefined],
   ['Kilometre taşları', 'milestones'],
   ['Çalışmalar', 'runs'],
+  ['Onaylar', 'approvals'],
   ['Ayarlar', 'settings'],
 ];
 

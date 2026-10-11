@@ -2,6 +2,8 @@ import {
   mayAddProjectMembers,
   memberRemoval,
   memberRoleChanges,
+  projectApprovalSchema,
+  projectApprovalsSchema,
   projectDetailSchema,
   projectRunSchema,
   projectRunsSchema,
@@ -10,6 +12,8 @@ import {
   type CustomerOption,
   type MembershipSummary,
   type ProjectActor,
+  type ProjectApproval,
+  type ProjectApprovals,
   type ProjectDetail,
   type ProjectMember,
   type ProjectMemberCandidate,
@@ -323,9 +327,42 @@ export function projectRuns(
   });
 }
 
+/** The key of the list of a project's results (the "Onaylar" tab of its page). */
+export function projectApprovalsRoute(projectId: string = PROJECT_ID): string {
+  return `GET /projects/${projectId}/approvals`;
+}
+
+/** One result of a request of the fixture's project: the first attempt, waiting for a decision. */
+export function projectApproval(overrides: Partial<ProjectApproval> = {}): ProjectApproval {
+  return projectApprovalSchema.parse({
+    id: 'f1111111-1111-4111-8111-111111111111',
+    request: { id: 'e1111111-1111-4111-8111-111111111111', title: 'Ekim bülteni taslağı' },
+    agent: { code: 'SOS-2', name: 'Sosyal İçerik Yazım Ajanı' },
+    status: 'pending',
+    attempt: 1,
+    createdAt: '2026-10-08T09:01:00.000Z',
+    decidedAt: null,
+    decidedBy: null,
+    ...overrides,
+  });
+}
+
+/** GET /projects/:id/approvals as a reader with the approval right gets it. */
+export function projectApprovals(
+  approvals: ProjectApproval[] = [],
+  overrides: Partial<ProjectApprovals> = {},
+): ProjectApprovals {
+  return projectApprovalsSchema.parse({
+    approvals,
+    truncated: false,
+    seesUndecided: true,
+    ...overrides,
+  });
+}
+
 /**
  * The read routes of the section, answering the fixtures; a test replaces what it is about. The
- * project has no request and no agent run unless a test gives some, and no request waits for an
+ * project has no request, no agent run and no result unless a test gives some, and no request waits for an
  * opening.
  */
 export function projectHandlers(
@@ -338,6 +375,7 @@ export function projectHandlers(
     [`GET /projects/${detail.id}`]: () => json(detail),
     [projectRequestsRoute(detail.id)]: () => json({ requests: [], truncated: false }),
     [projectRunsRoute(detail.id)]: () => json(projectRuns()),
+    [projectApprovalsRoute(detail.id)]: () => json(projectApprovals()),
     // The confirmation of an opening asks how many waiting requests it would start: none.
     [waitingWorkRoute({ project: detail.id })]: () => json({ waiting: 0 }),
     ...(detail.customer

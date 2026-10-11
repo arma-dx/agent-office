@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  approvalLine,
   handOverDescription,
   memberLine,
   PROJECT_ROLE,
@@ -98,5 +99,33 @@ describe('project labels: the result of an agent run', () => {
     expect(runDurationText(59_400)).toBe('59 sn.');
     expect(runDurationText(60_000)).toBe('1 dk.');
     expect(runDurationText(605_000)).toBe('10 dk.');
+  });
+});
+
+describe('project labels: a result in the list of approvals', () => {
+  const agent = { code: 'SOS-2', name: 'Sosyal İçerik Yazım Ajanı' };
+  const by = { userId: '33333333-3333-4333-8333-333333333333', name: 'Ayşe Yılmaz' };
+  const line = (
+    status: Parameters<typeof approvalLine>[0]['status'],
+    attempt = 1,
+    decidedBy: Parameters<typeof approvalLine>[0]['decidedBy'] = by,
+  ) => approvalLine({ agent, status, attempt, decidedBy });
+
+  it('one sentence for each thing that became of a result, with the agent by its code', () => {
+    expect(line('pending', 1, null)).toBe('SOS-2 sonucu onay bekliyor.');
+    expect(line('pending', 2, null)).toBe('SOS-2 düzeltilmiş sonucu onay bekliyor.');
+    expect(line('approved')).toBe('SOS-2 sonucunu Ayşe Yılmaz onayladı.');
+    expect(line('changes_requested')).toBe('SOS-2 sonucu için Ayşe Yılmaz düzeltme istedi.');
+    expect(line('rejected')).toBe('SOS-2 sonucunu Ayşe Yılmaz reddetti.');
+    // Closed is not a decision: nobody is named, also when a name came with it.
+    expect(line('closed', 1, null)).toBe('SOS-2 sonucu karar verilmeden kapandı: talep değişti.');
+    expect(line('closed', 1, by)).toBe('SOS-2 sonucu karar verilmeden kapandı: talep değişti.');
+  });
+
+  it('a person whose name cannot be read any more is "Eski üye"', () => {
+    expect(line('approved', 1, { userId: by.userId, name: null })).toBe(
+      'SOS-2 sonucunu Eski üye onayladı.',
+    );
+    expect(line('rejected', 2, null)).toBe('SOS-2 sonucunu Eski üye reddetti.');
   });
 });

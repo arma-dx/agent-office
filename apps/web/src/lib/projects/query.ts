@@ -6,6 +6,7 @@ import {
   customerPermissionsSchema,
   projectAiPermissionAnswerSchema,
   projectAiPermissionSchema,
+  projectApprovalsSchema,
   projectDetailSchema,
   projectListSchema,
   projectMemberCandidatesSchema,
@@ -21,6 +22,7 @@ import {
   type CustomerPermissionsAnswer,
   type ProjectAiPermission,
   type ProjectAiPermissionAnswer,
+  type ProjectApprovals,
   type ProjectBudget,
   type ProjectDetail,
   type ProjectList,
@@ -56,6 +58,9 @@ export const projectKey = (companyId: string, projectId: string) =>
  */
 export const projectRunsKey = (companyId: string, projectId: string) =>
   ['company', companyId, 'project', projectId, 'runs'] as const;
+/** The results of the requests of a project; under projectKey, like its runs. */
+export const projectApprovalsKey = (companyId: string, projectId: string) =>
+  ['company', companyId, 'project', projectId, 'approvals'] as const;
 export const customersKey = (companyId: string) => ['company', companyId, 'customers'] as const;
 export const memberCandidatesKey = (companyId: string) =>
   ['company', companyId, 'project-member-candidates'] as const;
@@ -96,6 +101,30 @@ export function projectRunsQueryOptions(companyId: string, projectId: string) {
   return queryOptions({
     queryKey: projectRunsKey(companyId, projectId),
     queryFn: ({ signal }) => fetchProjectRuns(companyId, projectId, { signal }),
+  });
+}
+
+/**
+ * GET /api/projects/:projectId/approvals: the results of the project's requests, the ones that
+ * wait for the unit's approver first. `background`: the periodic refresh of the "Onaylar" tab.
+ */
+export function fetchProjectApprovals(
+  companyId: string,
+  projectId: string,
+  options: { signal?: AbortSignal; background?: boolean } = {},
+): Promise<ProjectApprovals> {
+  const id = z.uuid().parse(projectId);
+  return apiRequest(`/projects/${id}/approvals`, {
+    schema: projectApprovalsSchema,
+    companyId,
+    ...options,
+  });
+}
+
+export function projectApprovalsQueryOptions(companyId: string, projectId: string) {
+  return queryOptions({
+    queryKey: projectApprovalsKey(companyId, projectId),
+    queryFn: ({ signal }) => fetchProjectApprovals(companyId, projectId, { signal }),
   });
 }
 

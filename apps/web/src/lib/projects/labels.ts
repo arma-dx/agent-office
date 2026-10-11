@@ -1,4 +1,5 @@
 import type {
+  ProjectApproval,
   ProjectColor,
   ProjectIcon,
   ProjectMember,
@@ -21,6 +22,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { formatDay } from '../dates.ts';
+import { personName } from '../requests/labels.ts';
 import { PROJECT_STATUS, type RunStatus } from '../status.ts';
 
 /**
@@ -274,6 +276,33 @@ export function runDurationText(durationMs: number | null): string {
   if (durationMs === null) return 'Sürüyor';
   const seconds = Math.max(1, Math.round(durationMs / 1000));
   return seconds < 60 ? `${String(seconds)} sn.` : `${String(Math.round(seconds / 60))} dk.`;
+}
+
+/**
+ * A result of a request in the list of a project's approvals, as one sentence: what became of it
+ * and who decided. The agent is named by its code; nothing the agent wrote is in the sentence
+ * (docs/SONRA.md V-c). A result that waited when its request changed was closed, not decided:
+ * nobody is named.
+ */
+export function approvalLine(
+  approval: Pick<ProjectApproval, 'agent' | 'status' | 'attempt' | 'decidedBy'>,
+): string {
+  const agent = approval.agent.code;
+  const person = personName(approval.decidedBy ?? { name: null });
+  switch (approval.status) {
+    case 'pending':
+      return approval.attempt > 1
+        ? `${agent} düzeltilmiş sonucu onay bekliyor.`
+        : `${agent} sonucu onay bekliyor.`;
+    case 'approved':
+      return `${agent} sonucunu ${person} onayladı.`;
+    case 'changes_requested':
+      return `${agent} sonucu için ${person} düzeltme istedi.`;
+    case 'rejected':
+      return `${agent} sonucunu ${person} reddetti.`;
+    case 'closed':
+      return `${agent} sonucu karar verilmeden kapandı: talep değişti.`;
+  }
 }
 
 const byName = new Intl.Collator('tr');

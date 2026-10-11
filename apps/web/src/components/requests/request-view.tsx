@@ -1033,8 +1033,11 @@ export function RerouteDialog({
   );
 }
 
-/** The mark of a row that is an event, not a record with a status of its own. */
-function EventMark() {
+/**
+ * The mark of a row that is an event, not a record with a status of its own. Also the mark of a
+ * closed result in the list of a project's approvals.
+ */
+export function EventMark() {
   return (
     <span
       aria-hidden="true"
