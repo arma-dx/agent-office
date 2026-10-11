@@ -71,11 +71,16 @@ export const requestDueDateSchema = z.iso.date();
  * `dueDate` is optional and is information only (docs/SONRA.md W-h): it moves no status, starts
  * no reminder and cannot be changed after the request is sent. A day that has already ended is
  * refused by the API (409 due_date_past); today is accepted.
+ * `projectId` is optional: the request is opened inside that project and is then read by the
+ * project's members and the founder only (CLAUDE.md "Şirketler, projeler ve görünürlük"). It never
+ * changes afterwards (docs/SONRA.md P-m). The API answers 409 project_not_available,
+ * project_closed or project_ai_not_allowed when the project takes no request.
  */
 export const createRequestSchema = z.strictObject({
   id: z.uuid(),
   text: requestTextSchema,
   dueDate: requestDueDateSchema.optional(),
+  projectId: z.uuid().optional(),
 });
 export type CreateRequest = z.input<typeof createRequestSchema>;
 

@@ -23,6 +23,7 @@ import {
   ownRequestExists,
   peopleNames,
   readIntake,
+  readProject,
   readRequest,
   readResultApprovals,
   writeAudit,
@@ -82,8 +83,9 @@ import type { RouteDeps } from '../services.ts';
  *
  *   GET  /api/requests/intake                can this person send a request here now
  *   POST /api/requests                       a person writes what they want and, if they wish, a
- *                                            due day (information only); the coordinator's run is
- *                                            put on the queue in the same transaction
+ *                                            due day (information only) and the project the
+ *                                            request is inside; the coordinator's run is put on
+ *                                            the queue in the same transaction
  *   GET  /api/requests                       the requests the person may read, with stage and turn
  *                                            (`?project=<id>`: of one project)
  *   GET  /api/requests/:requestId            one answer for the whole page
@@ -187,6 +189,42 @@ const routingNotPossible = (): ApiError =>
     'routing_not_possible',
     'Bu birim ya da ajan şu an seçilemiyor. Listeyi yenileyip yeniden deneyin.',
   );
+
+const projectNotAvailable = (): ApiError =>
+  new ApiError(
+    409,
+    'project_not_available',
+    'Bu proje yok ya da size açık değil. Başka bir proje seçin.',
+  );
+
+const projectClosed = (): ApiError =>
+  new ApiError(409, 'project_closed', 'Bu proje kapalı. Kapalı projede yeni talep açılamaz.');
+
+// Rule 12 at the door, with the reason: the project's own permission, or its customer's contract.
+const projectAiNotAllowed = (byCustomer: boolean): ApiError =>
+  new ApiError(
+    409,
+    'project_ai_not_allowed',
+    byCustomer
+      ? 'Bu projede talep açılamaz: müşterinin sözleşmesi yapay zekâ kullanımına izin vermiyor.'
+      : 'Bu projede talep açılamaz: projenin yapay zekâ izni kapalı. İzni kurucu, projenin sayfasından açar.',
+  );
+
+/**
+ * Why a request cannot be opened in this project now, as the answer to give; null when it can.
+ * Read with the person's own rights: a project they are not a member of is one that does not
+ * exist. The database decides again at the insert (office.check_task and the row policy).
+ */
+export async function projectDoor(client: Queryable, projectId: string): Promise<ApiError | null> {
+  const project = await readProject(client, projectId);
+  if (!project) return projectNotAvailable();
+  if (project.closed) return projectClosed();
+  if (!project.ai_allowed) return projectAiNotAllowed(false);
+  if (project.customer_id !== null && project.customer_ai_allowed !== true) {
+    return projectAiNotAllowed(true);
+  }
+  return null;
+}
 
 /** Why a request cannot be sent now, in the words the person reads. */
 const INTAKE_MESSAGE: Record<RequestIntakeReason, string> = {
@@ -387,6 +425,12 @@ export function registerRequestRoutes(
         if (body.data.dueDate !== undefined && body.data.dueDate < officeDay(new Date())) {
           throw dueDatePast();
         }
+        const projectId = body.data.projectId ?? null;
+        if (projectId !== null) {
+          // Refused before anything is stored, with the sentence that says why (rule 12; P-h).
+          const refused = await projectDoor(client, projectId);
+          if (refused) throw refused;
+        }
         let opened = true;
         await client.query('savepoint open_request');
         try {
@@ -395,9 +439,15 @@ export function registerRequestRoutes(
             title: deriveRequestTitle(body.data.text),
             text: body.data.text,
             dueDate: body.data.dueDate ?? null,
+            projectId,
           });
         } catch (error) {
           await client.query('rollback to savepoint open_request');
+          if (databaseErrorCode(error) === '23514' && projectId !== null) {
+            // check_violation of office.check_task: the project was closed, lost its permission
+            // or was taken from the person between the read above and the insert.
+            throw (await projectDoor(client, projectId)) ?? error;
+          }
           if (databaseErrorCode(error) !== '23505') {
             throw error;
           }
@@ -411,8 +461,9 @@ export function registerRequestRoutes(
           opened = false;
         }
         if (opened) {
-          // The coordinator's run, in the name of the requester; ids only (rule 10). The job is
-          // stored with the request: both or neither.
+          // The coordinator's run. The job names the requester and carries ids only (rule 10),
+          // never the project: the runner reads that from the request (office.request_run_gate).
+          // The job is stored with the request: both or neither.
           await jobs.send(client, {
             companyId,
             userId: session.userId,

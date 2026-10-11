@@ -4477,6 +4477,47 @@ describe.skipIf(noDatabase)('a request inside a project', () => {
     });
   });
 
+  it('the statement that opens a request stores its project, and none when none is given', async () => {
+    await inTransaction(async (tx) => {
+      await tx.setContext(employeeA);
+      const open = async (projectId?: string | null): Promise<string> => {
+        const id = randomUUID();
+        await insertRequest(tx.client, {
+          id,
+          title: 'A request',
+          text: 'What is wanted',
+          dueDate: null,
+          ...(projectId === undefined ? {} : { projectId }),
+        });
+        return id;
+      };
+      const projectOf = async (task: string): Promise<unknown> =>
+        (await one(tx, 'select project_id from office.tasks where id = $1', [task])).project_id;
+      expect(await projectOf(await open(ids.projectA))).toBe(ids.projectA);
+      expect(await projectOf(await open(null))).toBeNull();
+      expect(await projectOf(await open())).toBeNull();
+      // The database refuses a project that takes no request; the statement adds no rule.
+      const refused = async (projectId: string): Promise<unknown> => {
+        await tx.exec('savepoint refused');
+        try {
+          await open(projectId);
+        } catch (error) {
+          await tx.exec('rollback to savepoint refused');
+          return (error as { code?: string }).code;
+        }
+        return 'opened';
+      };
+      expect(await refused(ids.projectANoAi)).toBe('23514');
+      expect(await refused(ids.projectP)).toBe('23514');
+      await tx.exec(`update office.projects set status = 'completed' where id = $1`, [
+        ids.projectA,
+      ]);
+      expect(await refused(ids.projectA)).toBe('23514');
+      await tx.setContext(colleagueA);
+      expect(await refused(ids.projectA)).toBe('23514');
+    });
+  });
+
   it('the project of a request never changes', async () => {
     await inTransaction(async (tx) => {
       await tx.setContext(employeeA);

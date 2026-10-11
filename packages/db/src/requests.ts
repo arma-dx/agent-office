@@ -312,17 +312,24 @@ export async function ownRequestExists(client: Queryable, requestId: string): Pr
 /**
  * Opens a request. The database takes the requester from the context and writes the status, the
  * unit and the agent itself (check_task); the title is derived by the caller from the text.
- * The due day is stored when the request is opened and never afterwards: the database refuses
- * every later change of a request.
+ * The due day and the project are stored when the request is opened and never afterwards: the
+ * database refuses every later change of a request. A project the person cannot read, a closed
+ * one and one where agents may not work are refused by the database (23514).
  */
 export async function insertRequest(
   client: Queryable,
-  request: { id: string; title: string; text: string; dueDate: string | null },
+  request: {
+    id: string;
+    title: string;
+    text: string;
+    dueDate: string | null;
+    projectId?: string | null;
+  },
 ): Promise<void> {
   await client.query(
-    `insert into office.tasks (id, company_id, kind, title, description, due_at)
-     values ($1, office.ctx_company_id(), 'request', $2, $3, ${dueAtSql('$4')})`,
-    [request.id, request.title, request.text, request.dueDate],
+    `insert into office.tasks (id, company_id, kind, title, description, due_at, project_id)
+     values ($1, office.ctx_company_id(), 'request', $2, $3, ${dueAtSql('$4')}, $5)`,
+    [request.id, request.title, request.text, request.dueDate, request.projectId ?? null],
   );
 }
 

@@ -14,6 +14,7 @@ import {
   approvalDeskSchema,
   officeAgentSchema,
   officeResponseSchema,
+  projectDetailSchema,
   requestDetailSchema,
   requestIntakeSchema,
   requestListSchema,
@@ -22,6 +23,7 @@ import {
   todaySchema,
   officeDay,
   type OfficeAgentWork,
+  type ProjectDetail,
   type RequestDetail,
   type SidebarCounts,
   type Today,
@@ -80,6 +82,9 @@ describe.skipIf(noDatabase)('requests', () => {
   const workerPool = createPool(database?.worker ?? '', 'agent-office-api-test-worker', () => {});
   // A connection of the API's role that a test holds open itself, next to the server's own.
   const besidePool = createPool(database?.app ?? '', 'agent-office-api-test-beside', () => {});
+  // A connection of the privileged role that a test holds open itself, for a change of somebody
+  // else that commits while a request of the server is on its way.
+  const adminPool = createPool(database?.admin ?? '', 'agent-office-api-test-other', () => {});
 
   beforeAll(async () => {
     server = createTestServer();
@@ -126,6 +131,7 @@ describe.skipIf(noDatabase)('requests', () => {
     `);
     await workerPool.end();
     await besidePool.end();
+    await adminPool.end();
     await server.close();
     await closeAdminPool();
   });
@@ -170,10 +176,12 @@ describe.skipIf(noDatabase)('requests', () => {
     requester: string,
     agent: string | null = 'HAF-2',
     unit = 'HAF',
+    // A request inside a project is carried out in the context of that project.
+    projectId: string | null = null,
   ) {
     await agentStep(
       workerPool,
-      { companyId: ids.arma, userId: requester, agentCode: 'KOR-1' },
+      { companyId: ids.arma, userId: requester, agentCode: 'KOR-1', projectId },
       async (client) => {
         const run = await client.query<{ id: string }>(
           `insert into office.runs (company_id, task_id, agent_code, card_version_id, trigger_type,
@@ -199,11 +207,16 @@ describe.skipIf(noDatabase)('requests', () => {
   async function submit(
     taskId: string,
     requester: string,
-    options: { goesExternal?: boolean; previous?: string } = {},
+    options: { goesExternal?: boolean; previous?: string; projectId?: string } = {},
   ): Promise<string> {
     return agentStep(
       workerPool,
-      { companyId: ids.arma, userId: requester, agentCode: 'HAF-2' },
+      {
+        companyId: ids.arma,
+        userId: requester,
+        agentCode: 'HAF-2',
+        projectId: options.projectId ?? null,
+      },
       async (client) => {
         const run = await client.query<{ id: string }>(
           `insert into office.runs (company_id, task_id, agent_code, card_version_id, trigger_type,
@@ -3390,6 +3403,470 @@ describe.skipIf(noDatabase)('requests', () => {
       // Writing a comment is the person's own act.
       expect((await comment(session, id, 'Kişinin kendi işi')).statusCode).toBe(201);
       expect(await idle()).toBe(false);
+    });
+  });
+  // Requests inside a project (8 October decisions 11, 17, 46 to 48; rule 12). Projects are made
+  // through the API, so their opener is their owner; the AI permission is opened as an
+  // administrator would where a case is not about the passkey. Every case uses projects and
+  // requests of its own: the routes commit and nothing is deleted.
+  describe('requests inside a project', () => {
+    // A project of a company the people of Arma DX are no members of, written as an
+    // administrator would. (Not in Pillika: another file counts the projects there.)
+    const FOREIGN_PROJECT = '00000000-0000-4000-8000-000000000961';
+
+    beforeAll(async () => {
+      await adminExec(`
+        insert into office.projects (id, company_id, name, ai_allowed)
+          values ('${FOREIGN_PROJECT}', '${ids.otherCompany}', 'Başka şirketin projesi', true)
+          on conflict do nothing;
+      `);
+    });
+
+    const messageOf = (res: LightMyRequestResponse): string =>
+      apiErrorSchema.parse(res.json()).error.message;
+
+    /** Opens a project through the API; the session's person is its owner. */
+    async function project(
+      session: string,
+      body: Record<string, unknown> = {},
+    ): Promise<ProjectDetail> {
+      const res = await post(session, '/api/projects', {
+        id: randomUUID(),
+        name: 'Lansman',
+        ...body,
+      });
+      expect(res.statusCode, res.body).toBe(201);
+      return projectDetailSchema.parse(res.json());
+    }
+
+    const allowAi = (projectId: string, allowed = true) =>
+      adminQuery('update office.projects set ai_allowed = $2 where id = $1', [projectId, allowed]);
+
+    /** A project of the employee (its owner) where agents may work. */
+    async function workable(body: Record<string, unknown> = {}): Promise<ProjectDetail> {
+      const made = await project(employee, body);
+      await allowAi(made.id);
+      return made;
+    }
+
+    const sendIn = (session: string, projectId: string | undefined, id: string = randomUUID()) =>
+      post(session, '/api/requests', {
+        id,
+        text: 'Lansman için gönderi yaz',
+        ...(projectId === undefined ? {} : { projectId }),
+      });
+
+    async function openIn(session: string, projectId: string): Promise<RequestDetail> {
+      const res = await sendIn(session, projectId);
+      expect(res.statusCode, res.body).toBe(201);
+      return requestDetailSchema.parse(res.json());
+    }
+
+    async function listed(session: string, query = ''): Promise<string[]> {
+      const res = await get(session, `/api/requests${query}`);
+      expect(res.statusCode, res.body).toBe(200);
+      return requestListSchema.parse(res.json()).requests.map((request) => request.id);
+    }
+
+    const tasksOf = async (requestId: string): Promise<number> =>
+      (await adminQuery('select 1 from office.tasks where id = $1', [requestId])).length;
+
+    it('opens a request in a project and puts the same job on the queue', async () => {
+      const made = await workable({ name: 'Bahar lansmanı' });
+      const before = server.jobs.sent.length;
+      const id = randomUUID();
+      const res = await sendIn(employee, made.id, id);
+      expect(res.statusCode, res.body).toBe(201);
+      const detail = requestDetailSchema.parse(res.json());
+      expect(detail).toMatchObject({
+        id,
+        status: 'open',
+        stage: 'routing',
+        project: { id: made.id, name: 'Bahar lansmanı' },
+        agentsMayWork: true,
+        requesterReads: true,
+        requester: { userId: ids.employee },
+      });
+      // The job is the one every request gets: four ids, and nothing of the project (rule 10;
+      // the runner reads the project from the request).
+      expect(server.jobs.sent.slice(before)).toEqual([
+        { companyId: ids.arma, userId: ids.employee, taskId: id, agentCode: 'KOR-1' },
+      ]);
+      expect(
+        await adminQuery('select project_id, requester_user_id from office.tasks where id = $1', [
+          id,
+        ]),
+      ).toEqual([{ project_id: made.id, requester_user_id: ids.employee }]);
+      // The founder opens one there too, member or not; a request without a project names none.
+      expect((await openIn(founder, made.id)).project).toEqual({
+        id: made.id,
+        name: 'Bahar lansmanı',
+      });
+      expect((await open(employee)).project).toBeNull();
+      // The project is named by its id and by nothing else.
+      for (const projectId of ['', 'x', null, 12]) {
+        const bad = await post(employee, '/api/requests', {
+          id: randomUUID(),
+          text: 'x',
+          projectId,
+        });
+        expect([bad.statusCode, errorCode(bad)], JSON.stringify(projectId)).toEqual([
+          400,
+          'invalid_request',
+        ]);
+      }
+    });
+
+    it('refuses with a sentence that says why, and stores nothing', async () => {
+      const notMine = await project(founder, { name: 'Kurucunun projesi' });
+      await allowAi(notMine.id);
+      const closed = await workable({ name: 'Biten proje', status: 'completed' });
+      const cancelled = await workable({ name: 'İptal edilen proje', status: 'cancelled' });
+      const noPermission = await project(employee, { name: 'İzni açılmamış proje' });
+      const customerRefuses = await workable({
+        name: 'Müşterisi izin vermeyen proje',
+        customer: { kind: 'new', id: randomUUID(), name: `İzinsiz müşteri ${randomUUID()}` },
+      });
+      // Closed and without the permission: said to be closed (the person reads the project).
+      const closedNoAi = await project(employee, {
+        name: 'Kapalı ve izinsiz',
+        status: 'completed',
+      });
+
+      const NOT_AVAILABLE = 'Bu proje yok ya da size açık değil. Başka bir proje seçin.';
+      const cases: [string, string, string, string][] = [
+        [employee, randomUUID(), 'project_not_available', NOT_AVAILABLE],
+        // A project the employee is no member of answers exactly like one that does not exist.
+        [employee, notMine.id, 'project_not_available', NOT_AVAILABLE],
+        [colleague, closed.id, 'project_not_available', NOT_AVAILABLE],
+        [
+          employee,
+          closed.id,
+          'project_closed',
+          'Bu proje kapalı. Kapalı projede yeni talep açılamaz.',
+        ],
+        [
+          founder,
+          cancelled.id,
+          'project_closed',
+          'Bu proje kapalı. Kapalı projede yeni talep açılamaz.',
+        ],
+        [
+          employee,
+          closedNoAi.id,
+          'project_closed',
+          'Bu proje kapalı. Kapalı projede yeni talep açılamaz.',
+        ],
+        [
+          employee,
+          noPermission.id,
+          'project_ai_not_allowed',
+          'Bu projede talep açılamaz: projenin yapay zekâ izni kapalı. İzni kurucu, projenin sayfasından açar.',
+        ],
+        [
+          founder,
+          noPermission.id,
+          'project_ai_not_allowed',
+          'Bu projede talep açılamaz: projenin yapay zekâ izni kapalı. İzni kurucu, projenin sayfasından açar.',
+        ],
+        [
+          employee,
+          customerRefuses.id,
+          'project_ai_not_allowed',
+          'Bu projede talep açılamaz: müşterinin sözleşmesi yapay zekâ kullanımına izin vermiyor.',
+        ],
+      ];
+      for (const [session, projectId, code, message] of cases) {
+        const before = server.jobs.sent.length;
+        const id = randomUUID();
+        const res = await sendIn(session, projectId, id);
+        expect([res.statusCode, errorCode(res), messageOf(res)], code).toEqual([
+          409,
+          code,
+          message,
+        ]);
+        expect(await tasksOf(id), code).toBe(0);
+        expect(server.jobs.sent, code).toHaveLength(before);
+      }
+      // The same text is sent without the project and is opened: nothing of the form is lost.
+      expect((await sendIn(employee, undefined)).statusCode).toBe(201);
+      // An external person has no request at all, with or without a project.
+      expect((await sendIn(external, notMine.id)).statusCode).toBe(403);
+    });
+
+    it('a project of the other company is not available', async () => {
+      for (const session of [founder, employee]) {
+        const before = server.jobs.sent.length;
+        const id = randomUUID();
+        const res = await sendIn(session, FOREIGN_PROJECT, id);
+        expect([res.statusCode, errorCode(res)]).toEqual([409, 'project_not_available']);
+        expect(await tasksOf(id)).toBe(0);
+        expect(server.jobs.sent).toHaveLength(before);
+      }
+      // And a project of Arma DX is none of Pillika's, also for the founder of both.
+      const made = await workable();
+      const there = await post(
+        founder,
+        '/api/requests',
+        { id: randomUUID(), text: 'x', projectId: made.id },
+        ids.pillika,
+      );
+      expect(there.statusCode).toBe(409);
+      expect(['project_not_available', 'requests_not_open']).toContain(errorCode(there));
+    });
+
+    it('a repeated send answers the first request, whatever project the second body names', async () => {
+      const first = await workable({ name: 'İlk proje' });
+      const second = await workable({ name: 'İkinci proje' });
+      const before = server.jobs.sent.length;
+      const id = randomUUID();
+      expect((await sendIn(employee, first.id, id)).statusCode).toBe(201);
+      for (const projectId of [second.id, undefined, randomUUID(), FOREIGN_PROJECT]) {
+        const again = await sendIn(employee, projectId, id);
+        expect(again.statusCode, String(projectId)).toBe(201);
+        expect(requestDetailSchema.parse(again.json()).project, String(projectId)).toEqual({
+          id: first.id,
+          name: 'İlk proje',
+        });
+      }
+      expect(server.jobs.sent).toHaveLength(before + 1);
+      expect(await adminQuery('select project_id from office.tasks where id = $1', [id])).toEqual([
+        { project_id: first.id },
+      ]);
+      // The id of a project request is not somebody else's to reuse, and tells them nothing.
+      const stranger = await sendIn(colleague, undefined, id);
+      expect([stranger.statusCode, errorCode(stranger)]).toEqual([400, 'invalid_request']);
+    });
+
+    it('the lists: project requests for members and the founder only; ?project= keeps one project', async () => {
+      const one = await workable({ name: 'Bir' });
+      const other = await workable({ name: 'İki' });
+      const inOne = await openIn(employee, one.id);
+      const inOther = await openIn(employee, other.id);
+      const plain = await open(employee);
+
+      for (const reader of [employee, founder]) {
+        const all = await listed(reader);
+        expect(all).toEqual(expect.arrayContaining([inOne.id, inOther.id, plain.id]));
+        expect(await listed(reader, `?project=${one.id}`)).toEqual([inOne.id]);
+        expect(await listed(reader, `?project=${other.id}`)).toEqual([inOther.id]);
+        expect(await listed(reader, `?project=${one.id}&mine=true`)).toEqual(
+          reader === employee ? [inOne.id] : [],
+        );
+      }
+      const row = requestListSchema
+        .parse((await get(founder, `/api/requests?project=${one.id}`)).json())
+        .requests.at(0);
+      expect(row?.project).toEqual({ id: one.id, name: 'Bir' });
+      // A project without requests and a project that does not exist are the same empty list.
+      const empty = await workable({ name: 'Boş' });
+      for (const projectId of [empty.id, randomUUID(), FOREIGN_PROJECT]) {
+        const res = await get(founder, `/api/requests?project=${projectId}`);
+        expect(res.statusCode).toBe(200);
+        expect(requestListSchema.parse(res.json())).toEqual({ requests: [], truncated: false });
+      }
+      for (const bad of ['x', '', '123']) {
+        const res = await get(founder, `/api/requests?project=${bad}`);
+        expect([res.statusCode, errorCode(res)], bad).toEqual([400, 'invalid_request']);
+      }
+
+      // An employee who is no member, and one with the approval right who is none.
+      for (const stranger of [colleague, rightHolder]) {
+        const all = await listed(stranger);
+        expect(all).toContain(plain.id);
+        expect(all).not.toContain(inOne.id);
+        expect(all).not.toContain(inOther.id);
+        expect(await listed(stranger, `?project=${one.id}`)).toEqual([]);
+        for (const [method, url, payload] of [
+          ['GET', `/api/requests/${inOne.id}`, undefined],
+          ['GET', `/api/requests/${inOne.id}/routing-options`, undefined],
+          ['POST', `/api/requests/${inOne.id}/close`, { reason: 'x' }],
+          ['POST', `/api/requests/${inOne.id}/acceptance`, { decision: 'approved' }],
+          ['POST', `/api/requests/${inOne.id}/comments`, { id: randomUUID(), body: 'x' }],
+          ['POST', `/api/requests/${inOne.id}/routing`, { unitCode: 'HAF', agentCode: 'HAF-2' }],
+        ] as const) {
+          const res =
+            method === 'GET' ? await get(stranger, url) : await post(stranger, url, payload);
+          expect([res.statusCode, errorCode(res)], url).toEqual([404, 'not_found']);
+        }
+      }
+      // Made a member, the colleague reads the project's requests, the old ones too.
+      expect(
+        (await put(employee, `/api/projects/${one.id}/members/${ids.holder}`, {})).statusCode,
+      ).toBe(200);
+      expect(await listed(colleague, `?project=${one.id}`)).toEqual([inOne.id]);
+      expect((await read(colleague, inOne.id)).project).toEqual({ id: one.id, name: 'Bir' });
+      expect(await listed(colleague, `?project=${other.id}`)).toEqual([]);
+    });
+
+    it('Bugün, the counts and the approval desk hold a project request only for those who read it', async () => {
+      const made = await workable({ name: 'Onay bekleyen proje' });
+      const counts = async (session: string): Promise<SidebarCounts> =>
+        sidebarCountsSchema.parse((await get(session, '/api/today/counts')).json());
+      const before = { founder: await counts(founder), holder: await counts(rightHolder) };
+
+      const { id } = await openIn(employee, made.id);
+      await route(id, ids.employee, 'HAF-2', 'HAF', made.id);
+      const approvalId = await submit(id, ids.employee, { projectId: made.id });
+
+      const today = async (session: string): Promise<Today> =>
+        todaySchema.parse((await get(session, '/api/today')).json());
+      const desk = async (session: string) =>
+        approvalDeskSchema.parse((await get(session, '/api/approvals')).json());
+
+      // The founder decides: the request is on the founder's list, and the card names the project.
+      expect((await today(founder)).expected.map((item) => item.id)).toContain(id);
+      expect((await today(founder)).expected.find((item) => item.id === id)?.project).toEqual({
+        id: made.id,
+        name: 'Onay bekleyen proje',
+      });
+      const card = (await desk(founder)).approvals.find((item) => item.id === approvalId);
+      expect(card).toMatchObject({
+        requestId: id,
+        project: { id: made.id, name: 'Onay bekleyen proje' },
+        agentsMayWork: true,
+      });
+      expect(await counts(founder)).toEqual({
+        today: before.founder.today + 1,
+        approvals: before.founder.approvals + 1,
+      });
+      expect((await read(founder, id)).approval).toMatchObject({
+        id: approvalId,
+        project: { id: made.id, name: 'Onay bekleyen proje' },
+      });
+
+      // An employee with the approval right who is no member: nothing of it, and no number moves.
+      expect((await today(rightHolder)).expected.map((item) => item.id)).not.toContain(id);
+      expect((await desk(rightHolder)).approvals.map((item) => item.id)).not.toContain(approvalId);
+      expect(await counts(rightHolder)).toEqual(before.holder);
+      const decided = await post(rightHolder, `/api/approvals/${approvalId}/decision`, {
+        decision: 'approved',
+        selectedOption: 'A',
+      });
+      expect(decided.statusCode).toBe(404);
+      // The requester reads the request and not the result nobody approved.
+      const mine = await read(employee, id);
+      expect([mine.stage, mine.approval, mine.project?.id]).toEqual([
+        'unit_approval',
+        null,
+        made.id,
+      ]);
+    });
+
+    it('a notification of a project request reaches its requester and is gone when they leave the project', async () => {
+      // The founder's project, the employee a plain member of it: a member can be removed.
+      const made = await project(founder, {
+        name: 'Üyesi çıkarılan proje',
+        memberIds: [ids.employee],
+      });
+      await allowAi(made.id);
+      const { id } = await openIn(employee, made.id);
+      await route(id, ids.employee, 'HAF-2', 'HAF', made.id);
+      const approvalId = await submit(id, ids.employee, { projectId: made.id });
+      const rejected = await post(founder, `/api/approvals/${approvalId}/decision`, {
+        decision: 'rejected',
+        reason: 'incomplete',
+      });
+      expect(rejected.statusCode, rejected.body).toBe(200);
+
+      const about = async (session: string): Promise<string[]> =>
+        todaySchema
+          .parse((await get(session, '/api/today')).json())
+          .notifications.flatMap((item) =>
+            item.template !== 'passkeys_reset' && item.request.id === id ? [item.template] : [],
+          );
+      expect(await about(employee)).toEqual(['request_rejected']);
+      // Nobody else is told, also not the founder who reads every notification row.
+      expect(await about(founder)).toEqual([]);
+      expect(await about(colleague)).toEqual([]);
+
+      const removed = await send(
+        server,
+        founder,
+        'DELETE',
+        `/api/projects/${made.id}/members/${ids.employee}`,
+        { company: ids.arma },
+      );
+      expect(removed.statusCode, removed.body).toBe(200);
+      // The row is still theirs; the request it names is not theirs to read any more (W-r).
+      expect(
+        await adminQuery(
+          `select recipient_user_id from office.notifications
+           where record_type = 'task' and record_id = $1`,
+          [id],
+        ),
+      ).toEqual([{ recipient_user_id: ids.employee }]);
+      expect(await about(employee)).toEqual([]);
+      expect((await get(employee, `/api/requests/${id}`)).statusCode).toBe(404);
+    });
+
+    it('a project that stops taking requests between the door and the insert is refused with its own sentence', async () => {
+      // The route reads the project, then inserts. Somebody else holds the table of requests
+      // against new rows, so the insert waits; the project changes and commits; the database
+      // refuses the insert, and the route reads the project again for the sentence.
+      const meanwhile = async (
+        projectId: string,
+        session: string,
+        change: string,
+        values: unknown[],
+      ): Promise<{ res: LightMyRequestResponse; id: string }> => {
+        const id = randomUUID();
+        const admin = await adminPool.connect();
+        let pending: Promise<LightMyRequestResponse>;
+        try {
+          await admin.query('begin');
+          await admin.query('lock table office.tasks in share row exclusive mode');
+          pending = sendIn(session, projectId, id);
+          await untilServerWaits();
+          await admin.query(change, values);
+          await admin.query('commit');
+        } catch (error) {
+          await admin.query('rollback');
+          throw error;
+        } finally {
+          admin.release();
+        }
+        return { res: await pending, id };
+      };
+
+      const closing = await workable({ name: 'O anda kapanan proje' });
+      const losing = await workable({ name: 'O anda izni kapanan proje' });
+      const leaving = await project(founder, {
+        name: 'O anda üyeliği kalkan proje',
+        memberIds: [ids.employee],
+      });
+      await allowAi(leaving.id);
+      const cases: [string, string, unknown[], string][] = [
+        [
+          closing.id,
+          `update office.projects set status = 'completed' where id = $1`,
+          [closing.id],
+          'project_closed',
+        ],
+        [
+          losing.id,
+          'update office.projects set ai_allowed = false where id = $1',
+          [losing.id],
+          'project_ai_not_allowed',
+        ],
+        [
+          leaving.id,
+          'delete from office.project_members where project_id = $1 and user_id = $2',
+          [leaving.id, ids.employee],
+          'project_not_available',
+        ],
+      ];
+      for (const [projectId, change, values, code] of cases) {
+        const before = server.jobs.sent.length;
+        const { res, id } = await meanwhile(projectId, employee, change, values);
+        expect([res.statusCode, errorCode(res)], code).toEqual([409, code]);
+        expect(await tasksOf(id), code).toBe(0);
+        expect(server.jobs.sent, code).toHaveLength(before);
+      }
+      // Without a change in between the same wait ends in a request.
+      const steady = await workable({ name: 'Değişmeyen proje' });
+      const { res } = await meanwhile(steady.id, employee, 'select $1::uuid', [steady.id]);
+      expect(res.statusCode, res.body).toBe(201);
     });
   });
 });

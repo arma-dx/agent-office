@@ -105,6 +105,31 @@ describe('the bodies a person sends', () => {
     }
   });
 
+  it('a request body may name a project by its id and nothing else', () => {
+    const parse = (body: unknown): boolean => createRequestSchema.safeParse(body).success;
+    const projectId = '00000000-0000-4000-8000-000000000031';
+    expect(createRequestSchema.parse({ id, text: 'Bir gönderi yaz', projectId })).toEqual({
+      id,
+      text: 'Bir gönderi yaz',
+      projectId,
+    });
+    expect(parse({ id, text: 'x', projectId, dueDate: '2026-10-20' })).toBe(true);
+    // Without a project the body has no such key: it is not "no project" written as a value.
+    expect(createRequestSchema.parse({ id, text: 'x' })).toEqual({ id, text: 'x' });
+    for (const bad of ['', null, 'x', 31, 'Lansman', [projectId]]) {
+      expect(parse({ id, text: 'x', projectId: bad }), JSON.stringify(bad)).toBe(false);
+    }
+    // The project is named by its id; a body cannot send its name or anything else of it.
+    for (const extra of [
+      { project: projectId },
+      { project: { id: projectId, name: 'Lansman' } },
+      { projectName: 'Lansman' },
+      { project_id: projectId },
+    ]) {
+      expect(parse({ id, text: 'x', ...extra }), JSON.stringify(extra)).toBe(false);
+    }
+  });
+
   it('a comment is an id and a text: trimmed, not blank, at most 10 000 characters, without NUL, and nothing that moves the request', () => {
     const parse = (body: unknown): boolean => createRequestCommentSchema.safeParse(body).success;
     expect(createRequestCommentSchema.parse({ id, body: ' Tamam. \n' })).toEqual({
