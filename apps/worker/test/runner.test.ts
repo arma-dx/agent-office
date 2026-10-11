@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { agentStep, withContext } from '@agent-office/db';
+import { agentStep, setContext, withContext } from '@agent-office/db';
 import { afterAll, describe, expect, it } from 'vitest';
 import { closeLostRun, runAgentJob } from '../src/runner/run.ts';
 import { handleAgentRunJob } from '../src/worker.ts';
@@ -2955,5 +2955,139 @@ describe.skipIf(noDatabase)('a request inside a project', () => {
     expect(
       await admin(`select count(*)::int as n from office.approvals where task_id = $1`, [taskId]),
     ).toEqual([{ n: 1 }]);
+  });
+
+  it('a job refused while its agent is being opened starts the work itself', async () => {
+    /** Resolves when a statement of the runner waits for a lock another transaction holds. */
+    async function untilRunnerWaits(): Promise<void> {
+      for (let attempt = 0; attempt < 500; attempt += 1) {
+        const waiting = await admin(
+          `select 1 from pg_catalog.pg_stat_activity
+           where application_name = 'worker-test-worker' and wait_event_type = 'Lock'
+             and state = 'active'`,
+        );
+        if (waiting.length > 0) return;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      throw new Error('The runner never waited');
+    }
+    const refusals = async (taskId: string) =>
+      (await tracesOf(taskId)).filter((row) => row.event === 'run_refused');
+    const setSwitch = (status: string) =>
+      asPerson(
+        ids.founder,
+        `update office.company_agents set status = $1
+         where company_id = office.ctx_company_id() and agent_code = 'SOS-2'`,
+        [status],
+      );
+
+    // The agent's switch ---------------------------------------------------------------------
+    const taskId = await routedRequest();
+    await setSwitch('stopped');
+    try {
+      // The founder's request to the API: the agent is enabled and the waiting work is asked
+      // for. This request has no trace yet, so the restart does not pick it. Not committed.
+      const opening = await testPools().app.connect();
+      const model = new ScriptedModel([toolUse('submit_for_approval', RESULT)]);
+      const { deps, log } = await runner(model);
+      let running: Promise<Awaited<ReturnType<typeof runAgentJob>>>;
+      try {
+        await opening.query('begin');
+        await setContext(opening, { companyId: ids.arma, userId: ids.founder });
+        await opening.query(
+          `update office.company_agents set status = 'enabled'
+           where company_id = office.ctx_company_id() and agent_code = 'SOS-2'`,
+        );
+        const picked = await opening.query<{ task_id: string }>(
+          `select task_id from office.restart_waiting_work('SOS-2', null, null)`,
+        );
+        expect(picked.rows.map((row) => row.task_id)).not.toContain(taskId);
+        // The job arrives now: its opening reads the agent stopped, and the record of the
+        // refusal waits behind the opening.
+        running = runAgentJob(deps, job(taskId, 'SOS-2', ids.founder));
+        await untilRunnerWaits();
+        expect(await refusals(taskId)).toEqual([]);
+        expect(model.requests).toHaveLength(0);
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        await opening.query('commit');
+      } catch (error) {
+        await opening.query('rollback');
+        throw error;
+      } finally {
+        opening.release();
+      }
+      // The opening's restart could not see this job, so the job itself starts the work: no
+      // request is left at "çalışma başlamadı" beside an open agent.
+      const result = await running;
+      expect(result).toMatchObject({ outcome: 'submitted', modelCalls: 1 });
+      expect(await refusals(taskId)).toEqual([]);
+      expect(log.map((line) => line.event)).not.toContain('run_refused');
+
+      // The agent left stopped, and nobody opening it: the refusal is written, once.
+      const other = await routedRequest();
+      await setSwitch('stopped');
+      const idle = new ScriptedModel([]);
+      const refused = await runner(idle);
+      expect(await runAgentJob(refused.deps, job(other, 'SOS-2', ids.founder))).toEqual({
+        outcome: 'agent_not_enabled',
+        runId: null,
+        modelCalls: 0,
+      });
+      expect(await refusals(other)).toEqual([
+        { event: 'run_refused', user_id: ids.founder, agent_code: 'SOS-2', project_id: null },
+      ]);
+      expect(refused.log).toEqual([
+        {
+          event: 'run_refused',
+          fields: { reason: 'agent_not_enabled', task: other, agent: 'SOS-2' },
+        },
+      ]);
+      expect((await runsOf(other)).map((run) => run.agent_code)).toEqual(['KOR-1']);
+      expect(idle.requests).toHaveLength(0);
+    } finally {
+      await setSwitch('enabled');
+    }
+
+    // The AI permission of a project ---------------------------------------------------------
+    const projectId = await project(true);
+    const inProject = await openIn(projectId);
+    const routing = await runner(new ScriptedModel([toolUse('route_task', ROUTE_TO_SOS)]));
+    expect((await runAgentJob(routing.deps, job(inProject, 'KOR-1', ids.employee))).outcome).toBe(
+      'routed',
+    );
+    await closePermission(projectId);
+    // Left closed: the refusal is written, with the project.
+    const idle = new ScriptedModel([]);
+    const held = await runner(idle);
+    expect(await runAgentJob(held.deps, job(inProject, 'SOS-2', ids.employee))).toEqual({
+      outcome: 'ai_not_allowed',
+      runId: null,
+      modelCalls: 0,
+    });
+    expect(await refusals(inProject)).toEqual([
+      { event: 'run_refused', user_id: ids.employee, agent_code: 'SOS-2', project_id: projectId },
+    ]);
+    // Being opened: the job waits for the opening and then runs; no second refusal is written.
+    const opening = await testPools().admin.connect();
+    const model = new ScriptedModel([toolUse('submit_for_approval', RESULT)]);
+    const { deps } = await runner(model);
+    let running: Promise<Awaited<ReturnType<typeof runAgentJob>>>;
+    try {
+      await opening.query('begin');
+      await opening.query('update office.projects set ai_allowed = true where id = $1', [
+        projectId,
+      ]);
+      running = runAgentJob(deps, job(inProject, 'SOS-2', ids.employee));
+      await untilRunnerWaits();
+      expect(model.requests).toHaveLength(0);
+      await opening.query('commit');
+    } catch (error) {
+      await opening.query('rollback');
+      throw error;
+    } finally {
+      opening.release();
+    }
+    expect(await running).toMatchObject({ outcome: 'submitted', modelCalls: 1 });
+    expect(await refusals(inProject)).toHaveLength(1);
   });
 });

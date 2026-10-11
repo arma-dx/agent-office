@@ -409,6 +409,36 @@ export async function runAgentJob(
     return none(outcome);
   };
   /**
+   * The trace of a job that was refused because its agent is stopped or agents may not work in
+   * its project. The restart reads this trace (8 October decision 49), so it is never written
+   * past an opening: the transaction asks the gate again (its row locks hold a change of the
+   * permission off until this transaction ends), takes the company's restart lock shared
+   * (office.restart_waiting_work takes the same key exclusively) and reads the switch again.
+   * Still closed: the trace is written, and an opening that waited behind this transaction
+   * finds it. Open now: nothing is written, and the caller opens the job again.
+   *
+   * The order is fixed: the gate, then the advisory lock, then the switch. (The gate takes row
+   * locks an opening of a permission also takes; the advisory lock taken before the gate could
+   * wait for an opening that waits for this transaction's row lock.)
+   */
+  const recordSwitchRefusal = (): Promise<'recorded' | 'open_now'> =>
+    unresolved(async (client): Promise<'recorded' | 'open_now'> => {
+      const gate = await resolve(client);
+      if (gate === null) return 'recorded';
+      await client.query(
+        `select pg_advisory_xact_lock_shared(
+           hashtextextended('office.restart:' || ($1::uuid)::text, 0))`,
+        [job.companyId],
+      );
+      const agentSwitch = await client.query<{ status: string }>(
+        'select status from office.company_agents where agent_code = $1',
+        [job.agentCode],
+      );
+      if (agentSwitch.rows[0]?.status === 'enabled' && gate.ai_allowed) return 'open_now';
+      await audit(client, 'run_refused', { recordType: 'task', recordId: job.taskId });
+      return 'recorded';
+    }).catch((): 'recorded' => 'recorded');
+  /**
    * A job that found nothing to do: the work it called for is already running or waiting, or the
    * request is closed. Not a missed start, so the trace has a name of its own (the request's page
    * reads "run_refused" as work that was called for and did not start).
@@ -779,18 +809,42 @@ export async function runAgentJob(
   // for the new step, with what that step carries. If it moved a second time in that instant the
   // job gives way; the job of the newest routing starts the work. The same for a person who
   // stopped being the resolved one under the opening: the gate is asked anew.
-  const opened = await open().catch((error: unknown) => {
-    if (!(error instanceof StepMoved)) throw error;
-    return open().catch((again: unknown): Opened => {
-      if (!(again instanceof StepMoved)) throw again;
-      return { kind: 'refused', outcome: 'job_stale' };
+  const openOnce = (): Promise<Opened> =>
+    open().catch((error: unknown) => {
+      if (!(error instanceof StepMoved)) throw error;
+      return open().catch((again: unknown): Opened => {
+        if (!(again instanceof StepMoved)) throw again;
+        return { kind: 'refused', outcome: 'job_stale' };
+      });
     });
-  });
+  let opened = await openOnce();
+  // A job that is refused in the instant its switch is opened: the opening's restart saw no
+  // trace of it, and a trace written afterwards would leave the request at "çalışma başlamadı"
+  // with the agent open. The trace of these two refusals is therefore written behind the locks
+  // an opening takes, after the switches are read once more.
+  let switchRefusalRecorded = false;
+  if (
+    opened.kind === 'refused' &&
+    (opened.outcome === 'agent_not_enabled' || opened.outcome === 'ai_not_allowed')
+  ) {
+    if ((await recordSwitchRefusal()) === 'open_now') {
+      // The switch was opened in this instant and its restart saw no trace of this job: this job
+      // is what starts the work. Once; a second refusal is written as any other.
+      opened = await openOnce();
+    } else {
+      switchRefusalRecorded = true;
+    }
+  }
 
   for (const run of superseded) {
     deps.log('run_superseded', { run, task: job.taskId, agent: job.agentCode });
   }
   if (opened.kind === 'refused') {
+    if (switchRefusalRecorded) {
+      // The trace is written (above); only the log line and the answer are left.
+      deps.log('run_refused', { reason: opened.outcome, task: job.taskId, agent: job.agentCode });
+      return none(opened.outcome);
+    }
     return opened.outcome === 'duplicate_job' || opened.outcome === 'request_closed'
       ? skip(opened.outcome)
       : refuse(opened.outcome);
