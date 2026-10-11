@@ -20,6 +20,7 @@ import {
   officeResponseSchema,
   projectAiPermissionAnswerSchema,
   projectAiPermissionDetails,
+  projectAiSpendingLimitDetails,
   projectDetailSchema,
   requestDetailSchema,
   requestIntakeSchema,
@@ -4612,6 +4613,363 @@ describe.skipIf(noDatabase)('requests', () => {
       expect(
         await adminQuery('select status from office.approvals where id = $1', [approvalId]),
       ).toEqual([{ status: 'pending' }]);
+    });
+
+    // The AI spending limit of a project (8 October decision 17) -------------------------------
+
+    /**
+     * The project reaches its AI spending limit: its first run is given a recorded cost, and the
+     * limit is written at exactly that amount (as an administrator would; the founder's route has
+     * its own tests). The project needs a run: a request routed in it has the coordinator's.
+     */
+    async function reachLimit(projectId: string): Promise<void> {
+      const paid = await adminQuery(
+        `update office.runs set cost_usd = 3 where id = (
+           select id from office.runs where project_id = $1 order by started_at, id limit 1
+         ) returning id`,
+        [projectId],
+      );
+      expect(paid).toHaveLength(1);
+      await adminQuery('update office.projects set ai_spend_limit_usd = 3 where id = $1', [
+        projectId,
+      ]);
+    }
+
+    /** The founder raises the limit through the panel's route, with the passkey. */
+    async function raiseLimit(projectId: string, limitUsd: string): Promise<ProjectDetail> {
+      const res = await put(founder, `/api/projects/${projectId}/ai-spending-limit`, {
+        limitUsd,
+        stepUp: await signStepUp(server, founder, founderKey, {
+          purpose: 'project_ai_spending_limit',
+          companyId: ids.arma,
+          subjectId: projectId,
+          details: projectAiSpendingLimitDetails(limitUsd),
+        }),
+      });
+      expect(res.statusCode, res.body).toBe(200);
+      return projectDetailSchema.parse(res.json());
+    }
+
+    const AT_LIMIT =
+      'Bu projenin yapay zekâ harcama sınırı doldu. Sınır yükseltilene kadar bu işlem yapılamaz.';
+
+    it('POST /api/requests in a project at its limit: 409 project_spending_limit_reached, nothing stored', async () => {
+      const made = await workable({ name: 'Sınırı dolan proje' });
+      await routedIn(made.id);
+      // Under the limit a request is taken.
+      await adminQuery('update office.projects set ai_spend_limit_usd = 3 where id = $1', [
+        made.id,
+      ]);
+      expect((await sendIn(employee, made.id)).statusCode).toBe(201);
+      await reachLimit(made.id);
+      // A member and the founder alike, with the sentence that says why and who can change it.
+      for (const session of [employee, founder]) {
+        const before = server.jobs.sent.length;
+        const id = randomUUID();
+        const res = await sendIn(session, made.id, id);
+        expect([res.statusCode, errorCode(res), messageOf(res)]).toEqual([
+          409,
+          'project_spending_limit_reached',
+          'Bu projede talep açılamaz: projenin yapay zekâ harcama sınırı doldu. Sınırı kurucu, projenin sayfasından yükseltir.',
+        ]);
+        expect(await tasksOf(id)).toBe(0);
+        expect(server.jobs.sent).toHaveLength(before);
+      }
+      // Somebody who cannot read the project learns nothing of its limit.
+      const stranger = await sendIn(colleague, made.id);
+      expect(errorCode(stranger)).toBe('project_not_available');
+      // A closed AI permission is said first.
+      await allowAi(made.id, false);
+      expect(errorCode(await sendIn(employee, made.id))).toBe('project_ai_not_allowed');
+      await allowAi(made.id);
+      // The same text is sent without the project and is opened: nothing of the form is lost.
+      expect((await sendIn(employee, undefined)).statusCode).toBe(201);
+      // With the limit raised the project takes requests again.
+      await freshPasskey(server, founder, founderKey, ids.founder, 'Kurucu telefonu');
+      expect((await raiseLimit(made.id, '500')).spendingLimitReached).toBe(false);
+      const after = server.jobs.sent.length;
+      const opened = await sendIn(employee, made.id);
+      expect(opened.statusCode, opened.body).toBe(201);
+      expect(server.jobs.sent).toHaveLength(after + 1);
+    });
+
+    it('while the limit is reached: a change request of the approver and of the requester and a corrected routing are 409 spending_limit_reached; approving, rejecting, accepting and stopping work', async () => {
+      const made = await workable({ name: 'Sınırı dolunca bekleyen proje' });
+      const toApprove = await submittedIn(made.id);
+      const toReject = await submittedIn(made.id);
+      const toSendBack = await submittedIn(made.id);
+      const toStop = await submittedIn(made.id);
+      const toAccept = await submittedIn(made.id);
+      const toAskAgain = await submittedIn(made.id);
+      const toReroute = await routedIn(made.id);
+      for (const { approvalId } of [toAccept, toAskAgain]) {
+        const res = await post(founder, `/api/approvals/${approvalId}/decision`, {
+          decision: 'approved',
+          selectedOption: 'A',
+        });
+        expect(res.statusCode, res.body).toBe(200);
+      }
+      await reachLimit(made.id);
+      const refusedAtLimit = (res: LightMyRequestResponse): unknown[] => [
+        res.statusCode,
+        errorCode(res),
+        messageOf(res),
+      ];
+      const before = server.jobs.sent.length;
+
+      // A waiting result keeps its stage and its card: the card says that the limit is reached,
+      // and the permission is not what holds anything.
+      expect(await read(founder, toSendBack.id)).toMatchObject({
+        stage: 'unit_approval',
+        cause: null,
+        waitingForMe: true,
+        agentsMayWork: true,
+        spendingLimitReached: true,
+        approval: { id: toSendBack.approvalId, agentsMayWork: true, spendingLimitReached: true },
+        actions: { stop: true, reroute: false },
+      });
+      const desk = approvalDeskSchema.parse((await get(founder, '/api/approvals')).json());
+      expect(desk.approvals.find((item) => item.id === toSendBack.approvalId)).toMatchObject({
+        agentsMayWork: true,
+        spendingLimitReached: true,
+      });
+      const waiting = approvalDeskSchema
+        .parse((await get(employee, '/api/approvals')).json())
+        .acceptances.find((item) => item.requestId === toAskAgain.id);
+      expect(waiting).toMatchObject({ agentsMayWork: true, spendingLimitReached: true });
+
+      // What only calls for an agent run is refused, and nothing is put on the queue: a change
+      // request of the approver, "not what I asked for" of the requester, a corrected routing.
+      expect(
+        refusedAtLimit(
+          await post(founder, `/api/approvals/${toSendBack.approvalId}/decision`, {
+            decision: 'changes_requested',
+            reason: 'incomplete',
+          }),
+        ),
+      ).toEqual([409, 'spending_limit_reached', AT_LIMIT]);
+      expect(
+        refusedAtLimit(
+          await post(employee, `/api/requests/${toAskAgain.id}/acceptance`, {
+            decision: 'changes_requested',
+            note: 'Daha kısa olsun.',
+          }),
+        ),
+      ).toEqual([409, 'spending_limit_reached', AT_LIMIT]);
+      expect(
+        refusedAtLimit(
+          await post(founder, `/api/requests/${toReroute}/routing`, {
+            unitCode: 'HAF',
+            agentCode: 'HAF-2',
+          }),
+        ),
+      ).toEqual([409, 'spending_limit_reached', AT_LIMIT]);
+      expect(server.jobs.sent).toHaveLength(before);
+      expect((await read(founder, toSendBack.id)).stage).toBe('unit_approval');
+      expect((await read(employee, toAskAgain.id)).stage).toBe('requester_approval');
+
+      // Approving and rejecting a waiting result work as always: the limit is about money.
+      const approved = await post(founder, `/api/approvals/${toApprove.approvalId}/decision`, {
+        decision: 'approved',
+        selectedOption: 'A',
+      });
+      expect(approved.statusCode, approved.body).toBe(200);
+      expect(requestDetailSchema.parse(approved.json())).toMatchObject({
+        stage: 'requester_approval',
+        spendingLimitReached: true,
+      });
+      const rejected = await post(founder, `/api/approvals/${toReject.approvalId}/decision`, {
+        decision: 'rejected',
+        reason: 'incomplete',
+      });
+      expect(rejected.statusCode, rejected.body).toBe(200);
+      expect(requestDetailSchema.parse(rejected.json())).toMatchObject({
+        status: 'cancelled',
+        cause: 'rejected',
+      });
+      // The requester accepts an approved result.
+      const accepted = await post(employee, `/api/requests/${toAccept.id}/acceptance`, {
+        decision: 'approved',
+      });
+      expect(accepted.statusCode, accepted.body).toBe(200);
+      expect(requestDetailSchema.parse(accepted.json()).status).toBe('done');
+      // The work can be stopped, and the requester can cancel.
+      const stop = await post(founder, `/api/requests/${toStop.id}/close`, {
+        reason: 'Sınır doluyken bekletilmeyecek.',
+      });
+      expect(stop.statusCode, stop.body).toBe(200);
+      expect(requestDetailSchema.parse(stop.json()).status).toBe('cancelled');
+      const cancel = await post(employee, `/api/requests/${toReroute}/close`);
+      expect(cancel.statusCode, cancel.body).toBe(200);
+      expect(server.jobs.sent).toHaveLength(before);
+
+      // With the limit taken away the change request goes back to the agent.
+      await adminQuery('update office.projects set ai_spend_limit_usd = null where id = $1', [
+        made.id,
+      ]);
+      const later = await post(employee, `/api/requests/${toAskAgain.id}/acceptance`, {
+        decision: 'changes_requested',
+        note: 'Daha kısa olsun.',
+      });
+      expect(later.statusCode, later.body).toBe(200);
+      expect(server.jobs.sent.slice(before)).toEqual([
+        { companyId: ids.arma, userId: ids.employee, taskId: toAskAgain.id, agentCode: 'HAF-2' },
+      ]);
+      for (const id of [toSendBack.id, toAskAgain.id, toApprove.id]) {
+        await post(founder, `/api/requests/${id}/close`, { reason: 'Deneme bitti.' });
+      }
+    });
+
+    it('a request in a project at its limit reads fell_to_person with the founder’s turn and stands in the founder’s "Sizden beklenenler"; nobody is notified', async () => {
+      const made = await workable({ name: 'Sınırı dolunca kurucuya düşen proje' });
+      const routed = await routedIn(made.id);
+      const { id: unrouted } = await openIn(employee, made.id);
+      const expectedOf = async (session: string): Promise<string[]> =>
+        todaySchema
+          .parse((await get(session, '/api/today')).json())
+          .expected.map((item) => item.id);
+      const countsOf = async (session: string) =>
+        sidebarCountsSchema.parse((await get(session, '/api/today/counts')).json());
+      const before = await countsOf(founder);
+      const jobs = server.jobs.sent.length;
+      expect(await read(founder, routed)).toMatchObject({
+        stage: 'working',
+        spendingLimitReached: false,
+        actions: { reroute: true },
+      });
+      await reachLimit(made.id);
+
+      // Routed or not: held by the limit, and the founder's to act on, whoever the approver is.
+      for (const id of [routed, unrouted]) {
+        expect(await read(founder, id), id).toMatchObject({
+          status: id === routed ? 'in_progress' : 'open',
+          stage: 'fell_to_person',
+          cause: 'spending_limit_reached',
+          turn: { kind: 'founder' },
+          waitingForMe: true,
+          agentsMayWork: true,
+          spendingLimitReached: true,
+          // The routing cannot be corrected while the limit holds; the work can be stopped.
+          actions: { cancel: false, stop: true, reroute: false },
+        });
+        // The requester reads the same reason, and that it is not theirs to act on.
+        expect(await read(employee, id), id).toMatchObject({
+          stage: 'fell_to_person',
+          cause: 'spending_limit_reached',
+          turn: { kind: 'founder' },
+          waitingForMe: false,
+          spendingLimitReached: true,
+          actions: { cancel: true, stop: false, reroute: false },
+        });
+      }
+      // On the founder's list and in the founder's count; not on the requester's.
+      expect(await expectedOf(founder)).toEqual(expect.arrayContaining([routed, unrouted]));
+      expect((await countsOf(founder)).today).toBe(before.today + 2);
+      const forRequester = await expectedOf(employee);
+      expect(forRequester).not.toContain(routed);
+      expect(forRequester).not.toContain(unrouted);
+      // In the list of the project and in the list of all requests, with the same words.
+      const listed = requestListSchema.parse(
+        (await get(employee, `/api/requests?project=${made.id}`)).json(),
+      );
+      expect(
+        listed.requests
+          .filter((request) => [routed, unrouted].includes(request.id))
+          .map((request) => [request.stage, request.cause, request.waitingForMe]),
+      ).toEqual([
+        ['fell_to_person', 'spending_limit_reached', false],
+        ['fell_to_person', 'spending_limit_reached', false],
+      ]);
+      // Nobody is notified, and nothing was put on the queue.
+      expect(
+        await adminQuery('select 1 from office.notifications where record_id = any ($1::uuid[])', [
+          [routed, unrouted],
+        ]),
+      ).toEqual([]);
+      expect(server.jobs.sent).toHaveLength(jobs);
+      for (const id of [routed, unrouted]) {
+        await post(employee, `/api/requests/${id}/close`);
+      }
+    });
+
+    it('after the limit is raised the request offers "Yönlendirmeyi düzelt" again, and nothing was put on the queue by the raise', async () => {
+      await freshPasskey(server, founder, founderKey, ids.founder, 'Kurucu telefonu');
+      const made = await workable({ name: 'Sınırı yükseltilen proje' });
+      // Two requests routed to HAF-2. The job of the first was refused at the start of its run
+      // while the limit was reached; the run of the second was open and the runner ended it
+      // before its next model call.
+      const refused = await routedIn(made.id);
+      const stoppedByLimit = await routedIn(made.id);
+      const runId = await openRun(stoppedByLimit, made.id);
+      await reachLimit(made.id);
+      await refusedAtTheGate(refused, 'HAF-2', made.id);
+      await agentStep(
+        workerPool,
+        { companyId: ids.arma, userId: ids.employee, agentCode: 'HAF-2', projectId: made.id },
+        (client) =>
+          client.query(
+            `update office.runs set status = 'stopped', finished_at = now(),
+               error_code = 'spending_limit_reached' where id = $1`,
+            [runId],
+          ),
+      );
+      for (const id of [refused, stoppedByLimit]) {
+        expect(await read(founder, id), id).toMatchObject({
+          stage: 'fell_to_person',
+          cause: 'spending_limit_reached',
+          actions: { reroute: false },
+        });
+      }
+      const before = server.jobs.sent.length;
+      const traces = async () =>
+        adminQuery(
+          `select 1 from office.audit_log
+           where event = 'run_restarted' and record_id = any ($1::uuid[])`,
+          [[refused, stoppedByLimit]],
+        );
+
+      // The founder raises the limit: the answer says it is no longer reached, and the raise
+      // itself starts nothing. No job, no trace of a restart.
+      expect(await raiseLimit(made.id, '500')).toMatchObject({
+        spendingLimitReached: false,
+        aiSpending: { limitUsd: '500.00', spentUsd: '3.000000' },
+      });
+      expect(server.jobs.sent).toHaveLength(before);
+      expect(await traces()).toEqual([]);
+      // The requests now say what happened to their work, and a person gives it again.
+      expect(await read(founder, refused)).toMatchObject({
+        stage: 'fell_to_person',
+        cause: 'not_started',
+        spendingLimitReached: false,
+        waitingForMe: true,
+        actions: { stop: true, reroute: true },
+      });
+      expect(await read(founder, stoppedByLimit)).toMatchObject({
+        stage: 'fell_to_person',
+        cause: 'spending_limit_interrupted',
+        spendingLimitReached: false,
+        waitingForMe: true,
+        actions: { stop: true, reroute: true },
+      });
+      // "Yönlendirmeyi düzelt" is taken again and puts the agent's job on the queue.
+      for (const id of [refused, stoppedByLimit]) {
+        const again = await post(founder, `/api/requests/${id}/routing`, {
+          unitCode: 'HAF',
+          agentCode: 'HAF-2',
+        });
+        expect(again.statusCode, again.body).toBe(200);
+        expect(requestDetailSchema.parse(again.json())).toMatchObject({
+          stage: 'working',
+          cause: null,
+        });
+      }
+      expect(server.jobs.sent.slice(before)).toEqual([
+        { companyId: ids.arma, userId: ids.employee, taskId: refused, agentCode: 'HAF-2' },
+        { companyId: ids.arma, userId: ids.employee, taskId: stoppedByLimit, agentCode: 'HAF-2' },
+      ]);
+      for (const id of [refused, stoppedByLimit]) {
+        await post(founder, `/api/requests/${id}/close`, { reason: 'Deneme bitti.' });
+      }
     });
 
     it('a project that is closed takes no new request and lets its open requests finish', async () => {

@@ -218,10 +218,29 @@ const aiPermissionClosed = (): ApiError =>
     'Bu projede ajanlar şu an çalışamaz: projenin ya da müşterisinin yapay zekâ izni kapalı. İzin açılana kadar bu işlem yapılamaz.',
   );
 
+// Decision 17 at the door: no agent run starts in this project until its limit is raised.
+const projectSpendingLimitReached = (): ApiError =>
+  new ApiError(
+    409,
+    'project_spending_limit_reached',
+    'Bu projede talep açılamaz: projenin yapay zekâ harcama sınırı doldu. Sınırı kurucu, projenin sayfasından yükseltir.',
+  );
+
+// The same while a request is under way: an act that only calls for an agent run.
+const spendingLimitReached = (): ApiError =>
+  new ApiError(
+    409,
+    'spending_limit_reached',
+    'Bu projenin yapay zekâ harcama sınırı doldu. Sınır yükseltilene kadar bu işlem yapılamaz.',
+  );
+
 /**
  * Why a request cannot be opened in this project now, as the answer to give; null when it can.
  * Read with the person's own rights: a project they are not a member of is one that does not
- * exist. The database decides again at the insert (office.check_task and the row policy).
+ * exist. The database decides again at the insert (office.check_task and the row policy), for
+ * everything but a reached AI spending limit: a request that slips in at that instant is stored
+ * and falls to the founder with that cause; what the database holds for the limit is the one
+ * thing that matters, no run.
  */
 export async function projectDoor(client: Queryable, projectId: string): Promise<ApiError | null> {
   const project = await readProject(client, projectId);
@@ -231,6 +250,9 @@ export async function projectDoor(client: Queryable, projectId: string): Promise
   if (project.customer_id !== null && project.customer_ai_allowed !== true) {
     return projectAiNotAllowed(true);
   }
+  // Decision 17: raising the limit starts nothing by itself, so requests are not left to pile
+  // up behind a reached limit (docs/SONRA.md P3-r).
+  if (project.spending_limit_reached) return projectSpendingLimitReached();
   return null;
 }
 
@@ -373,8 +395,9 @@ async function detailOf(context: CompanyContext, row: RequestRow): Promise<Reque
       // somebody else's request and correct the routing.
       cancel: open && isRequester,
       stop: open && !isRequester && row.reader_may_decide,
-      // Correcting the routing calls for a run; none starts while agents may not work (rule 12).
-      reroute: open && row.reader_may_decide && row.agents_may_work,
+      // Correcting the routing calls for a run; none starts while agents may not work (rule 12)
+      // or while the project's AI spending limit is reached (decision 17).
+      reroute: open && row.reader_may_decide && row.agents_may_work && !row.spending_limit_reached,
     },
     comments: toComments(commentRows, names, mayComment),
     serverTime: now.toISOString(),
@@ -645,6 +668,10 @@ export function registerRequestRoutes(
       if (!before.agents_may_work) {
         throw aiPermissionClosed();
       }
+      // Decision 17: the same for a project at its AI spending limit.
+      if (before.spending_limit_reached) {
+        throw spendingLimitReached();
+      }
       const { unitCode, agentCode, note } = body.data;
       // The coordinator's own unit is never a place to route to (the list does not offer it).
       const options = await listRoutingOptions(client, COORDINATOR_AGENT_CODE);
@@ -709,6 +736,10 @@ export function registerRequestRoutes(
       // "Not what I asked for" calls for a run; accepting the approved result starts none.
       if (body.data.decision === 'changes_requested' && !before.agents_may_work) {
         throw aiPermissionClosed();
+      }
+      // Decision 17: at the limit too; accepting the approved result stays possible.
+      if (body.data.decision === 'changes_requested' && before.spending_limit_reached) {
+        throw spendingLimitReached();
       }
       // The request first, as a close and a correction do: the answer then waits for them
       // instead of meeting them half way.
@@ -823,6 +854,11 @@ export function registerRequestRoutes(
       // may not work in it. Said before the passkey is asked for. Rejecting stays possible.
       if (!approval.agents_may_work && decision.decision !== 'rejected') {
         throw aiPermissionClosed();
+      }
+      // Decision 17: a change request would call for a run that cannot start at the limit.
+      // Approving and rejecting are not touched: the limit is about money, not about permission.
+      if (approval.spending_limit_reached && decision.decision === 'changes_requested') {
+        throw spendingLimitReached();
       }
       if (decision.decision === 'approved') {
         const options = optionsOf(approval.payload);
