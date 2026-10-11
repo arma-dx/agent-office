@@ -4178,6 +4178,104 @@ describe.skipIf(noDatabase)('a request inside a project', () => {
     });
   });
 
+  it('a project request and every record of its flow are read by the project’s members and the founder only', async () => {
+    await inTransaction(async (tx) => {
+      await enableHaf(tx);
+      const inProject = (agent: string): ContextInput => ({
+        ...agentRun(ids.employeeA, agent),
+        projectId: ids.projectA,
+      });
+      /** A project request of the employee, walked to a result HAF-1 submitted. */
+      const walked = async (): Promise<{ task: string; runs: string[]; approval: string }> => {
+        await tx.setContext(employeeA);
+        const task = await openRequest(tx, ids.projectA);
+        await tx.setContext(inProject('KOR-1'));
+        const kor = await openRun(tx, task, 'KOR-1');
+        await tx.rows(ROUTE, [task, HAF_STEP, kor]);
+        await tx.exec(
+          `insert into office.tool_calls (company_id, run_id, seq, tool_name, status)
+           values (office.ctx_company_id(), $1, 1, 'read_task', 'succeeded')`,
+          [kor],
+        );
+        await tx.exec(
+          `update office.runs set status = 'completed', finished_at = now() where id = $1`,
+          [kor],
+        );
+        await tx.setContext(inProject('HAF-1'));
+        const haf = await openRun(tx, task, 'HAF-1');
+        const approval = (await one<{ id: string }>(tx, SUBMIT, [task, haf, null])).id;
+        await tx.exec(
+          `update office.runs set status = 'completed', finished_at = now() where id = $1`,
+          [haf],
+        );
+        return { task, runs: [kor, haf], approval };
+      };
+      // One result approved (the requester's approval opens), one rejected (the requester is
+      // told), one still waiting.
+      const approved = await walked();
+      const rejected = await walked();
+      const waiting = await walked();
+      await tx.setContext(founderA);
+      await tx.exec(`update office.approvals set status = 'approved' where id = $1`, [
+        approved.approval,
+      ]);
+      await tx.exec(
+        `update office.approvals set status = 'rejected', rejection_reason = 'incomplete'
+         where id = $1`,
+        [rejected.approval],
+      );
+      const tasks = [approved.task, rejected.task, waiting.task];
+      const runs = [...approved.runs, ...rejected.runs, ...waiting.runs];
+
+      const read = async (context: ContextInput): Promise<Record<string, number>> => {
+        await tx.setContext(context);
+        return {
+          tasks: await tx.count('tasks', 'id = any ($1::uuid[])', [tasks]),
+          runs: await tx.count('runs', 'id = any ($1::uuid[])', [runs]),
+          tool_calls: await tx.count('tool_calls', 'run_id = any ($1::uuid[])', [runs]),
+          task_routings: await tx.count('task_routings', 'task_id = any ($1::uuid[])', [tasks]),
+          approvals: await tx.count('approvals', 'task_id = any ($1::uuid[])', [tasks]),
+          requester_approvals: await tx.count('requester_approvals', 'task_id = any ($1::uuid[])', [
+            tasks,
+          ]),
+          notifications: await tx.count('notifications', 'record_id = any ($1::uuid[])', [tasks]),
+          flow_facts: (
+            await tx.rows('select 1 from office.request_flow_facts($1::uuid[])', [tasks])
+          ).length,
+        };
+      };
+      const everything = {
+        tasks: 3,
+        runs: 6,
+        tool_calls: 3,
+        task_routings: 3,
+        approvals: 3,
+        requester_approvals: 1,
+        notifications: 1,
+        flow_facts: 3,
+      };
+      const nothing = Object.fromEntries(Object.keys(everything).map((key) => [key, 0]));
+      expect(await read(founderA)).toEqual(everything);
+      // The member reads all of it but the results nobody approved: the waiting one and the
+      // rejected one (docs/SONRA.md V-c).
+      expect(await read(employeeA)).toEqual({ ...everything, approvals: 1 });
+      for (const stranger of [colleagueA, approverA, externalA, founderP, employeeP, {}]) {
+        expect(await read(stranger), JSON.stringify(stranger)).toEqual(nothing);
+      }
+      // An agent run reads them in the project's context and in no other.
+      expect(await read(inProject('KOR-1'))).toMatchObject({ tasks: 3, runs: 6, task_routings: 3 });
+      expect(await read(agentRun(ids.employeeA, 'KOR-1'))).toMatchObject({
+        tasks: 0,
+        runs: 0,
+        task_routings: 0,
+        approvals: 0,
+      });
+      expect(
+        await read({ ...agentRun(ids.employeeA, 'KOR-1'), projectId: ids.projectANoAi }),
+      ).toMatchObject({ tasks: 0, runs: 0, task_routings: 0, approvals: 0 });
+    });
+  });
+
   it('the project of a request never changes', async () => {
     await inTransaction(async (tx) => {
       await tx.setContext(employeeA);

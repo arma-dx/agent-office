@@ -40,6 +40,8 @@ function agentRun(
 }
 
 const WHO = 'select office.request_run_identity($1) as who';
+// The runner's question at the start of every run; its first column is the same answer.
+const GATE = 'select run_as, project_id, ai_allowed from office.request_run_gate($1)';
 const RUN = `insert into office.runs
     (company_id, task_id, agent_code, card_version_id, trigger_type, model)
   values (office.ctx_company_id(), $1, $2, $3, 'request', 'test-model')
@@ -186,22 +188,25 @@ async function approvedResult(tx: Tx, project: string | null = ids.projectA): Pr
 describe.skipIf(noDatabase)('in whose name a run on a request goes', () => {
   afterAll(closePools);
 
-  it('the database names the requester while they read the request and the founder afterwards, for every way of losing it', async () => {
+  it('the gate names the requester while they read the request and the founder afterwards, for every way of losing it', async () => {
     for (const way of LOSSES) {
       await inAdminTransaction(async (tx) => {
         const inside = await requestOf(tx, employeeA, ids.projectA);
         const outside = await requestOf(tx, employeeA);
-        // The runner asks with the company and the agent and no person.
-        await asWorker(tx, agentRun('KOR-1'));
-        expect(await tx.rows(WHO, [inside]), way).toEqual([{ who: ids.employeeA }]);
-        expect(await tx.rows(WHO, [outside]), way).toEqual([{ who: ids.employeeA }]);
+        const named = async (task: string, project: string | null, who: string): Promise<void> => {
+          // The runner asks with the company and the agent and no person.
+          await asWorker(tx, agentRun('KOR-1'));
+          expect(await tx.rows(GATE, [task]), way).toEqual([
+            { run_as: who, project_id: project, ai_allowed: true },
+          ]);
+          expect(await tx.rows(WHO, [task]), way).toEqual([{ who }]);
+        };
+        await named(inside, ids.projectA, ids.employeeA);
+        await named(outside, null, ids.employeeA);
         await lose(tx, way);
-        await asWorker(tx, agentRun('KOR-1'));
-        expect(await tx.rows(WHO, [inside]), way).toEqual([{ who: ids.founder }]);
+        await named(inside, ids.projectA, ids.founder);
         // A person who only left the project still reads their request outside it.
-        expect(await tx.rows(WHO, [outside]), way).toEqual([
-          { who: way === 'left_project' ? ids.employeeA : ids.founder },
-        ]);
+        await named(outside, null, way === 'left_project' ? ids.employeeA : ids.founder);
       });
     }
   });
@@ -529,6 +534,7 @@ describe.skipIf(noDatabase)('in whose name a run on a request goes', () => {
       ]) {
         await tx.setContext(context);
         expect(await tx.rows(WHO, [ids.requestA])).toEqual([{ who: null }]);
+        expect(await tx.rows(GATE, [ids.requestA])).toEqual([]);
       }
       // A task between people is no request.
       await tx.setContext(agentRun('KOR-1'));
