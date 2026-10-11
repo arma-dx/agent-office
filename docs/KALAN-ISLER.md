@@ -53,6 +53,8 @@ Henüz olmayanlar: veritabanı (göç dosyası yok), giriş, işlevli ekran (yal
 
 12 Ekim 2026 (devam): adım 3'ün üçüncü parçası kuruldu: onaylar. Proje sayfasında "Onaylar" sekmesi var: o projenin taleplerinde birim onayına sunulan sonuçlar, "Karar bekleyenler" ve "Karar verilenler" diye iki grupta listelenir. Satır talebin sayfasını açar; karar sekmede verilmez ve listede ajanın yazdığı hiçbir metin yoktur. Onay hakkı olmayan üye yalnızca onaylanmış sonuçları görür ve sekme bunu söyler. Türetilen seçimler `docs/SONRA.md` içinde P3-k ve P3-l; ikisi de kurucu onayı bekliyor. Bu parça için göç yok.
 
+12 Ekim 2026 (devam): adım 3'ün son parçası kuruldu: projeye yapay zekâ harcama sınırı (8 Ekim karar 17). Sınırı yalnızca kurucu, proje sayfasının "Çalışmalar" sekmesinden belirler; orada harcananı, sınırı ve kalanı görür. Sınır dolar olarak yazılır ve projenin bütün ömrü için geçerlidir (12 Ekim, karar 1). Dolunca o projede yeni çalışma başlamaz, süren çalışma bir sonraki adımında biter, açık talepler "harcama sınırı doldu" diye kurucunun "Sizden beklenenler" listesine düşer ve o projede yeni talep açılamaz; onay bekleyen sonuç yine onaylanabilir ve reddedilebilir. İlk kez sınır koymak ve sınırı düşürmek passkey istemez; yükseltmek ve kaldırmak passkey ister ve sınırın beklettiği işleri kendiliğinden yeniden başlatır, pencere kaç talebin başlayacağını önceden söyler (11 Ekim, karar 1). Üyeler yalnızca sınırın dolduğunu öğrenir; hiçbir tutar görmez. Türetilen seçimler `docs/SONRA.md` içinde P3-m ila P3-ab; P3-o ve P3-s karara bağlandı, ötekiler kurucu onayı bekliyor. Adım 3'ün dört parçası böylece tamamlandı; projenin notları Notlar işini (1.3) bekliyor. Ekranlar tarayıcıda görülmeden yazıldı; kurucunun bir proje sayfasının beş sekmesine, bütçe penceresine ve sınır penceresine bir kez bakması gerekir (P3-ab). Dört yeni göç (`20261008102700` ila `20261008103000`) yerel veritabanına uygulanana kadar yerelde proje listesi, proje sayfası ve talep listeleri sunucu hatası verir. Sıradaki adım proje dosyaları (adım 4).
+
 ## Sprint 0
 
 ### 0.1 Arayüz temeli
@@ -409,7 +411,7 @@ Bu işten çıkarılanlar:
 
 ### 0.4c Projeler
 
-8 Ekim, karar 11 ve 14-22. Projeler "İş" grubunda ayrı bir bölümdür (karar 14). Çalışanlar da proje açar ve üye ekler; yapay zekâ iznini yalnızca kurucu, passkey ile açar (karar 15 ve 22). Türetilen yorumlar ve varsayımlar `docs/SONRA.md` içinde P-a ila P-u. Adım 1 tasarlanırken ve yapılırken türetilenler aynı dosyada P1-a ila P1-z. Projede sahip, yönetici ve üye ayrımı 8 Ekim karar 44 ile geldi; ondan türetilenler P1b-a ila P1b-m. Adım 2 (8 Ekim, karar 45-49) tasarlanırken ve yapılırken türetilenler P2-a ila P2-af. Adım 3 (karar 17; 11 Ekim karar 1; 12 Ekim karar 1 ve 2) tasarlanırken ve yapılırken türetilenler P3-a ila P3-z.
+8 Ekim, karar 11 ve 14-22. Projeler "İş" grubunda ayrı bir bölümdür (karar 14). Çalışanlar da proje açar ve üye ekler; yapay zekâ iznini yalnızca kurucu, passkey ile açar (karar 15 ve 22). Türetilen yorumlar ve varsayımlar `docs/SONRA.md` içinde P-a ila P-u. Adım 1 tasarlanırken ve yapılırken türetilenler aynı dosyada P1-a ila P1-z. Projede sahip, yönetici ve üye ayrımı 8 Ekim karar 44 ile geldi; ondan türetilenler P1b-a ila P1b-m. Adım 2 (8 Ekim, karar 45-49) tasarlanırken ve yapılırken türetilenler P2-a ila P2-af. Adım 3 (karar 17; 11 Ekim karar 1; 12 Ekim karar 1 ve 2) tasarlanırken ve yapılırken türetilenler P3-a ila P3-ab.
 
 Adım 1: en küçük Projeler
 
@@ -436,9 +438,11 @@ Adım 3: proje sayfasının öteki bölümleri (karar 17; her biri ayrı küçü
 - [x] Ajan çalışmaları ve maliyeti ("Çalışmalar" sekmesi: en yeni 200 çalışma; token ve maliyeti yalnızca kurucu görür; listede ajan metni yok, SONRA P3-h ila P3-j)
 - [x] Onaylar ("Onaylar" sekmesi: karar burada verilmez, satır talebi açar; bekleyen ve onaylanmayan sonucu yalnızca onay verebilen görür, SONRA P3-k, P3-l; göç yok)
 - [ ] Projenin notları (Notlar işiyle birlikte) (adım 3'te kurulmadı: Notlar işi (1.3) bekleniyor; proje sayfasında not sekmesi yok)
-- [ ] Projeye yapay zekâ harcama sınırı: aşılınca o projede ajanlar durur
+- [x] Projeye yapay zekâ harcama sınırı: aşılınca o projede ajanlar durur (sınır dolar olarak ve projenin bütün ömrü için, 12 Ekim karar 1; dolunca yeni çalışma başlamaz, süren çalışma bir sonraki adımında biter, talepler kurucuya düşer ve o projede yeni talep açılamaz; yükseltmek ve kaldırmak passkey ister ve bekleyen işleri kendiliğinden yeniden başlatır, 11 Ekim karar 1; SONRA P3-m ila P3-ab)
 - [ ] `20261008102700_project_budget_and_milestones.sql` göçünün yerel veritabanına ve test ortamına uygulanması
 - [ ] `20261008102800_project_runs_index.sql` göçünün yerel veritabanına ve test ortamına uygulanması
+- [ ] `20261008102900_project_ai_spending_limit.sql` göçünün yerel veritabanına ve test ortamına uygulanması
+- [ ] `20261008103000_spending_limit_restarts_work.sql` göçünün yerel veritabanına ve test ortamına uygulanması
 
 Adım 4: proje dosyaları (karar 20)
 
