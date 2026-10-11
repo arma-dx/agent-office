@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { projectDetail, CUSTOMER_ID, OTHER_CUSTOMER_ID } from '../../test/project-fixtures.ts';
 import {
+  budgetFormSchema,
+  budgetOf,
+  budgetValues,
   createProjectBody,
   milestoneFormSchema,
   NEW_CUSTOMER,
@@ -200,5 +203,51 @@ describe('milestone form', () => {
     for (const date of ['2026-02-30', '0000-01-01', '12.01.2026']) {
       expect(problem({ name: 'Yayın', date })).toEqual({ date: 'Geçerli bir tarih girin.' });
     }
+  });
+});
+
+describe('budget form', () => {
+  const problem = (values: unknown): Record<string, string> => {
+    const result = budgetFormSchema.safeParse(values);
+    if (result.success) return {};
+    return Object.fromEntries(
+      result.error.issues.map((issue) => [issue.path.join('.'), issue.message]),
+    );
+  };
+
+  it('opens empty with no currency chosen, or with the saved budget as a person types it', () => {
+    expect(budgetValues(null)).toEqual({ amount: '', currency: '' });
+    expect(budgetValues({ amount: '125000.50', currency: 'EUR' })).toEqual({
+      amount: '125.000,50',
+      currency: 'EUR',
+    });
+  });
+
+  it('says in Turkish what is wrong with the amount and with the currency', () => {
+    expect(problem({ amount: '', currency: '' })).toEqual({
+      amount: 'Tutarı yazın.',
+      currency: 'Para birimini seçin.',
+    });
+    expect(problem({ amount: '   ', currency: 'TRY' })).toEqual({ amount: 'Tutarı yazın.' });
+    const SHAPE = 'Tutarı 125.000,50 biçiminde yazın; sıfırdan büyük olmalı.';
+    // A dot as the decimal sign, three decimals, zero, a word, thirteen whole digits.
+    for (const amount of ['12.5', '1,234', '0', '0,00', 'yüz', '1234567890123']) {
+      expect(problem({ amount, currency: 'TRY' }), amount).toEqual({ amount: SHAPE });
+    }
+    expect(problem({ amount: '100', currency: 'GBP' })).toEqual({
+      currency: 'Para birimini seçin.',
+    });
+    expect(problem({ amount: '999.999.999.999,99', currency: 'USD' })).toEqual({});
+  });
+
+  it('gives the API the amount as text with a dot, never rounded', () => {
+    expect(budgetOf({ amount: ' 125.000,50 ', currency: 'TRY' })).toEqual({
+      amount: '125000.50',
+      currency: 'TRY',
+    });
+    expect(budgetOf({ amount: '999999999999,99', currency: 'USD' })).toEqual({
+      amount: '999999999999.99',
+      currency: 'USD',
+    });
   });
 });

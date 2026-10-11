@@ -7,6 +7,7 @@ import {
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useId, useRef, useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
+import { BudgetDialog } from '@/components/projects/budget-dialog';
 import { ProjectTile } from '@/components/projects/project-tile';
 import { StatusBadge } from '@/components/status';
 import { StepUpDialog } from '@/components/step-up';
@@ -22,6 +23,7 @@ import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { ApiError, userMessage } from '@/lib/api';
 import { formatDay, formatFull } from '@/lib/dates';
+import { useReturnFocus } from '@/lib/focus';
 import { waitingState, waitingWorkQueryOptions } from '@/lib/office/query';
 import {
   agentsSentence,
@@ -30,6 +32,7 @@ import {
   ICON_NAME,
   PERMISSION_WORD,
 } from '@/lib/projects/labels';
+import { formatMoney } from '@/lib/projects/money';
 import {
   customersKey,
   projectKey,
@@ -503,13 +506,19 @@ function Permissions({ project }: { project: ProjectDetail }) {
 
 /**
  * The properties of a project, for the shell's properties panel: what the project is (status,
- * customer, target date, colour and icon, members, who opened it, who owns it now and when it
- * was opened), then its AI permission, then the contract permissions of its customer. Rule 12
- * reads both permissions; the sentence under the first says what they mean together for this
- * project.
+ * customer, target date, budget, colour and icon, members, who opened it, who owns it now and
+ * when it was opened), then its AI permission, then the contract permissions of its customer.
+ * Rule 12 reads both permissions; the sentence under the first says what they mean together for
+ * this project.
+ *
+ * The budget is a row only for a reader who may see it: the owner of the project, its managers
+ * and the founder (12 October 2026, decision 2). For anybody else the API's answer carries no
+ * amount, and the panel has no row and no sentence about one.
  */
 export function ProjectProperties({ project }: { project: ProjectDetail }) {
   const owner = project.members.find((member) => member.projectRole === 'owner');
+  const [editingBudget, setEditingBudget] = useState(false);
+  const budgetFocus = useReturnFocus();
   return (
     <div className="flex flex-col gap-5 text-sm">
       <dl className={FIELDS}>
@@ -527,6 +536,31 @@ export function ProjectProperties({ project }: { project: ProjectDetail }) {
             'Belirlenmedi'
           )}
         </dd>
+        {project.budget.visible ? (
+          <>
+            <dt className={FIELD_NAME}>Bütçe</dt>
+            <dd className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <span className="tabular-nums">
+                {project.budget.value
+                  ? formatMoney(project.budget.value.amount, project.budget.value.currency)
+                  : 'Belirlenmedi'}
+              </span>
+              {project.actions.setBudget ? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  aria-label="Bütçeyi düzenle"
+                  onClick={() => {
+                    budgetFocus.remember();
+                    setEditingBudget(true);
+                  }}
+                >
+                  Düzenle
+                </Button>
+              ) : null}
+            </dd>
+          </>
+        ) : null}
         <dt className={FIELD_NAME}>Renk ve simge</dt>
         <dd className="flex items-center gap-2">
           <ProjectTile color={project.color} icon={project.icon} />
@@ -547,6 +581,18 @@ export function ProjectProperties({ project }: { project: ProjectDetail }) {
         </dd>
       </dl>
       <Permissions project={project} />
+      {/* Mounted only while open: every opening starts from the budget as it is now. It stays
+          when the row goes away under it (a refusal made the page read the project again), so
+          that the refusal can be read. */}
+      {editingBudget ? (
+        <BudgetDialog
+          project={project}
+          onClose={() => {
+            setEditingBudget(false);
+          }}
+          onCloseAutoFocus={budgetFocus.onCloseAutoFocus}
+        />
+      ) : null}
     </div>
   );
 }

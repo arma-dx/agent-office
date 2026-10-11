@@ -9,6 +9,7 @@ import {
   projectDetailSchema,
   projectListSchema,
   projectMemberCandidatesSchema,
+  setProjectBudgetSchema,
   setProjectMemberRoleSchema,
   updateMilestoneSchema,
   updateProjectSchema,
@@ -19,6 +20,7 @@ import {
   type CustomerPermissionsAnswer,
   type ProjectAiPermission,
   type ProjectAiPermissionAnswer,
+  type ProjectBudget,
   type ProjectDetail,
   type ProjectList,
   type ProjectMemberCandidate,
@@ -159,6 +161,26 @@ export function setProjectMemberRole(
   const ids = z.object({ projectId: z.uuid(), userId: z.uuid() }).parse({ projectId, userId });
   const body = setProjectMemberRoleSchema.parse({ role });
   return apiRequest(`/projects/${ids.projectId}/members/${ids.userId}/role`, {
+    method: 'PUT',
+    body,
+    schema: projectDetailSchema,
+    companyId,
+  });
+}
+
+/**
+ * The owner of a project, a manager of it or the founder sets its budget: an amount and a
+ * currency, or null to take it away (docs/SONRA.md P3-a). The budget has this route of its own;
+ * no other body carries it.
+ */
+export function setProjectBudget(
+  companyId: string,
+  projectId: string,
+  budget: ProjectBudget | null,
+): Promise<ProjectDetail> {
+  const id = z.uuid().parse(projectId);
+  const body = setProjectBudgetSchema.parse({ budget });
+  return apiRequest(`/projects/${id}/budget`, {
     method: 'PUT',
     body,
     schema: projectDetailSchema,

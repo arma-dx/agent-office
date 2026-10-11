@@ -1,4 +1,5 @@
 import {
+  budgetCurrencySchema,
   CUSTOMER_NAME_MAX,
   DEFAULT_PROJECT_COLOR,
   DEFAULT_PROJECT_ICON,
@@ -13,10 +14,12 @@ import {
   projectIconSchema,
   projectStatusSchema,
   type CreateProject,
+  type ProjectBudget,
   type ProjectDetail,
   type UpdateProject,
 } from '@agent-office/shared';
 import { z } from 'zod';
+import { amountInputText, parseAmountInput } from './money.ts';
 
 /**
  * The form of a project, shared by "Yeni proje" and "Projeyi düzenle": what the person fills in,
@@ -199,3 +202,44 @@ export const milestoneFormSchema = z.object({
   }),
 });
 export type MilestoneFormValues = z.output<typeof milestoneFormSchema>;
+
+/** The whole digits a budget holds (projects.budget is numeric(14, 2)). */
+const BUDGET_WHOLE_DIGITS = 12;
+
+/**
+ * The form of a project's budget: an amount as a person types it (the Turkish way, read with
+ * parseAmountInput) and one of the three currencies. No currency is chosen for the person: the
+ * select starts empty for a project without a budget (docs/SONRA.md P3-c).
+ */
+export const budgetFormSchema = z.object({
+  amount: z.string().superRefine((text, context) => {
+    if (text.trim() === '') {
+      context.addIssue({ code: 'custom', message: 'Tutarı yazın.' });
+    } else if (parseAmountInput(text, BUDGET_WHOLE_DIGITS) === null) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Tutarı 125.000,50 biçiminde yazın; sıfırdan büyük olmalı.',
+      });
+    }
+  }),
+  // Empty: nothing chosen yet.
+  currency: z.string().refine((currency) => budgetCurrencySchema.safeParse(currency).success, {
+    message: 'Para birimini seçin.',
+  }),
+});
+export type BudgetFormValues = z.output<typeof budgetFormSchema>;
+
+/** What the budget dialog opens with: the saved budget as a person would type it, or nothing. */
+export function budgetValues(budget: ProjectBudget | null): BudgetFormValues {
+  return budget
+    ? { amount: amountInputText(budget.amount), currency: budget.currency }
+    : { amount: '', currency: '' };
+}
+
+/** The budget the form holds, as the API takes it. Only for values the form's schema accepted. */
+export function budgetOf(values: BudgetFormValues): ProjectBudget {
+  return {
+    amount: parseAmountInput(values.amount, BUDGET_WHOLE_DIGITS) ?? '',
+    currency: budgetCurrencySchema.parse(values.currency),
+  };
+}
