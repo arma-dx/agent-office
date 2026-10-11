@@ -2,9 +2,16 @@ import { describe, expect, it } from 'vitest';
 import { requestDetail, summaryOf } from '../../test/request-fixtures.ts';
 import { textWidth } from '../../test/text-width.ts';
 import {
+  AI_CLOSED_FOR_OTHERS,
   CAUSE_FOR_FOUNDER,
   CAUSE_NEXT,
   CAUSE_SENTENCE,
+  CAUSE_SHORT,
+  CHANGES_HELD,
+  OPEN_PROJECT,
+  RESULT_HELD,
+  RESULT_HELD_FOR_FOUNDER,
+  RESULT_HELD_FOR_OTHERS,
   WAITING_WORK_IF_ANY,
   dueText,
   rowSentence,
@@ -89,6 +96,40 @@ describe('the due day of a request in words', () => {
     const widest = dueText({ dueDate: '2025-12-30', overdue: true }, NOW);
     if (widest === null) throw new Error('No due text');
     expect(ROW - textWidth(widest, 12) * 1.05).toBeGreaterThan(200);
+  });
+});
+
+// Rule 12 while a request is under way (8 October decisions 46 and 47): a closed AI permission
+// holds the request and its result. Every sentence about it is fixed and names no owner of the
+// permission it cannot know (the project's or its customer's).
+describe('the held request names the permission, and the reworded sentences', () => {
+  it('names the cause in a few words and in a sentence', () => {
+    expect(CAUSE_SHORT.ai_permission_closed).toBe('yapay zekâ izni kapalı');
+    expect(CAUSE_SHORT.ai_permission_interrupted).toBe('izin kapanınca durdu');
+    expect(CAUSE_SENTENCE.ai_permission_closed).toBe(
+      'Bu talebin projesinde ajanlar şu an çalışamaz: projenin ya da müşterisinin yapay zekâ izni kapalı. Süren çalışma varsa durduruldu.',
+    );
+    expect(AI_CLOSED_FOR_OTHERS).toBe('Talep kayıtlı. Yapay zekâ iznini yalnızca kurucu açar.');
+    expect(OPEN_PROJECT).toBe('Projeyi aç');
+  });
+
+  it('says of a held result what cannot be done and what still can', () => {
+    expect(RESULT_HELD).toBe(
+      'Bu projede ajanlar şu an çalışamaz: projenin ya da müşterisinin yapay zekâ izni kapalı. İzin açılana kadar sonuç onaylanamaz ve düzeltme istenemez; sonucu reddedebilirsiniz.',
+    );
+    expect(RESULT_HELD_FOR_FOUNDER).toBe('İzni projenin sayfasından açabilirsiniz.');
+    expect(RESULT_HELD_FOR_OTHERS).toBe(
+      'Bu projede ajanlar şu an çalışamaz; izin açılana kadar sonuç onaylanamaz. Yapay zekâ iznini yalnızca kurucu açar.',
+    );
+    expect(CHANGES_HELD).toBe(
+      'Bu projede ajanlar şu an çalışamaz: izin açılana kadar düzeltme istenemez. Sonuç istediğiniz gibiyse onaylayabilirsiniz.',
+    );
+  });
+
+  it('a card that cannot run names its third reason: it is not open to a request inside a project', () => {
+    expect(CAUSE_FOR_FOUNDER.card_not_runnable).toBe(
+      'Kart taslak durumunda; deneme durumunda ve talep kurucuya ait değil; ya da kart, proje içindeki talepte çalışmaya açık değil (project_context alanı). Kart depoda değiştirilir.',
+    );
   });
 });
 

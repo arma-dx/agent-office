@@ -12,6 +12,7 @@ import {
   type TodayNotification,
 } from '@agent-office/shared';
 import { USER_ID } from './mock-api.ts';
+import { PROJECT_ID } from './project-fixtures.ts';
 
 /** Fixtures of flow (A), checked against the shared contract so that they cannot drift from it. */
 
@@ -27,6 +28,8 @@ const SOS_2 = { code: 'SOS-2', name: 'Sosyal İçerik Yazım Ajanı' };
 const KOR_1 = { code: 'KOR-1', name: 'Ofis Koordinatörü' };
 export const EMPLOYEE = { userId: EMPLOYEE_ID, name: 'Ayşe Yılmaz' };
 export const FOUNDER = { userId: USER_ID, name: 'Ömer Kadıoğlu' };
+/** The project a request is inside, as the answers carry it: the id and the name. */
+export const PROJECT_REF = { id: PROJECT_ID, name: 'Lansman' };
 
 export const APPROVAL_CARD: ApprovalCard = approvalCardSchema.parse({
   id: APPROVAL_ID,

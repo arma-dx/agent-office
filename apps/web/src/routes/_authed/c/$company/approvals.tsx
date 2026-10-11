@@ -120,6 +120,7 @@ function ApprovalsScreen() {
               <AcceptanceCardView
                 requestId={card.requestId}
                 returnsToAgent={card.returnsToAgent}
+                agentsMayWork={card.agentsMayWork}
                 approver={card.result.approvedBy ? personName(card.result.approvedBy) : null}
               />
               <ResultBlock result={card.result} />

@@ -25,10 +25,15 @@ import { formatMessageTime } from '@/lib/dates';
 import { useReturnFocus } from '@/lib/focus';
 import { useDecisionDialog } from '@/lib/requests/hold';
 import {
+  AI_CLOSED_FOR_OTHERS,
   CAUSE_FOR_FOUNDER,
   CAUSE_NEXT,
   CAUSE_SENTENCE,
+  CHANGES_HELD,
+  OPEN_PROJECT,
   REASON_LABEL,
+  RESULT_HELD,
+  RESULT_HELD_FOR_FOUNDER,
   RETURNED_NEXT,
   personName,
   returnedSentence,
@@ -85,6 +90,23 @@ function AgentText({ label, children }: { label: string; children: string }) {
         {children}
       </p>
     </div>
+  );
+}
+
+/**
+ * From a held request or a held result to the project's page, where the founder opens the
+ * permission. Used inside a banner, so it takes the banner's link colour.
+ */
+function OpenProjectLink({ projectId }: { projectId: string }) {
+  const company = useCompany();
+  return (
+    <Link
+      to="/c/$company/projects/$projectId"
+      params={{ company: company.code, projectId }}
+      className="self-start font-medium text-brand-active underline underline-offset-4"
+    >
+      {OPEN_PROJECT}
+    </Link>
   );
 }
 
@@ -238,6 +260,10 @@ function ReasonDialog({
 /**
  * A result that waits for the decision of the unit's approver. Given only to a person who may
  * decide it (the API sends the card to nobody else).
+ *
+ * While agents may not work in the request's project (rule 12; 8 October decision 46) the result
+ * is held: it is read and can be rejected, but "Onayla" and "Düzeltme iste" do nothing and say
+ * why. Both stay focusable, like every busy control; the API and the database refuse them anyway.
  */
 export function ApprovalCardView({
   card,
@@ -250,6 +276,8 @@ export function ApprovalCardView({
   const settle = useSettle();
   const headingId = useId();
   const hintId = useId();
+  const heldId = useId();
+  const held = !card.agentsMayWork;
   const [selected, setSelected] = useState<string | null>(null);
   const [dialog, setDialog] = useState<'changes_requested' | 'rejected' | 'passkey' | null>(null);
   useDecisionDialog(dialog !== null);
@@ -284,6 +312,7 @@ export function ApprovalCardView({
           </span>
           {card.attempt > 1 ? <span>{card.attempt}. deneme</span> : null}
           <span>Talep sahibi: {personName(card.requester)}</span>
+          {card.project ? <span>Proje: {card.project.name}</span> : null}
           {showRequestLink ? (
             <Link
               to="/c/$company/requests/$requestId"
@@ -354,13 +383,24 @@ export function ApprovalCardView({
           {userMessage(decide.error)}
         </p>
       ) : null}
+      {held ? (
+        <InlineBanner tone="warning" compact>
+          <div className="flex flex-col gap-1">
+            <p id={heldId}>
+              {RESULT_HELD}
+              {company.role === 'founder' ? ` ${RESULT_HELD_FOR_FOUNDER}` : ''}
+            </p>
+            {card.project ? <OpenProjectLink projectId={card.project.id} /> : null}
+          </div>
+        </InlineBanner>
+      ) : null}
       <div className="flex flex-wrap items-center gap-2">
         <Button
           size="lg"
-          {...busyProps(decide.isPending || missingOption)}
-          aria-describedby={missingOption ? hintId : undefined}
+          {...busyProps(decide.isPending || missingOption || held)}
+          aria-describedby={held ? heldId : missingOption ? hintId : undefined}
           onClick={() => {
-            if (decide.isPending || missingOption) return;
+            if (decide.isPending || missingOption || held) return;
             if (card.needsStepUp) {
               focus.remember();
               setDialog('passkey');
@@ -377,9 +417,10 @@ export function ApprovalCardView({
         <Button
           variant="outline"
           size="lg"
-          {...busyProps(decide.isPending)}
+          {...busyProps(decide.isPending || held)}
+          aria-describedby={held ? heldId : undefined}
           onClick={() => {
-            if (decide.isPending) return;
+            if (decide.isPending || held) return;
             focus.remember();
             setDialog('changes_requested');
           }}
@@ -398,7 +439,7 @@ export function ApprovalCardView({
         >
           Reddet
         </Button>
-        {missingOption ? (
+        {missingOption && !held ? (
           <span id={hintId} className="text-sm text-ink-secondary">
             Onaylamak için önce bir seçenek seçin.
           </span>
@@ -532,6 +573,7 @@ export function AcceptanceCardView({
   requestId,
   approver,
   returnsToAgent,
+  agentsMayWork,
 }: {
   requestId: string;
   approver: string | null;
@@ -544,10 +586,17 @@ export function AcceptanceCardView({
    * time, and the sentence names no number.
    */
   returnsToAgent: boolean;
+  /**
+   * False while agents may not work in the request's project (rule 12): "İstediğim bu değil" calls
+   * for a run, so it does nothing and says why. Accepting the approved result starts no agent and
+   * stays possible.
+   */
+  agentsMayWork: boolean;
 }) {
   const company = useCompany();
   const settle = useSettle();
   const headingId = useId();
+  const heldId = useId();
   const [asking, setAsking] = useState(false);
   useDecisionDialog(asking);
   const catchUp = useCatchUp(requestId);
@@ -577,6 +626,11 @@ export function AcceptanceCardView({
           {userMessage(decide.error)}
         </p>
       ) : null}
+      {agentsMayWork ? null : (
+        <p id={heldId} className="text-sm text-ink-secondary">
+          {CHANGES_HELD}
+        </p>
+      )}
       <div className="flex flex-wrap gap-2">
         <Button
           size="lg"
@@ -590,9 +644,10 @@ export function AcceptanceCardView({
         <Button
           variant="outline"
           size="lg"
-          {...busyProps(decide.isPending)}
+          {...busyProps(decide.isPending || !agentsMayWork)}
+          aria-describedby={agentsMayWork ? undefined : heldId}
           onClick={() => {
-            if (decide.isPending) return;
+            if (decide.isPending || !agentsMayWork) return;
             focus.remember();
             setAsking(true);
           }}
@@ -630,6 +685,26 @@ export function AcceptanceCardView({
 /** Why a request fell to a person, and what can be done about it. */
 export function FellNotice({ request, isFounder }: { request: RequestDetail; isFounder: boolean }) {
   if (request.stage !== 'fell_to_person' || request.cause === null) return null;
+  // Held by a closed AI permission (rule 12; 8 October decision 47): nothing can be routed while
+  // it holds, so the notice names the one way on, which is the founder's, and tells everybody
+  // else who opens the permission. No "next step" line, and no words of the run the close stopped.
+  if (request.cause === 'ai_permission_closed') {
+    return (
+      <InlineBanner tone="warning">
+        <div className="flex flex-col gap-2">
+          <p>{CAUSE_SENTENCE.ai_permission_closed}</p>
+          {isFounder ? (
+            <>
+              <p>{CAUSE_FOR_FOUNDER.ai_permission_closed}</p>
+              {request.project ? <OpenProjectLink projectId={request.project.id} /> : null}
+            </>
+          ) : (
+            <p className="text-ink-secondary">{AI_CLOSED_FOR_OTHERS}</p>
+          )}
+        </div>
+      </InlineBanner>
+    );
+  }
   const lastRun = request.journey.findLast((item) => item.kind === 'run');
   // Given by the API only to a person who may decide the work; null for everybody else.
   const said = lastRun?.kind === 'run' ? lastRun.agentText : null;
@@ -1015,9 +1090,11 @@ function RunItem({
 /** What happened, in order, already cut by the API to what the reader may read. */
 export function Journey({ request }: { request: RequestDetail }) {
   const headingId = useId();
-  // The words of the run a request fell on are in the notice at the top; not said twice.
+  // The words of the run a request fell on are in the notice at the top; not said twice. The
+  // notice of a request held by a closed AI permission shows no run's words (the last run is not
+  // why it waits), so there the journey keeps them.
   const fellOn =
-    request.stage === 'fell_to_person'
+    request.stage === 'fell_to_person' && request.cause !== 'ai_permission_closed'
       ? request.journey.findLast((item) => item.kind === 'run')?.id
       : undefined;
   return (

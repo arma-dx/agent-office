@@ -162,10 +162,34 @@ export const CAUSE_FOR_FOUNDER: Partial<Record<RequestCause, string>> = {
   model_not_available:
     'Kartın yazdığı model bu Anthropic hesabında kullanılamıyor. Hesabın model erişimini ve agents/models.yaml dosyasını kontrol edin.',
   card_not_runnable:
-    'Kart taslak durumunda, ya da deneme durumunda ve talep kurucuya ait değil. Kartın durumu depoda değiştirilir.',
+    'Kart taslak durumunda; deneme durumunda ve talep kurucuya ait değil; ya da kart, proje içindeki talepte çalışmaya açık değil (project_context alanı). Kart depoda değiştirilir.',
   ai_permission_closed:
     'İzni projenin sayfasından açabilirsiniz; passkey ister. İzin açılınca bekleyen iş kendiliğinden yeniden başlar. İş gerekmiyorsa talebi durdurabilirsiniz.',
 };
+
+/**
+ * A request held by a closed AI permission, for a reader who cannot open it: every reader of the
+ * project's requests already reads "Ajanlar çalışamaz" on the project's page.
+ */
+export const AI_CLOSED_FOR_OTHERS = 'Talep kayıtlı. Yapay zekâ iznini yalnızca kurucu açar.';
+
+/** The link from a held request or a held result to the page where the permission is opened. */
+export const OPEN_PROJECT = 'Projeyi aç';
+
+/**
+ * A result that waits while agents may not work in its project (rule 12, 8 October decision 46):
+ * it is read, can be rejected and the request can be stopped, but it is not approved and no change
+ * is asked for until the permission is open again. Said in the approval card, to who may decide.
+ */
+export const RESULT_HELD =
+  'Bu projede ajanlar şu an çalışamaz: projenin ya da müşterisinin yapay zekâ izni kapalı. İzin açılana kadar sonuç onaylanamaz ve düzeltme istenemez; sonucu reddedebilirsiniz.';
+export const RESULT_HELD_FOR_FOUNDER = 'İzni projenin sayfasından açabilirsiniz.';
+/** The same hold on the request's page, for a reader who cannot decide the result. */
+export const RESULT_HELD_FOR_OTHERS =
+  'Bu projede ajanlar şu an çalışamaz; izin açılana kadar sonuç onaylanamaz. Yapay zekâ iznini yalnızca kurucu açar.';
+/** The acceptance card: "not what I asked for" calls for a run; accepting the result does not. */
+export const CHANGES_HELD =
+  'Bu projede ajanlar şu an çalışamaz: izin açılana kadar düzeltme istenemez. Sonuç istediğiniz gibiyse onaylayabilirsiniz.';
 
 /** The three switches whose opening starts waiting work again (8 October decision 49). */
 export type OpeningKind = 'agent' | 'project' | 'customer';

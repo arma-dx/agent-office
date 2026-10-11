@@ -14,6 +14,7 @@ import {
   ResultBlock,
 } from '@/components/requests/request-view';
 import { PageLabel } from '@/components/shell/page-label';
+import { InlineBanner } from '@/components/inline-banner';
 import { ErrorMessage, LoadingRows } from '@/components/states';
 import { StatusIcon } from '@/components/status';
 import {
@@ -31,7 +32,13 @@ import { formatDay } from '@/lib/dates';
 import { useReturnFocus } from '@/lib/focus';
 import { REFRESH_MS, useBackgroundRefresh } from '@/lib/refresh';
 import { decisionDialogOpen } from '@/lib/requests/hold';
-import { machineHasTurn, personName, stageText, turnText } from '@/lib/requests/labels';
+import {
+  RESULT_HELD_FOR_OTHERS,
+  machineHasTurn,
+  personName,
+  stageText,
+  turnText,
+} from '@/lib/requests/labels';
 import { closeRequest, fetchRequest, requestKey, requestQueryOptions } from '@/lib/requests/query';
 import { useSettle } from '@/lib/requests/settle';
 import { useCompany } from '@/lib/session';
@@ -139,6 +146,20 @@ function RequestScreen() {
               </span>
             ) : null}
             {request.unit ? <span>Birim: {request.unit.name}</span> : null}
+            {/* A request inside a project is read by the project's members and the founder only;
+                every reader of this page can open the project. */}
+            {request.project ? (
+              <span>
+                Proje:{' '}
+                <Link
+                  to="/c/$company/projects/$projectId"
+                  params={{ company: company.code, projectId: request.project.id }}
+                  className="font-medium text-brand underline underline-offset-4"
+                >
+                  {request.project.name}
+                </Link>
+              </span>
+            ) : null}
             {/* Information only (docs/SONRA.md W-h). "Son tarihi geçti" is the API's word for an
                 open request whose day has ended; "gecikti" is a run that takes too long. */}
             {request.dueDate !== null ? (
@@ -195,11 +216,20 @@ function RequestScreen() {
       {request.approval ? (
         <ApprovalCardView key={request.approval.id} card={request.approval} />
       ) : null}
+      {/* A held result, for a reader who cannot decide it (the requester, the other members): the
+          stage reads "Birim onayında" and nothing else on their page says why no decision comes
+          (rule 12; 8 October decision 46). Who may decide reads the same in the card above. */}
+      {!request.agentsMayWork && request.stage === 'unit_approval' && request.approval === null ? (
+        <InlineBanner tone="info" compact>
+          {RESULT_HELD_FOR_OTHERS}
+        </InlineBanner>
+      ) : null}
       {request.acceptance ? (
         <AcceptanceCardView
           key={request.acceptance.round}
           requestId={request.id}
           returnsToAgent={request.acceptance.returnsToAgent}
+          agentsMayWork={request.agentsMayWork}
           approver={request.result?.approvedBy ? personName(request.result.approvedBy) : null}
         />
       ) : null}
