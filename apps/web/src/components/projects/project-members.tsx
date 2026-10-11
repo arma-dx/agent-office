@@ -1,6 +1,6 @@
 import type { ProjectDetail, ProjectMember, ProjectMemberRole } from '@agent-office/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useId, useRef, useState, type RefObject } from 'react';
+import { useId, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { toast } from 'sonner';
 import {
   AlertDialog,
@@ -48,12 +48,17 @@ import { busyProps } from '@/lib/utils';
  * "Sahip" by keyboard would make somebody a manager on the way. Here nothing is given by moving:
  * an item is chosen with Enter, and each says what it does. The member's present role is no item;
  * it is the line under the name.
+ *
+ * The menu goes away when no role is left to give (a deactivated manager who was dismissed), and
+ * its button may hold the focus just then: the focus is handed on to the heading of the section,
+ * or the keyboard would start again from the top of the page.
  */
 function RoleMenu({
   member,
   busy,
   onGive,
   onHandOver,
+  heading,
 }: {
   member: ProjectMember;
   /** A change of this row is on its way: the menu opens nothing. */
@@ -62,9 +67,22 @@ function RoleMenu({
   onGive: (role: ProjectMemberRole) => void;
   /** Asks first; gets the menu button, which takes the focus if the hand-over is given up. */
   onHandOver: (trigger: HTMLElement | null) => void;
+  /** Takes the focus when the menu button goes away while it holds it. */
+  heading: RefObject<HTMLHeadingElement | null>;
 }) {
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
+  // A layout effect: its cleanup runs while the button is still in the page, so whether the
+  // button holds the focus can still be asked. (Moving the focus when the answer arrives is too
+  // early: the closing menu returns it to the button afterwards.) The heading stands before the
+  // list and stays as long as the section does, so it is there when a menu is first shown.
+  useLayoutEffect(() => {
+    const button = trigger.current;
+    const next = heading.current;
+    return () => {
+      if (button !== null && document.activeElement === button) next?.focus();
+    };
+  }, [heading]);
   // The confirmation of a hand-over takes the focus itself; the closing menu must not pull it back
   // to its button first.
   const confirming = useRef(false);
@@ -117,6 +135,7 @@ function MemberRow({
   own,
   onRemove,
   onHandOver,
+  heading,
 }: {
   project: ProjectDetail;
   member: ProjectMember;
@@ -125,6 +144,8 @@ function MemberRow({
   onRemove?: () => void;
   /** Asks to hand the ownership over to this member. */
   onHandOver: (trigger: HTMLElement | null) => void;
+  /** The heading of the section: takes the focus when the row's role menu goes away. */
+  heading: RefObject<HTMLHeadingElement | null>;
 }) {
   const company = useCompany();
   const store = useStoreProject(company.companyId);
@@ -168,6 +189,7 @@ function MemberRow({
                   if (!give.isPending) give.mutate(role);
                 }}
                 onHandOver={onHandOver}
+                heading={heading}
               />
             ) : null}
             {onRemove ? (
@@ -537,6 +559,7 @@ export function ProjectMembers({ project }: { project: ProjectDetail }) {
                   project={project}
                   member={member}
                   own={own}
+                  heading={heading}
                   onHandOver={(trigger) => {
                     setHandingOver({
                       member,

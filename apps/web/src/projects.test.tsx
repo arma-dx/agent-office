@@ -1226,6 +1226,35 @@ describe('projects: members', () => {
     // No confirmation and no passkey for either (5 October decision 4).
     expect(screen.queryByRole('alertdialog')).toBeNull();
     expect(api.callsTo('POST /step-up/options')).toEqual([]);
+
+    // A deactivated manager who is dismissed is given no role any more, so the row loses its menu
+    // while the menu's button holds the focus (by keyboard, start to end): the keyboard stays in
+    // the section, on its heading, and the row keeps the button that is still offered.
+    roleButton('Deniz Öz').focus();
+    await userEvent.keyboard('{Enter}');
+    await waitFor(() => {
+      expect(
+        within(screen.getByRole('menu')).getByRole('menuitem', { name: 'Yöneticilikten al' }),
+      ).toHaveFocus();
+    });
+    await userEvent.keyboard('{Enter}');
+    expect(await screen.findByText('Deniz Öz artık yönetici değil.')).toBeVisible();
+    expect(lineOf('Deniz Öz')).toBe('Üye, Çalışan, devre dışı');
+    expect(
+      within(row('Deniz Öz'))
+        .getAllByRole('button')
+        .map((button) => button.textContent),
+    ).toEqual(['Projeden çıkar']);
+    await waitFor(() => {
+      expect(
+        within(screen.getByRole('region', { name: 'Üyeler 5' })).getByRole('heading', { level: 3 }),
+      ).toHaveFocus();
+    });
+    // It stays there: nothing pulls it away afterwards.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(
+      within(screen.getByRole('region', { name: 'Üyeler 5' })).getByRole('heading', { level: 3 }),
+    ).toHaveFocus();
     expect(api.unexpected).toEqual([]);
   });
 
