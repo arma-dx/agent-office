@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { agentStep, setContext, withContext } from '@agent-office/db';
+import { agentStep, restartWaitingWork, setContext, withContext } from '@agent-office/db';
 import { afterAll, describe, expect, it } from 'vitest';
 import { closeLostRun, runAgentJob } from '../src/runner/run.ts';
 import { handleAgentRunJob } from '../src/worker.ts';
@@ -2361,6 +2361,21 @@ describe.skipIf(noDatabase)('a request inside a project', () => {
   const founderCloses = (projectId: string) =>
     asPerson(ids.founder, 'select office.set_project_ai_permission($1, false, null)', [projectId]);
 
+  /**
+   * The founder opens the permission again and the waiting work is called for, as the route does
+   * (the opening itself as an administrator: a person's opening asks for a passkey, which the
+   * API's own tests cover). Returns the requests the database picked.
+   */
+  async function founderOpens(projectId: string): Promise<string[]> {
+    await admin('update office.projects set ai_allowed = true where id = $1', [projectId]);
+    const work = await withContext(
+      testPools().app,
+      { companyId: ids.arma, userId: ids.founder },
+      (client) => restartWaitingWork(client, { projectId }),
+    );
+    return work.map((row) => row.task_id);
+  }
+
   const runsOf = (taskId: string) =>
     admin<{
       id: string;
@@ -2557,6 +2572,104 @@ describe.skipIf(noDatabase)('a request inside a project', () => {
         code: 'ai_permission_closed',
       },
     });
+  });
+
+  it('the permission is closed and opened again inside one model call: the stopped run drops its answer and the restarted job does the work, once', async () => {
+    const projectId = await project(true);
+    const taskId = await openIn(projectId);
+    const routing = await runner(new ScriptedModel([toolUse('route_task', ROUTE_TO_SOS)]));
+    expect((await runAgentJob(routing.deps, job(taskId, 'KOR-1', ids.employee))).outcome).toBe(
+      'routed',
+    );
+    const approvalsOf = () =>
+      admin<{ run_id: string; status: string }>(
+        `select run_id, status from office.approvals where task_id = $1 order by created_at`,
+        [taskId],
+      );
+    let restarted: string[] = [];
+    const model = new ScriptedModel([
+      async () => {
+        // The founder closes the permission by mistake and opens it again before the answer
+        // is back: the close stopped the run, the opening called for the work again.
+        await founderCloses(projectId);
+        restarted = await founderOpens(projectId);
+        return toolUse('submit_for_approval', RESULT, { input: 100, output: 20 });
+      },
+    ]);
+    const { deps, jobs, log } = await runner(model);
+    const result = await runAgentJob(deps, job(taskId, 'SOS-2', ids.employee));
+    expect(restarted).toEqual([taskId]);
+    // The run is visible again and everything else reads as before; its own record says that
+    // it was closed, and the answer is dropped.
+    expect(result).toMatchObject({ outcome: 'stopped', modelCalls: 1 });
+    expect(await approvalsOf()).toEqual([]);
+    expect(jobs.sent).toEqual([]);
+    const stopped = (await runsOf(taskId)).filter((run) => run.agent_code === 'SOS-2');
+    expect(stopped).toEqual([
+      {
+        id: result.runId,
+        agent_code: 'SOS-2',
+        status: 'stopped',
+        error_code: 'ai_permission_closed',
+        user_id: ids.employee,
+        project_id: projectId,
+        // The answered call is paid into the run all the same (rule 5).
+        input_tokens: 100,
+        output_tokens: 20,
+        paid: true,
+      },
+    ]);
+    expect(await runRow(result.runId)).toMatchObject({ tool_call_count: 0, summary: null });
+    expect(
+      await admin('select 1 from office.tool_calls where run_id = $1', [result.runId]),
+    ).toEqual([]);
+    expect(log.at(-1)).toEqual({
+      event: 'run_finished',
+      fields: {
+        run: result.runId,
+        status: 'stopped',
+        outcome: 'stopped',
+        code: 'ai_permission_closed',
+      },
+    });
+    // The job the opening put on the queue: a new run, and the result that waits is its own.
+    const again = await runner(new ScriptedModel([toolUse('submit_for_approval', RESULT)]));
+    const second = await runAgentJob(again.deps, job(taskId, 'SOS-2', ids.employee));
+    expect(second).toMatchObject({ outcome: 'submitted', modelCalls: 1 });
+    expect(second.runId).not.toBe(result.runId);
+    expect(await approvalsOf()).toEqual([{ run_id: second.runId, status: 'pending' }]);
+    expect(await runRow(result.runId)).toMatchObject({
+      status: 'stopped',
+      error_code: 'ai_permission_closed',
+    });
+  });
+
+  it('a run that was stopped and is visible again makes no further model call', async () => {
+    const projectId = await project(true);
+    const taskId = await openIn(projectId);
+    const routing = await runner(new ScriptedModel([toolUse('route_task', ROUTE_TO_SOS)]));
+    expect((await runAgentJob(routing.deps, job(taskId, 'KOR-1', ids.employee))).outcome).toBe(
+      'routed',
+    );
+    // The first answer is prose: a run that went on would be reminded and call the model again.
+    const model = new ScriptedModel([
+      async () => {
+        await founderCloses(projectId);
+        await founderOpens(projectId);
+        return text('Biraz daha düşünmem gerek.', { input: 100, output: 20 });
+      },
+      toolUse('submit_for_approval', RESULT, { input: 500, output: 80 }),
+    ]);
+    const { deps } = await runner(model);
+    const result = await runAgentJob(deps, job(taskId, 'SOS-2', ids.employee));
+    expect(result).toMatchObject({ outcome: 'stopped', modelCalls: 1 });
+    expect(model.requests).toHaveLength(1);
+    expect(await runRow(result.runId)).toMatchObject({
+      status: 'stopped',
+      error_code: 'ai_permission_closed',
+      input_tokens: 100,
+    });
+    expect(await admin('select 1 from office.approvals where task_id = $1', [taskId])).toEqual([]);
   });
 
   it('the permission is closed between the model’s answer and its tool call: the run ends as stopped and nothing is thrown', async () => {

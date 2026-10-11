@@ -232,6 +232,12 @@ class ToolRefusal extends Error {
  */
 class StepMoved extends Error {}
 
+// The company's restart lock, shared. office.restart_waiting_work takes the same key exclusively
+// (8 October decision 49): what a runner writes while it holds this lock is either committed
+// before a restart picks its work, or written after the opening of that restart is committed.
+const RESTART_LOCK_SHARED = `select pg_advisory_xact_lock_shared(
+  hashtextextended('office.restart:' || ($1::uuid)::text, 0))`;
+
 function sqlState(error: unknown): string | undefined {
   if (error instanceof Error && 'code' in error && typeof error.code === 'string') {
     return error.code;
@@ -425,11 +431,7 @@ export async function runAgentJob(
     unresolved(async (client): Promise<'recorded' | 'open_now'> => {
       const gate = await resolve(client);
       if (gate === null) return 'recorded';
-      await client.query(
-        `select pg_advisory_xact_lock_shared(
-           hashtextextended('office.restart:' || ($1::uuid)::text, 0))`,
-        [job.companyId],
-      );
+      await client.query(RESTART_LOCK_SHARED, [job.companyId]);
       const agentSwitch = await client.query<{ status: string }>(
         'select status from office.company_agents where agent_code = $1',
         [job.agentCode],
@@ -894,60 +896,74 @@ export async function runAgentJob(
   let toolCalls = 0;
   let reminded = false;
 
-  const finish = async (
-    status: 'completed' | 'failed' | 'limit_reached' | 'stopped',
+  type EndStatus = 'completed' | 'failed' | 'limit_reached' | 'stopped';
+  interface EndFields {
+    errorCode?: string;
+    summary?: string | null;
+    stopReason?: string | null;
+    // The model's closing words when it ended without its tool; raw content of the run.
+    finalText?: string | null;
+  }
+  /** The end of the run, written inside an open step of the run. */
+  const writeEnd = async (
+    client: pg.PoolClient,
+    status: EndStatus,
     outcome: RunOutcome,
-    fields: {
-      errorCode?: string;
-      summary?: string | null;
-      stopReason?: string | null;
-      // The model's closing words when it ended without its tool; raw content of the run.
-      finalText?: string | null;
-    } = {},
-  ): Promise<RunResult> => {
-    await agentStep(deps.pool, context, async (client) => {
-      // Once: the status, the code and the summary of a run that is already closed stay.
-      const closed = await client.query(
-        `update office.runs set status = $2, finished_at = now(), error_code = $3, summary = $4,
-           output = $5
-         where id = $1 and status = 'running'`,
+    fields: EndFields,
+  ): Promise<void> => {
+    // Once: the status, the code and the summary of a run that is already closed stay.
+    const closed = await client.query(
+      `update office.runs set status = $2, finished_at = now(), error_code = $3, summary = $4,
+         output = $5
+       where id = $1 and status = 'running'`,
+      [
+        runId,
+        status,
+        fields.errorCode ?? null,
+        fields.summary ?? null,
+        JSON.stringify({
+          outcome,
+          stop_reason: fields.stopReason ?? null,
+          model_calls: modelCalls,
+          model_sends: modelSends,
+          request_ids: requestIds,
+          ...(fields.finalText ? { final_text: fields.finalText } : {}),
+        }),
+      ],
+    );
+    if ((closed.rowCount ?? 0) > 0) {
+      await audit(client, `run_${status}`, { runId, recordType: 'task', recordId: job.taskId });
+    } else {
+      // Closed from elsewhere while this runner was working (the job of a new routing, a lost
+      // run's handler, a closed AI permission): its status and its code stand. What this runner
+      // sent is recorded with the run all the same, like its cost: every send reached the
+      // provider.
+      await client.query(
+        `update office.runs set output = coalesce(output, '{}'::jsonb) || $2::jsonb
+         where id = $1`,
         [
           runId,
-          status,
-          fields.errorCode ?? null,
-          fields.summary ?? null,
           JSON.stringify({
-            outcome,
-            stop_reason: fields.stopReason ?? null,
             model_calls: modelCalls,
             model_sends: modelSends,
             request_ids: requestIds,
-            ...(fields.finalText ? { final_text: fields.finalText } : {}),
           }),
         ],
       );
-      if ((closed.rowCount ?? 0) > 0) {
-        await audit(client, `run_${status}`, { runId, recordType: 'task', recordId: job.taskId });
-      } else {
-        // Closed from elsewhere while this runner was working (the job of a new routing, a lost
-        // run's handler): its status and its code stand. What this runner sent is recorded with
-        // the run all the same, like its cost: every send reached the provider.
-        await client.query(
-          `update office.runs set output = coalesce(output, '{}'::jsonb) || $2::jsonb
-           where id = $1`,
-          [
-            runId,
-            JSON.stringify({
-              model_calls: modelCalls,
-              model_sends: modelSends,
-              request_ids: requestIds,
-            }),
-          ],
-        );
-      }
-    });
-    deps.log('run_finished', { run: runId, status, outcome, code: fields.errorCode ?? null });
+    }
+  };
+  /** The log line and the answer of a run whose end is written. */
+  const ended = (status: EndStatus, outcome: RunOutcome, code: string | null): RunResult => {
+    deps.log('run_finished', { run: runId, status, outcome, code });
     return { outcome, runId, modelCalls };
+  };
+  const finish = async (
+    status: EndStatus,
+    outcome: RunOutcome,
+    fields: EndFields = {},
+  ): Promise<RunResult> => {
+    await agentStep(deps.pool, context, (client) => writeEnd(client, status, outcome, fields));
+    return ended(status, outcome, fields.errorCode ?? null);
   };
 
   /** A tool call that did not take effect: its own row, counted, and an error for the model. */
@@ -1257,9 +1273,9 @@ export async function runAgentJob(
 
       // After every model call: what it cost, and whether the run may go on. The database stops
       // an open run by itself only when an AI permission is closed (rule 12), so the switch, the
-      // request and the step are read again here. The cost is written whatever the run's status:
-      // a call that was answered is paid for, also when the run was closed from elsewhere while
-      // the model was answering.
+      // request, the step and the run's own status are read again here. The cost is written
+      // whatever the run's status: a call that was answered is paid for, also when the run was
+      // closed from elsewhere while the model was answering.
       const usage = usageOf(message);
       const paidFor = [
         runId,
@@ -1315,17 +1331,27 @@ export async function runAgentJob(
           task: string;
           step: string | null;
           routed: boolean;
+          run: string | null;
+          run_code: string | null;
         }>(
           `select (select ca.status from office.company_agents ca where ca.agent_code = $2) as agent,
                   t.status as task,
                   (select s.id from office.task_routings s
                    where s.task_id = t.id and s.status = 'active' and s.agent_code = $2) as step,
-                  exists (select 1 from office.task_routings r where r.task_id = t.id) as routed
+                  exists (select 1 from office.task_routings r where r.task_id = t.id) as routed,
+                  (select r.status from office.runs r where r.id = $3) as run,
+                  (select r.error_code from office.runs r where r.id = $3) as run_code
            from office.tasks t where t.id = $1`,
-          [job.taskId, job.agentCode],
+          [job.taskId, job.agentCode, runId],
         );
         const row = state.rows[0];
         if (!row || row.task === 'done' || row.task === 'cancelled') return 'request_closed';
+        // The run's own record. A run that was closed while the model was answering stays
+        // closed, also when everything else reads as before: an AI permission that was closed
+        // and opened again inside this one call left the run stopped and visible, and the
+        // opening has called for the work again (8 October decision 49). The answer is dropped
+        // with the code the run was closed with; the job of the restart does the work, once.
+        if (row.run !== 'running') return row.run_code ?? 'run_closed';
         if (row.agent !== 'enabled') return 'agent_stopped';
         // The coordinator routes a request nobody has routed yet. Once a person gave it to a unit
         // while this run was open (7 October decision 7), the run has nothing left to decide: it
