@@ -191,6 +191,52 @@ export const RESULT_HELD_FOR_OTHERS =
 export const CHANGES_HELD =
   'Bu projede ajanlar şu an çalışamaz: izin açılana kadar düzeltme istenemez. Sonuç istediğiniz gibiyse onaylayabilirsiniz.';
 
+/**
+ * A request whose requester can no longer read it (taken out of its project, made an external
+ * person, removed from the company, deactivated) goes on: the agent works in the founder's name
+ * and the founder gives the requester's approval in their place (8 October decision 45). The
+ * request stays the requester's: every page and list keeps naming who asked.
+ */
+export const REQUESTER_ABSENT =
+  'Talep sahibi bu talebi artık göremiyor. Talep sürer: ajan kurucunun adına çalışır, sonucu da talep sahibinin yerine kurucu onaylar.';
+/** The same fact on a request that is done or cancelled: nothing goes on any more. */
+export const REQUESTER_ABSENT_CLOSED = 'Talep sahibi bu talebi artık göremiyor.';
+
+/**
+ * Above the question of the acceptance card, for the founder who answers in the requester's
+ * place. "Karar veriyorsunuz": the card offers both answers. A requester who left the company has
+ * no name the founder can read any more; the sentence then names nobody.
+ */
+export function acceptInPlace(requester: { name: string | null }): string {
+  const whom =
+    requester.name === null ? 'talep sahibinin yerine' : `talep sahibi ${requester.name} yerine`;
+  return `Bu sonuca ${whom} siz karar veriyorsunuz: talep sahibi talebi artık göremiyor.`;
+}
+
+/**
+ * The journey's line for a requester's approval that somebody else gave: who answered, and that
+ * it was in the requester's place. Never "the requester approved".
+ */
+export function answeredInPlace(
+  status: 'approved' | 'changes_requested',
+  by: { name: string | null },
+): string {
+  return `${personName(by)}, talep sahibinin yerine ${
+    status === 'approved' ? 'onayladı' : 'düzeltme istedi'
+  }.`;
+}
+
+/**
+ * Appended to the confirmation of an act that takes a person's requests from them, so that
+ * whoever does it knows that the requests do not stop (decision 45). The first for the two acts
+ * of the Kullanıcılar screen (remove from the company, make an external person), the second for
+ * taking a member off one project. Both start with a space: they follow another sentence.
+ */
+export const OPEN_REQUESTS_GO_ON =
+  ' Açık talepleri sürer: ajan kurucunun adına çalışır, sonucu kurucu onaylar.';
+export const PROJECT_REQUESTS_GO_ON =
+  ' Bu projede açık talebi varsa talep sürer: ajan kurucunun adına çalışır, sonucu kurucu onaylar.';
+
 /** The three switches whose opening starts waiting work again (8 October decision 49). */
 export type OpeningKind = 'agent' | 'project' | 'customer';
 

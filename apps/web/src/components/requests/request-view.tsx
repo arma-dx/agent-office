@@ -35,6 +35,8 @@ import {
   RESULT_HELD,
   RESULT_HELD_FOR_FOUNDER,
   RETURNED_NEXT,
+  acceptInPlace,
+  answeredInPlace,
   personName,
   returnedSentence,
   runLine,
@@ -574,6 +576,7 @@ export function AcceptanceCardView({
   approver,
   returnsToAgent,
   agentsMayWork,
+  inPlaceOf,
 }: {
   requestId: string;
   approver: string | null;
@@ -592,11 +595,21 @@ export function AcceptanceCardView({
    * stays possible.
    */
   agentsMayWork: boolean;
+  /**
+   * Set when the reader is the founder and answers in the place of a requester who can no longer
+   * read the request (8 October decision 45): the requester, who is named above the question.
+   * Null when the reader answers for their own request. The buttons and what they send are the
+   * same either way; the API and the database decide who may answer.
+   */
+  inPlaceOf: { name: string | null } | null;
 }) {
   const company = useCompany();
   const settle = useSettle();
   const headingId = useId();
   const heldId = useId();
+  const inPlaceId = useId();
+  // What both buttons are described by: in whose place, and (the second button) why it is held.
+  const described = (...ids: (string | false)[]) => ids.filter(Boolean).join(' ') || undefined;
   const [asking, setAsking] = useState(false);
   useDecisionDialog(asking);
   const catchUp = useCatchUp(requestId);
@@ -617,6 +630,11 @@ export function AcceptanceCardView({
       <h3 id={headingId} className="text-[0.9375rem] font-semibold">
         Sonuç hazır
       </h3>
+      {inPlaceOf ? (
+        <p id={inPlaceId} className="text-sm">
+          {acceptInPlace(inPlaceOf)}
+        </p>
+      ) : null}
       <p className="text-sm">
         {approver ? `${approver} onayladı. ` : ''}Sonucu aşağıda görebilirsiniz. İstediğiniz buysa
         onaylayın; talep tamamlanır.
@@ -635,6 +653,7 @@ export function AcceptanceCardView({
         <Button
           size="lg"
           {...busyProps(decide.isPending)}
+          aria-describedby={described(inPlaceOf !== null && inPlaceId)}
           onClick={() => {
             if (!decide.isPending) decide.mutate({ decision: 'approved' });
           }}
@@ -645,7 +664,7 @@ export function AcceptanceCardView({
           variant="outline"
           size="lg"
           {...busyProps(decide.isPending || !agentsMayWork)}
-          aria-describedby={agentsMayWork ? undefined : heldId}
+          aria-describedby={described(inPlaceOf !== null && inPlaceId, !agentsMayWork && heldId)}
           onClick={() => {
             if (decide.isPending || !agentsMayWork) return;
             focus.remember();
@@ -661,7 +680,10 @@ export function AcceptanceCardView({
           help={
             returnsToAgent
               ? 'Neyin eksik ya da yanlış olduğunu yazın. İş bu açıklamayla aynı ajana bir kez geri döner; yeni sonuç önce birim onayına, sonra size gelir.'
-              : 'Neyin eksik ya da yanlış olduğunu yazın. Daha önce düzeltme istediniz: iş ajana kendiliğinden dönmez, kurucuya düşer.'
+              : inPlaceOf
+                ? // The founder may not be the one who asked the first time.
+                  'Neyin eksik ya da yanlış olduğunu yazın. Bu talepte daha önce düzeltme istendi: iş ajana kendiliğinden dönmez, kurucuya düşer.'
+                : 'Neyin eksik ya da yanlış olduğunu yazın. Daha önce düzeltme istediniz: iş ajana kendiliğinden dönmez, kurucuya düşer.'
           }
           confirmLabel="Gönder"
           askClass={false}
@@ -1197,13 +1219,18 @@ export function Journey({ request }: { request: RequestDetail }) {
                   <p>
                     {item.status === 'pending'
                       ? 'Sonuç talep sahibine iletildi; talep sahibinin onayı bekleniyor.'
-                      : item.status === 'approved'
-                        ? `${personName(request.requester)} sonucu onayladı.`
-                        : item.status === 'closed'
-                          ? 'Talep sahibinin onayı kapandı: talep değişti.'
-                          : `${personName(request.requester)} "istediğim bu değil" dedi${
-                              item.reason ? `: ${REASON_LABEL[item.reason]}.` : '.'
-                            }`}
+                      : item.status === 'closed'
+                        ? 'Talep sahibinin onayı kapandı: talep değişti.'
+                        : item.decidedBy
+                          ? // Somebody else answered (the founder, for a requester who could not
+                            // read the request any more): the line names that person and never
+                            // says that the requester did.
+                            answeredInPlace(item.status, item.decidedBy)
+                          : item.status === 'approved'
+                            ? `${personName(request.requester)} sonucu onayladı.`
+                            : `${personName(request.requester)} "istediğim bu değil" dedi${
+                                item.reason ? `: ${REASON_LABEL[item.reason]}.` : '.'
+                              }`}
                   </p>
                   {item.note ? (
                     <p className="whitespace-pre-wrap text-ink-secondary">{item.note}</p>

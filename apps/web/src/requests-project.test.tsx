@@ -1143,3 +1143,329 @@ describe('the page of a request inside a project', () => {
     expect(stageLine()).toContain('Aşama: Sizden bekleniyor: izin kapanınca durdu');
   });
 });
+
+// 8 October decision 45: a request whose requester can no longer read it (taken out of its
+// project, made an external person, removed from the company, deactivated) goes on. The agent
+// works in the founder's name and the founder gives the requester's approval in their place; the
+// request stays the requester's on every page.
+describe('a request that goes on in the founder’s name', () => {
+  const ABSENT =
+    'Talep sahibi bu talebi artık göremiyor. Talep sürer: ajan kurucunun adına çalışır, sonucu da talep sahibinin yerine kurucu onaylar.';
+  const ABSENT_CLOSED = 'Talep sahibi bu talebi artık göremiyor.';
+  const IN_PLACE =
+    'Bu sonuca talep sahibi Ayşe Yılmaz yerine siz karar veriyorsunuz: talep sahibi talebi artık göremiyor.';
+  const COLLEAGUE_SESSION = {
+    user: { id: '99999999-9999-4999-8999-999999999999', name: 'Mehmet Demir' },
+    memberships: [{ ...ARMADX, role: 'employee' as const, canApprove: false }],
+  };
+  const working = {
+    status: 'in_progress' as const,
+    stage: 'working' as const,
+    turn: { kind: 'agent' as const, code: 'SOS-2', name: 'Sosyal İçerik Yazım Ajanı' },
+    waitingForMe: false,
+    approval: null,
+    project: PROJECT_REF,
+  };
+  /** The requester's approval waits, and the founder is the one who gives it. */
+  const standIn = (overrides: Parameters<typeof requestDetail>[0] = {}) =>
+    requestDetail({
+      stage: 'requester_approval',
+      turn: { kind: 'founder' },
+      waitingForMe: true,
+      project: PROJECT_REF,
+      requesterReads: false,
+      approval: null,
+      result: RESULT,
+      acceptance: { round: 1, returnsToAgent: true, inPlaceOfRequester: true },
+      actions: { cancel: false, stop: true, reroute: true },
+      ...overrides,
+    });
+
+  it('page: a request whose requester cannot read it says so to every reader, in the open and in the closed form', async () => {
+    const open = requestDetail({ ...working, requesterReads: false });
+    mockApi({
+      'GET /session': sessionHandler(),
+      [`GET /requests/${REQUEST_ID}`]: () => json(open),
+    });
+    renderApp(REQUEST_PAGE);
+    expect(await screen.findByText(ABSENT)).toBeVisible();
+    // Who asked never changes: the page keeps naming the requester.
+    expect(screen.getByText('Ayşe Yılmaz yazdı.')).toBeVisible();
+    expect(screen.getByRole('region', { name: 'Yolculuk' })).toHaveTextContent(
+      'Ayşe Yılmaz talebi gönderdi.',
+    );
+    cleanup();
+
+    // Not only the founder: every reader of the page reads it.
+    mockApi({
+      'GET /session': sessionHandler(COLLEAGUE_SESSION),
+      [`GET /requests/${REQUEST_ID}`]: () =>
+        json({ ...open, actions: { cancel: false, stop: false, reroute: false } }),
+    });
+    renderApp(REQUEST_PAGE);
+    expect(await screen.findByText(ABSENT)).toBeVisible();
+    cleanup();
+
+    // Closed: nothing goes on any more, and the sentence does not say that it does.
+    for (const closed of [
+      { status: 'done' as const, stage: 'done' as const },
+      {
+        status: 'cancelled' as const,
+        stage: 'cancelled' as const,
+        cause: 'stopped' as const,
+        closure: { by: FOUNDER, reason: null, note: 'Gerek kalmadı.' },
+      },
+    ]) {
+      mockApi({
+        'GET /session': sessionHandler(),
+        [`GET /requests/${REQUEST_ID}`]: () =>
+          json(
+            requestDetail({
+              ...closed,
+              turn: { kind: 'none' },
+              waitingForMe: false,
+              approval: null,
+              requesterReads: false,
+              actions: { cancel: false, stop: false, reroute: false },
+            }),
+          ),
+      });
+      renderApp(REQUEST_PAGE);
+      expect(await screen.findByText(ABSENT_CLOSED)).toBeVisible();
+      expect(screen.getByRole('main')).not.toHaveTextContent(/Talep sürer|kurucunun adına/);
+      cleanup();
+    }
+
+    // A requester who reads their request: nothing is said.
+    mockApi({
+      'GET /session': sessionHandler(),
+      [`GET /requests/${REQUEST_ID}`]: () => json(requestDetail(working)),
+    });
+    renderApp(REQUEST_PAGE);
+    await screen.findByText('Ayşe Yılmaz yazdı.');
+    expect(screen.getByRole('main')).not.toHaveTextContent(/artık göremiyor/);
+  });
+
+  it('page: the founder is offered the requester’s approval in their place, reads in whose place, and sends the same request', async () => {
+    const done = requestDetail({
+      status: 'done',
+      stage: 'done',
+      turn: { kind: 'none' },
+      waitingForMe: false,
+      project: PROJECT_REF,
+      requesterReads: false,
+      approval: null,
+      result: RESULT,
+      actions: { cancel: false, stop: false, reroute: false },
+    });
+    const api = mockApi({
+      'GET /session': sessionHandler(),
+      [`GET /requests/${REQUEST_ID}`]: () => json(standIn()),
+      [ACCEPTANCE]: () => json(done),
+    });
+    renderApp(REQUEST_PAGE);
+    const card = await screen.findByRole('region', { name: 'Sonuç hazır' });
+    // The turn is the founder's, in the words every waiting result uses.
+    expect(stageLine()).toContain('Aşama: Sonucu onaylamanız bekleniyor Sıra: sizde');
+    expect(screen.getByText(ABSENT)).toBeVisible();
+    // In whose place, above the question, and both buttons are described by it.
+    const inPlace = within(card).getByText(IN_PLACE);
+    expect(
+      inPlace.compareDocumentPosition(within(card).getByText(/İstediğiniz buysa onaylayın/)) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    const accept = within(card).getByRole('button', { name: 'Sonucu onayla' });
+    const notThis = within(card).getByRole('button', { name: 'İstediğim bu değil' });
+    expect(accept).toHaveAccessibleDescription(IN_PLACE);
+    expect(notThis).toHaveAccessibleDescription(IN_PLACE);
+    // The other answer is offered too ("karar veriyorsunuz"), with the dialog of every acceptance.
+    await userEvent.click(notThis);
+    const dialog = await screen.findByRole('dialog', { name: 'İstediğim bu değil' });
+    expect(dialog).toHaveTextContent('aynı ajana bir kez geri döner');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Vazgeç' }));
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).toBeNull();
+    });
+    // The same request as the requester's own answer: the API knows who answers.
+    await userEvent.click(accept);
+    await waitFor(() => {
+      expect(stageLine()).toContain('Aşama: Tamamlandı');
+    });
+    expect(api.callsTo(ACCEPTANCE).map((call) => call.body)).toEqual([{ decision: 'approved' }]);
+    expect(screen.getByText(ABSENT_CLOSED)).toBeVisible();
+    cleanup();
+
+    // A requester who left the company has no name the founder can read: nobody is named. While
+    // the permission is closed, "İstediğim bu değil" says both things.
+    mockApi({
+      'GET /session': sessionHandler(),
+      [`GET /requests/${REQUEST_ID}`]: () =>
+        json(
+          standIn({
+            requester: { userId: EMPLOYEE.userId, name: null },
+            agentsMayWork: false,
+            acceptance: { round: 2, returnsToAgent: false, inPlaceOfRequester: true },
+          }),
+        ),
+    });
+    renderApp(REQUEST_PAGE);
+    const nameless = await screen.findByRole('region', { name: 'Sonuç hazır' });
+    const NAMELESS =
+      'Bu sonuca talep sahibinin yerine siz karar veriyorsunuz: talep sahibi talebi artık göremiyor.';
+    expect(within(nameless).getByText(NAMELESS)).toBeVisible();
+    expect(nameless).not.toHaveTextContent(/Eski üye/);
+    expect(
+      within(nameless).getByRole('button', { name: 'İstediğim bu değil' }),
+    ).toHaveAccessibleDescription(`${NAMELESS} ${CHANGES_HELD}`);
+    expect(
+      within(nameless).getByRole('button', { name: 'Sonucu onayla' }),
+    ).toHaveAccessibleDescription(NAMELESS);
+    cleanup();
+
+    // The founder was not the one who asked for changes the first time: the dialog does not say
+    // "you asked before".
+    mockApi({
+      'GET /session': sessionHandler(),
+      [`GET /requests/${REQUEST_ID}`]: () =>
+        json(
+          standIn({ acceptance: { round: 2, returnsToAgent: false, inPlaceOfRequester: true } }),
+        ),
+    });
+    renderApp(REQUEST_PAGE);
+    await userEvent.click(
+      within(await screen.findByRole('region', { name: 'Sonuç hazır' })).getByRole('button', {
+        name: 'İstediğim bu değil',
+      }),
+    );
+    const second = await screen.findByRole('dialog', { name: 'İstediğim bu değil' });
+    expect(second).toHaveTextContent(
+      'Bu talepte daha önce düzeltme istendi: iş ajana kendiliğinden dönmez, kurucuya düşer.',
+    );
+    expect(second).not.toHaveTextContent(/istediniz/);
+    cleanup();
+
+    // The founder's own request: nothing is said about anybody's place.
+    mockApi({
+      'GET /session': sessionHandler(),
+      [`GET /requests/${REQUEST_ID}`]: () =>
+        json(
+          standIn({
+            requester: FOUNDER,
+            requesterReads: true,
+            turn: { kind: 'person', ...FOUNDER },
+            acceptance: { round: 1, returnsToAgent: true, inPlaceOfRequester: false },
+          }),
+        ),
+    });
+    renderApp(REQUEST_PAGE);
+    const own = await screen.findByRole('region', { name: 'Sonuç hazır' });
+    expect(own).not.toHaveTextContent(/yerine/);
+    expect(
+      within(own).getByRole('button', { name: 'Sonucu onayla' }),
+    ).not.toHaveAccessibleDescription();
+    expect(
+      within(own).getByRole('button', { name: 'İstediğim bu değil' }),
+    ).not.toHaveAccessibleDescription();
+  });
+
+  it('Onaylar: a stand-in acceptance names the requester', async () => {
+    const acceptance = (
+      requestId: string,
+      requestTitle: string,
+      forRequester: { userId: string; name: string | null } | null,
+    ) => ({
+      requestId,
+      requestTitle,
+      round: 1,
+      returnsToAgent: true,
+      agentsMayWork: true,
+      forRequester,
+      openedAt: '2026-10-07T09:00:00.000Z',
+      result: RESULT,
+    });
+    mockApi({
+      'GET /session': sessionHandler(),
+      'GET /approvals': () =>
+        json({
+          approvals: [],
+          acceptances: [
+            acceptance(REQUEST_ID, 'Lansman duyurusu', EMPLOYEE),
+            acceptance('77777777-7777-4777-8777-777777777777', 'Kasım bülteni', null),
+          ],
+        }),
+    });
+    renderApp('/c/armadx/approvals');
+    const results = await screen.findByRole('region', { name: /Taleplerinizin sonuçları/ });
+    const [inPlace, own] = within(results).getAllByRole('region', { name: 'Sonuç hazır' });
+    if (!inPlace || !own) throw new Error('Two acceptance cards were expected');
+    expect(within(inPlace).getByText(IN_PLACE)).toBeVisible();
+    expect(
+      within(inPlace).getByRole('button', { name: 'Sonucu onayla' }),
+    ).toHaveAccessibleDescription(IN_PLACE);
+    // The founder's own request beside it says nothing of the kind.
+    expect(own).not.toHaveTextContent(/yerine/);
+    expect(
+      within(own).getByRole('button', { name: 'Sonucu onayla' }),
+    ).not.toHaveAccessibleDescription();
+  });
+
+  it('page: the journey says who answered in the requester’s place', async () => {
+    const acceptance = (
+      id: string,
+      status: 'approved' | 'changes_requested',
+      decidedBy: typeof FOUNDER | null,
+      note: string | null = null,
+    ) => ({
+      kind: 'acceptance' as const,
+      id,
+      at: '2026-10-07T10:00:00.000Z',
+      round: 1,
+      status,
+      decidedBy,
+      reason: null,
+      note,
+    });
+    const page = (journey: ReturnType<typeof acceptance>[]) =>
+      requestDetail({
+        ...working,
+        requesterReads: false,
+        journey: [...DEFAULT_JOURNEY, ...journey],
+      });
+    mockApi({
+      'GET /session': sessionHandler(),
+      [`GET /requests/${REQUEST_ID}`]: () =>
+        json(
+          page([
+            // The requester's own answer, before they lost the request.
+            acceptance(
+              'c1111111-1111-4111-8111-111111111111',
+              'changes_requested',
+              null,
+              'Kısa olsun.',
+            ),
+            // The founder's answers in their place.
+            acceptance(
+              'c2222222-2222-4222-8222-222222222222',
+              'changes_requested',
+              FOUNDER,
+              'Daha resmî.',
+            ),
+            acceptance('c3333333-3333-4333-8333-333333333333', 'approved', FOUNDER),
+          ]),
+        ),
+    });
+    renderApp(REQUEST_PAGE);
+    const journey = await screen.findByRole('region', { name: 'Yolculuk' });
+    const lines = within(journey)
+      .getAllByRole('listitem')
+      .map((item) => item.textContent)
+      .slice(-3);
+    expect(lines[0]).toContain('Ayşe Yılmaz "istediğim bu değil" dedi.Kısa olsun.');
+    expect(lines[1]).toContain('Ömer Kadıoğlu, talep sahibinin yerine düzeltme istedi.Daha resmî.');
+    expect(lines[2]).toContain('Ömer Kadıoğlu, talep sahibinin yerine onayladı.');
+    // The record never says that the requester answered what the founder answered.
+    expect(lines[1]).not.toContain('Ayşe Yılmaz');
+    expect(lines[2]).not.toContain('Ayşe Yılmaz');
+    expect(journey).not.toHaveTextContent('Ayşe Yılmaz sonucu onayladı.');
+  });
+});

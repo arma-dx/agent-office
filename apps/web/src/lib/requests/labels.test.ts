@@ -9,10 +9,16 @@ import {
   CAUSE_SHORT,
   CHANGES_HELD,
   OPEN_PROJECT,
+  OPEN_REQUESTS_GO_ON,
+  PROJECT_REQUESTS_GO_ON,
+  REQUESTER_ABSENT,
+  REQUESTER_ABSENT_CLOSED,
   RESULT_HELD,
   RESULT_HELD_FOR_FOUNDER,
   RESULT_HELD_FOR_OTHERS,
   WAITING_WORK_IF_ANY,
+  acceptInPlace,
+  answeredInPlace,
   dueText,
   rowSentence,
   stepText,
@@ -174,6 +180,48 @@ describe('the held request names the permission, and the reworded sentences', ()
   it('a card that cannot run names its third reason: it is not open to a request inside a project', () => {
     expect(CAUSE_FOR_FOUNDER.card_not_runnable).toBe(
       'Kart taslak durumunda; deneme durumunda ve talep kurucuya ait değil; ya da kart, proje içindeki talepte çalışmaya açık değil (project_context alanı). Kart depoda değiştirilir.',
+    );
+  });
+});
+
+// 8 October decision 45: the request of a requester who can no longer read it goes on in the
+// founder's name, and the founder answers its result in their place.
+describe('the sentences of a request that goes on without its requester', () => {
+  it('says so on the request, in the open and in the closed form', () => {
+    expect(REQUESTER_ABSENT).toBe(
+      'Talep sahibi bu talebi artık göremiyor. Talep sürer: ajan kurucunun adına çalışır, sonucu da talep sahibinin yerine kurucu onaylar.',
+    );
+    expect(REQUESTER_ABSENT_CLOSED).toBe('Talep sahibi bu talebi artık göremiyor.');
+  });
+
+  it('tells the founder in whose place they decide, and names nobody when the name is gone', () => {
+    expect(acceptInPlace({ name: 'Ayşe Yılmaz' })).toBe(
+      'Bu sonuca talep sahibi Ayşe Yılmaz yerine siz karar veriyorsunuz: talep sahibi talebi artık göremiyor.',
+    );
+    // A requester removed from the company has no name the founder may read.
+    expect(acceptInPlace({ name: null })).toBe(
+      'Bu sonuca talep sahibinin yerine siz karar veriyorsunuz: talep sahibi talebi artık göremiyor.',
+    );
+  });
+
+  it('the journey names who answered in the requester’s place', () => {
+    expect(answeredInPlace('approved', { name: 'Ömer Kadıoğlu' })).toBe(
+      'Ömer Kadıoğlu, talep sahibinin yerine onayladı.',
+    );
+    expect(answeredInPlace('changes_requested', { name: 'Ömer Kadıoğlu' })).toBe(
+      'Ömer Kadıoğlu, talep sahibinin yerine düzeltme istedi.',
+    );
+    expect(answeredInPlace('approved', { name: null })).toBe(
+      'Eski üye, talep sahibinin yerine onayladı.',
+    );
+  });
+
+  it('whoever takes a person’s requests from them is told that the requests go on', () => {
+    expect(OPEN_REQUESTS_GO_ON).toBe(
+      ' Açık talepleri sürer: ajan kurucunun adına çalışır, sonucu kurucu onaylar.',
+    );
+    expect(PROJECT_REQUESTS_GO_ON).toBe(
+      ' Bu projede açık talebi varsa talep sürer: ajan kurucunun adına çalışır, sonucu kurucu onaylar.',
     );
   });
 });

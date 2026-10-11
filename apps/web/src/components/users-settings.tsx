@@ -22,6 +22,7 @@ import { NativeSelect } from '@/components/ui/native-select';
 import { Switch } from '@/components/ui/switch';
 import { ApiError, userMessage } from '@/lib/api';
 import { notifyError } from '@/lib/notify';
+import { OPEN_REQUESTS_GO_ON } from '@/lib/requests/labels';
 import { useSession } from '@/lib/session';
 import {
   cancelInvitation,
@@ -78,8 +79,9 @@ function changeText(
   if (change === 'remove') {
     return {
       title: `${member.name} üyelikten çıkarılsın mı?`,
-      description:
-        'Bu şirketin paneline ve kayıtlarına artık erişemez. Gerekirse yeniden davet edebilirsiniz.',
+      // The person's open requests do not stop (8 October decision 45), and only the founder
+      // does this: said here, before a stranger's result waits for the founder.
+      description: `Bu şirketin paneline ve kayıtlarına artık erişemez. Gerekirse yeniden davet edebilirsiniz.${OPEN_REQUESTS_GO_ON}`,
       confirmLabel: 'Üyelikten çıkar',
       destructive: true,
     };
@@ -90,9 +92,12 @@ function changeText(
       // The database takes the person off every project of this company with the role (an
       // external person is no project member), and a later change back does not restore them: the
       // founder confirms that too.
-      description: member.canApprove
-        ? 'Dış kişi yalnızca kendisine açılan görev ve notları görür. Onay yetkisi ve bu şirketteki proje üyelikleri kalkar; üyelikler geri gelmez.'
-        : 'Dış kişi yalnızca kendisine açılan görev ve notları görür. Bu şirketteki proje üyelikleri kalkar; üyelikler geri gelmez.',
+      // An external person reads no request, so theirs go on in the founder's name too.
+      description: `${
+        member.canApprove
+          ? 'Dış kişi yalnızca kendisine açılan görev ve notları görür. Onay yetkisi ve bu şirketteki proje üyelikleri kalkar; üyelikler geri gelmez.'
+          : 'Dış kişi yalnızca kendisine açılan görev ve notları görür. Bu şirketteki proje üyelikleri kalkar; üyelikler geri gelmez.'
+      }${OPEN_REQUESTS_GO_ON}`,
       confirmLabel: 'Rolü değiştir',
     };
   }

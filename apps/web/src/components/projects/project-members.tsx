@@ -47,7 +47,7 @@ import {
   setProjectMemberRole,
 } from '@/lib/projects/query';
 import { useStoreProject } from '@/lib/projects/store';
-import { personName } from '@/lib/requests/labels';
+import { PROJECT_REQUESTS_GO_ON, personName } from '@/lib/requests/labels';
 import { useCompany, useSession } from '@/lib/session';
 import { busyProps } from '@/lib/utils';
 
@@ -390,7 +390,8 @@ function RemoveMemberDialog({
         <AlertDialogDescription>
           {member.role === 'founder'
             ? 'Kurucu, üye olmasa da bütün projeleri görür.'
-            : 'Bu projeyi ve projeye bağlı kayıtları artık göremez. Gerekirse yeniden ekleyebilirsiniz.'}
+            : // The person's open requests in the project do not stop (8 October decision 45).
+              `Bu projeyi ve projeye bağlı kayıtları artık göremez. Gerekirse yeniden ekleyebilirsiniz.${PROJECT_REQUESTS_GO_ON}`}
         </AlertDialogDescription>
         {remove.isError ? (
           <p role="alert" className="text-sm text-destructive">

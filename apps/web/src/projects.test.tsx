@@ -817,6 +817,42 @@ describe('projects: members', () => {
     });
   });
 
+  it('members: the removal confirmation says that the person’s open requests go on in the founder’s name', async () => {
+    // The founder of the company is a plain member here and can be taken off like anybody: a
+    // founder reads every project anyway, so nothing of theirs goes on in another name.
+    const founderMember = {
+      ...FOUNDER_MEMBER,
+      userId: '66666666-6666-4666-8666-666666666666',
+      name: 'Kemal Arı',
+      projectRole: 'member' as const,
+      removable: true,
+    };
+    mockApi(projectHandlers(projectDetail({ members: [FOUNDER_MEMBER, AYSE, founderMember] })));
+    renderApp(PAGE);
+    await screen.findByRole('region', { name: 'Üyeler 3' });
+    await userEvent.click(
+      within(row('Ayşe Yılmaz')).getByRole('button', { name: 'Projeden çıkar' }),
+    );
+    let dialog = await screen.findByRole('alertdialog', {
+      name: 'Ayşe Yılmaz projeden çıkarılsın mı?',
+    });
+    // Whoever takes a person off a project is told that their requests do not stop (8 October
+    // decision 45).
+    expect(
+      within(dialog).getByText(
+        'Bu projeyi ve projeye bağlı kayıtları artık göremez. Gerekirse yeniden ekleyebilirsiniz. Bu projede açık talebi varsa talep sürer: ajan kurucunun adına çalışır, sonucu kurucu onaylar.',
+      ),
+    ).toBeVisible();
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Vazgeç' }));
+    await waitFor(() => {
+      expect(screen.queryByRole('alertdialog')).toBeNull();
+    });
+    await userEvent.click(within(row('Kemal Arı')).getByRole('button', { name: 'Projeden çıkar' }));
+    dialog = await screen.findByRole('alertdialog', { name: 'Kemal Arı projeden çıkarılsın mı?' });
+    expect(within(dialog).getByText('Kurucu, üye olmasa da bütün projeleri görür.')).toBeVisible();
+    expect(dialog).not.toHaveTextContent(/açık talebi|kurucunun adına/);
+  });
+
   it("members: the remove button follows the API's answer: an employee has none on their own row and nobody has one on the owner's; the founder who is a plain member has one", async () => {
     const none = { removable: false, roleChanges: [] };
     // The reader is a manager of the project: a plain member's row has the button, their own and

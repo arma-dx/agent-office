@@ -259,6 +259,84 @@ describe('settings, users: members', () => {
     );
   });
 
+  it('Kullanıcılar: removing a member and making a person external say that their open requests go on in the founder’s name', async () => {
+    // 8 October decision 45 was asked for exactly these two acts, and only the founder does
+    // them: the confirmation says it before a stranger's result waits for the founder.
+    const GO_ON = ' Açık talepleri sürer: ajan kurucunun adına çalışır, sonucu kurucu onaylar.';
+    const HOLDER = {
+      ...EMPLOYEE,
+      userId: '77777777-7777-4777-8777-777777777777',
+      name: 'Can Öz',
+      canApprove: true,
+    };
+    founderApi({
+      'GET /members': () => json({ members: [FOUNDER, EMPLOYEE, HOLDER, EXTERNAL] }),
+      'POST /step-up/options': stepUpIssuer().handler,
+    });
+    renderApp('/c/armadx/settings/users');
+    await screen.findByText('Çalışan, onay yetkisi yok, etkin');
+    const giveUp = async (dialog: HTMLElement) => {
+      await userEvent.click(within(dialog).getByRole('button', { name: 'Vazgeç' }));
+      await waitFor(() => {
+        expect(screen.queryByRole('alertdialog')).toBeNull();
+      });
+    };
+
+    await userEvent.click(
+      within(row('Ayşe Demir')).getByRole('button', { name: 'Üyelikten çıkar' }),
+    );
+    let dialog = await screen.findByRole('alertdialog', {
+      name: 'Ayşe Demir üyelikten çıkarılsın mı?',
+    });
+    expect(
+      within(dialog).getByText(
+        `Bu şirketin paneline ve kayıtlarına artık erişemez. Gerekirse yeniden davet edebilirsiniz.${GO_ON}`,
+      ),
+    ).toBeVisible();
+    await giveUp(dialog);
+
+    // Made an external person: without and with the approval right.
+    await userEvent.selectOptions(
+      within(row('Ayşe Demir')).getByRole('combobox', { name: 'Rol' }),
+      'external',
+    );
+    dialog = await screen.findByRole('alertdialog', { name: 'Ayşe Demir dış kişi olsun mu?' });
+    expect(
+      within(dialog).getByText(
+        `Dış kişi yalnızca kendisine açılan görev ve notları görür. Bu şirketteki proje üyelikleri kalkar; üyelikler geri gelmez.${GO_ON}`,
+      ),
+    ).toBeVisible();
+    await giveUp(dialog);
+    await userEvent.selectOptions(
+      within(row('Can Öz')).getByRole('combobox', { name: 'Rol' }),
+      'external',
+    );
+    dialog = await screen.findByRole('alertdialog', { name: 'Can Öz dış kişi olsun mu?' });
+    expect(
+      within(dialog).getByText(
+        `Dış kişi yalnızca kendisine açılan görev ve notları görür. Onay yetkisi ve bu şirketteki proje üyelikleri kalkar; üyelikler geri gelmez.${GO_ON}`,
+      ),
+    ).toBeVisible();
+    await giveUp(dialog);
+
+    // The acts that take no request from anybody do not say it: an approval right, and an
+    // external person who becomes an employee.
+    await userEvent.click(within(row('Ayşe Demir')).getByRole('switch', { name: 'Onay yetkisi' }));
+    dialog = await screen.findByRole('alertdialog', {
+      name: 'Ayşe Demir için onay yetkisi açılsın mı?',
+    });
+    expect(dialog).not.toHaveTextContent(/Açık talepleri|kurucunun adına/);
+    await giveUp(dialog);
+    await userEvent.selectOptions(
+      within(row(EXTERNAL.name)).getByRole('combobox', { name: 'Rol' }),
+      'employee',
+    );
+    dialog = await screen.findByRole('alertdialog', {
+      name: `${EXTERNAL.name} çalışan olsun mu?`,
+    });
+    expect(dialog).not.toHaveTextContent(/Açık talepleri|kurucunun adına/);
+  });
+
   it('turns approval rights on for an employee after a passkey confirmation', async () => {
     const stepUp = stepUpIssuer();
     const api = founderApi({

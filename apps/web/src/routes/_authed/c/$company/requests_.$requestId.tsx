@@ -33,6 +33,8 @@ import { useReturnFocus } from '@/lib/focus';
 import { REFRESH_MS, useBackgroundRefresh } from '@/lib/refresh';
 import { decisionDialogOpen } from '@/lib/requests/hold';
 import {
+  REQUESTER_ABSENT,
+  REQUESTER_ABSENT_CLOSED,
   RESULT_HELD_FOR_OTHERS,
   machineHasTurn,
   personName,
@@ -209,6 +211,15 @@ function RequestScreen() {
         </div>
       </header>
 
+      {/* The requester can no longer read this request (8 October decision 45). Said to every
+          reader of the page; the header keeps naming who asked, which never changes. */}
+      {request.requesterReads ? null : (
+        <InlineBanner tone="info" compact>
+          {request.stage === 'done' || request.stage === 'cancelled'
+            ? REQUESTER_ABSENT_CLOSED
+            : REQUESTER_ABSENT}
+        </InlineBanner>
+      )}
       <FellNotice request={request} isFounder={company.role === 'founder'} />
       <ClosedNotice request={request} />
       {/* A card belongs to one approval (one round of the acceptance): what was chosen or opened
@@ -230,6 +241,7 @@ function RequestScreen() {
           requestId={request.id}
           returnsToAgent={request.acceptance.returnsToAgent}
           agentsMayWork={request.agentsMayWork}
+          inPlaceOf={request.acceptance.inPlaceOfRequester ? request.requester : null}
           approver={request.result?.approvedBy ? personName(request.result.approvedBy) : null}
         />
       ) : null}

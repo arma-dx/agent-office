@@ -20,7 +20,8 @@ import { useCompany } from '@/lib/session';
  * "Onaylar": what waits for a decision of the reader, in two groups that are two different
  * records. "Birim onayları" are results an agent submitted and the reader may decide (the gate of
  * rule 4, sometimes with a passkey); "Taleplerinizin sonuçları" are approved results of the
- * reader's own requests that wait for their acceptance. The cards are the ones the request page
+ * reader's own requests that wait for their acceptance and, for the founder, of requests whose
+ * requester can no longer read them (8 October decision 45; the card says in whose place). The cards are the ones the request page
  * uses, and each decision goes through the same endpoint whichever screen it is given on
  * (5 October decision 10). Nothing here can be dismissed or postponed.
  */
@@ -121,6 +122,7 @@ function ApprovalsScreen() {
                 requestId={card.requestId}
                 returnsToAgent={card.returnsToAgent}
                 agentsMayWork={card.agentsMayWork}
+                inPlaceOf={card.forRequester}
                 approver={card.result.approvedBy ? personName(card.result.approvedBy) : null}
               />
               <ResultBlock result={card.result} />
