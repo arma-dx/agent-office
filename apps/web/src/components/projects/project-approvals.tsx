@@ -79,7 +79,8 @@ function Group({
 
 /**
  * The "Onaylar" tab of a project's page (8 October 2026, decision 17): the results of the
- * project's requests that wait for the unit's approver or were decided, in two groups. A row is
+ * project's requests in two groups: those that wait for the unit's approver, and those that were
+ * decided or were closed without a decision (the heading names both). A row is
  * the request's title and one sentence about its result; it opens the request, where the card is
  * for whoever may decide it. Nothing is decided here: a card stands in one place (docs/SONRA.md
  * W-n), and the Onaylar screen with its count stays the place that says what waits for the
@@ -115,23 +116,24 @@ export function ProjectApprovals({ project }: { project: ProjectDetail }): React
   }
   const { approvals, truncated, seesUndecided } = list.data;
   if (approvals.length === 0) {
-    return (
+    // A reader without the approval right gets only approved results: an empty list does not
+    // say that nothing was submitted, so the title does not say it either.
+    return seesUndecided ? (
       <EmptyState
         title="Bu projede henüz onaya sunulan sonuç yok"
-        description={
-          seesUndecided
-            ? 'Ajanların bu projedeki taleplere yazdığı sonuçlar onaya sunulduğunda burada listelenir.'
-            : `Bu projede onaylanmış sonuç yok. ${LEFT_OUT}`
-        }
+        description="Ajanların bu projedeki taleplere yazdığı sonuçlar onaya sunulduğunda burada listelenir."
       />
+    ) : (
+      <EmptyState title="Bu projede henüz onaylanmış sonuç yok" description={LEFT_OUT} />
     );
   }
   const waiting = approvals.filter((approval) => approval.status === 'pending');
-  const decided = approvals.filter((approval) => approval.status !== 'pending');
+  // Everything that no longer waits: decided, or closed without a decision (the request changed).
+  const settled = approvals.filter((approval) => approval.status !== 'pending');
   return (
     <div className="flex flex-col gap-5">
       <Group title="Karar bekleyenler" approvals={waiting} company={company.code} />
-      <Group title="Karar verilenler" approvals={decided} company={company.code} />
+      <Group title="Karar verilenler ve kapananlar" approvals={settled} company={company.code} />
       {seesUndecided ? null : <p className="px-2 text-sm text-ink-secondary">{LEFT_OUT}</p>}
       {truncated ? (
         <p className="px-2 text-sm text-ink-secondary">Liste en yeni 200 sonucu gösteriyor.</p>

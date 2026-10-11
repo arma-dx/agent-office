@@ -96,7 +96,7 @@ describe('projects: the approvals of a project', () => {
       'aria-selected',
       'true',
     );
-    expect(await group('Karar verilenler')).toBeVisible();
+    expect(await group('Karar verilenler ve kapananlar')).toBeVisible();
   });
 
   it('approvals: two groups, each row a link to its request with one sentence', async () => {
@@ -112,7 +112,7 @@ describe('projects: the approvals of a project', () => {
       'SOS-2 sonucu onay bekliyor.',
       'SOS-2 düzeltilmiş sonucu onay bekliyor.',
     ]);
-    const second = await group('Karar verilenler');
+    const second = await group('Karar verilenler ve kapananlar');
     expect(sentences(second)).toEqual([
       'SOS-2 sonucunu Ayşe Yılmaz onayladı.',
       'SOS-2 sonucu için Ayşe Yılmaz düzeltme istedi.',
@@ -152,7 +152,7 @@ describe('projects: the approvals of a project', () => {
       projectHandlers(projectDetail(), { [APPROVALS]: () => json(projectApprovals([approved])) }),
     );
     renderApp(TAB);
-    expect(await group('Karar verilenler')).toBeVisible();
+    expect(await group('Karar verilenler ve kapananlar')).toBeVisible();
     expect(screen.queryByRole('region', { name: 'Karar bekleyenler' })).toBeNull();
     expect(screen.queryByText('Karar bekleyenler')).toBeNull();
   });
@@ -165,7 +165,7 @@ describe('projects: the approvals of a project', () => {
       }),
     );
     renderApp(TAB);
-    expect(await group('Karar verilenler')).toBeVisible();
+    expect(await group('Karar verilenler ve kapananlar')).toBeVisible();
     expect(await tabPanel()).toHaveTextContent(
       'Onay bekleyen ve onaylanmayan sonuçları yalnızca onay verebilen kişiler görür.',
     );
@@ -193,15 +193,20 @@ describe('projects: the approvals of a project', () => {
       }),
     );
     renderApp(TAB);
+    // A reader without the approval right gets only approved results: results they may not see
+    // can be waiting, so the tab does not say that nothing was submitted.
     const other = await tabPanel();
     expect(
-      await within(other).findByRole('heading', {
-        name: 'Bu projede henüz onaya sunulan sonuç yok',
-      }),
+      await within(other).findByRole('heading', { name: 'Bu projede henüz onaylanmış sonuç yok' }),
     ).toBeVisible();
+    expect(
+      within(other).queryByRole('heading', { name: 'Bu projede henüz onaya sunulan sonuç yok' }),
+    ).toBeNull();
     expect(other).toHaveTextContent(
-      'Bu projede onaylanmış sonuç yok. Onay bekleyen ve onaylanmayan sonuçları yalnızca onay verebilen kişiler görür.',
+      'Onay bekleyen ve onaylanmayan sonuçları yalnızca onay verebilen kişiler görür.',
     );
+    expect(other).not.toHaveTextContent('onaya sunulan sonuç yok');
+    expect(other).not.toHaveTextContent('Bu projede onaylanmış sonuç yok.');
   });
 
   it('approvals: the tab holds no button that decides', async () => {
@@ -241,7 +246,7 @@ describe('projects: the approvals of a project', () => {
       expect(alert).toHaveTextContent('Liste şu anda okunamadı. Yeniden deneyin.');
       api.handle(APPROVALS, () => json(projectApprovals([approved], { truncated: true })));
       await user.click(within(alert).getByRole('button', { name: 'Yeniden dene' }));
-      expect(await group('Karar verilenler')).toBeVisible();
+      expect(await group('Karar verilenler ve kapananlar')).toBeVisible();
       expect(within(panel).getByText('Liste en yeni 200 sonucu gösteriyor.')).toBeVisible();
 
       // Agents submit results by themselves: every half minute, as a background request.
