@@ -13,6 +13,7 @@ import {
   RESULT,
   ROUTE_TO_SOS,
   admin,
+  answering,
   asPerson,
   closeTestPools,
   ids,
@@ -3406,5 +3407,440 @@ describe.skipIf(noDatabase)('a request inside a project', () => {
     }
     expect(await running).toMatchObject({ outcome: 'submitted', modelCalls: 1 });
     expect(await refusals(inProject)).toHaveLength(1);
+  });
+});
+
+// The AI spending limit of a project (8 October decision 17). The runner asks the database at
+// the start of every run on a request inside a project and after every model call. At the limit
+// no run starts: no run row, no model call. A run that is open when the limit is reached uses the
+// answer it has already paid for and ends before its next model call.
+describe.skipIf(noDatabase)('a project at its AI spending limit', () => {
+  afterAll(closeTestPools);
+
+  // A model call with so many input tokens that its cost is above every limit of these tests,
+  // whatever the card's model costs per token.
+  const COSTLY = { input: 50_000_000 };
+  const LIMIT = '1.00';
+
+  /** A project of Arma DX where agents may work, with the employee as a member. */
+  async function project(limit: string | null = null): Promise<string> {
+    const [row] = await admin<{ id: string }>(
+      `insert into office.projects (company_id, name, ai_allowed, ai_spend_limit_usd)
+       values ($1, 'Sınırlı proje', true, $2::numeric) returning id`,
+      [ids.arma, limit],
+    );
+    const id = row?.id ?? '';
+    await admin(
+      `insert into office.project_members (company_id, project_id, user_id) values ($1, $2, $3)`,
+      [ids.arma, id, ids.employee],
+    );
+    return id;
+  }
+
+  /** The employee opens a request, inside the project or without one, as the API does. */
+  async function openIn(projectId: string | null): Promise<string> {
+    return withContext(
+      testPools().app,
+      { companyId: ids.arma, userId: ids.employee },
+      async (client) => {
+        const { rows } = await client.query<{ id: string }>(
+          `insert into office.tasks (company_id, project_id, kind, title, description)
+           values ($1, $2, 'request', 'Lansman gönderisi', 'Lansman için gönderi yaz') returning id`,
+          [ids.arma, projectId],
+        );
+        return rows[0]?.id ?? '';
+      },
+    );
+  }
+
+  const setLimit = (projectId: string, limit: string | null) =>
+    admin('update office.projects set ai_spend_limit_usd = $2::numeric where id = $1', [
+      projectId,
+      limit,
+    ]);
+
+  /**
+   * What the project has spent so far: a finished run of the coordinator on another request of
+   * the project, with that recorded cost. Returns the run's id.
+   */
+  async function spent(projectId: string, cost: string): Promise<string> {
+    const other = await openIn(projectId);
+    const runId = await leftOpen(other, 'KOR-1', undefined, {
+      userId: ids.employee,
+      projectId,
+    });
+    await admin(
+      `update office.runs set status = 'completed', finished_at = now(), cost_usd = $2::numeric
+       where id = $1`,
+      [runId, cost],
+    );
+    return runId;
+  }
+
+  const runsOf = (taskId: string) =>
+    admin<{
+      id: string;
+      agent_code: string;
+      status: string;
+      error_code: string | null;
+      project_id: string | null;
+      paid: boolean;
+    }>(
+      `select id, agent_code, status, error_code, project_id, cost_usd > 0 as paid
+       from office.runs where task_id = $1 order by started_at, id`,
+      [taskId],
+    );
+
+  const tracesOf = (taskId: string) =>
+    admin(
+      `select event, user_id, agent_code, project_id from office.audit_log
+       where record_type = 'task' and record_id = $1
+         and event in ('run_refused', 'run_skipped', 'run_restarted')
+       order by id`,
+      [taskId],
+    );
+
+  const reached = async (projectId: string): Promise<boolean | null> => {
+    const [row] = await admin<{ reached: boolean | null }>(
+      `select ai_spend_limit_usd is not null and (
+         select coalesce(sum(cost_usd), 0) from office.runs where project_id = $1
+       ) >= ai_spend_limit_usd as reached
+       from office.projects where id = $1`,
+      [projectId],
+    );
+    return row?.reached ?? null;
+  };
+
+  it('a job in a project at its limit opens no run and calls no model; the trace is run_refused and the outcome spending_limit_reached', async () => {
+    // The limit is reached exactly: what was spent is equal to it.
+    const projectId = await project(LIMIT);
+    await spent(projectId, LIMIT);
+    const taskId = await openIn(projectId);
+    const model = new ScriptedModel([]);
+    const { deps, jobs, log } = await runner(model);
+    expect(await runAgentJob(deps, job(taskId, 'KOR-1', ids.employee))).toEqual({
+      outcome: 'spending_limit_reached',
+      runId: null,
+      modelCalls: 0,
+    });
+    expect(model.requests).toHaveLength(0);
+    expect(jobs.sent).toEqual([]);
+    expect(log).toEqual([
+      {
+        event: 'run_refused',
+        fields: { reason: 'spending_limit_reached', task: taskId, agent: 'KOR-1' },
+      },
+    ]);
+    // The trace is on the request, with its project, its agent and the person the run would
+    // have gone as; no run row was written.
+    expect(await tracesOf(taskId)).toEqual([
+      { event: 'run_refused', user_id: ids.employee, agent_code: 'KOR-1', project_id: projectId },
+    ]);
+    expect(await runsOf(taskId)).toEqual([]);
+
+    // The same for the unit agent's job, when the limit is reached after the routing.
+    const later = await project(LIMIT);
+    const routed = await openIn(later);
+    const first = await runner(new ScriptedModel([toolUse('route_task', ROUTE_TO_SOS)]));
+    expect((await runAgentJob(first.deps, job(routed, 'KOR-1', ids.employee))).outcome).toBe(
+      'routed',
+    );
+    await spent(later, '7.5');
+    const never = new ScriptedModel([]);
+    const second = await runner(never);
+    expect(await runAgentJob(second.deps, job(routed, 'SOS-2', ids.employee))).toEqual({
+      outcome: 'spending_limit_reached',
+      runId: null,
+      modelCalls: 0,
+    });
+    expect(never.requests).toHaveLength(0);
+    expect((await runsOf(routed)).map((run) => run.agent_code)).toEqual(['KOR-1']);
+    expect(await tracesOf(routed)).toEqual([
+      { event: 'run_refused', user_id: ids.employee, agent_code: 'SOS-2', project_id: later },
+    ]);
+
+    // Under the limit, and with the limit taken away, the same kind of job runs.
+    for (const limit of ['7.51', null]) {
+      await setLimit(later, limit);
+      const again = await openIn(later);
+      const allowed = await runner(new ScriptedModel([toolUse('route_task', ROUTE_TO_SOS)]));
+      expect(
+        (await runAgentJob(allowed.deps, job(again, 'KOR-1', ids.employee))).outcome,
+        String(limit),
+      ).toBe('routed');
+    }
+  });
+
+  it("a run whose answer reaches the limit still executes that answer's tool call and completes", async () => {
+    const projectId = await project(LIMIT);
+    const taskId = await openIn(projectId);
+    // The coordinator's one call is cheap; the routing is stored.
+    const first = await runner(new ScriptedModel([toolUse('route_task', ROUTE_TO_SOS)]));
+    expect((await runAgentJob(first.deps, job(taskId, 'KOR-1', ids.employee))).outcome).toBe(
+      'routed',
+    );
+    expect(await reached(projectId)).toBe(false);
+    // The unit agent's one call costs more than the whole limit, and its answer is the result.
+    const model = new ScriptedModel([toolUse('submit_for_approval', RESULT, COSTLY)]);
+    const { deps } = await runner(model);
+    const result = await runAgentJob(deps, job(taskId, 'SOS-2', ids.employee));
+    // The answer was paid for, so it is used: the result is submitted and the run completes.
+    expect(result).toMatchObject({ outcome: 'submitted', modelCalls: 1 });
+    expect(model.remaining).toBe(0);
+    expect(await reached(projectId)).toBe(true);
+    expect(await runsOf(taskId)).toMatchObject([
+      { agent_code: 'KOR-1', status: 'completed', error_code: null, paid: true },
+      { agent_code: 'SOS-2', status: 'completed', error_code: null, paid: true },
+    ]);
+    expect(await runRow(result.runId)).toMatchObject({
+      status: 'completed',
+      input_tokens: COSTLY.input,
+    });
+    expect(
+      await admin(
+        `select status, invalidated_at from office.approvals
+         where task_id = $1 and routing_id is not null`,
+        [taskId],
+      ),
+    ).toEqual([{ status: 'pending', invalidated_at: null }]);
+    expect(await statusOf(taskId)).toBe('awaiting_approval');
+    expect(await tracesOf(taskId)).toEqual([]);
+
+    // The same for the coordinator: a routing that reaches the limit is stored, and the job it
+    // put on the queue is then refused.
+    const routedAtLimit = await openIn(await project(LIMIT));
+    const costly = await runner(new ScriptedModel([toolUse('route_task', ROUTE_TO_SOS, COSTLY)]));
+    expect(await runAgentJob(costly.deps, job(routedAtLimit, 'KOR-1', ids.employee))).toMatchObject(
+      { outcome: 'routed', modelCalls: 1 },
+    );
+    expect(costly.jobs.sent).toMatchObject([{ taskId: routedAtLimit, agentCode: 'SOS-2' }]);
+    expect(
+      await admin('select agent_code, status from office.task_routings where task_id = $1', [
+        routedAtLimit,
+      ]),
+    ).toEqual([{ agent_code: 'SOS-2', status: 'active' }]);
+    const refused = await runner(new ScriptedModel([]));
+    expect(
+      (await runAgentJob(refused.deps, job(routedAtLimit, 'SOS-2', ids.employee))).outcome,
+    ).toBe('spending_limit_reached');
+  });
+
+  it('a run that would need another model call after the limit is reached stops before it', async () => {
+    const projectId = await project(LIMIT);
+    const taskId = await openIn(projectId);
+    const first = await runner(new ScriptedModel([toolUse('route_task', ROUTE_TO_SOS)]));
+    await runAgentJob(first.deps, job(taskId, 'KOR-1', ids.employee));
+    // Two scripted turns: the first ends in prose and reaches the limit; the reminder that
+    // would follow needs a second model call, which is never made.
+    const model = new ScriptedModel([
+      text('Önce bir soru sormam gerekiyor.', COSTLY),
+      toolUse('submit_for_approval', RESULT),
+    ]);
+    const { deps, log } = await runner(model);
+    const result = await runAgentJob(deps, job(taskId, 'SOS-2', ids.employee));
+    expect(result).toMatchObject({ outcome: 'stopped', modelCalls: 1 });
+    expect(model.requests).toHaveLength(1);
+    expect(model.remaining).toBe(1);
+    expect(await runRow(result.runId)).toMatchObject({
+      status: 'stopped',
+      error_code: 'spending_limit_reached',
+      // The cost of the one call that was answered is on the run (rule 5).
+      input_tokens: COSTLY.input,
+    });
+    expect((await runsOf(taskId)).at(-1)).toMatchObject({ agent_code: 'SOS-2', paid: true });
+    expect(log).toContainEqual({
+      event: 'run_finished',
+      fields: {
+        run: result.runId,
+        status: 'stopped',
+        outcome: 'stopped',
+        code: 'spending_limit_reached',
+      },
+    });
+    // No result was submitted and nothing was put on the queue.
+    expect(
+      await admin('select 1 from office.approvals where task_id = $1 and routing_id is not null', [
+        taskId,
+      ]),
+    ).toEqual([]);
+
+    // A tool call the handler refuses is an answer that was used too: the model is not asked
+    // to correct itself.
+    const other = await openIn(await project(LIMIT));
+    const route = new ScriptedModel([
+      toolUse('route_task', { unit_code: 'YOK', agent_code: 'YOK-1', reason: 'x' }, COSTLY),
+      toolUse('route_task', ROUTE_TO_SOS),
+    ]);
+    const coordinator = await runner(route);
+    const stopped = await runAgentJob(coordinator.deps, job(other, 'KOR-1', ids.employee));
+    expect(stopped).toMatchObject({ outcome: 'stopped', modelCalls: 1 });
+    expect(route.remaining).toBe(1);
+    expect(await runRow(stopped.runId)).toMatchObject({
+      status: 'stopped',
+      error_code: 'spending_limit_reached',
+      tool_call_count: 1,
+    });
+    expect(await admin('select 1 from office.task_routings where task_id = $1', [other])).toEqual(
+      [],
+    );
+
+    // Without a limit the same script runs to its end.
+    const free = await openIn(await project(null));
+    const through = new ScriptedModel([
+      toolUse('route_task', { unit_code: 'YOK', agent_code: 'YOK-1', reason: 'x' }, COSTLY),
+      toolUse('route_task', ROUTE_TO_SOS),
+    ]);
+    const unlimited = await runner(through);
+    expect(await runAgentJob(unlimited.deps, job(free, 'KOR-1', ids.employee))).toMatchObject({
+      outcome: 'routed',
+      modelCalls: 2,
+    });
+  });
+
+  it('a run without a project never asks for a limit', async () => {
+    const asked = { count: 0 };
+    const counting = () =>
+      answering(testPools().worker, 'project_spending_limit_reached', () => {
+        asked.count += 1;
+        return null;
+      });
+    // A request without a project, from the coordinator's run to the unit agent's result.
+    const taskId = await openIn(null);
+    const first = await runner(new ScriptedModel([toolUse('route_task', ROUTE_TO_SOS)]), {
+      pool: counting(),
+    });
+    expect((await runAgentJob(first.deps, job(taskId, 'KOR-1', ids.employee))).outcome).toBe(
+      'routed',
+    );
+    const second = await runner(
+      new ScriptedModel([text('Bir dakika.'), toolUse('submit_for_approval', RESULT)]),
+      { pool: counting() },
+    );
+    expect((await runAgentJob(second.deps, job(taskId, 'SOS-2', ids.employee))).outcome).toBe(
+      'submitted',
+    );
+    expect(asked.count).toBe(0);
+    // Inside a project it asks: once before the run row, and once after every model call.
+    const inProject = await openIn(await project(null));
+    const third = await runner(new ScriptedModel([toolUse('route_task', ROUTE_TO_SOS)]), {
+      pool: counting(),
+    });
+    expect((await runAgentJob(third.deps, job(inProject, 'KOR-1', ids.employee))).outcome).toBe(
+      'routed',
+    );
+    expect(asked.count).toBe(2);
+  });
+
+  it('a limit the database gives no answer for is read as reached', async () => {
+    // No value (null) and no row at all, at the start of the run.
+    for (const rows of [[{ reached: null }], []]) {
+      const taskId = await openIn(await project(null));
+      const model = new ScriptedModel([]);
+      const { deps } = await runner(model, {
+        pool: answering(testPools().worker, 'project_spending_limit_reached', () => rows),
+      });
+      expect(await runAgentJob(deps, job(taskId, 'KOR-1', ids.employee))).toEqual({
+        outcome: 'spending_limit_reached',
+        runId: null,
+        modelCalls: 0,
+      });
+      expect(model.requests).toHaveLength(0);
+      expect(await runsOf(taskId)).toEqual([]);
+    }
+    // "Not reached" at the start and no value after the first model call: the run uses that
+    // answer and makes no second call.
+    const taskId = await openIn(await project(null));
+    const model = new ScriptedModel([text('Düşünüyorum.'), toolUse('route_task', ROUTE_TO_SOS)]);
+    const { deps } = await runner(model, {
+      pool: answering(testPools().worker, 'project_spending_limit_reached', (count) =>
+        count === 0 ? [{ reached: false }] : [{ reached: null }],
+      ),
+    });
+    const result = await runAgentJob(deps, job(taskId, 'KOR-1', ids.employee));
+    expect(result).toMatchObject({ outcome: 'stopped', modelCalls: 1 });
+    expect(model.remaining).toBe(1);
+    expect(await runRow(result.runId)).toMatchObject({
+      status: 'stopped',
+      error_code: 'spending_limit_reached',
+    });
+  });
+
+  it('a duplicate job and a job of a closed request in a project at its limit keep their own answer', async () => {
+    // A request the requester cancelled.
+    const closedProject = await project(null);
+    const closed = await openIn(closedProject);
+    await asPerson(ids.employee, 'select office.close_request($1)', [closed]);
+    await spent(closedProject, '2');
+    await setLimit(closedProject, LIMIT);
+    const first = await runner(new ScriptedModel([]));
+    expect(await runAgentJob(first.deps, job(closed, 'KOR-1', ids.employee))).toEqual({
+      outcome: 'request_closed',
+      runId: null,
+      modelCalls: 0,
+    });
+    // A request whose coordinator run is open already (the limit was reached after it opened).
+    const busyProject = await project(null);
+    const busy = await openIn(busyProject);
+    const open = await leftOpen(busy, 'KOR-1', undefined, {
+      userId: ids.employee,
+      projectId: busyProject,
+    });
+    await spent(busyProject, '2');
+    await setLimit(busyProject, LIMIT);
+    const second = await runner(new ScriptedModel([]));
+    expect(await runAgentJob(second.deps, job(busy, 'KOR-1', ids.employee))).toEqual({
+      outcome: 'duplicate_job',
+      runId: null,
+      modelCalls: 0,
+    });
+    // Neither is "work that was called for and did not start": the trace is run_skipped, and
+    // the log says the job's own reason.
+    for (const [taskId, projectId, test] of [
+      [closed, closedProject, first],
+      [busy, busyProject, second],
+    ] as const) {
+      expect(await tracesOf(taskId)).toEqual([
+        { event: 'run_skipped', user_id: ids.employee, agent_code: 'KOR-1', project_id: projectId },
+      ]);
+      expect(test.log.map((line) => line.event)).toEqual(['run_skipped']);
+    }
+    // The open run was not touched.
+    expect(await runRow(open)).toMatchObject({ status: 'running', error_code: null });
+  });
+
+  it('an insert the database refuses for the limit ends the job as spending_limit_reached', async () => {
+    const projectId = await project(LIMIT);
+    // Another run of the project is open and has cost nothing yet.
+    const other = await openIn(projectId);
+    const paying = await leftOpen(other, 'KOR-1', undefined, { userId: ids.employee, projectId });
+    const taskId = await openIn(projectId);
+    const model = new ScriptedModel([]);
+    // Between the runner's question ("not reached") and its insert of the run row, the other
+    // run's model call is answered and its cost committed: the limit is reached.
+    let met = false;
+    const pool = meeting(testPools().worker, 'insert into office.runs', async () => {
+      met = true;
+      await admin('update office.runs set cost_usd = $2::numeric where id = $1', [paying, LIMIT]);
+    });
+    const { deps, jobs, log } = await runner(model, { pool });
+    // Refused, not failed: nothing is thrown, so the job is neither failed nor retried.
+    expect(await runAgentJob(deps, job(taskId, 'KOR-1', ids.employee))).toEqual({
+      outcome: 'spending_limit_reached',
+      runId: null,
+      modelCalls: 0,
+    });
+    expect(met).toBe(true);
+    expect(model.requests).toHaveLength(0);
+    expect(jobs.sent).toEqual([]);
+    expect(await runsOf(taskId)).toEqual([]);
+    expect(await tracesOf(taskId)).toEqual([
+      { event: 'run_refused', user_id: ids.employee, agent_code: 'KOR-1', project_id: projectId },
+    ]);
+    expect(log).toEqual([
+      {
+        event: 'run_refused',
+        fields: { reason: 'spending_limit_reached', task: taskId, agent: 'KOR-1' },
+      },
+    ]);
   });
 });

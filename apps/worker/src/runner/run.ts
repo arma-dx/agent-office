@@ -61,6 +61,12 @@ import {
  *
  * Nothing here sets the status of the request: the records the run writes (a run, a routing, an
  * approval) move it inside the database.
+ *
+ * A project can carry an AI spending limit (8 October decision 17). While it is reached no run
+ * is opened in that project (no run row, no model call; the job is refused with its reason, and
+ * the database refuses the row behind the runner). A run that is open when the limit is reached
+ * uses the answer it has already paid for (its tool call is executed) and ends before its next
+ * model call, stopped with the code spending_limit_reached.
  */
 
 export type RunOutcome =
@@ -71,6 +77,8 @@ export type RunOutcome =
   | 'agent_not_enabled'
   | 'task_not_visible'
   | 'ai_not_allowed'
+  // The AI spending limit of the request's project is reached (8 October decision 17).
+  | 'spending_limit_reached'
   | 'request_closed'
   | 'job_stale'
   | 'duplicate_job'
@@ -237,6 +245,11 @@ class StepMoved extends Error {}
 // before a restart picks its work, or written after the opening of that restart is committed.
 const RESTART_LOCK_SHARED = `select pg_advisory_xact_lock_shared(
   hashtextextended('office.restart:' || ($1::uuid)::text, 0))`;
+
+// Is the AI spending limit of this project reached now (8 October decision 17): the database's
+// own answer for an agent run, a yes or a no. The runner asks at the start of a run and after
+// every model call, and reads anything but "no" as reached.
+const SPENDING_LIMIT_REACHED = 'select office.project_spending_limit_reached($1) as reached';
 
 function sqlState(error: unknown): string | undefined {
   if (error instanceof Error && 'code' in error && typeof error.code === 'string') {
@@ -707,6 +720,21 @@ export async function runAgentJob(
       }
     }
 
+    // Decision 17: no run starts in a project whose AI spending limit is reached. Asked in this
+    // transaction, behind the gate's lock on the project row: a change of the limit waits until
+    // the run row is committed. Asked here, directly before the insert and after every test
+    // that answers a job with nothing to do (a closed request, a stale or a duplicate job): such
+    // a job keeps its own answer and its own trace. No answer (the function gives none to a
+    // context it does not know) is read as reached: a limit that cannot be read holds.
+    if (gated.project_id !== null) {
+      const limit = await client.query<{ reached: boolean | null }>(SPENDING_LIMIT_REACHED, [
+        gated.project_id,
+      ]);
+      if (limit.rows[0]?.reached !== false) {
+        return { kind: 'refused', outcome: 'spending_limit_reached' };
+      }
+    }
+
     const inserted = await client.query<{ id: string; routing_id: string | null }>(
       `insert into office.runs
          (company_id, task_id, agent_code, card_version_id, trigger_type, model, input)
@@ -809,6 +837,12 @@ export async function runAgentJob(
       if (sqlState(error) === '23514') {
         return { kind: 'refused', outcome: 'job_stale' };
       }
+      // program_limit_exceeded from the run's own check: the project's AI spending limit was
+      // reached between the question above and the insert, by the cost another run of the
+      // project committed in that instant (8 October decision 17). The database refused the row.
+      if (sqlState(error) === '54000') {
+        return { kind: 'refused', outcome: 'spending_limit_reached' };
+      }
       // insufficient_privilege from the insert of the run: the person the gate named stopped
       // being the resolved one in this instant (or lost the project). Read again, once, like a
       // step that moved.
@@ -895,6 +929,10 @@ export async function runAgentJob(
   let modelCalls = 0;
   let toolCalls = 0;
   let reminded = false;
+  // The AI spending limit of the run's project was read as reached after a model call (decision
+  // 17): the answer that was paid for is still used, and no further model call is made. (Set
+  // inside a step of the run.)
+  const spending = { limitReached: false };
 
   type EndStatus = 'completed' | 'failed' | 'limit_reached' | 'stopped';
   interface EndFields {
@@ -1231,6 +1269,12 @@ export async function runAgentJob(
       if (left <= 0 || controller.signal.aborted) {
         return await finish('limit_reached', 'limit_reached', { errorCode: 'time_limit' });
       }
+      if (spending.limitReached) {
+        // The answer that was paid for has been used: its tool call was executed, or the model
+        // ended without one. One more model call would be needed, and the AI spending limit of
+        // the project does not allow it (8 October decision 17).
+        return await finish('stopped', 'stopped', { errorCode: 'spending_limit_reached' });
+      }
       const params: ModelRequest = {
         // From the card version, never a literal in code.
         model: version.model,
@@ -1327,6 +1371,14 @@ export async function runAgentJob(
           }
           // Hidden for a reason neither function knows: nothing took the numbers.
           numbers.recorded = false;
+        }
+        // Decision 17: the limit of the run's project, read with the cost of this call in the
+        // sum (the update above is in this transaction). No answer is read as reached.
+        if ((context.projectId ?? null) !== null) {
+          const limit = await client.query<{ reached: boolean | null }>(SPENDING_LIMIT_REACHED, [
+            context.projectId,
+          ]);
+          spending.limitReached = limit.rows[0]?.reached !== false;
         }
         interface State {
           agent: string | null;

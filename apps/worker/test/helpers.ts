@@ -77,6 +77,47 @@ export function meeting(pool: pg.Pool, marker: string, before: () => Promise<voi
   });
 }
 
+/**
+ * A pool that answers one kind of statement itself: a statement whose text contains `marker` is
+ * not sent to the database; `answer` is asked for its rows instead (with the number of such
+ * statements so far, from 0), or sends the statement after all when it returns null. Everything
+ * else goes to the pool unchanged. For an answer the database cannot be made to give.
+ */
+export function answering(
+  pool: pg.Pool,
+  marker: string,
+  answer: (count: number) => Record<string, unknown>[] | null,
+): pg.Pool {
+  let count = 0;
+  const through = (target: object, property: string | symbol): unknown => {
+    const value: unknown = Reflect.get(target, property, target);
+    return typeof value === 'function' ? (value as AnyFunction).bind(target) : value;
+  };
+  const wrap = (client: pg.PoolClient): pg.PoolClient =>
+    new Proxy(client, {
+      get(target, property) {
+        if (property !== 'query') return through(target, property);
+        return (...args: unknown[]): unknown => {
+          if (typeof args[0] === 'string' && args[0].includes(marker)) {
+            const rows = answer(count);
+            count += 1;
+            if (rows !== null) return Promise.resolve({ rows, rowCount: rows.length });
+          }
+          return (target.query as AnyFunction).apply(target, args);
+        };
+      },
+    });
+  return new Proxy(pool, {
+    get(target, property) {
+      if (property !== 'connect') return through(target, property);
+      return async (...args: unknown[]): Promise<unknown> =>
+        args.length > 0
+          ? (target.connect as AnyFunction).apply(target, args)
+          : wrap(await target.connect());
+    },
+  });
+}
+
 /** One-off query with the privileged role, to prepare or to verify the state. */
 export async function admin<T extends pg.QueryResultRow = Record<string, unknown>>(
   sql: string,

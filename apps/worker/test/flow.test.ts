@@ -12,6 +12,7 @@ import {
   approvalDeskSchema,
   projectAiPermissionAnswerSchema,
   projectAiPermissionDetails,
+  projectAiSpendingLimitDetails,
   requestDetailSchema,
   requestListSchema,
   type ApprovalDesk,
@@ -1411,5 +1412,89 @@ describe.skipIf(noDatabase)('a request from the first line to "done"', () => {
     expect(await workerQueue.fetch(AGENT_RUN_QUEUE)).toEqual([]);
     expect(errors).toEqual([]);
     await post(founder, `/api/requests/${id}/close`);
+  });
+
+  // 8 October decision 17: the AI spending limit of a project.
+  it('the coordinator’s routing that reaches the limit is stored, and the unit agent’s job is then refused', async () => {
+    const projectId = await projectWithAgents('Sınırı dolan proje');
+    // The founder sets a first limit: no passkey.
+    const limited = await put(founder, `/api/projects/${projectId}/ai-spending-limit`, {
+      limitUsd: '1',
+    });
+    expect(limited.statusCode, limited.body).toBe(200);
+    const id = randomUUID();
+    const created = await post(employee, '/api/requests', {
+      id,
+      text: 'Lansman için LinkedIn gönderisi yaz',
+      projectId,
+    });
+    expect(created.statusCode, created.body).toBe(201);
+    expect(requestDetailSchema.parse(created.json())).toMatchObject({
+      stage: 'routing',
+      spendingLimitReached: false,
+    });
+    // The coordinator's one call costs more than the whole limit. The answer was paid for, so
+    // it is used: the routing is stored and the unit agent's job is put on the queue.
+    expect(
+      await work(new ScriptedModel([toolUse('route_task', ROUTE_TO_SOS, { input: 50_000_000 })])),
+    ).toEqual({ outcome: 'routed', agent: 'KOR-1' });
+    // The worker takes that job: no run, no model call, and the trace of the refusal.
+    const never = new ScriptedModel([]);
+    expect(await work(never)).toEqual({ outcome: 'spending_limit_reached', agent: 'SOS-2' });
+    expect(never.requests).toHaveLength(0);
+    expect((await runsOf(id)).map((run) => [run.agent_code, run.status])).toEqual([
+      ['KOR-1', 'completed'],
+    ]);
+    // The request falls to the founder, with the reason; the permission is not what holds it.
+    for (const session of [founder, employee]) {
+      expect(await detail(session, id)).toMatchObject({
+        status: 'in_progress',
+        stage: 'fell_to_person',
+        cause: 'spending_limit_reached',
+        turn: { kind: 'founder' },
+        waitingForMe: session === founder,
+        agentsMayWork: true,
+        spendingLimitReached: true,
+        agent: { code: 'SOS-2' },
+      });
+    }
+    expect(await workerQueue.fetch(AGENT_RUN_QUEUE)).toEqual([]);
+
+    // The founder raises the limit with the passkey. Nothing starts by itself: no job is put on
+    // the queue, and the request now reads as work that did not start, for a person to give
+    // again.
+    const raised = await put(founder, `/api/projects/${projectId}/ai-spending-limit`, {
+      limitUsd: '900000',
+      stepUp: await signStepUp(server, founder, founderKey, {
+        purpose: 'project_ai_spending_limit',
+        companyId: ids.arma,
+        subjectId: projectId,
+        details: projectAiSpendingLimitDetails('900000'),
+      }),
+    });
+    expect(raised.statusCode, raised.body).toBe(200);
+    expect(await workerQueue.fetch(AGENT_RUN_QUEUE)).toEqual([]);
+    expect(await detail(founder, id)).toMatchObject({
+      stage: 'fell_to_person',
+      cause: 'not_started',
+      spendingLimitReached: false,
+      waitingForMe: true,
+    });
+    expect((await runsOf(id)).map((run) => run.agent_code)).toEqual(['KOR-1']);
+
+    // The founder gives the work again ("Yönlendirmeyi düzelt"): the unit agent runs and submits.
+    const again = await post(founder, `/api/requests/${id}/routing`, {
+      unitCode: 'SOS',
+      agentCode: 'SOS-2',
+    });
+    expect(again.statusCode, again.body).toBe(200);
+    expect(await work(new ScriptedModel([toolUse('submit_for_approval', RESULT)]))).toEqual({
+      outcome: 'submitted',
+      agent: 'SOS-2',
+    });
+    expect(await detail(founder, id)).toMatchObject({ stage: 'unit_approval', waitingForMe: true });
+    expect(await workerQueue.fetch(AGENT_RUN_QUEUE)).toEqual([]);
+    expect(errors).toEqual([]);
+    await post(founder, `/api/requests/${id}/close`, { reason: 'Deneme bitti.' });
   });
 });
