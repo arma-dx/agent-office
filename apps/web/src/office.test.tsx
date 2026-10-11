@@ -778,7 +778,7 @@ describe('office page: the agent switch', () => {
     expect(within(dialog).getByText(/^Açık ajan/).textContent).toBe(OPENING);
     await waitFor(() => {
       expect(count(dialog)).toHaveTextContent(
-        'Bu ajanı bekleyen talep yok; açmak hiçbir çalışmayı başlatmaz.',
+        'Bu ajanı bekleyip yeniden başlayacak talep yok; açmak hiçbir çalışmayı başlatmaz.',
       );
     });
     await userEvent.click(within(dialog).getByRole('button', { name: label }));

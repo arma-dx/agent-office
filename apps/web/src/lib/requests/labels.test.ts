@@ -295,16 +295,22 @@ describe('the sentence of an opening: counting, none, a number, not counted', ()
     }
   });
 
-  it('says that nothing starts when nothing waits', () => {
+  it('says that nothing starts when the count is zero, and never that no request waits', () => {
     expect(waitingWorkSentence('agent', 0)).toBe(
-      'Bu ajanı bekleyen talep yok; açmak hiçbir çalışmayı başlatmaz.',
+      'Bu ajanı bekleyip yeniden başlayacak talep yok; açmak hiçbir çalışmayı başlatmaz.',
     );
     expect(waitingWorkSentence('project', 0)).toBe(
-      'Bu projede bekleyen talep yok; izni açmak hiçbir çalışmayı başlatmaz.',
+      'Bu projede yeniden başlayacak talep yok; izni açmak hiçbir çalışmayı başlatmaz.',
     );
     expect(waitingWorkSentence('customer', 0)).toBe(
-      'Bu müşterinin projelerinde bekleyen talep yok; izni açmak hiçbir çalışmayı başlatmaz.',
+      'Bu müşterinin projelerinde yeniden başlayacak talep yok; izni açmak hiçbir çalışmayı başlatmaz.',
     );
+    // The number is of the requests an opening would start. A request whose result waits for a
+    // decision, or which waits for another switch too, is held and not counted: the sentence
+    // says nothing about those.
+    for (const kind of KINDS) {
+      expect(waitingWorkSentence(kind, 0)).not.toMatch(/bekleyen talep yok/);
+    }
   });
 
   it('names the number twice: how many wait, and how many paid runs the opening starts', () => {

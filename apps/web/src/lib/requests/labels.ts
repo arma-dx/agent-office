@@ -279,9 +279,13 @@ export function waitingWorkSentence(
   }
   const where = WAITING_WHERE[kind];
   if (waiting === 0) {
+    // Only what the number knows: no request would START. The database counts the work an
+    // opening starts, so requests can wait all the same (a result that waits for a decision
+    // behind the closed permission, a request that also waits for another switch), and "no
+    // request waits" would be said beside a list that shows them.
     return kind === 'agent'
-      ? `${where} bekleyen talep yok; açmak hiçbir çalışmayı başlatmaz.`
-      : `${where} bekleyen talep yok; izni açmak hiçbir çalışmayı başlatmaz.`;
+      ? `${where} bekleyip yeniden başlayacak talep yok; açmak hiçbir çalışmayı başlatmaz.`
+      : `${where} yeniden başlayacak talep yok; izni açmak hiçbir çalışmayı başlatmaz.`;
   }
   const count = String(waiting);
   return `${where} ${count} talep bekliyor. ${kind === 'agent' ? 'Ajanı' : 'İzni'} açınca ${count} talebin çalışması hemen yeniden başlar; her biri ücretli bir yapay zekâ çalışmasıdır.`;

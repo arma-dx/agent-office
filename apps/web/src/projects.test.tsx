@@ -2056,6 +2056,41 @@ describe('projects: permissions', () => {
     expect(api.callsTo(`GET /projects/${PROJECT_ID}`)).toHaveLength(1);
   });
 
+  it('AI permission: a count of zero is not said as "no request waits" while a held request is listed behind the confirmation', async () => {
+    // The project's only open request has a result that waits for the founder's decision; the
+    // permission is closed, so the result is held (8 October decision 46). An opening would
+    // start no work (the database counts 0), and the request waits all the same.
+    const held = requestDetail({
+      project: { id: PROJECT_ID, name: 'Depo otomasyonu' },
+      agentsMayWork: false,
+    });
+    const api = mockApi(
+      projectHandlers(projectDetail({ customer: null }), {
+        'POST /step-up/options': stepUpIssuer().handler,
+        [projectRequestsRoute()]: () => json({ requests: [summaryOf(held)], truncated: false }),
+      }),
+    );
+    renderApp(PROJECT_PATH);
+    const tab = await screen.findByRole('tabpanel', { name: 'Talepler' });
+    const mine = await within(tab).findByRole('region', { name: 'Sizden beklenenler 1' });
+    expect(within(mine).getByRole('listitem')).toHaveTextContent('LinkedIn için gönderi yaz');
+    await userEvent.click(aiSwitch());
+    const dialog = await screen.findByRole('alertdialog', {
+      name: 'Depo otomasyonu için yapay zekâ izni açılsın mı?',
+    });
+    await waitFor(() => {
+      expect(status(dialog)).toHaveTextContent(
+        'Bu projede yeniden başlayacak talep yok; izni açmak hiçbir çalışmayı başlatmaz.',
+      );
+    });
+    expect(api.callsTo(waitingWorkRoute({ project: PROJECT_ID }))).toHaveLength(1);
+    // The sentence says what the opening starts; it does not deny the request behind it.
+    expect(dialog).not.toHaveTextContent(/bekleyen talep yok/);
+    expect(
+      screen.getByRole('region', { name: 'Sizden beklenenler 1', hidden: true }),
+    ).toHaveTextContent('LinkedIn için gönderi yaz');
+  });
+
   it('AI permission: a project without a customer is confirmed for no customer, without the sentence about the contract', async () => {
     const stepUp = stepUpIssuer();
     const api = mockApi(
@@ -2077,7 +2112,7 @@ describe('projects: permissions', () => {
     // and the founder reads how many before confirming (8 October decision 49). Here none waits.
     await waitFor(() => {
       expect(dialog).toHaveTextContent(
-        'İzin açıkken projenin müşterisi değiştirilemez.Bu projede bekleyen talep yok; izni açmak hiçbir çalışmayı başlatmaz.',
+        'İzin açıkken projenin müşterisi değiştirilemez.Bu projede yeniden başlayacak talep yok; izni açmak hiçbir çalışmayı başlatmaz.',
       );
     });
     await waitFor(() => {
@@ -2410,7 +2445,7 @@ describe('projects: permissions', () => {
     // What the permission is, and how many waiting requests opening it starts: here none.
     await waitFor(() => {
       expect(dialog).toHaveTextContent(
-        'Sözleşmenin yapay zekâ kullanımına izin verdiğini işaretliyorsunuz. Bu izin müşterinin bütün projeleri için geçerlidir; ajanlar yalnızca yapay zekâ izni açık projelerde çalışır.Bu müşterinin projelerinde bekleyen talep yok; izni açmak hiçbir çalışmayı başlatmaz.',
+        'Sözleşmenin yapay zekâ kullanımına izin verdiğini işaretliyorsunuz. Bu izin müşterinin bütün projeleri için geçerlidir; ajanlar yalnızca yapay zekâ izni açık projelerde çalışır.Bu müşterinin projelerinde yeniden başlayacak talep yok; izni açmak hiçbir çalışmayı başlatmaz.',
       );
     });
     await waitFor(() => {
