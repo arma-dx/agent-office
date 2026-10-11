@@ -24,8 +24,8 @@ const employeeA: ContextInput = { companyId: ids.arma, userId: ids.employeeA };
 const approverA: ContextInput = { companyId: ids.arma, userId: ids.approverA };
 const sharedA: ContextInput = { companyId: ids.arma, userId: ids.sharedEmployee };
 
-// The event names of the Projects section (migrations 20261008101900_project_audit and
-// 20261008102100_project_owner_and_managers).
+// The event names of the Projects section (migrations 20261008101900_project_audit,
+// 20261008102100_project_owner_and_managers and 20261008102700_project_budget_and_milestones).
 const EVENTS = [
   'project_created',
   'project_name_changed',
@@ -40,6 +40,8 @@ const EVENTS = [
   'project_icon_changed',
   'project_target_date_changed',
   'project_changed',
+  'project_budget_changed',
+  'project_milestones_changed',
   'project_ai_permission_opened',
   'project_ai_permission_closed',
   'project_member_added',
@@ -214,13 +216,113 @@ describe.skipIf(noDatabase)('audit rows of projects and customers', () => {
         'project_target_date_changed',
       ]);
     });
-    // A column without an event of its own (an administrator's change) is still traced.
+    // The budget has an event of its own since step 3 of the Projects section (it was the one
+    // column an administrator could change that fell to the catch-all project_changed; no column
+    // is left without an event now, and the catch-all stays for a column a later migration
+    // adds). An administrator's change is traced without an actor.
     await inAdminTransaction(async (tx) => {
       const from = await mark(tx);
       await tx.setContext({});
-      await tx.exec('update office.projects set budget = 10 where id = $1', [ids.projectANoAi]);
+      await tx.exec(
+        `update office.projects set budget = 10, budget_currency = 'TRY' where id = $1`,
+        [ids.projectANoAi],
+      );
       expect(await since(tx, from)).toEqual([
-        projectRow('project_changed', null, ids.projectANoAi),
+        projectRow('project_budget_changed', null, ids.projectANoAi),
+      ]);
+    });
+  });
+
+  it('audit: a budget change and every milestone change write their own event, with ids only', async () => {
+    const SET_BUDGET =
+      'update office.projects set budget = $2::numeric, budget_currency = $3 where id = $1';
+    const SET_MILESTONES = 'update office.projects set milestones = $2::jsonb where id = $1';
+    const first = {
+      id: randomUUID(),
+      name: 'Gizli kilometre taşı',
+      date: '2026-11-15',
+      done: false,
+    };
+    await inTransaction(async (tx) => {
+      const id = ids.projectANoAi;
+      const from = await mark(tx);
+      // The founder changes the budget: set, another amount, another currency, cleared.
+      const budgets: [string | null, string | null][] = [
+        ['7654321.09', 'TRY'],
+        ['7654321.10', 'TRY'],
+        ['7654321.10', 'EUR'],
+        [null, null],
+      ];
+      for (const [amount, currency] of budgets) {
+        await tx.setContext(founderA);
+        expect(await tx.exec(SET_BUDGET, [id, amount, currency])).toBe(1);
+        // The same value again changes nothing and writes nothing.
+        expect(await tx.exec(SET_BUDGET, [id, amount, currency])).toBe(1);
+      }
+      expect(await since(tx, from)).toEqual(
+        budgets.map(() => projectRow('project_budget_changed', ids.founder, id)),
+      );
+
+      // A plain member keeps the milestones: added, ticked, renamed, removed.
+      const lists = [
+        [first],
+        [{ ...first, done: true }],
+        [{ ...first, done: true, name: 'Başka ad', date: null }],
+        [],
+      ];
+      const again = await mark(tx);
+      for (const list of lists) {
+        await tx.setContext(employeeA);
+        expect(await tx.exec(SET_MILESTONES, [id, JSON.stringify(list)])).toBe(1);
+        expect(await tx.exec(SET_MILESTONES, [id, JSON.stringify(list)])).toBe(1);
+      }
+      expect(await since(tx, again)).toEqual(
+        lists.map(() => projectRow('project_milestones_changed', ids.employeeA, id)),
+      );
+
+      // Both in one update, with a plain field: one row each, and no catch-all beside them.
+      const both = await mark(tx);
+      await tx.setContext(founderA);
+      await tx.exec(
+        `update office.projects set milestones = $2::jsonb, budget = 5, budget_currency = 'USD',
+           name = 'With money'
+         where id = $1`,
+        [id, JSON.stringify([first])],
+      );
+      expect((await since(tx, both)).map((row) => row.event)).toEqual([
+        'project_name_changed',
+        'project_budget_changed',
+        'project_milestones_changed',
+      ]);
+
+      // Ids and an event name: no amount, no currency and no name of a milestone in any column.
+      await tx.setContext(founderA);
+      const rows = await tx.rows<{ row: string }>(
+        `select to_jsonb(a)::text as row from office.audit_log a
+         where id > $1 and event ~ '^project_(budget|milestones)_'`,
+        [from],
+      );
+      expect(rows).toHaveLength(10);
+      for (const { row } of rows) {
+        for (const text of ['7654321', 'TRY', 'EUR', 'USD', 'Gizli', 'Başka', first.id]) {
+          expect(row).not.toContain(text);
+        }
+      }
+    });
+    // A project an administrator writes with a budget and milestones says so when it is opened.
+    await inAdminTransaction(async (tx) => {
+      const from = await mark(tx);
+      await tx.setContext({});
+      const id = randomUUID();
+      await tx.exec(
+        `insert into office.projects (id, company_id, name, budget, budget_currency, milestones)
+         values ($1, $2, 'Seeded', 10, 'TRY', $3::jsonb)`,
+        [id, ids.arma, JSON.stringify([first])],
+      );
+      expect(await since(tx, from)).toEqual([
+        projectRow('project_created', null, id),
+        projectRow('project_budget_changed', null, id),
+        projectRow('project_milestones_changed', null, id),
       ]);
     });
   });

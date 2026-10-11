@@ -19,7 +19,8 @@ import { createChallenge, openTestSession, stepUp } from './step-up.ts';
 // fields of a project, who opens and changes one, who its members are, and who sets the AI
 // permission of a project and the contract permissions of a customer. And part 1b (8 October
 // decision 44): the owner, the managers and the plain members of a project, who adds, removes and
-// gives roles. Every rule here is the database's own; the API and the panel only ask.
+// gives roles. And step 3 (8 October decision 17): the budget and the milestones of a project.
+// Every rule here is the database's own; the API and the panel only ask.
 
 const MIGRATIONS = new URL('../../../supabase/migrations/', import.meta.url);
 
@@ -427,9 +428,9 @@ describe.skipIf(noDatabase)('who opens and changes a project', () => {
           day: '2026-12-31',
         },
       ]);
+      // The budget and the milestones have their own rules now (the describe at the end of this
+      // file): a plain member is refused the budget by its guard and keeps the milestones.
       for (const assignment of [
-        'budget = 10',
-        `milestones = '[]'`,
         'ai_allowed = true',
         `company_id = '${ids.pillika}'`,
         `id = '${randomUUID()}'`,
@@ -1760,6 +1761,333 @@ describe.skipIf(noDatabase)('customers of the Projects section', () => {
       expect(
         (await tx.expectError(RECORD, await record('project_delete', ids.arma, randomUUID()))).code,
       ).toBe('22023');
+    });
+  });
+});
+
+describe.skipIf(noDatabase)('the budget and the milestones of a project', () => {
+  afterAll(closePools);
+
+  const SET_BUDGET =
+    'update office.projects set budget = $2::numeric, budget_currency = $3 where id = $1';
+  const SET_MILESTONES = 'update office.projects set milestones = $2::jsonb where id = $1';
+  const BUDGET_RULE = 'Only the owner, a manager or the founder changes the budget of a project';
+
+  /** The budget as the founder of Arma DX reads the row. Leaves the founder's context set. */
+  async function budgetOf(tx: Tx, projectId: string): Promise<[string | null, string | null]> {
+    await tx.setContext(founderA);
+    const [row] = await tx.rows<{ budget: string | null; budget_currency: string | null }>(
+      'select budget::text as budget, budget_currency from office.projects where id = $1',
+      [projectId],
+    );
+    if (!row) {
+      throw new Error('The founder does not read the project');
+    }
+    return [row.budget, row.budget_currency];
+  }
+
+  async function milestonesOf(tx: Tx, projectId: string): Promise<unknown> {
+    await tx.setContext(founderA);
+    const [row] = await tx.rows<{ milestones: unknown }>(
+      'select milestones from office.projects where id = $1',
+      [projectId],
+    );
+    return row?.milestones;
+  }
+
+  const milestone = (fields: Record<string, unknown> = {}): Record<string, unknown> => ({
+    id: randomUUID(),
+    name: 'Design approved',
+    date: null,
+    done: false,
+    ...fields,
+  });
+
+  it('budget: the owner, a manager and the founder set it; a plain member is refused', async () => {
+    await inTransaction(async (tx) => {
+      // employeeA the owner, approverA a manager, sharedEmployee a plain member; the founder is
+      // a member of no project.
+      await projectWithRoles(tx);
+      const setters: [ContextInput, string, string][] = [
+        [employeeA, '150000.00', 'TRY'],
+        [approverA, '99.50', 'USD'],
+        [founderA, '2500000.00', 'EUR'],
+      ];
+      for (const [context, amount, currency] of setters) {
+        await tx.setContext(context);
+        expect(await tx.exec(SET_BUDGET, [ids.projectA, amount, currency]), amount).toBe(1);
+        expect(await budgetOf(tx, ids.projectA)).toEqual([amount, currency]);
+      }
+      // A plain member neither sets, changes nor clears it; the value stays.
+      await tx.setContext(sharedA);
+      for (const [amount, currency] of [
+        ['1', 'TRY'],
+        ['2500000.00', 'USD'],
+        [null, null],
+      ]) {
+        const refused = await tx.expectError(SET_BUDGET, [ids.projectA, amount, currency]);
+        expect(refused.code, String(amount)).toBe('42501');
+        expect(refused.message).toBe(BUDGET_RULE);
+      }
+      expect(await budgetOf(tx, ids.projectA)).toEqual(['2500000.00', 'EUR']);
+      // An update that does not change the budget is not the guard's business.
+      await tx.setContext(sharedA);
+      expect(
+        await tx.exec(
+          `update office.projects set name = 'Renamed', budget = budget where id = $1`,
+          [ids.projectA],
+        ),
+      ).toBe(1);
+    });
+  });
+
+  it("budget: an employee who is no member, an external person, an agent context and the founder in the other company's context change nothing", async () => {
+    await inTransaction(async (tx) => {
+      const nobody: ContextInput[] = [
+        approverA,
+        externalA,
+        founderP,
+        employeeP,
+        { ...founderA, agentCode: 'KOR-1' },
+        { ...founderA, agentCode: 'KOR-1', projectId: ids.projectA },
+        // Rule 9: the API's role with only a company, only a person, or nothing in the context.
+        { companyId: ids.arma },
+        { userId: ids.founder },
+        {},
+      ];
+      for (const context of nobody) {
+        await tx.setContext(context);
+        expect(await tx.exec(SET_BUDGET, [ids.projectA, '1', 'TRY']), JSON.stringify(context)).toBe(
+          0,
+        );
+      }
+      expect(await budgetOf(tx, ids.projectA)).toEqual([null, null]);
+
+      // A manager of one project is a plain member in another: the role is asked per project.
+      await tx.setContext(founderA);
+      await tx.exec(ADD_MEMBER, [ids.arma, ids.projectA, ids.approverA]);
+      await tx.exec(ADD_MEMBER, [ids.arma, ids.projectANoAi, ids.approverA]);
+      await giveRole(tx, ids.projectA, ids.approverA, 'manager');
+      await tx.setContext(approverA);
+      expect(await tx.exec(SET_BUDGET, [ids.projectA, '10', 'TRY'])).toBe(1);
+      const refused = await tx.expectError(SET_BUDGET, [ids.projectANoAi, '10', 'TRY']);
+      expect(refused.code).toBe('42501');
+      expect(refused.message).toBe(BUDGET_RULE);
+      expect(await budgetOf(tx, ids.projectANoAi)).toEqual([null, null]);
+
+      // A new project names no budget: the column is in nobody's insert grant.
+      for (const context of [founderA, approverA]) {
+        await tx.setContext(context);
+        for (const [columns, values] of [
+          ['budget, budget_currency', `10, 'TRY'`],
+          ['budget', '10'],
+          ['budget_currency', `'TRY'`],
+        ]) {
+          expect(
+            (
+              await tx.expectError(
+                `insert into office.projects (company_id, name, ${String(columns)})
+                 values ($1, 'With money', ${String(values)})`,
+                [ids.arma],
+              )
+            ).code,
+            columns,
+          ).toBe('42501');
+        }
+      }
+    });
+  });
+
+  it("budget: the worker's role cannot write it, in anybody's name", async () => {
+    await inWorkerTransaction(async (tx) => {
+      const asWorker: ContextInput[] = [
+        founderA,
+        employeeA,
+        { ...founderA, agentCode: 'KOR-1' },
+        { ...founderA, agentCode: 'KOR-1', projectId: ids.projectA },
+      ];
+      for (const context of asWorker) {
+        await tx.setContext(context);
+        const refused: [string, unknown[]][] = [
+          [SET_BUDGET, [ids.projectA, '1', 'TRY']],
+          [SET_BUDGET, [ids.projectA, null, null]],
+          [SET_MILESTONES, [ids.projectA, JSON.stringify([milestone()])]],
+          [SET_MILESTONES, [ids.projectA, '[]']],
+        ];
+        for (const [sql, values] of refused) {
+          expect((await tx.expectError(sql, values)).code, sql).toBe('42501');
+        }
+      }
+    });
+    expect(
+      await adminQuery(
+        'select budget, budget_currency, milestones from office.projects where id = $1',
+        [ids.projectA],
+      ),
+    ).toEqual([{ budget: null, budget_currency: null, milestones: [] }]);
+  });
+
+  it('budget: an amount needs a currency, a currency an amount, and the amount is above zero', async () => {
+    await inTransaction(async (tx) => {
+      await tx.setContext(founderA);
+      const refused: [string | null, string | null][] = [
+        ['10', null],
+        [null, 'TRY'],
+        ['0', 'TRY'],
+        ['0.00', 'TRY'],
+        ['-5', 'TRY'],
+        ['10', 'GBP'],
+        ['10', 'try'],
+        // numeric takes NaN, and NaN > 0 is true: a budget is a number.
+        ['NaN', 'TRY'],
+      ];
+      for (const [amount, currency] of refused) {
+        expect(
+          (await tx.expectError(SET_BUDGET, [ids.projectA, amount, currency])).code,
+          `${String(amount)} ${String(currency)}`,
+        ).toBe('23514');
+      }
+      // Twelve whole digits are the column's width; one more does not fit.
+      expect(await tx.exec(SET_BUDGET, [ids.projectA, '999999999999.99', 'TRY'])).toBe(1);
+      expect((await tx.expectError(SET_BUDGET, [ids.projectA, '1000000000000', 'TRY'])).code).toBe(
+        '22003',
+      );
+      for (const currency of ['TRY', 'USD', 'EUR']) {
+        expect(await tx.exec(SET_BUDGET, [ids.projectA, '0.01', currency]), currency).toBe(1);
+        expect(await budgetOf(tx, ids.projectA)).toEqual(['0.01', currency]);
+      }
+      // Clearing both takes the budget away.
+      expect(await tx.exec(SET_BUDGET, [ids.projectA, null, null])).toBe(1);
+      expect(await budgetOf(tx, ids.projectA)).toEqual([null, null]);
+    });
+  });
+
+  it('budget: a write without a person in the context is left alone', async () => {
+    await inAdminTransaction(async (tx) => {
+      await tx.setContext({});
+      expect(await tx.exec(SET_BUDGET, [ids.projectA, '500', 'USD'])).toBe(1);
+      // The shape holds for an administrator too.
+      expect((await tx.expectError(SET_BUDGET, [ids.projectA, '500', null])).code).toBe('23514');
+      // With a person in the context the privileged role is held to the rule: a plain member, an
+      // agent run in the founder's name, and the founder of the other company.
+      for (const context of [
+        employeeA,
+        { ...founderA, agentCode: 'KOR-1', projectId: ids.projectA },
+        founderP,
+      ]) {
+        await tx.setContext(context);
+        const refused = await tx.expectError(SET_BUDGET, [ids.projectA, '1', 'TRY']);
+        expect(refused.code, JSON.stringify(context)).toBe('42501');
+        expect(refused.message).toBe(BUDGET_RULE);
+      }
+      await tx.setContext(founderA);
+      expect(await tx.exec(SET_BUDGET, [ids.projectA, '2', 'TRY'])).toBe(1);
+      expect(
+        await tx.rows(
+          'select budget::text as budget, budget_currency from office.projects where id = $1',
+          [ids.projectA],
+        ),
+      ).toEqual([{ budget: '2.00', budget_currency: 'TRY' }]);
+    });
+  });
+
+  it('milestones: only a list of the fixed shape is stored', async () => {
+    const ok = milestone();
+    const bad: Record<string, unknown> = {
+      'not a list': {},
+      'a string': 'x',
+      'a string in the list': ['x'],
+      'a list in the list': [[ok]],
+      'an extra key': [{ ...ok, note: 'x' }],
+      'a missing key': [{ id: ok.id, name: 'a', done: false }],
+      'another key instead of one': [{ id: ok.id, name: 'a', done: false, day: null }],
+      'an upper-case id': [{ ...ok, id: String(ok.id).toUpperCase() }],
+      'an id that is no uuid': [{ ...ok, id: 'first' }],
+      'an id that is a number': [{ ...ok, id: 1 }],
+      'the same id twice': [ok, { ...ok, name: 'Another' }],
+      'a name that is not trimmed': [{ ...ok, name: ' a' }],
+      'a name of spaces': [{ ...ok, name: '  ' }],
+      'an empty name': [{ ...ok, name: '' }],
+      'a name of 121 characters': [{ ...ok, name: 'a'.repeat(121) }],
+      'a name that is a number': [{ ...ok, name: 5 }],
+      'month 13': [{ ...ok, date: '2026-13-01' }],
+      'a day that does not exist': [{ ...ok, date: '2026-02-30' }],
+      'year 0000': [{ ...ok, date: '0000-01-01' }],
+      'a day with a time': [{ ...ok, date: '2026-01-01T00:00' }],
+      'a day that is a number': [{ ...ok, date: 20260101 }],
+      'done as text': [{ ...ok, done: 'yes' }],
+      'done as null': [{ ...ok, done: null }],
+      '51 entries': Array.from({ length: 51 }, () => milestone()),
+    };
+    // For an administrator and for a member alike: the check holds for every writer.
+    await inAdminTransaction(async (tx) => {
+      await tx.setContext({});
+      for (const [name, value] of Object.entries(bad)) {
+        expect(
+          (await tx.expectError(SET_MILESTONES, [ids.projectA, JSON.stringify(value)])).code,
+          name,
+        ).toBe('23514');
+      }
+      expect((await tx.expectError(SET_MILESTONES, [ids.projectA, null])).code).toBe('23502');
+    });
+    await inTransaction(async (tx) => {
+      await tx.setContext(employeeA);
+      for (const [name, value] of Object.entries(bad)) {
+        expect(
+          (await tx.expectError(SET_MILESTONES, [ids.projectA, JSON.stringify(value)])).code,
+          name,
+        ).toBe('23514');
+      }
+      const good: unknown[][] = [
+        [],
+        [ok],
+        [{ ...ok, name: 'a'.repeat(120), date: '2028-02-29', done: true }, milestone()],
+        Array.from({ length: 50 }, () => milestone({ date: '2026-12-31' })),
+      ];
+      for (const list of good) {
+        await tx.setContext(employeeA);
+        expect(await tx.exec(SET_MILESTONES, [ids.projectA, JSON.stringify(list)])).toBe(1);
+        expect(await milestonesOf(tx, ids.projectA)).toEqual(list);
+      }
+    });
+  });
+
+  it('milestones: a plain member writes them, and nobody who cannot change the project does', async () => {
+    await inTransaction(async (tx) => {
+      const list = [milestone({ date: '2026-11-15' })];
+      // employeeA is a plain member of projectA in the fixtures; the founder is no member.
+      for (const context of [employeeA, founderA]) {
+        await tx.setContext(context);
+        expect(await tx.exec(SET_MILESTONES, [ids.projectA, JSON.stringify(list)])).toBe(1);
+      }
+      const nobody: ContextInput[] = [
+        approverA,
+        externalA,
+        founderP,
+        employeeP,
+        { ...founderA, agentCode: 'KOR-1' },
+        { ...employeeA, agentCode: 'KOR-1', projectId: ids.projectA },
+        { companyId: ids.arma },
+        { userId: ids.founder },
+        {},
+      ];
+      for (const context of nobody) {
+        await tx.setContext(context);
+        expect(await tx.exec(SET_MILESTONES, [ids.projectA, '[]']), JSON.stringify(context)).toBe(
+          0,
+        );
+      }
+      expect(await milestonesOf(tx, ids.projectA)).toEqual(list);
+      // A new project names no milestones: the column is in nobody's insert grant.
+      await tx.setContext(employeeA);
+      expect(
+        (
+          await tx.expectError(
+            `insert into office.projects (company_id, name, milestones) values ($1, 'x', $2::jsonb)`,
+            [ids.arma, JSON.stringify(list)],
+          )
+        ).code,
+      ).toBe('42501');
     });
   });
 });
