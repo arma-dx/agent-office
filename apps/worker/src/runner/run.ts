@@ -745,8 +745,16 @@ export async function runAgentJob(
     const ownRequest = context.userId === task.requester_user_id;
     const trialRefused =
       card.status === 'trial' && !(ownRequest && task.requester_role === 'founder');
+    // The card says whether the agent runs inside a project (project_context). Only what the
+    // first two cards need is built: "if_available" runs in the request's project when it has
+    // one and without a project when it has none. A card without the field runs only on a
+    // request without a project. "required" and "per_project" are not built yet: such a card
+    // runs nothing.
+    const projectServed =
+      card.project_context === 'if_available' ||
+      (card.project_context === undefined && (context.projectId ?? null) === null);
     const closeWith =
-      card.status === 'draft' || trialRefused || offered.length === 0
+      card.status === 'draft' || trialRefused || offered.length === 0 || !projectServed
         ? 'card_not_runnable'
         : deps.callModel === null
           ? 'model_unavailable'

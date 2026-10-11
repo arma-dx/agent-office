@@ -5,6 +5,7 @@ companies: [armadx, pillika]
 version: "0.1"
 status: active
 owner: founder
+project_context: if_available   # talebin projesi varsa o projenin bağlamında koşar (SONRA W-g)
 
 purpose: >
   Verilen kaynak bilgiden gönderi metinleri, video senaryoları ve etiket setleri hazırlar;

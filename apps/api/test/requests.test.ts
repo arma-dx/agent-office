@@ -2904,7 +2904,7 @@ describe.skipIf(noDatabase)('requests', () => {
       expect(await numbers(founder, 'KOR-1')).toEqual(kor);
     });
 
-    it('counts for the reader: a request inside a project is counted only for its members and the founder', async () => {
+    it('a project request stands on a desk only for a reader who reads it, and a held one on none', async () => {
       const projectId = randomUUID();
       const created = await post(employee, '/api/projects', { id: projectId, name: 'Ofis sayımı' });
       expect(created.statusCode).toBe(201);
@@ -2915,16 +2915,14 @@ describe.skipIf(noDatabase)('requests', () => {
         employee: await numbers(employee, 'KOR-1'),
         colleague: await numbers(colleague, 'KOR-1'),
       };
-      // A request inside the project, opened by its member with the API's role (the form has no
-      // project field yet).
+      // A request inside the project, opened by its member through the form's own route.
       const requestId = randomUUID();
-      await withContext(besidePool, { companyId: ids.arma, userId: ids.employee }, (client) =>
-        client.query(
-          `insert into office.tasks (id, company_id, project_id, kind, title, description)
-           values ($1, $2, $3, 'request', 'Proje içinde talep', 'Proje içinde talep')`,
-          [requestId, ids.arma, projectId],
-        ),
-      );
+      const opened = await post(employee, '/api/requests', {
+        id: requestId,
+        text: 'Proje içinde talep',
+        projectId,
+      });
+      expect(opened.statusCode, opened.body).toBe(201);
       expect((await read(employee, requestId)).stage).toBe('routing');
       expect(await numbers(founder, 'KOR-1')).toEqual(plus(before.founder, [1, 0, 0]));
       expect(await numbers(employee, 'KOR-1')).toEqual(plus(before.employee, [1, 0, 0]));
@@ -2942,7 +2940,30 @@ describe.skipIf(noDatabase)('requests', () => {
       );
       expect(added.statusCode).toBe(200);
       expect(await numbers(colleague, 'KOR-1')).toEqual(plus(before.colleague, [1, 0, 0]));
+
+      // Held by a closed AI permission (rule 12): no agent has the turn and no agent failed, so
+      // the request stands on no desk, for anybody. It is with the founder, on Bugün.
+      const closed = await put(founder, `/api/projects/${projectId}/ai-permission`, {
+        allowed: false,
+      });
+      expect(closed.statusCode, closed.body).toBe(200);
+      expect(await read(founder, requestId)).toMatchObject({
+        stage: 'fell_to_person',
+        cause: 'ai_permission_closed',
+        turn: { kind: 'founder' },
+      });
+      expect(await numbers(founder, 'KOR-1')).toEqual(before.founder);
+      expect(await numbers(employee, 'KOR-1')).toEqual(before.employee);
+      expect(await numbers(colleague, 'KOR-1')).toEqual(before.colleague);
+      for (const reader of [founder, employee, colleague]) {
+        expect((await office(reader)).res.body).not.toContain(requestId);
+      }
+      // Open again: the coordinator has the turn again, and the request is back on its desk.
+      await adminQuery('update office.projects set ai_allowed = true where id = $1', [projectId]);
+      expect((await read(founder, requestId)).stage).toBe('routing');
+      expect(await numbers(founder, 'KOR-1')).toEqual(plus(before.founder, [1, 0, 0]));
       await post(founder, `/api/requests/${requestId}/close`, { reason: 'Deneme bitti.' });
+      expect(await numbers(founder, 'KOR-1')).toEqual(before.founder);
     });
 
     describe('in two companies', () => {

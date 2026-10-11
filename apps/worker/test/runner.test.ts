@@ -2619,6 +2619,76 @@ describe.skipIf(noDatabase)('a request inside a project', () => {
     expect(await runRow(overdue)).toMatchObject({ status: 'failed', error_code: 'worker_lost' });
   });
 
+  it('project_context: only "if_available" runs inside a project; a card without the field runs outside one', async () => {
+    const projectId = await project(true);
+    // The coordinator's stored card with the field removed or set, put back at the end.
+    const set = (value: string | null) =>
+      admin(
+        value === null
+          ? `update office.card_versions v set content = v.content #- '{card,project_context}'
+             from office.agent_definitions d where d.current_version_id = v.id and d.code = 'KOR-1'`
+          : `update office.card_versions v
+             set content = jsonb_set(v.content, '{card,project_context}', to_jsonb($1::text))
+             from office.agent_definitions d where d.current_version_id = v.id and d.code = 'KOR-1'`,
+        value === null ? [] : [value],
+      );
+    // The repository's two cards say it themselves.
+    expect(
+      await admin(
+        `select d.code, v.content -> 'card' ->> 'project_context' as mode
+         from office.agent_definitions d join office.card_versions v on v.id = d.current_version_id
+         order by d.code`,
+      ),
+    ).toEqual([
+      { code: 'KOR-1', mode: 'if_available' },
+      { code: 'SOS-2', mode: 'if_available' },
+    ]);
+    try {
+      for (const mode of [null, 'required', 'per_project']) {
+        await set(mode);
+        const taskId = await openIn(projectId);
+        const model = new ScriptedModel([]);
+        const { deps, jobs } = await runner(model);
+        const result = await runAgentJob(deps, job(taskId, 'KOR-1', ids.employee));
+        // A run is opened and closed at once, so that the request's page can say why.
+        expect(result, String(mode)).toMatchObject({ outcome: 'card_not_runnable', modelCalls: 0 });
+        expect(model.requests).toHaveLength(0);
+        expect(jobs.sent).toEqual([]);
+        expect(await runsOf(taskId)).toMatchObject([
+          { status: 'failed', error_code: 'card_not_runnable', project_id: projectId },
+        ]);
+      }
+      // Without the field the card runs on a request without a project, as it always did.
+      await set(null);
+      const plain = await openIn(null);
+      const routes = await runner(new ScriptedModel([toolUse('route_task', ROUTE_TO_SOS)]));
+      expect((await runAgentJob(routes.deps, job(plain, 'KOR-1', ids.employee))).outcome).toBe(
+        'routed',
+      );
+      // The two modes that are not built run nothing, with or without a project.
+      for (const mode of ['required', 'per_project']) {
+        await set(mode);
+        const outside = await openIn(null);
+        const idle = new ScriptedModel([]);
+        const none = await runner(idle);
+        expect(
+          (await runAgentJob(none.deps, job(outside, 'KOR-1', ids.employee))).outcome,
+          mode,
+        ).toBe('card_not_runnable');
+        expect(idle.requests).toHaveLength(0);
+      }
+    } finally {
+      await set('if_available');
+    }
+    // "if_available": inside a project and without one.
+    for (const where of [projectId, null]) {
+      const taskId = await openIn(where);
+      const { deps } = await runner(new ScriptedModel([toolUse('route_task', ROUTE_TO_SOS)]));
+      expect((await runAgentJob(deps, job(taskId, 'KOR-1', ids.employee))).outcome).toBe('routed');
+      expect(await runsOf(taskId)).toMatchObject([{ status: 'completed', project_id: where }]);
+    }
+  });
+
   // In whose name a run goes (8 October decision 45) ----------------------------------------------
 
   it('a requester who was taken out of the project: the request runs in the founder’s name', async () => {

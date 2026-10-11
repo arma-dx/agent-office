@@ -7,8 +7,11 @@ import {
   ensureAgentRunQueues,
 } from '@agent-office/db';
 import {
+  agentOpenResponseSchema,
   approvalDecisionDetails,
   approvalDeskSchema,
+  projectAiPermissionAnswerSchema,
+  projectAiPermissionDetails,
   requestDetailSchema,
   requestListSchema,
   type ApprovalDesk,
@@ -1008,4 +1011,405 @@ describe.skipIf(noDatabase)('a request from the first line to "done"', () => {
     expect(errors2).toEqual([]);
     await post(founder, `/api/requests/${id}/close`);
   }, 60_000);
+
+  // Requests inside a project, and work that goes on by itself (8 October decisions 11, 17, 45 to
+  // 49): the API, the real queue and the runner together.
+
+  const put = (session: string, url: string, payload: object) =>
+    send(server, session, 'PUT', url, { company: ids.arma, payload });
+
+  /** The founder opens a project with the employee as a member and opens its AI permission. */
+  async function projectWithAgents(name: string): Promise<string> {
+    const id = randomUUID();
+    const created = await post(founder, '/api/projects', {
+      id,
+      name,
+      memberIds: [ids.employee],
+    });
+    expect(created.statusCode, created.body).toBe(201);
+    expect((await openPermission(id)).restarted).toBe(0);
+    return id;
+  }
+
+  /** The founder opens the project's AI permission with the passkey; the answer of the route. */
+  async function openPermission(projectId: string) {
+    const res = await put(founder, `/api/projects/${projectId}/ai-permission`, {
+      allowed: true,
+      customerId: null,
+      stepUp: await signStepUp(server, founder, founderKey, {
+        purpose: 'project_ai_permission',
+        companyId: ids.arma,
+        subjectId: projectId,
+        details: projectAiPermissionDetails(null),
+      }),
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    return projectAiPermissionAnswerSchema.parse(res.json());
+  }
+
+  /** The founder's switch of SOS-2; an opening answers how many waiting requests it started. */
+  async function switchUnitAgent(status: 'enabled' | 'stopped'): Promise<number> {
+    const res = await put(founder, '/api/agents/SOS-2/switch', { status });
+    expect(res.statusCode, res.body).toBe(200);
+    return status === 'enabled' ? agentOpenResponseSchema.parse(res.json()).restarted : 0;
+  }
+
+  /**
+   * Earlier cases left requests that wait for SOS-2. One stop and one opening start them once;
+   * their jobs are taken off the queue unrun, so that a case meets only its own.
+   */
+  async function settle(): Promise<void> {
+    await switchUnitAgent('stopped');
+    await switchUnitAgent('enabled');
+    for (;;) {
+      const [next] = await workerQueue.fetch(AGENT_RUN_QUEUE);
+      if (!next) break;
+      await workerQueue.complete(AGENT_RUN_QUEUE, next.id);
+    }
+  }
+
+  const runsOf = (id: string) =>
+    admin<{
+      agent_code: string;
+      status: string;
+      error_code: string | null;
+      user_id: string;
+      project_id: string | null;
+    }>(
+      `select agent_code, status, error_code, user_id, project_id from office.runs
+       where task_id = $1 order by started_at, id`,
+      [id],
+    );
+
+  /** The request's project fact, as the model was given it. */
+  const dataOf = (model: ScriptedModel): string => JSON.stringify(model.requests[0]?.messages[0]);
+
+  it('a request inside a project, from the form to the requester’s acceptance', async () => {
+    const projectId = await projectWithAgents('Lansman projesi');
+    const stranger = await sessionOf(server, accounts.holder);
+    const id = randomUUID();
+    /** An employee who is no member of the project: the request does not exist for them. */
+    const hidden = async (): Promise<void> => {
+      const res = await get(stranger, `/api/requests/${id}`);
+      expect([res.statusCode, errorCode(res)]).toEqual([404, 'not_found']);
+      const list = requestListSchema.parse((await get(stranger, '/api/requests')).json());
+      expect(list.requests.map((request) => request.id)).not.toContain(id);
+      const inProject = requestListSchema.parse(
+        (await get(stranger, `/api/requests?project=${projectId}`)).json(),
+      );
+      expect(inProject.requests).toEqual([]);
+      expect(await waitingFor(stranger, id)).toEqual({ approval: false, acceptance: false });
+    };
+
+    const created = await post(employee, '/api/requests', {
+      id,
+      text: 'Lansman için LinkedIn gönderisi yaz',
+      projectId,
+    });
+    expect(created.statusCode, created.body).toBe(201);
+    expect(requestDetailSchema.parse(created.json())).toMatchObject({
+      stage: 'routing',
+      project: { id: projectId, name: 'Lansman projesi' },
+      agentsMayWork: true,
+      requesterReads: true,
+    });
+    // The job on the queue names four ids and nothing of the project (rule 10).
+    expect(
+      await admin(`select data from pgboss.job where name = $1 and data ->> 'taskId' = $2`, [
+        AGENT_RUN_QUEUE,
+        id,
+      ]),
+    ).toEqual([
+      { data: { companyId: ids.arma, userId: ids.employee, taskId: id, agentCode: 'KOR-1' } },
+    ]);
+    await hidden();
+
+    // Both agents work inside the project; the model is told its name as a fact.
+    const kor = new ScriptedModel([toolUse('route_task', ROUTE_TO_SOS)]);
+    expect(await work(kor)).toEqual({ outcome: 'routed', agent: 'KOR-1' });
+    expect(dataOf(kor)).toContain('project\\":\\"Lansman projesi');
+    await hidden();
+    const sos = new ScriptedModel([toolUse('submit_for_approval', RESULT)]);
+    expect(await work(sos)).toEqual({ outcome: 'submitted', agent: 'SOS-2' });
+    expect(dataOf(sos)).toContain('project\\":\\"Lansman projesi');
+    expect(await runsOf(id)).toEqual([
+      {
+        agent_code: 'KOR-1',
+        status: 'completed',
+        error_code: null,
+        user_id: ids.employee,
+        project_id: projectId,
+      },
+      {
+        agent_code: 'SOS-2',
+        status: 'completed',
+        error_code: null,
+        user_id: ids.employee,
+        project_id: projectId,
+      },
+    ]);
+    await hidden();
+
+    // The founder approves with the passkey; the card names the project.
+    const waiting = await detail(founder, id);
+    expect(waiting).toMatchObject({
+      stage: 'unit_approval',
+      waitingForMe: true,
+      project: { id: projectId },
+      approval: { project: { id: projectId, name: 'Lansman projesi' }, agentsMayWork: true },
+    });
+    const approved = await approve(waiting.approval?.id ?? '', 'A');
+    expect(approved).toMatchObject({
+      stage: 'requester_approval',
+      turn: { kind: 'person', userId: ids.employee },
+    });
+    await hidden();
+
+    // The employee accepts: done, still inside its project, still hidden from the stranger.
+    const accepted = await post(employee, `/api/requests/${id}/acceptance`, {
+      decision: 'approved',
+    });
+    expect(accepted.statusCode, accepted.body).toBe(200);
+    expect(requestDetailSchema.parse(accepted.json())).toMatchObject({
+      status: 'done',
+      stage: 'done',
+      project: { id: projectId, name: 'Lansman projesi' },
+      result: { option: { code: 'A' } },
+    });
+    await hidden();
+    for (const session of [employee, founder]) {
+      const list = requestListSchema.parse(
+        (await get(session, `/api/requests?project=${projectId}`)).json(),
+      );
+      expect(list.requests.map((request) => request.id)).toEqual([id]);
+    }
+    expect(await workerQueue.fetch(AGENT_RUN_QUEUE)).toEqual([]);
+    expect(errors).toEqual([]);
+  });
+
+  it('a requester is taken out of the project after the routing: the unit agent works in the founder’s name, the founder approves and accepts in their place', async () => {
+    const projectId = await projectWithAgents('Sahibi ayrılan talep');
+    const id = randomUUID();
+    const created = await post(employee, '/api/requests', {
+      id,
+      text: 'Lansman için LinkedIn gönderisi yaz',
+      projectId,
+    });
+    expect(created.statusCode, created.body).toBe(201);
+    expect(await work(new ScriptedModel([toolUse('route_task', ROUTE_TO_SOS)]))).toEqual({
+      outcome: 'routed',
+      agent: 'KOR-1',
+    });
+    // The owner of the project (the founder) takes the employee out of it.
+    const removed = await send(
+      server,
+      founder,
+      'DELETE',
+      `/api/projects/${projectId}/members/${ids.employee}`,
+      { company: ids.arma },
+    );
+    expect(removed.statusCode, removed.body).toBe(200);
+    expect((await get(employee, `/api/requests/${id}`)).statusCode).toBe(404);
+    expect(await detail(founder, id)).toMatchObject({
+      stage: 'working',
+      turn: { kind: 'agent', code: 'SOS-2' },
+      requester: { userId: ids.employee },
+      requesterReads: false,
+    });
+
+    // The job that was sent with the routing names the employee; the run goes in the founder's
+    // name, and the work is done.
+    expect(await work(new ScriptedModel([toolUse('submit_for_approval', RESULT)]))).toEqual({
+      outcome: 'submitted',
+      agent: 'SOS-2',
+    });
+    expect((await runsOf(id)).map((run) => [run.agent_code, run.status, run.user_id])).toEqual([
+      ['KOR-1', 'completed', ids.employee],
+      ['SOS-2', 'completed', ids.founder],
+    ]);
+
+    // The founder approves as the unit's approver, and then gives the requester's approval in
+    // the employee's place: a second, separate act.
+    const waiting = await detail(founder, id);
+    expect(waiting).toMatchObject({ stage: 'unit_approval', waitingForMe: true, acceptance: null });
+    const approved = await approve(waiting.approval?.id ?? '', 'B');
+    expect(approved).toMatchObject({
+      status: 'awaiting_approval',
+      stage: 'requester_approval',
+      turn: { kind: 'founder' },
+      waitingForMe: true,
+      requesterReads: false,
+      acceptance: { round: 1, inPlaceOfRequester: true },
+    });
+    expect(await waitingFor(founder, id)).toEqual({ approval: false, acceptance: true });
+    expect((await desk(founder)).acceptances.find((card) => card.requestId === id)).toMatchObject({
+      forRequester: { userId: ids.employee },
+    });
+    const accepted = await post(founder, `/api/requests/${id}/acceptance`, {
+      decision: 'approved',
+    });
+    expect(accepted.statusCode, accepted.body).toBe(200);
+    const done = requestDetailSchema.parse(accepted.json());
+    expect(done).toMatchObject({
+      status: 'done',
+      requester: { userId: ids.employee },
+      result: { option: { code: 'B' } },
+    });
+    expect(done.journey.at(-1)).toMatchObject({
+      kind: 'acceptance',
+      status: 'approved',
+      decidedBy: { userId: ids.founder },
+    });
+    expect((await get(employee, `/api/requests/${id}`)).statusCode).toBe(404);
+    expect(await workerQueue.fetch(AGENT_RUN_QUEUE)).toEqual([]);
+    expect(errors).toEqual([]);
+  });
+
+  it('a stopped agent is opened again: the request it was working on starts again by itself and reaches the approver', async () => {
+    await settle();
+    const id = randomUUID();
+    const created = await post(employee, '/api/requests', {
+      id,
+      text: 'LinkedIn için gönderi yaz\nKaynak: İzmir ofisimiz 1 Ekim’de açıldı.',
+    });
+    expect(created.statusCode, created.body).toBe(201);
+    expect(await work(new ScriptedModel([toolUse('route_task', ROUTE_TO_SOS)]))).toEqual({
+      outcome: 'routed',
+      agent: 'KOR-1',
+    });
+    try {
+      // The founder stops the agent while its model call is open: the run ends before its next
+      // step, and nothing of the answer is stored.
+      const stoppedMidway = new ScriptedModel([
+        async () => {
+          await switchUnitAgent('stopped');
+          return toolUse('submit_for_approval', RESULT);
+        },
+      ]);
+      expect(await work(stoppedMidway)).toEqual({ outcome: 'stopped', agent: 'SOS-2' });
+      for (const session of [founder, employee]) {
+        expect(await detail(session, id)).toMatchObject({
+          status: 'in_progress',
+          stage: 'fell_to_person',
+          cause: 'agent_stopped',
+          turn: { kind: 'founder' },
+          waitingForMe: session === founder,
+          approval: null,
+        });
+      }
+      expect(await workerQueue.fetch(AGENT_RUN_QUEUE)).toEqual([]);
+
+      // The founder opens the agent: the request is started again, by that very act.
+      expect(await switchUnitAgent('enabled')).toBe(1);
+    } finally {
+      await switchUnitAgent('enabled');
+    }
+    expect(
+      await admin(
+        `select data from pgboss.job
+         where name = $1 and data ->> 'taskId' = $2 and state = 'created'`,
+        [AGENT_RUN_QUEUE, id],
+      ),
+    ).toEqual([
+      { data: { companyId: ids.arma, userId: ids.employee, taskId: id, agentCode: 'SOS-2' } },
+    ]);
+    expect(await detail(founder, id)).toMatchObject({
+      stage: 'working',
+      cause: null,
+      turn: { kind: 'agent', code: 'SOS-2' },
+      waitingForMe: false,
+    });
+    // The worker takes the job like any other, and the result reaches the approver.
+    expect(await work(new ScriptedModel([toolUse('submit_for_approval', RESULT)]))).toEqual({
+      outcome: 'submitted',
+      agent: 'SOS-2',
+    });
+    expect(await detail(founder, id)).toMatchObject({
+      status: 'awaiting_approval',
+      stage: 'unit_approval',
+      waitingForMe: true,
+      approval: { agent: { code: 'SOS-2' } },
+    });
+    // Exactly two runs of the unit agent: the one the switch stopped, and the one that did the
+    // work.
+    expect(
+      (await runsOf(id))
+        .filter((run) => run.agent_code === 'SOS-2')
+        .map((run) => [run.status, run.error_code]),
+    ).toEqual([
+      ['stopped', 'agent_stopped'],
+      ['completed', null],
+    ]);
+    expect(journeyOf(await detail(founder, id))).toEqual([
+      'run:completed',
+      'routing:',
+      'run:stopped',
+      'run:completed',
+      'approval:pending',
+    ]);
+    expect(await workerQueue.fetch(AGENT_RUN_QUEUE)).toEqual([]);
+    expect(errors).toEqual([]);
+    await post(founder, `/api/requests/${id}/close`);
+  });
+
+  it('a closed AI permission is opened again: the held request starts again by itself', async () => {
+    const projectId = await projectWithAgents('İzni kapanıp açılan proje');
+    const id = randomUUID();
+    const created = await post(employee, '/api/requests', {
+      id,
+      text: 'Lansman için LinkedIn gönderisi yaz',
+      projectId,
+    });
+    expect(created.statusCode, created.body).toBe(201);
+    expect(await work(new ScriptedModel([toolUse('route_task', ROUTE_TO_SOS)]))).toEqual({
+      outcome: 'routed',
+      agent: 'KOR-1',
+    });
+    // The founder closes the permission while the unit agent's job is on the queue. No passkey.
+    const closed = await put(founder, `/api/projects/${projectId}/ai-permission`, {
+      allowed: false,
+    });
+    expect(closed.statusCode, closed.body).toBe(200);
+    // The worker takes the job: no run, no model call (rule 12), and the trace of the refusal.
+    const never = new ScriptedModel([]);
+    expect(await work(never)).toEqual({ outcome: 'ai_not_allowed', agent: 'SOS-2' });
+    expect(never.requests).toHaveLength(0);
+    expect((await runsOf(id)).map((run) => run.agent_code)).toEqual(['KOR-1']);
+    for (const session of [founder, employee]) {
+      expect(await detail(session, id)).toMatchObject({
+        status: 'in_progress',
+        stage: 'fell_to_person',
+        cause: 'ai_permission_closed',
+        turn: { kind: 'founder' },
+        waitingForMe: session === founder,
+        agentsMayWork: false,
+      });
+    }
+    expect(await workerQueue.fetch(AGENT_RUN_QUEUE)).toEqual([]);
+
+    // Opened again with the passkey: the request it held is started again by that very act.
+    expect((await openPermission(projectId)).restarted).toBe(1);
+    expect(await detail(founder, id)).toMatchObject({
+      stage: 'working',
+      cause: null,
+      turn: { kind: 'agent', code: 'SOS-2' },
+      agentsMayWork: true,
+    });
+    expect(await work(new ScriptedModel([toolUse('submit_for_approval', RESULT)]))).toEqual({
+      outcome: 'submitted',
+      agent: 'SOS-2',
+    });
+    expect(await detail(founder, id)).toMatchObject({
+      stage: 'unit_approval',
+      waitingForMe: true,
+      project: { id: projectId },
+    });
+    expect((await runsOf(id)).map((run) => [run.agent_code, run.status, run.project_id])).toEqual([
+      ['KOR-1', 'completed', projectId],
+      ['SOS-2', 'completed', projectId],
+    ]);
+    expect(await workerQueue.fetch(AGENT_RUN_QUEUE)).toEqual([]);
+    expect(errors).toEqual([]);
+    await post(founder, `/api/requests/${id}/close`);
+  });
 });
