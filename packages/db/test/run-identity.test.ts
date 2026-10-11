@@ -1,5 +1,12 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import type { ContextInput } from '../src/context.ts';
+import {
+  countPendingDecisions,
+  decideAcceptance,
+  listAcceptances,
+  listPendingAcceptances,
+  readRequest,
+} from '../src/requests.ts';
 import { ids } from './fixtures.ts';
 import {
   asRole,
@@ -521,6 +528,81 @@ describe.skipIf(noDatabase)('in whose name a run on a request goes', () => {
         ).toEqual([{ decided_by_user_id: ids.founder, status: 'done' }]);
       });
     }
+  });
+
+  it('the statements say whether the requester reads the request', async () => {
+    await inAdminTransaction(async (tx) => {
+      const inside = await requestOf(tx, employeeA, ids.projectA);
+      const outside = await requestOf(tx, employeeA);
+      const reads = async (task: string): Promise<boolean | undefined> => {
+        await asPerson(tx, founderA);
+        return (await readRequest(tx.client, 'KOR-1', task))?.requester_reads;
+      };
+      expect([await reads(inside), await reads(outside)]).toEqual([true, true]);
+      // The requester reads it as their own, too.
+      await asPerson(tx, employeeA);
+      expect((await readRequest(tx.client, 'KOR-1', inside))?.requester_reads).toBe(true);
+      await lose(tx, 'left_project');
+      expect([await reads(inside), await reads(outside)]).toEqual([false, true]);
+      await asPerson(tx, employeeA);
+      expect(await readRequest(tx.client, 'KOR-1', inside)).toBeNull();
+      await addBack(tx);
+      expect([await reads(inside), await reads(outside)]).toEqual([true, true]);
+      await lose(tx, 'external');
+      expect([await reads(inside), await reads(outside)]).toEqual([false, false]);
+    });
+  });
+
+  it('the lists hold a stand-in acceptance for the founder and for nobody else', async () => {
+    await inAdminTransaction(async (tx) => {
+      const task = await approvedResult(tx);
+      const waits = async (
+        reader: ContextInput,
+      ): Promise<{ listed: (boolean | null)[]; counted: number }> => {
+        await asPerson(tx, reader);
+        const listed = (await listPendingAcceptances(tx.client))
+          .filter((row) => row.task_id === task)
+          .map((row) => row.reader_stands_in);
+        return { listed, counted: (await countPendingDecisions(tx.client)).acceptances };
+      };
+      const base = {
+        founder: (await waits(founderA)).counted,
+        requester: (await waits(employeeA)).counted,
+      };
+      // While the requester reads the request it waits for them alone.
+      expect(await waits(employeeA)).toEqual({ listed: [false], counted: base.requester });
+      expect(await waits(founderA)).toEqual({ listed: [], counted: base.founder });
+
+      await lose(tx, 'left_project');
+      expect(await waits(founderA)).toEqual({ listed: [true], counted: base.founder + 1 });
+      expect(await waits(employeeA)).toEqual({ listed: [], counted: base.requester - 1 });
+      // An employee with the approval right is not asked: the founder stands in, nobody else.
+      expect((await waits(approverA)).listed).toEqual([]);
+      expect((await waits(colleagueA)).listed).toEqual([]);
+      expect((await waits(founderP)).listed).toEqual([]);
+      // Every row of the request says who stands in, also for the founder reading the page.
+      await asPerson(tx, founderA);
+      expect(
+        (await listAcceptances(tx.client, task)).map((row) => [
+          row.reader_stands_in,
+          row.decided_by_user_id,
+        ]),
+      ).toEqual([[true, null]]);
+
+      // The statement the route uses: the founder's answer is stored, the others' is not.
+      await asPerson(tx, approverA);
+      expect(await decideAcceptance(tx.client, task, { decision: 'approved' })).toBe(false);
+      await asPerson(tx, founderA);
+      expect(await decideAcceptance(tx.client, task, { decision: 'approved' })).toBe(true);
+      expect(
+        (await listAcceptances(tx.client, task)).map((row) => [
+          row.status,
+          row.reader_stands_in,
+          row.decided_by_user_id,
+        ]),
+      ).toEqual([['approved', false, ids.founder]]);
+      expect(await waits(founderA)).toEqual({ listed: [], counted: base.founder });
+    });
   });
 
   it('company separation: with a Pillika context nothing of an Arma DX request is resolved or answered', async () => {

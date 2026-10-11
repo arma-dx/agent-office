@@ -41,6 +41,20 @@ const mayDecide = (task: string): string => `(
   )
 )`;
 
+// May agents work in the project of a request now (rule 12), asked with the reader's own rights:
+// whoever reads a request inside a project reads that project, and every founder and employee
+// reads the customers of the company. True for a request without a project. The database's own
+// answer for a run is office.request_run_gate; this one is for what a person is shown and offered.
+const agentsMayWork = (project: string): string => `(
+  ${project} is null or exists (
+    select 1 from office.projects p
+    where p.id = ${project} and p.ai_allowed
+      and (p.customer_id is null or exists (
+        select 1 from office.customers c where c.id = p.customer_id and c.ai_allowed
+      ))
+  )
+)`;
+
 export interface RequestRow {
   id: string;
   title: string;
@@ -51,6 +65,14 @@ export interface RequestRow {
   // The due day (YYYY-MM-DD, office time); null when the requester gave none.
   due_date: string | null;
   requester_user_id: string;
+  project_id: string | null;
+  // Null when the request has no project.
+  project_name: string | null;
+  agents_may_work: boolean;
+  // May the requester still read the request (decision 45); the database's own answer.
+  requester_reads: boolean;
+  // The latest time waiting work of this request was called for again (decision 49).
+  restarted_at: Date | null;
   closed_by_user_id: string | null;
   close_reason: string | null;
   closed_after_delivery: boolean;
@@ -97,6 +119,10 @@ export interface RequestRow {
 const requestSql = (chosen: string): string => `
   select t.id, t.title, t.description, t.status, t.created_at, t.updated_at,
          t.requester_user_id, t.closed_by_user_id, t.close_reason,
+         t.project_id,
+         (select p.name from office.projects p where p.id = t.project_id) as project_name,
+         ${agentsMayWork('t.project_id')} as agents_may_work,
+         coalesce(office.request_run_identity(t.id) = t.requester_user_id, true) as requester_reads,
          ${dueDaySql('t.due_at')} as due_date,
          t.unit_code, u.name as unit_name,
          (select d.name from office.agent_definitions d where d.code = $1) as coordinator_name,
@@ -151,13 +177,14 @@ const requestSql = (chosen: string): string => `
          ) as pending_acceptance,
          coalesce(f.pending_result, false) as pending_result,
          f.last_result_status, f.last_result_attempt, f.last_change_request_at,
-         f.not_started_at,
+         f.not_started_at, f.restarted_at,
          lr.agent_code as run_agent_code, lr.status as run_status,
          lr.error_code as run_error_code, lr.started_at as run_started_at,
          lr.limit_minutes as run_limit_minutes
   from (
     select x.id, x.company_id, x.title, x.description, x.status, x.created_at, x.updated_at,
-           x.requester_user_id, x.closed_by_user_id, x.close_reason, x.unit_code, x.due_at
+           x.requester_user_id, x.closed_by_user_id, x.close_reason, x.unit_code, x.project_id,
+           x.due_at
     from office.tasks x
     where x.kind = 'request' and x.company_id = office.ctx_company_id()
       ${chosen}
@@ -181,18 +208,21 @@ const requestSql = (chosen: string): string => `
  * The requests the person can see, the newest movement first; `mine` keeps only their own. The
  * order and the limit are applied to the requests themselves, and an index serves each variant of
  * that pick: tasks_requests_by_movement the full list, tasks_requests_of_requester the person's
- * own. The joins keep no order, so the page is ordered again.
+ * own. The joins keep no order, so the page is ordered again. `projectId` keeps the requests of
+ * one project (the project page; served by the index tasks_project); a project the person cannot
+ * read gives no row, because its requests give none.
  */
 export async function listRequests(
   client: Queryable,
-  options: { coordinator: string; mine: boolean; limit: number },
+  options: { coordinator: string; mine: boolean; limit: number; projectId?: string | null },
 ): Promise<RequestRow[]> {
   const { rows } = await client.query<RequestRow>(
     `${requestSql(`and ($2::boolean is false or x.requester_user_id = office.ctx_user_id())
+      and ($4::uuid is null or x.project_id = $4)
       order by x.updated_at desc, x.id
       limit $3`)}
      order by t.updated_at desc, t.id`,
-    [options.coordinator, options.mine, options.limit],
+    [options.coordinator, options.mine, options.limit, options.projectId ?? null],
   );
   return rows;
 }
@@ -560,6 +590,10 @@ export interface ResultApprovalRow {
   task_id: string;
   request_title: string;
   requester_user_id: string;
+  project_id: string | null;
+  // Null when the request has no project.
+  project_name: string | null;
+  agents_may_work: boolean;
   agent_code: string;
   agent_name: string;
   attempt: number;
@@ -606,7 +640,11 @@ const MAY_DECIDE_RESULT = `(
 const RESULT_WAITS = `a.status = 'pending' and a.invalidated_at is null`;
 
 const RESULT_APPROVAL_SQL = `
-  select a.id, a.task_id, t.title as request_title, t.requester_user_id, a.agent_code,
+  select a.id, a.task_id, t.title as request_title, t.requester_user_id,
+         t.project_id,
+         (select p.name from office.projects p where p.id = t.project_id) as project_name,
+         ${agentsMayWork('t.project_id')} as agents_may_work,
+         a.agent_code,
          d.name as agent_name, a.attempt, a.status, a.created_at, a.decided_at,
          a.decided_by_user_id, a.rejection_reason, a.decision_reason, a.invalidated_at,
          a.title, a.summary, a.agent_rationale, a.risk_note, a.payload, a.selected_option,
@@ -713,6 +751,14 @@ export interface AcceptanceRow {
   rejection_reason: string | null;
   decision_reason: string | null;
   approval_id: string;
+  // Who answered: the requester, or the founder in the requester's place (decision 45). Null
+  // while it waits, and for an answer given before the column existed (then: the requester).
+  decided_by_user_id: string | null;
+  // The approval waits and the calling person is the founder standing in for a requester who
+  // cannot read the request.
+  reader_stands_in: boolean;
+  // May agents work in the project of the request now (rule 12).
+  agents_may_work: boolean;
   // The requester has not asked for changes on this request before: the next "not what I asked
   // for" goes back to the agent (the rule of office.flow_on_requester_approval, as a question).
   returns_to_agent: boolean;
@@ -723,14 +769,29 @@ const ACCEPTANCE_FROM = `
   join office.tasks t on t.id = q.task_id and t.kind = 'request'
   where q.company_id = office.ctx_company_id()`;
 
-// An approved result that waits for the acceptance of the calling person, its requester.
+// An approved result that waits for the answer of the calling person: its requester, or the
+// founder while the requester cannot read the request (decision 45; the database's own rule).
 const ACCEPTANCE_WAITS_FOR_READER = `q.status = 'pending' and q.invalidated_at is null
-  and q.requester_user_id = office.ctx_user_id()`;
+  and (
+    q.requester_user_id = office.ctx_user_id()
+    or (
+      office.is_founder()
+      and office.request_run_identity(q.task_id) is distinct from q.requester_user_id
+    )
+  )`;
 
 const ACCEPTANCE_SQL = `
   select q.id, q.task_id, t.title as request_title, q.requester_user_id, q.round, q.status,
          q.created_at, q.decided_at, q.invalidated_at, q.rejection_reason, q.decision_reason,
          q.approval_id,
+         q.decided_by_user_id,
+         (
+           q.status = 'pending' and q.invalidated_at is null
+           and q.requester_user_id is distinct from office.ctx_user_id()
+           and office.is_founder()
+           and office.request_run_identity(q.task_id) is distinct from q.requester_user_id
+         ) as reader_stands_in,
+         ${agentsMayWork('t.project_id')} as agents_may_work,
          not exists (
            select 1 from office.requester_approvals p
            where p.task_id = q.task_id and p.status = 'changes_requested'
@@ -748,7 +809,10 @@ export async function listAcceptances(
   return rows;
 }
 
-/** The approved results of this person's own requests that wait for their acceptance. */
+/**
+ * The approved results that wait for the acceptance of this person: of their own requests, and
+ * for the founder those of requesters who can no longer read their request (decision 45).
+ */
 export async function listPendingAcceptances(client: Queryable): Promise<AcceptanceRow[]> {
   const { rows } = await client.query<AcceptanceRow>(
     `${ACCEPTANCE_SQL} and ${ACCEPTANCE_WAITS_FOR_READER}
@@ -775,7 +839,8 @@ export async function readResultApprovals(
 export interface PendingDecisionCounts {
   // Results that wait for a decision of this person.
   approvals: number;
-  // Approved results of this person's own requests that wait for their acceptance.
+  // Approved results that wait for this person's acceptance: its requester, or the founder in
+  // the requester's place.
   acceptances: number;
 }
 
@@ -805,8 +870,10 @@ export async function countPendingDecisions(client: Queryable): Promise<PendingD
 }
 
 /**
- * The requester's answer to the approved result. Returns false when no approval of this request
- * waits for this person (the row policy lets only the requester update it).
+ * The requester's answer to the approved result, given by the requester or, while the requester
+ * cannot read the request, by the founder in their place (decision 45). Returns false when no
+ * approval of this request waits for this person: two row policies let the requester update it,
+ * and the founder only while the requester cannot.
  */
 export async function decideAcceptance(
   client: Queryable,

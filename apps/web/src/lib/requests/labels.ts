@@ -57,6 +57,8 @@ export const CAUSE_SHORT: Record<RequestCause, string> = {
   model_not_available: 'model bu hesapta yok',
   card_not_runnable: 'ajan kartı çalışmaya açık değil',
   second_change_request: 'ikinci düzeltme isteği',
+  ai_permission_closed: 'yapay zekâ izni kapalı',
+  ai_permission_interrupted: 'izin kapanınca durdu',
   returned_no_agent: 'birimde açık ajan yok',
   cancelled_by_requester: 'talep sahibi iptal etti',
   stopped: 'durduruldu',
@@ -88,6 +90,12 @@ export const CAUSE_SENTENCE: Record<RequestCause, string> = {
   model_not_available: 'Ajanın kartında yazan model kullanılamıyor.',
   card_not_runnable: 'Bu ajanın kartı bu talep için çalışmaya açık değil.',
   second_change_request: 'İkinci düzeltme isteğinden sonra iş ajana dönmedi.',
+  // Rule 12 while a request is under way: the project's AI permission, or its customer's.
+  ai_permission_closed:
+    'Bu talebin projesinde ajanlar şu an çalışamaz: projenin ya da müşterisinin yapay zekâ izni kapalı. Süren çalışma varsa durduruldu.',
+  // The permission may have been the customer's, so the sentence names no owner.
+  ai_permission_interrupted:
+    'Yapay zekâ izni kapatıldığı için ajanın çalışması durduruldu. İzin yeniden açık, ama iş yeniden başlamadı.',
   returned_no_agent: 'Talep geri çevrildi: birimde bu işi alabilecek açık ajan yok.',
   cancelled_by_requester: 'Talep sahibi talebi iptal etti.',
   stopped: 'İş durduruldu.',

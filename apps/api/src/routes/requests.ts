@@ -67,6 +67,7 @@ import {
   optionsOf,
   peopleOf,
   peopleOfJourney,
+  person,
   toApprovalCard,
   toComments,
   toJourney,
@@ -84,6 +85,7 @@ import type { RouteDeps } from '../services.ts';
  *                                            due day (information only); the coordinator's run is
  *                                            put on the queue in the same transaction
  *   GET  /api/requests                       the requests the person may read, with stage and turn
+ *                                            (`?project=<id>`: of one project)
  *   GET  /api/requests/:requestId            one answer for the whole page
  *   POST /api/requests/:requestId/close      the requester cancels; the approver or founder stops
  *   POST /api/requests/:requestId/comments   a comment of the requester, the approver or the founder
@@ -119,7 +121,11 @@ const DEADLOCK = '40P01';
 
 const requestParams = z.object({ requestId: z.uuid() });
 const approvalParams = z.object({ approvalId: z.uuid() });
-const listQuery = z.object({ mine: z.enum(['true', 'false']).optional() });
+const listQuery = z.object({
+  mine: z.enum(['true', 'false']).optional(),
+  // The requests of one project (the project page).
+  project: z.uuid().optional(),
+});
 
 const requestClosed = (): ApiError =>
   new ApiError(409, 'request_closed', 'Bu talep kapanmış. Sayfayı yenileyin.');
@@ -284,6 +290,9 @@ async function detailOf(context: CompanyContext, row: RequestRow): Promise<Reque
   );
   const open = !isClosedTaskStatus(summary.status);
   const isRequester = row.requester_user_id === reader.userId;
+  // Decision 45: the founder gives the requester's approval while the requester cannot read
+  // the request. The database decides (two row policies); this only says what the page offers.
+  const standsIn = !row.requester_reads && !isRequester && reader.role === 'founder';
   return requestDetailSchema.parse({
     ...summary,
     text: row.description ?? '',
@@ -295,13 +304,19 @@ async function detailOf(context: CompanyContext, row: RequestRow): Promise<Reque
       row.step_approver_user_id !== null
         ? { userId: row.step_approver_user_id, name: names.get(row.step_approver_user_id) ?? null }
         : null,
+    agentsMayWork: row.agents_may_work,
+    requesterReads: row.requester_reads,
     closure: closureOf(row, names),
     journey: toJourney(journeyRows, names),
     approval: pending?.may_decide === true ? toApprovalCard(pending, names) : null,
     result: approved ? toResult(approved, names) : null,
     acceptance:
-      waiting && isRequester
-        ? { round: waiting.round, returnsToAgent: waiting.returns_to_agent }
+      waiting && (isRequester || standsIn)
+        ? {
+            round: waiting.round,
+            returnsToAgent: waiting.returns_to_agent,
+            inPlaceOfRequester: standsIn,
+          }
         : null,
     actions: {
       // The same rules as office.close_request and office.correct_routing, which are the ones
@@ -330,6 +345,8 @@ export function registerRequestRoutes(
         coordinator: COORDINATOR_AGENT_CODE,
         mine: query.data.mine === 'true',
         limit: REQUEST_LIST_LIMIT + 1,
+        // A project the person cannot read gives an empty list, exactly as one without requests.
+        projectId: query.data.project ?? null,
       });
       const shown = rows.slice(0, REQUEST_LIST_LIMIT);
       const names = await peopleNames(context.client, shown.flatMap(peopleOf));
@@ -666,6 +683,10 @@ export function registerRequestRoutes(
         ...results.flatMap((result) =>
           result.decided_by_user_id ? [result.decided_by_user_id] : [],
         ),
+        // The requester the founder stands in for (8 October decision 45).
+        ...acceptances.flatMap((acceptance) =>
+          acceptance.reader_stands_in ? [acceptance.requester_user_id] : [],
+        ),
       ]);
       return approvalDeskSchema.parse({
         approvals: approvals.map((approval) => toApprovalCard(approval, names)),
@@ -678,6 +699,10 @@ export function registerRequestRoutes(
                   requestTitle: acceptance.request_title,
                   round: acceptance.round,
                   returnsToAgent: acceptance.returns_to_agent,
+                  agentsMayWork: acceptance.agents_may_work,
+                  forRequester: acceptance.reader_stands_in
+                    ? person(names, acceptance.requester_user_id)
+                    : null,
                   openedAt: acceptance.created_at.toISOString(),
                   result: toResult(result, names),
                 },

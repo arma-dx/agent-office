@@ -6,6 +6,7 @@
 // whole sentence), so the sum is never narrower than what the browser draws.
 const ADVANCE: Readonly<Record<string, number>> = {
   a: 534,
+  â: 534,
   b: 580,
   c: 503,
   ç: 503,

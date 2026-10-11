@@ -84,6 +84,18 @@ export const apiErrorCodeSchema = z.enum([
   'project_customer_locked',
   // The project is not what the founder confirmed with the passkey; the page is read again.
   'project_changed',
+  // A change of an AI permission met another transaction and was ended by the database; nothing
+  // changed, the person tries again.
+  'permission_busy',
+  // A request names a project the person cannot read (hidden and missing are one answer).
+  'project_not_available',
+  // A closed project takes no new request.
+  'project_closed',
+  // No agent may work in the project the request names (rule 12).
+  'project_ai_not_allowed',
+  // The request is inside a project where agents may not work now: the act is not possible until
+  // the permission is open again.
+  'ai_permission_closed',
   // Project members (8 October decision 44): who adds, removes and gives roles.
   'project_members_not_allowed',
   'project_manager_protected',

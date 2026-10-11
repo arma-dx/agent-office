@@ -3,7 +3,9 @@ import {
   QUEUE_GRACE_MS,
   REQUEST_COMMENT_MAX,
   REQUEST_TITLE_MAX,
+  acceptanceCardSchema,
   acceptanceDecisionSchema,
+  approvalCardSchema,
   approvalDecisionSchema,
   closeRequestSchema,
   correctRoutingSchema,
@@ -11,6 +13,7 @@ import {
   createRequestSchema,
   deriveRequestTitle,
   deriveStage,
+  journeyItemSchema,
   requestCauseSchema,
   requestCommentSchema,
   requestDetailSchema,
@@ -197,6 +200,7 @@ describe('the due day and the comments in an answer', () => {
     waitingForMe: false,
     unit: { code: 'SOS', name: 'Sosyal Medya' },
     requester: { userId: id, name: 'Çalışan A' },
+    project: null,
     createdAt: '2026-10-08T10:00:00+03:00',
     updatedAt: '2026-10-08T10:00:00+03:00',
     dueDate: '2026-10-20',
@@ -230,6 +234,8 @@ describe('the due day and the comments in an answer', () => {
       text: 'LinkedIn için gönderi yaz',
       agent: { code: 'SOS-2', name: 'Sosyal İçerik Yazım Ajanı' },
       approver: null,
+      agentsMayWork: true,
+      requesterReads: true,
       closure: null,
       journey: [],
       approval: null,
@@ -284,6 +290,8 @@ describe('where a request is and whose turn it is', () => {
     closedAfterDelivery: false,
     returnedNoAgent: false,
     coordinatorEnabled: true,
+    agentsMayWork: true,
+    requesterReads: true,
     routed: false,
     step: null,
     pendingApproval: false,
@@ -388,10 +396,12 @@ describe('where a request is and whose turn it is', () => {
     );
   });
 
-  it('work that was called for and never started stays with a person, also once the agent is open again', () => {
+  it('work that was called for and never started stays with a person while nothing calls for it again', () => {
     // The agent is open and no run started since the work was called for (5 s ago), but a trace
-    // says the start was missed: the agent was stopped at the change request, or the job was
-    // refused at the runner's gate. Nothing is on the queue, so it is nobody's turn but a person's.
+    // says the start was missed: the job was refused at the runner's gate, or the agent was
+    // stopped at the change request and was opened outside the panel. Nothing is on the queue, so
+    // it is nobody's turn but a person's. (An opening through the panel calls for the work again:
+    // the cases of the restart are below.)
     expect(of({ notStartedAt: ago(4_000) }, routed)).toBe(
       'fell_to_person not_started approver on time',
     );
@@ -553,5 +563,325 @@ describe('where a request is and whose turn it is', () => {
       'fell_to_person no_submission approver on time',
       'fell_to_person second_change_request approver on time',
     ]);
+  });
+
+  // Rule 12 while a request is under way (8 October decisions 46 and 47).
+  it('a request inside a project where agents may not work falls to the founder, whatever was called for', () => {
+    const held = 'fell_to_person ai_permission_closed founder on time';
+    const closed = { agentsMayWork: false };
+    // Not routed: nothing yet, a start that was queued long ago, a coordinator that is stopped.
+    expect(of(closed)).toBe(held);
+    expect(of({ ...closed, createdAt: ago(60 * MINUTE) })).toBe(held);
+    expect(of({ ...closed, coordinatorEnabled: false })).toBe(held);
+    expect(of({ ...closed, notStartedAt: ago(4_000) })).toBe(held);
+    // Routed, with an active step: no run, a queue that would be late, a stopped agent.
+    expect(of(closed, routed)).toBe(held);
+    expect(of({ ...closed, awaitedSince: ago(60 * MINUTE) }, routed)).toBe(held);
+    expect(of({ ...closed, step: { agentCode: 'SOS-2', agentEnabled: false } }, routed)).toBe(held);
+    expect(of({ ...closed, notStartedAt: ago(4_000) }, routed)).toBe(held);
+    // The run the close stopped, a run that failed, a run the database has not closed yet.
+    for (const last of [
+      run('SOS-2', 'stopped', 'ai_permission_closed'),
+      run('SOS-2', 'failed', 'runner_error'),
+      run('SOS-2', 'completed'),
+      run('SOS-2', 'running', null, 60 * MINUTE),
+    ]) {
+      expect(of({ ...closed, lastRun: last }, routed)).toBe(held);
+    }
+    expect(of({ ...closed, lastRun: run('KOR-1', 'stopped', 'ai_permission_closed') })).toBe(held);
+    // After the second change request too: the founder is the one who can open the permission.
+    expect(of({ ...closed, step: null, changesRequested: true }, routed)).toBe(held);
+  });
+
+  it('a result that waits keeps its stage while the permission is closed, and a closed request stays closed', () => {
+    const closed = { agentsMayWork: false };
+    // It can still be rejected, and an approved result can still be accepted.
+    expect(of({ ...closed, status: 'awaiting_approval', pendingApproval: true }, routed)).toBe(
+      'unit_approval - approver on time',
+    );
+    expect(of({ ...closed, status: 'awaiting_approval', pendingAcceptance: true }, routed)).toBe(
+      'requester_approval - requester on time',
+    );
+    expect(of({ ...closed, status: 'done' }, routed)).toBe('done - none on time');
+    expect(of({ ...closed, status: 'cancelled', closedBy: 'other' }, routed)).toBe(
+      'cancelled stopped none on time',
+    );
+    expect(of({ ...closed, status: 'cancelled', closedBy: null }, routed)).toBe(
+      'cancelled rejected none on time',
+    );
+  });
+
+  // 8 October decision 45.
+  it('a result that waits for a requester who cannot read the request is the founder’s turn', () => {
+    const waits = { status: 'awaiting_approval', pendingAcceptance: true } as const;
+    expect(of({ ...waits, requesterReads: true }, routed)).toBe(
+      'requester_approval - requester on time',
+    );
+    expect(of({ ...waits, requesterReads: false }, routed)).toBe(
+      'requester_approval - founder on time',
+    );
+    // Nothing else of the stage follows the requester: the work goes on as before.
+    expect(of({ requesterReads: false }, routed)).toBe('working - agent on time');
+    expect(
+      of({ requesterReads: false, status: 'awaiting_approval', pendingApproval: true }, routed),
+    ).toBe('unit_approval - approver on time');
+    expect(of({ requesterReads: false })).toBe('routing - coordinator on time');
+  });
+
+  // 8 October decision 49.
+  it('a restart moves the moment the work was called for', () => {
+    // The switch stopped the run of the step's agent 3 s ago; the agent is open again.
+    const stopped = { lastRun: run('SOS-2', 'stopped', 'agent_stopped') };
+    expect(of(stopped, routed)).toBe('fell_to_person agent_stopped approver on time');
+    // The opening called for the work again 1 s ago: that run is from before the call.
+    expect(of({ ...stopped, awaitedSince: ago(1_000) }, routed)).toBe('working - agent on time');
+    // The clock of "gecikti" starts at the restart, not at the routing or at the stopped run.
+    const longAgo = run('SOS-2', 'stopped', 'agent_stopped', 10 * MINUTE);
+    expect(of({ lastRun: longAgo, awaitedSince: ago(QUEUE_GRACE_MS) }, routed)).toBe(
+      'working - agent on time',
+    );
+    expect(
+      of(
+        {
+          lastRun: run('SOS-2', 'stopped', 'agent_stopped', 10 * MINUTE),
+          awaitedSince: ago(3 * MINUTE),
+        },
+        routed,
+      ),
+    ).toBe('working - agent delayed');
+    // A missed start from before the restart was answered by it; one after it was not.
+    expect(of({ ...stopped, awaitedSince: ago(1_000), notStartedAt: ago(2_000) }, routed)).toBe(
+      'working - agent on time',
+    );
+    expect(of({ ...stopped, awaitedSince: ago(1_000), notStartedAt: ago(500) }, routed)).toBe(
+      'fell_to_person not_started approver on time',
+    );
+    // After a change request the restarted work is a revision, as before.
+    expect(of({ ...stopped, awaitedSince: ago(1_000), changesRequested: true }, routed)).toBe(
+      'revising - agent on time',
+    );
+    // The new run of the restarted job says more than everything before it.
+    expect(of({ awaitedSince: ago(4_000), lastRun: run('SOS-2', 'running') }, routed)).toBe(
+      'working - agent on time',
+    );
+    expect(
+      of({ awaitedSince: ago(4_000), lastRun: run('SOS-2', 'failed', 'runner_error') }, routed),
+    ).toBe('fell_to_person run_failed approver on time');
+  });
+
+  it('the same for a request nobody has routed', () => {
+    // The coordinator's run was stopped by its switch 3 s ago; the coordinator is open again.
+    const stopped = { lastRun: run('KOR-1', 'stopped', 'agent_stopped') };
+    expect(of(stopped)).toBe('fell_to_person agent_stopped founder on time');
+    expect(of({ ...stopped, awaitedSince: ago(1_000) })).toBe('routing - coordinator on time');
+    expect(
+      of({
+        lastRun: run('KOR-1', 'stopped', 'agent_stopped', 10 * MINUTE),
+        createdAt: ago(60 * MINUTE),
+        awaitedSince: ago(3 * MINUTE),
+      }),
+    ).toBe('routing - coordinator delayed');
+    // An old request is not late because it is old: the clock starts at the restart.
+    expect(
+      of({ createdAt: ago(60 * MINUTE), awaitedSince: ago(1_000), notStartedAt: ago(2_000) }),
+    ).toBe('routing - coordinator on time');
+    expect(of({ awaitedSince: ago(1_000), notStartedAt: ago(500) })).toBe(
+      'fell_to_person not_started founder on time',
+    );
+    // While the coordinator is still closed that is what the person reads, restart or not.
+    expect(of({ ...stopped, awaitedSince: ago(1_000), coordinatorEnabled: false })).toBe(
+      'fell_to_person coordinator_closed founder on time',
+    );
+    // The run of the restarted job.
+    expect(of({ awaitedSince: ago(4_000), lastRun: run('KOR-1', 'running') })).toBe(
+      'routing - coordinator on time',
+    );
+    expect(of({ awaitedSince: ago(4_000), lastRun: run('KOR-1', 'completed') })).toBe(
+      'fell_to_person no_routing founder on time',
+    );
+    // Without a restart the branch answers as before: every run and every trace is later than
+    // the opening of the request.
+    expect(of({ lastRun: run('KOR-1', 'completed', null, 9_000) })).toBe(
+      'fell_to_person no_routing founder on time',
+    );
+    expect(of({ notStartedAt: ago(9_000) })).toBe('fell_to_person not_started founder on time');
+  });
+
+  it('after the permission is open again: restarted work reads as work; a run the close stopped that was not restarted reads as interrupted', () => {
+    const stopped = run('SOS-2', 'stopped', 'ai_permission_closed');
+    // Opened outside the panel, or while the step's agent was stopped: nothing called for the
+    // work again. The turn is the approver's, as for every run that ended without a result.
+    expect(of({ lastRun: stopped }, routed)).toBe(
+      'fell_to_person ai_permission_interrupted approver on time',
+    );
+    // Before any routing the turn is the founder's.
+    expect(of({ lastRun: run('KOR-1', 'stopped', 'ai_permission_closed') })).toBe(
+      'fell_to_person ai_permission_interrupted founder on time',
+    );
+    // While the agent of the step is stopped, its last run still says why the work stopped.
+    expect(
+      of({ lastRun: stopped, step: { agentCode: 'SOS-2', agentEnabled: false } }, routed),
+    ).toBe('fell_to_person ai_permission_interrupted approver on time');
+    // The opening restarted it, or a person routed it again: it reads as work.
+    expect(of({ lastRun: stopped, awaitedSince: ago(1_000) }, routed)).toBe(
+      'working - agent on time',
+    );
+    expect(
+      of({ lastRun: run('KOR-1', 'stopped', 'ai_permission_closed'), awaitedSince: ago(1_000) }),
+    ).toBe('routing - coordinator on time');
+    // The restarted job was refused: a missed start after the call.
+    expect(of({ lastRun: stopped, awaitedSince: ago(1_000), notStartedAt: ago(500) }, routed)).toBe(
+      'fell_to_person not_started approver on time',
+    );
+  });
+});
+
+describe('the project of a request and who stands in, in an answer', () => {
+  const id = '00000000-0000-4000-8000-000000000001';
+  const person = { userId: id, name: 'Çalışan A' };
+  const agent = { code: 'SOS-2', name: 'Sosyal İçerik Yazım Ajanı' };
+  const at = '2026-10-08T10:00:00+03:00';
+  const project = { id, name: 'Lansman' };
+  const summary = {
+    id,
+    title: 'LinkedIn için gönderi yaz',
+    status: 'awaiting_approval',
+    stage: 'unit_approval',
+    cause: null,
+    delayed: false,
+    turn: { kind: 'founder' },
+    waitingForMe: true,
+    unit: { code: 'SOS', name: 'Sosyal Medya' },
+    requester: person,
+    project,
+    createdAt: at,
+    updatedAt: at,
+    dueDate: null,
+    overdue: false,
+  };
+  const card = {
+    id,
+    requestId: id,
+    requestTitle: summary.title,
+    requester: person,
+    project,
+    agent,
+    attempt: 1,
+    createdAt: at,
+    title: 'Sonuç',
+    summary: null,
+    rationale: null,
+    riskNote: null,
+    options: [],
+    involvesMoney: false,
+    moneyStatedBy: null,
+    goesExternal: false,
+    needsStepUp: false,
+    agentsMayWork: false,
+  };
+  const result = {
+    approvalId: id,
+    agent,
+    title: 'Sonuç',
+    option: null,
+    approvedBy: person,
+    approvedAt: at,
+  };
+  const acceptance = {
+    requestId: id,
+    requestTitle: summary.title,
+    round: 1,
+    returnsToAgent: true,
+    agentsMayWork: true,
+    forRequester: person,
+    openedAt: at,
+    result,
+  };
+  const detail = {
+    ...summary,
+    text: summary.title,
+    agent,
+    approver: null,
+    agentsMayWork: false,
+    requesterReads: false,
+    closure: null,
+    journey: [],
+    approval: card,
+    result: null,
+    acceptance: { round: 1, returnsToAgent: true, inPlaceOfRequester: true },
+    actions: { cancel: false, stop: true, reroute: false },
+    comments: { items: [], truncated: false, mayWrite: true },
+    serverTime: at,
+  };
+  const without = (value: Record<string, unknown>, field: string): Record<string, unknown> =>
+    Object.fromEntries(Object.entries(value).filter(([key]) => key !== field));
+
+  it('every answer that carries a request says its project and whether agents may work', () => {
+    expect(requestSummarySchema.parse(summary)).toEqual(summary);
+    expect(requestSummarySchema.safeParse({ ...summary, project: null }).success).toBe(true);
+    expect(requestSummarySchema.safeParse(without(summary, 'project')).success).toBe(false);
+    // An id and a name, nothing else of the project.
+    for (const bad of [{ id }, { name: 'Lansman' }, { id: 'x', name: 'Lansman' }, 'Lansman']) {
+      expect(requestSummarySchema.safeParse({ ...summary, project: bad }).success).toBe(false);
+    }
+
+    expect(requestDetailSchema.parse(detail)).toEqual(detail);
+    expect(requestDetailSchema.safeParse(without(detail, 'agentsMayWork')).success).toBe(false);
+    expect(requestDetailSchema.safeParse({ ...detail, agentsMayWork: null }).success).toBe(false);
+
+    expect(approvalCardSchema.parse(card)).toEqual(card);
+    expect(approvalCardSchema.safeParse({ ...card, project: null }).success).toBe(true);
+    for (const field of ['project', 'agentsMayWork']) {
+      expect(approvalCardSchema.safeParse(without(card, field)).success, field).toBe(false);
+    }
+
+    expect(acceptanceCardSchema.parse(acceptance)).toEqual(acceptance);
+    expect(acceptanceCardSchema.safeParse(without(acceptance, 'agentsMayWork')).success).toBe(
+      false,
+    );
+  });
+
+  it('every answer says whether the requester reads the request and who stands in', () => {
+    const parse = (value: unknown): boolean => requestDetailSchema.safeParse(value).success;
+    expect(parse(without(detail, 'requesterReads'))).toBe(false);
+    expect(parse({ ...detail, requesterReads: true, acceptance: null })).toBe(true);
+    expect(
+      parse({
+        ...detail,
+        acceptance: { round: 1, returnsToAgent: true, inPlaceOfRequester: false },
+      }),
+    ).toBe(true);
+    expect(parse({ ...detail, acceptance: { round: 1, returnsToAgent: true } })).toBe(false);
+
+    // A desk card names the requester the reader stands in for, or says that it is the reader's
+    // own.
+    expect(acceptanceCardSchema.safeParse({ ...acceptance, forRequester: null }).success).toBe(
+      true,
+    );
+    expect(acceptanceCardSchema.safeParse(without(acceptance, 'forRequester')).success).toBe(false);
+    expect(
+      acceptanceCardSchema.safeParse({ ...acceptance, forRequester: 'Çalışan A' }).success,
+    ).toBe(false);
+
+    // The journey says who answered when it was not the requester.
+    const item = {
+      kind: 'acceptance',
+      id,
+      at,
+      round: 1,
+      status: 'approved',
+      decidedBy: person,
+      reason: null,
+      note: null,
+    };
+    expect(journeyItemSchema.parse(item)).toEqual(item);
+    expect(journeyItemSchema.safeParse({ ...item, decidedBy: null }).success).toBe(true);
+    expect(journeyItemSchema.safeParse(without(item, 'decidedBy')).success).toBe(false);
+  });
+
+  it('the two causes of a closed permission are causes of a request', () => {
+    const causes: readonly string[] = requestCauseSchema.options;
+    expect(causes).toContain('ai_permission_closed');
+    expect(causes).toContain('ai_permission_interrupted');
   });
 });

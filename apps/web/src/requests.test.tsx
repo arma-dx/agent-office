@@ -1249,7 +1249,7 @@ describe('the page of a request', () => {
       waitingForMe: true,
       approval: null,
       result: RESULT,
-      acceptance: { round: 1, returnsToAgent: true },
+      acceptance: { round: 1, returnsToAgent: true, inPlaceOfRequester: false },
       actions: { cancel: true, stop: false, reroute: false },
     });
     const done = requestDetail({
@@ -1307,7 +1307,7 @@ describe('the page of a request', () => {
       waitingForMe: true,
       approval: null,
       result: RESULT,
-      acceptance: { round: 2, returnsToAgent: false },
+      acceptance: { round: 2, returnsToAgent: false, inPlaceOfRequester: false },
       actions: { cancel: true, stop: false, reroute: false },
     });
     const fallen = requestDetail({
@@ -1419,7 +1419,7 @@ describe('the page of a request', () => {
             waitingForMe: true,
             approval: null,
             result: RESULT,
-            acceptance: { round: 2, returnsToAgent: true },
+            acceptance: { round: 2, returnsToAgent: true, inPlaceOfRequester: false },
             actions: { cancel: true, stop: false, reroute: false },
           }),
         ),
@@ -2115,6 +2115,7 @@ describe('the page of a request', () => {
                 at,
                 round: 1,
                 status: 'closed',
+                decidedBy: null,
                 reason: null,
                 note: null,
               },
@@ -2363,7 +2364,7 @@ describe('the page of a request', () => {
               waitingForMe: true,
               approval: null,
               result: RESULT,
-              acceptance: { round: 1, returnsToAgent: true },
+              acceptance: { round: 1, returnsToAgent: true, inPlaceOfRequester: false },
               actions: { cancel: true, stop: false, reroute: false },
             }),
           ),
@@ -2428,7 +2429,7 @@ describe('the page of a request', () => {
           waitingForMe: true,
           approval: null,
           result: RESULT,
-          acceptance: { round: number, returnsToAgent: true },
+          acceptance: { round: number, returnsToAgent: true, inPlaceOfRequester: false },
           actions: { cancel: true, stop: false, reroute: false },
         });
       const api = mockApi({
@@ -3350,6 +3351,8 @@ describe('Onaylar', () => {
               requestTitle: 'Kasım bülteni',
               round: 1,
               returnsToAgent: false,
+              agentsMayWork: true,
+              forRequester: null,
               openedAt: '2026-10-07T09:00:00.000Z',
               result: RESULT,
             },

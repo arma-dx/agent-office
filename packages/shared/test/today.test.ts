@@ -23,6 +23,7 @@ const SUMMARY = {
   waitingForMe: true,
   unit: { code: 'SOS', name: 'Sosyal Medya' },
   requester: { userId: uuid(2), name: 'Ada Yılmaz' },
+  project: null,
   createdAt: AT,
   updatedAt: AT,
   dueDate: null,

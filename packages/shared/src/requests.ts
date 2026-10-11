@@ -109,9 +109,10 @@ export const requestCauseSchema = z.enum([
   'coordinator_closed',
   'no_routing',
   'agent_stopped',
-  // A run was called for and never started: the agent was stopped when changes were asked for, or
-  // the runner refused the job before a run existed. The agent may be open again by now; nothing
-  // starts by itself, a person routes the request again.
+  // A run was called for and never started although the agent is open: the runner refused the
+  // job before a run existed, and no restart made that missed start good since (work that only
+  // waited for a stopped agent or a closed AI permission starts again when that is opened,
+  // 8 October decision 49). A person routes the request again.
   'not_started',
   'no_submission',
   'run_failed',
@@ -126,6 +127,14 @@ export const requestCauseSchema = z.enum([
   'model_not_available',
   'card_not_runnable',
   'second_change_request',
+  // The request is inside a project where agents may not work now (rule 12): the project's AI
+  // permission, or its customer's, is closed. Nothing runs until the founder opens it; then the
+  // waiting work starts again by itself (8 October decision 49).
+  'ai_permission_closed',
+  // The permission is open again, and the run the close stopped was not started again: its agent
+  // was stopped at that moment (opening the agent starts it), or the permission was opened
+  // outside the panel.
+  'ai_permission_interrupted',
   // cancelled
   // Returned to its requester by the routing: the coordinator named the unit, and no open agent
   // of it could take the work (8 October decision 2).
@@ -165,6 +174,12 @@ export interface RequestFacts {
   // The coordinator can take a request in this company: its switch is on and its card has a
   // version to run with.
   coordinatorEnabled: boolean;
+  // May agents work on this request now (rule 12): false only for a request inside a project
+  // whose AI permission, or whose customer's, is closed.
+  agentsMayWork: boolean;
+  // May the requester still read the request (8 October decision 45). False: runs go in the
+  // founder's name and the founder gives the requester's approval in their place.
+  requesterReads: boolean;
   // Was the request ever routed.
   routed: boolean;
   // The step that is active now; it always has an agent (a step without one is a returned step).
@@ -177,8 +192,9 @@ export interface RequestFacts {
   lastResult: { status: 'approved' | 'changes_requested' | 'rejected'; attempt: number } | null;
   // Did the approver or the requester ask for changes on the active step.
   changesRequested: boolean;
-  // The latest moment a run was called for: the routing of the active step or the last change
-  // request. Null before the first routing.
+  // The latest moment a run was called for: the routing of the active step, the last change
+  // request, or a restart after an agent or an AI permission was opened again (8 October
+  // decision 49). Null when the only call is the opening of the request itself.
   awaitedSince: Date | null;
   // The latest time a run was called for and not started, for the agent whose turn it is: the
   // trace of a change request that found the agent stopped, or of a job refused at the runner's
@@ -225,8 +241,11 @@ export function runGraceMs(limitMinutes: number | null): number {
 function causeOfRun(run: NonNullable<RequestFacts['lastRun']>, coordinator: boolean): RequestCause {
   if (run.status === 'limit_reached') return 'limit_reached';
   if (run.status === 'stopped') {
-    // Only the stop switch stops an agent; every other stop is the request changing under the run.
-    return run.errorCode === 'agent_stopped' ? 'agent_stopped' : 'run_interrupted';
+    // The stop switch stops an agent; a closed AI permission stops every run of its projects;
+    // every other stop is the request changing under the run.
+    if (run.errorCode === 'agent_stopped') return 'agent_stopped';
+    if (run.errorCode === 'ai_permission_closed') return 'ai_permission_interrupted';
+    return 'run_interrupted';
   }
   if (run.status === 'completed') return coordinator ? 'no_routing' : 'no_submission';
   switch (run.errorCode) {
@@ -278,31 +297,42 @@ export function deriveStage(facts: RequestFacts, now: Date): DerivedStage {
     return at('cancelled', 'none', { cause });
   }
   if (facts.pendingAcceptance) {
-    return at('requester_approval', 'requester');
+    // Decision 45: a requester who cannot read the request cannot answer; the founder does.
+    return at('requester_approval', facts.requesterReads ? 'requester' : 'founder');
   }
   if (facts.pendingApproval) {
     return at('unit_approval', 'approver');
   }
+  if (!facts.agentsMayWork) {
+    // Rule 12: nothing runs in this project now, whatever the records say was called for. A
+    // result that waits for a decision keeps its stage (above): it can still be rejected. Only
+    // the founder can open the permission, so the turn is the founder's.
+    return at('fell_to_person', 'founder', { cause: 'ai_permission_closed' });
+  }
 
   const run = facts.lastRun;
   if (!facts.routed) {
+    // The moment the coordinator's work was last called for: the opening of the request, or a
+    // restart after the coordinator or an AI permission was opened again (decision 49).
+    const called = facts.awaitedSince ?? facts.createdAt;
     if (run?.status === 'running') {
       return at('routing', 'coordinator', {
         delayed: since(run.startedAt) > runGraceMs(run.limitMinutes),
       });
     }
-    if (run) {
+    if (run && run.startedAt >= called) {
+      // The run that was called for has ended without a routing.
       return at('fell_to_person', 'founder', { cause: causeOfRun(run, true) });
     }
     if (!facts.coordinatorEnabled) {
       return at('fell_to_person', 'founder', { cause: 'coordinator_closed' });
     }
-    if (facts.notStartedAt !== null) {
-      // The coordinator's job was refused before a run existed. Nothing is on the queue any more,
-      // also when the coordinator is open again: a person makes the first routing.
+    if (facts.notStartedAt !== null && facts.notStartedAt >= called) {
+      // The coordinator's job was refused before a run existed, and nothing has called for the
+      // work again since: a person makes the first routing.
       return at('fell_to_person', 'founder', { cause: 'not_started' });
     }
-    return at('routing', 'coordinator', { delayed: since(facts.createdAt) > QUEUE_GRACE_MS });
+    return at('routing', 'coordinator', { delayed: since(called) > QUEUE_GRACE_MS });
   }
 
   const step = facts.step;
@@ -327,9 +357,9 @@ export function deriveStage(facts: RequestFacts, now: Date): DerivedStage {
     return at('fell_to_person', 'approver', { cause: 'agent_stopped' });
   }
   if (facts.notStartedAt !== null && facts.notStartedAt >= awaitedSince) {
-    // The run that was called for was never started and nothing is on the queue for it. The agent
-    // is open (again), but opening an agent starts no request: it stays with a person until
-    // somebody routes it again, which is a later moment than this trace.
+    // The run that was called for was never started and nothing is on the queue for it. The
+    // agent is open, and the start that was missed was not made good by a restart: the job was
+    // refused for another reason, or after the restart.
     return at('fell_to_person', 'approver', { cause: 'not_started' });
   }
   return at(working, 'agent', { delayed: since(awaitedSince) > QUEUE_GRACE_MS });
@@ -353,6 +383,9 @@ export const requestTurnSchema = z.discriminatedUnion('kind', [
 ]);
 export type RequestTurn = z.output<typeof requestTurnSchema>;
 
+/** The project a request is inside; its members and the founder are the only readers of both. */
+const projectRefSchema = z.object({ id: z.uuid(), name: z.string() });
+
 export const requestSummarySchema = z.object({
   id: z.uuid(),
   title: z.string(),
@@ -365,6 +398,8 @@ export const requestSummarySchema = z.object({
   waitingForMe: z.boolean(),
   unit: unitRefSchema.nullable(),
   requester: taskPersonSchema,
+  // Null: the request is inside no project and every founder and employee of the company reads it.
+  project: projectRefSchema.nullable(),
   createdAt: instantSchema,
   updatedAt: instantSchema,
   // The day the requester gave when the request was opened; null when none. Never changes.
@@ -414,6 +449,7 @@ export const approvalCardSchema = z.object({
   requestId: z.uuid(),
   requestTitle: z.string(),
   requester: taskPersonSchema,
+  project: projectRefSchema.nullable(),
   agent: agentRefSchema,
   attempt: z.number().int().min(1).max(2),
   createdAt: instantSchema,
@@ -430,6 +466,8 @@ export const approvalCardSchema = z.object({
   goesExternal: z.boolean(),
   // Approving asks for a passkey re-verification (3 October decision 7, 5 October decision 2).
   needsStepUp: z.boolean(),
+  // See requestDetailSchema.
+  agentsMayWork: z.boolean(),
 });
 export type ApprovalCard = z.output<typeof approvalCardSchema>;
 
@@ -453,12 +491,20 @@ export type RequestResult = z.output<typeof requestResultSchema>;
  */
 const returnsToAgentSchema = z.boolean();
 
-/** A result of the reader's own request that waits for their acceptance. */
+/**
+ * A result that waits for the acceptance of the reader: of their own request, or of the request
+ * of somebody who can no longer read it, when the reader is the founder (8 October decision 45).
+ */
 export const acceptanceCardSchema = z.object({
   requestId: z.uuid(),
   requestTitle: z.string(),
   round: z.number().int().min(1),
   returnsToAgent: returnsToAgentSchema,
+  // See requestDetailSchema: while false, "not what I asked for" cannot be said (it calls for a
+  // run); accepting the approved result stays possible.
+  agentsMayWork: z.boolean(),
+  // Set when the reader gives this approval in the requester's place: the requester.
+  forRequester: taskPersonSchema.nullable(),
   openedAt: instantSchema,
   result: requestResultSchema,
 });
@@ -572,6 +618,8 @@ export const journeyItemSchema = z.discriminatedUnion('kind', [
     at: instantSchema,
     round: z.number().int().min(1),
     status: z.enum(['pending', 'approved', 'changes_requested', 'closed']),
+    // Who answered when it was not the requester: the founder, in the requester's place.
+    decidedBy: taskPersonSchema.nullable(),
     reason: rejectionReasonSchema.nullable(),
     note: z.string().nullable(),
   }),
@@ -588,6 +636,14 @@ export const requestDetailSchema = requestSummarySchema.extend({
   // The approver of the active step; null when nobody is appointed (the founder decides) or when
   // no step is active.
   approver: taskPersonSchema.nullable(),
+  // False only for a request inside a project where agents may not work now (rule 12): a result
+  // cannot be approved, changes cannot be asked for and the routing cannot be corrected until the
+  // founder opens the permission.
+  agentsMayWork: z.boolean(),
+  // False: the requester can no longer read this request (taken out of the project, made an
+  // external person, left the company, deactivated). The request goes on in the founder's name
+  // (8 October decision 45).
+  requesterReads: z.boolean(),
   // How a cancelled request was closed, for everybody who may read it: who closed it (the
   // requester, the one who stopped it, the approver who rejected the result), the reason class of
   // a rejection and that person's own words. Never anything an agent wrote. Null for a request the
@@ -604,9 +660,14 @@ export const requestDetailSchema = requestSummarySchema.extend({
   approval: approvalCardSchema.nullable(),
   // The approved result; shown to everybody who may read the request once it is approved.
   result: requestResultSchema.nullable(),
-  // The requester's approval waits, and the reader is the requester.
+  // The requester's approval waits and the reader is the one who gives it: the requester, or the
+  // founder in the place of a requester who cannot read the request (`inPlaceOfRequester`).
   acceptance: z
-    .object({ round: z.number().int().min(1), returnsToAgent: returnsToAgentSchema })
+    .object({
+      round: z.number().int().min(1),
+      returnsToAgent: returnsToAgentSchema,
+      inPlaceOfRequester: z.boolean(),
+    })
     .nullable(),
   // The acts the reader may use (7 October decision 7). The server refuses the rest anyway.
   actions: z.object({ cancel: z.boolean(), stop: z.boolean(), reroute: z.boolean() }),

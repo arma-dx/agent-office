@@ -1,11 +1,26 @@
-import type { RequestCommentRow, RequestRow } from '@agent-office/db';
+import type {
+  AcceptanceRow,
+  RequestCommentRow,
+  RequestRow,
+  ResultApprovalRow,
+} from '@agent-office/db';
 import {
   REQUEST_COMMENT_LIMIT,
+  approvalCardSchema,
+  journeyItemSchema,
   requestCommentSchema,
   requestSummarySchema,
 } from '@agent-office/shared';
 import { describe, expect, it } from 'vitest';
-import { toComments, toSummary, type Reader } from '../src/requests-view.ts';
+import {
+  factsOf,
+  peopleOfJourney,
+  toApprovalCard,
+  toComments,
+  toJourney,
+  toSummary,
+  type Reader,
+} from '../src/requests-view.ts';
 
 // What the panel reads of a request beyond its stage, without a database: the due day and whether
 // it has passed (docs/SONRA.md W-h: information only), and its comments (8 October decision 13).
@@ -25,6 +40,11 @@ function row(overrides: Partial<RequestRow> = {}): RequestRow {
     updated_at: new Date('2026-10-08T06:00:00.000Z'),
     due_date: null,
     requester_user_id: id(900),
+    project_id: null,
+    project_name: null,
+    agents_may_work: true,
+    requester_reads: true,
+    restarted_at: null,
     closed_by_user_id: null,
     close_reason: null,
     closed_after_delivery: false,
@@ -207,5 +227,207 @@ describe('the comments of a request as the page reads them', () => {
     const before = rows.map((row) => row.id);
     toComments(rows, NAMES, true);
     expect(rows.map((row) => row.id)).toEqual(before);
+  });
+});
+
+// The project of a request, the permission of that project and who stands in for a requester
+// (8 October decisions 45 to 49), as the answers carry them.
+describe('the project, the permission and the stand-in of a request as the panel reads them', () => {
+  const NOON = new Date('2026-10-08T09:00:00.000Z');
+  const ago = (ms: number): Date => new Date(NOON.getTime() - ms);
+  const FOUNDER: Reader = { userId: id(901), role: 'founder' };
+  const PEOPLE = new Map([
+    [id(900), 'Çalışan'],
+    [id(901), 'Kurucu'],
+  ]);
+  const summaryOf = (overrides: Partial<RequestRow>, reader: Reader = READER) =>
+    requestSummarySchema.parse(toSummary(row(overrides), reader, PEOPLE, NOON));
+
+  it('a summary names the project of the request, and none for a request without one', () => {
+    expect(summaryOf({}).project).toBeNull();
+    expect(summaryOf({ project_id: id(31), project_name: 'Lansman' }).project).toEqual({
+      id: id(31),
+      name: 'Lansman',
+    });
+  });
+
+  it('a request held by a closed permission is the founder’s, whatever its row says was called for', () => {
+    const routed: Partial<RequestRow> = {
+      status: 'in_progress',
+      project_id: id(31),
+      project_name: 'Lansman',
+      routed: true,
+      step_agent_code: 'SOS-2',
+      step_agent_name: 'Sosyal İçerik Yazım Ajanı',
+      step_agent_enabled: true,
+      step_approver_user_id: id(900),
+      step_created_at: ago(5_000),
+    };
+    expect(factsOf(row(routed))).toMatchObject({ agentsMayWork: true, requesterReads: true });
+    const held = summaryOf({ ...routed, agents_may_work: false }, FOUNDER);
+    expect([held.stage, held.cause, held.turn, held.waitingForMe]).toEqual([
+      'fell_to_person',
+      'ai_permission_closed',
+      { kind: 'founder' },
+      true,
+    ]);
+    // For the appointed approver of the step it is not their turn: only the founder opens it.
+    expect(summaryOf({ ...routed, agents_may_work: false }).waitingForMe).toBe(false);
+    // With the permission open the same row reads as work.
+    expect(summaryOf(routed, FOUNDER).stage).toBe('working');
+  });
+
+  it('a restart is the latest call for the work', () => {
+    const stopped: Partial<RequestRow> = {
+      status: 'in_progress',
+      routed: true,
+      step_agent_code: 'SOS-2',
+      step_agent_name: 'Sosyal İçerik Yazım Ajanı',
+      step_agent_enabled: true,
+      step_created_at: ago(60_000),
+      run_agent_code: 'SOS-2',
+      run_status: 'stopped',
+      run_error_code: 'agent_stopped',
+      run_started_at: ago(30_000),
+    };
+    expect(factsOf(row(stopped)).awaitedSince).toEqual(ago(60_000));
+    expect(summaryOf(stopped).cause).toBe('agent_stopped');
+    // The restart is later than the routing, the change request and the stopped run.
+    const restarted = { ...stopped, restarted_at: ago(1_000) };
+    expect(factsOf(row(restarted)).awaitedSince).toEqual(ago(1_000));
+    expect(
+      factsOf(row({ ...restarted, last_change_request_at: ago(40_000) })).awaitedSince,
+    ).toEqual(ago(1_000));
+    expect([summaryOf(restarted).stage, summaryOf(restarted).cause]).toEqual(['working', null]);
+    // An old restart does not hide a later change request.
+    expect(
+      factsOf(row({ ...stopped, restarted_at: ago(50_000), last_change_request_at: ago(40_000) }))
+        .awaitedSince,
+    ).toEqual(ago(40_000));
+    // Before any routing the restart is the only call beside the opening.
+    expect(factsOf(row({ restarted_at: ago(1_000) })).awaitedSince).toEqual(ago(1_000));
+    expect(factsOf(row({})).awaitedSince).toBeNull();
+  });
+
+  it('a result that waits for a requester who cannot read the request waits for the founder', () => {
+    const waiting: Partial<RequestRow> = {
+      status: 'awaiting_approval',
+      routed: true,
+      pending_acceptance: true,
+    };
+    const own = summaryOf(waiting);
+    expect([own.stage, own.turn, own.waitingForMe]).toEqual([
+      'requester_approval',
+      { kind: 'person', userId: id(900), name: 'Çalışan' },
+      true,
+    ]);
+    expect(summaryOf(waiting, FOUNDER).waitingForMe).toBe(false);
+    const absent = { ...waiting, requester_reads: false };
+    const forFounder = summaryOf(absent, FOUNDER);
+    expect([forFounder.stage, forFounder.turn, forFounder.waitingForMe]).toEqual([
+      'requester_approval',
+      { kind: 'founder' },
+      true,
+    ]);
+    // Who asked never changes.
+    expect(forFounder.requester).toEqual({ userId: id(900), name: 'Çalışan' });
+    // An employee who reads the request is not asked.
+    expect(summaryOf(absent, { userId: id(902), role: 'employee' }).waitingForMe).toBe(false);
+  });
+
+  const approval = (overrides: Partial<ResultApprovalRow> = {}): ResultApprovalRow => ({
+    id: id(2),
+    task_id: id(1),
+    request_title: 'LinkedIn için gönderi yaz',
+    requester_user_id: id(900),
+    project_id: null,
+    project_name: null,
+    agents_may_work: true,
+    agent_code: 'SOS-2',
+    agent_name: 'Sosyal İçerik Yazım Ajanı',
+    attempt: 1,
+    status: 'pending',
+    created_at: ago(5_000),
+    decided_at: null,
+    decided_by_user_id: null,
+    rejection_reason: null,
+    decision_reason: null,
+    invalidated_at: null,
+    title: 'Sonuç',
+    summary: null,
+    agent_rationale: null,
+    risk_note: null,
+    payload: {},
+    selected_option: null,
+    involves_money: false,
+    goes_external: false,
+    needs_step_up: false,
+    may_decide: true,
+    ...overrides,
+  });
+
+  it('an approval card names the project and says whether agents may work', () => {
+    const plain = approvalCardSchema.parse(toApprovalCard(approval(), PEOPLE));
+    expect([plain.project, plain.agentsMayWork]).toEqual([null, true]);
+    const held = approvalCardSchema.parse(
+      toApprovalCard(
+        approval({ project_id: id(31), project_name: 'Lansman', agents_may_work: false }),
+        PEOPLE,
+      ),
+    );
+    expect([held.project, held.agentsMayWork]).toEqual([{ id: id(31), name: 'Lansman' }, false]);
+  });
+
+  const acceptance = (overrides: Partial<AcceptanceRow> = {}): AcceptanceRow => ({
+    id: id(3),
+    task_id: id(1),
+    request_title: 'LinkedIn için gönderi yaz',
+    requester_user_id: id(900),
+    round: 1,
+    status: 'approved',
+    created_at: ago(5_000),
+    decided_at: ago(1_000),
+    invalidated_at: null,
+    rejection_reason: null,
+    decision_reason: null,
+    approval_id: id(2),
+    decided_by_user_id: id(900),
+    reader_stands_in: false,
+    agents_may_work: true,
+    returns_to_agent: true,
+    ...overrides,
+  });
+  const journeyOf = (row: AcceptanceRow) => {
+    const rows = { routings: [], runs: [], steps: [], approvals: [], acceptances: [row] };
+    return {
+      items: toJourney(rows, PEOPLE).map((item) => journeyItemSchema.parse(item)),
+      people: peopleOfJourney(rows),
+    };
+  };
+
+  it('the journey names who answered only when it was not the requester', () => {
+    // The requester's own answer, and an answer from before the record said who decided.
+    for (const decidedBy of [id(900), null]) {
+      expect(journeyOf(acceptance({ decided_by_user_id: decidedBy })).items).toEqual([
+        expect.objectContaining({ kind: 'acceptance', status: 'approved', decidedBy: null }),
+      ]);
+    }
+    // The founder, in the requester's place: named, and among the people whose names are read.
+    const standIn = journeyOf(
+      acceptance({ decided_by_user_id: id(901), status: 'changes_requested' }),
+    );
+    expect(standIn.items).toEqual([
+      expect.objectContaining({
+        kind: 'acceptance',
+        status: 'changes_requested',
+        decidedBy: { userId: id(901), name: 'Kurucu' },
+      }),
+    ]);
+    expect(standIn.people).toContain(id(901));
+    // While it waits nobody has decided.
+    expect(
+      journeyOf(acceptance({ status: 'pending', decided_at: null, decided_by_user_id: null }))
+        .items,
+    ).toEqual([expect.objectContaining({ status: 'pending', decidedBy: null })]);
   });
 });

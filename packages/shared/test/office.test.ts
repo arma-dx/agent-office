@@ -31,6 +31,8 @@ const base: RequestFacts = {
   closedAfterDelivery: false,
   returnedNoAgent: false,
   coordinatorEnabled: true,
+  agentsMayWork: true,
+  requesterReads: true,
   routed: false,
   step: null,
   pendingApproval: false,
@@ -141,6 +143,22 @@ describe('the desk an open request stands on', () => {
       [
         'second_change_request',
         { ...routed, lastResult: { status: 'changes_requested', attempt: 2 } },
+      ],
+      // Held by a closed AI permission (rule 12), whatever its last run was: no desk, no error.
+      ['ai_permission_closed', { ...routed, agentsMayWork: false }],
+      [
+        'ai_permission_closed',
+        { ...routed, agentsMayWork: false, lastRun: run('SOS-2', 'failed') },
+      ],
+      ['ai_permission_closed', { ...base, agentsMayWork: false }],
+      // The permission is open again and the run the close stopped was not started again.
+      [
+        'ai_permission_interrupted',
+        { ...routed, lastRun: run('SOS-2', 'stopped', 'ai_permission_closed') },
+      ],
+      [
+        'ai_permission_interrupted',
+        { ...base, lastRun: run('KOR-1', 'stopped', 'ai_permission_closed') },
       ],
     ];
     for (const [cause, facts] of others) {

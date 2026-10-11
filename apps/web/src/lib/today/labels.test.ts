@@ -53,7 +53,11 @@ describe('the words of the Bugün screen', () => {
       'rejected',
     ];
     const fallen = requestCauseSchema.options.filter((cause) => !closed.includes(cause));
-    expect(fallen).toHaveLength(14);
+    // Sixteen since a closed AI permission holds a request (two causes of Projects step 2).
+    expect(fallen).toHaveLength(16);
+    expect(fallen).toEqual(
+      expect.arrayContaining(['ai_permission_closed', 'ai_permission_interrupted']),
+    );
     const texts = [
       expectationText({ stage: 'unit_approval', cause: null, delayed: false }),
       expectationText({ stage: 'requester_approval', cause: null, delayed: false }),

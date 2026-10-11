@@ -27,6 +27,7 @@ function summary(stage: RequestStage, waitingForMe: boolean): RequestSummary {
     waitingForMe,
     unit: null,
     requester: { userId: REQUEST, name: null },
+    project: null,
     createdAt: AT.toISOString(),
     updatedAt: AT.toISOString(),
     dueDate: null,

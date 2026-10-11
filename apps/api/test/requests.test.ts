@@ -691,7 +691,11 @@ describe.skipIf(noDatabase)('requests', () => {
       selectedOption: 'A',
     });
     // The requester said so once: the card says that this time the work does not go back.
-    expect((await read(employee, id)).acceptance).toEqual({ round: 2, returnsToAgent: false });
+    expect((await read(employee, id)).acceptance).toEqual({
+      round: 2,
+      returnsToAgent: false,
+      inPlaceOfRequester: false,
+    });
     expect(
       approvalDeskSchema
         .parse((await get(employee, '/api/approvals')).json())
@@ -735,7 +739,11 @@ describe.skipIf(noDatabase)('requests', () => {
       decision: 'approved',
       selectedOption: 'A',
     });
-    expect((await read(employee, id)).acceptance).toEqual({ round: 1, returnsToAgent: true });
+    expect((await read(employee, id)).acceptance).toEqual({
+      round: 1,
+      returnsToAgent: true,
+      inPlaceOfRequester: false,
+    });
     const rerouted = await post(founder, `/api/requests/${id}/routing`, {
       unitCode: 'HAF',
       agentCode: 'HAF-2',
@@ -747,7 +755,11 @@ describe.skipIf(noDatabase)('requests', () => {
       decision: 'approved',
       selectedOption: 'A',
     });
-    expect((await read(employee, id)).acceptance).toEqual({ round: 2, returnsToAgent: true });
+    expect((await read(employee, id)).acceptance).toEqual({
+      round: 2,
+      returnsToAgent: true,
+      inPlaceOfRequester: false,
+    });
     expect(
       approvalDeskSchema
         .parse((await get(employee, '/api/approvals')).json())
@@ -771,7 +783,11 @@ describe.skipIf(noDatabase)('requests', () => {
       decision: 'approved',
       selectedOption: 'A',
     });
-    expect((await read(employee, id)).acceptance).toEqual({ round: 3, returnsToAgent: false });
+    expect((await read(employee, id)).acceptance).toEqual({
+      round: 3,
+      returnsToAgent: false,
+      inPlaceOfRequester: false,
+    });
     const second = await post(employee, `/api/requests/${id}/acceptance`, {
       decision: 'changes_requested',
       note: 'Hâlâ olmadı.',

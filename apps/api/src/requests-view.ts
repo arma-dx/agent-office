@@ -65,6 +65,8 @@ export function factsOf(row: RequestRow): RequestFacts {
     closedAfterDelivery: row.closed_after_delivery,
     returnedNoAgent: row.returned_no_agent,
     coordinatorEnabled: row.coordinator_enabled,
+    agentsMayWork: row.agents_may_work,
+    requesterReads: row.requester_reads,
     routed: row.routed,
     step:
       row.step_agent_code !== null
@@ -77,7 +79,9 @@ export function factsOf(row: RequestRow): RequestFacts {
         ? { status: lastResult, attempt: row.last_result_attempt }
         : null,
     changesRequested: row.last_change_request_at !== null,
-    awaitedSince: latest(row.step_created_at, row.last_change_request_at),
+    // A restart after an agent or an AI permission was opened again calls for the work anew
+    // (8 October decision 49).
+    awaitedSince: latest(latest(row.step_created_at, row.last_change_request_at), row.restarted_at),
     notStartedAt: row.not_started_at,
     lastRun:
       row.run_agent_code !== null && row.run_status !== null && row.run_started_at !== null
@@ -213,6 +217,7 @@ export function toSummary(
         ? { code: row.unit_code, name: row.unit_name }
         : null,
     requester: person(names, row.requester_user_id),
+    project: projectOf(row),
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
     dueDate: row.due_date,
@@ -220,6 +225,16 @@ export function toSummary(
     // of anybody any more.
     overdue: row.due_date !== null && !isClosedTaskStatus(status) && row.due_date < officeDay(now),
   };
+}
+
+/** The project a request is inside, as the row names it; null for a request without one. */
+function projectOf(row: {
+  project_id: string | null;
+  project_name: string | null;
+}): RequestSummary['project'] {
+  return row.project_id !== null && row.project_name !== null
+    ? { id: row.project_id, name: row.project_name }
+    : null;
 }
 
 /**
@@ -239,6 +254,7 @@ export function toApprovalCard(row: ResultApprovalRow, names: Names): ApprovalCa
     requestId: row.task_id,
     requestTitle: row.request_title,
     requester: person(names, row.requester_user_id),
+    project: projectOf(row),
     agent: { code: row.agent_code, name: row.agent_name },
     attempt: row.attempt,
     createdAt: row.created_at.toISOString(),
@@ -253,6 +269,7 @@ export function toApprovalCard(row: ResultApprovalRow, names: Names): ApprovalCa
       row.involves_money && payload.success ? (payload.data.money_stated_by ?? null) : null,
     goesExternal: row.goes_external,
     needsStepUp: row.needs_step_up,
+    agentsMayWork: row.agents_may_work,
   };
 }
 
@@ -281,6 +298,8 @@ export function peopleOfJourney(rows: JourneyRows): string[] {
   return [
     ...rows.routings.flatMap((row) => [row.approver_user_id, row.routed_by_user_id]),
     ...rows.approvals.flatMap((row) => [row.decided_by_user_id, row.requester_user_id]),
+    // Who answered in the requester's place (8 October decision 45).
+    ...rows.acceptances.map((row) => row.decided_by_user_id),
   ].filter((id): id is string => id !== null);
 }
 
@@ -350,6 +369,11 @@ export function toJourney(rows: JourneyRows, names: Names): JourneyItem[] {
       at: (row.decided_at ?? row.invalidated_at ?? row.created_at).toISOString(),
       round: row.round,
       status: closed ? 'closed' : acceptanceStatus(row.status),
+      // Named only when it was not the requester: the founder, in the requester's place.
+      decidedBy:
+        row.decided_by_user_id !== null && row.decided_by_user_id !== row.requester_user_id
+          ? person(names, row.decided_by_user_id)
+          : null,
       reason: rejectionReasonSchema.nullable().catch(null).parse(row.rejection_reason),
       note: row.decision_reason,
     });

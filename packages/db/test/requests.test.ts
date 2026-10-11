@@ -25,6 +25,7 @@ import {
   readResultApprovals,
   stopAgentIfOpen,
   type PendingDecisionCounts,
+  type RequestRow,
 } from '../src/requests.ts';
 import { ids } from './fixtures.ts';
 import {
@@ -4273,6 +4274,206 @@ describe.skipIf(noDatabase)('a request inside a project', () => {
       expect(
         await read({ ...agentRun(ids.employeeA, 'KOR-1'), projectId: ids.projectANoAi }),
       ).toMatchObject({ tasks: 0, runs: 0, task_routings: 0, approvals: 0 });
+    });
+  });
+
+  it('the statements give the project, its name and whether agents may work, and the list of one project', async () => {
+    await inTransaction(async (tx) => {
+      await enableHaf(tx);
+      const inProject = (agent: string): ContextInput => ({
+        ...agentRun(ids.employeeA, agent),
+        projectId: ids.projectA,
+      });
+      await tx.setContext(employeeA);
+      const plain = await openRequest(tx);
+      // A project request whose result waits for the approver, and one whose approved result
+      // waits for its requester.
+      const walked = async (): Promise<{ task: string; approval: string }> => {
+        await tx.setContext(employeeA);
+        const task = await openRequest(tx, ids.projectA);
+        await tx.setContext(inProject('KOR-1'));
+        const kor = await openRun(tx, task, 'KOR-1');
+        await tx.rows(ROUTE, [task, HAF_STEP, kor]);
+        await tx.exec(
+          `update office.runs set status = 'completed', finished_at = now() where id = $1`,
+          [kor],
+        );
+        await tx.setContext(inProject('HAF-1'));
+        const haf = await openRun(tx, task, 'HAF-1');
+        return { task, approval: (await one<{ id: string }>(tx, SUBMIT, [task, haf, null])).id };
+      };
+      const waiting = await walked();
+      const accepted = await walked();
+      await tx.setContext(founderA);
+      await tx.exec(`update office.approvals set status = 'approved' where id = $1`, [
+        accepted.approval,
+      ]);
+
+      const projectOf = (row: RequestRow | null | undefined) =>
+        row && {
+          project_id: row.project_id,
+          project_name: row.project_name,
+          agents_may_work: row.agents_may_work,
+        };
+      const inside = { project_id: ids.projectA, project_name: 'Project A', agents_may_work: true };
+      const list = (projectId: string | null): Promise<RequestRow[]> =>
+        listRequests(tx.client, { coordinator: 'KOR-1', mine: false, limit: 50, projectId });
+      const state = async (): Promise<unknown> => ({
+        request: projectOf(await readRequest(tx.client, 'KOR-1', waiting.task)),
+        listed: (await list(ids.projectA)).map((row) => row.agents_may_work),
+        approvals: await (async () => {
+          await tx.setContext(founderA);
+          return (await listPendingApprovals(tx.client))
+            .filter((row) => row.task_id === waiting.task)
+            .map((row) => [row.project_id, row.project_name, row.agents_may_work]);
+        })(),
+        acceptances: await (async () => {
+          await tx.setContext(employeeA);
+          return (await listPendingAcceptances(tx.client))
+            .filter((row) => row.task_id === accepted.task)
+            .map((row) => row.agents_may_work);
+        })(),
+      });
+      const held = (allowed: boolean) => ({
+        request: { ...inside, agents_may_work: allowed },
+        listed: [allowed, allowed],
+        approvals: [[ids.projectA, 'Project A', allowed]],
+        acceptances: [allowed],
+      });
+
+      for (const reader of [employeeA, founderA]) {
+        await tx.setContext(reader);
+        expect(projectOf(await readRequest(tx.client, 'KOR-1', waiting.task))).toEqual(inside);
+        expect(projectOf(await readRequest(tx.client, 'KOR-1', plain))).toEqual({
+          project_id: null,
+          project_name: null,
+          agents_may_work: true,
+        });
+        // The list of one project holds that project's requests and no other.
+        expect((await list(ids.projectA)).map((row) => row.id).sort()).toEqual(
+          [waiting.task, accepted.task].sort(),
+        );
+        expect((await list(ids.projectANoAi)).map((row) => row.id)).toEqual([]);
+        const all = await list(null);
+        expect(all.map((row) => row.id)).toEqual(
+          expect.arrayContaining([plain, waiting.task, accepted.task]),
+        );
+        expect(projectOf(all.find((row) => row.id === waiting.task))).toEqual(inside);
+        // Without the option the list is the whole one, as before this step.
+        expect(
+          (await listRequests(tx.client, { coordinator: 'KOR-1', mine: false, limit: 50 })).length,
+        ).toBe(all.length);
+      }
+      // Somebody who does not read the project gets none of its requests, with or without the
+      // filter, and no project of the other company is listed.
+      for (const stranger of [colleagueA, approverA, externalA, founderP]) {
+        await tx.setContext(stranger);
+        expect(await list(ids.projectA), JSON.stringify(stranger)).toEqual([]);
+        expect(await readRequest(tx.client, 'KOR-1', waiting.task)).toBeNull();
+        expect((await list(null)).some((row) => row.project_id !== null)).toBe(false);
+      }
+
+      await tx.setContext(employeeA);
+      expect(await state()).toEqual(held(true));
+      // The project's own permission is closed; then it is opened and the customer's is closed.
+      await tx.setContext(founderA);
+      await tx.rows('select office.set_project_ai_permission($1, false, null)', [ids.projectA]);
+      await tx.setContext(employeeA);
+      expect(await state()).toEqual(held(false));
+      await stepUp(tx, founderA, 'project_ai_permission', ids.projectA);
+      await tx.rows('select office.set_project_ai_permission($1, true, $2)', [
+        ids.projectA,
+        ids.customerA,
+      ]);
+      await tx.setContext(employeeA);
+      expect(await state()).toEqual(held(true));
+      await tx.setContext(founderA);
+      await tx.rows('select office.set_customer_permissions($1, false, null)', [ids.customerA]);
+      await tx.setContext(employeeA);
+      expect(await state()).toEqual(held(false));
+      // A request without a project is never held.
+      expect(projectOf(await readRequest(tx.client, 'KOR-1', plain))).toMatchObject({
+        agents_may_work: true,
+      });
+    });
+  });
+
+  it('the lists of the Bugün screen hold a project request only for its readers', async () => {
+    await inTransaction(async (tx) => {
+      await enableHaf(tx);
+      // The right holder is appointed for the unit, and is no member of the project.
+      await tx.setContext(founderA);
+      await tx.exec(
+        `update office.approvers set user_id = $2 where company_id = $1 and unit_code = 'HAF'`,
+        [ids.arma, ids.approverA],
+      );
+      const inProject = (agent: string): ContextInput => ({
+        ...agentRun(ids.employeeA, agent),
+        projectId: ids.projectA,
+      });
+      const submittedInProject = async (): Promise<string> => {
+        await tx.setContext(employeeA);
+        const task = await openRequest(tx, ids.projectA);
+        await tx.setContext(inProject('KOR-1'));
+        const kor = await openRun(tx, task, 'KOR-1');
+        await tx.rows(ROUTE, [task, HAF_STEP, kor]);
+        await tx.exec(
+          `update office.runs set status = 'completed', finished_at = now() where id = $1`,
+          [kor],
+        );
+        await tx.setContext(inProject('HAF-1'));
+        await one(tx, SUBMIT, [task, await openRun(tx, task, 'HAF-1'), null]);
+        return task;
+      };
+      const seen = async (reader: ContextInput, task: string): Promise<[boolean, number]> => {
+        await tx.setContext(reader);
+        const expected = await listExpectedRequests(tx.client, {
+          coordinator: 'KOR-1',
+          limit: 200,
+        });
+        return [
+          expected.some((row) => row.id === task),
+          (await countPendingDecisions(tx.client)).approvals,
+        ];
+      };
+      const approverOf = async (task: string): Promise<unknown> => {
+        await tx.setContext(founderA);
+        return (
+          await one(
+            tx,
+            `select approver_user_id from office.task_routings
+             where task_id = $1 and status = 'active'`,
+            [task],
+          )
+        ).approver_user_id;
+      };
+      const before = {
+        founder: (await seen(founderA, ids.requestA))[1],
+        approver: (await seen(approverA, ids.requestA))[1],
+      };
+
+      const first = await submittedInProject();
+      // An appointed approver who is no member of the project is not appointed for it: the
+      // founder decides, and only the founder's lists hold the request.
+      expect(await approverOf(first)).toBeNull();
+      expect(await seen(founderA, first)).toEqual([true, before.founder + 1]);
+      expect(await seen(approverA, first)).toEqual([false, before.approver]);
+      expect(await seen(colleagueA, first)).toEqual([false, 0]);
+      // The requester's own list holds their request; nothing of it waits for their decision.
+      expect(await seen(employeeA, first)).toEqual([true, 0]);
+
+      // Made a member, the approver is appointed for the project's NEXT request.
+      await tx.setContext(founderA);
+      await tx.exec(
+        'insert into office.project_members (company_id, project_id, user_id) values ($1, $2, $3)',
+        [ids.arma, ids.projectA, ids.approverA],
+      );
+      const second = await submittedInProject();
+      expect(await approverOf(second)).toBe(ids.approverA);
+      expect(await seen(approverA, second)).toEqual([true, before.approver + 1]);
+      expect(await seen(founderA, second)).toEqual([true, before.founder + 2]);
+      // The step that was opened before keeps the founder as the one who decides.
+      expect(await approverOf(first)).toBeNull();
     });
   });
 

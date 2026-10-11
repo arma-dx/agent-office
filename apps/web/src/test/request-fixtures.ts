@@ -33,6 +33,7 @@ export const APPROVAL_CARD: ApprovalCard = approvalCardSchema.parse({
   requestId: REQUEST_ID,
   requestTitle: 'LinkedIn için gönderi yaz',
   requester: EMPLOYEE,
+  project: null,
   agent: SOS_2,
   attempt: 1,
   createdAt: AT,
@@ -48,6 +49,7 @@ export const APPROVAL_CARD: ApprovalCard = approvalCardSchema.parse({
   moneyStatedBy: null,
   goesExternal: true,
   needsStepUp: true,
+  agentsMayWork: true,
 });
 
 const JOURNEY: RequestDetail['journey'] = [
@@ -103,6 +105,7 @@ export function requestDetail(overrides: Partial<RequestDetail> = {}): RequestDe
     waitingForMe: true,
     unit: { code: 'SOS', name: 'Sosyal Medya' },
     requester: EMPLOYEE,
+    project: null,
     createdAt: AT,
     updatedAt: AT,
     dueDate: null,
@@ -110,6 +113,8 @@ export function requestDetail(overrides: Partial<RequestDetail> = {}): RequestDe
     text: 'LinkedIn için gönderi yaz\nKaynak: İzmir ofisimiz 1 Ekim’de açıldı.',
     agent: SOS_2,
     approver: null,
+    agentsMayWork: true,
+    requesterReads: true,
     closure: null,
     journey: JOURNEY,
     approval: APPROVAL_CARD,
@@ -166,6 +171,7 @@ export function summaryOf(detail: RequestDetail): RequestSummary {
     waitingForMe,
     unit,
     requester,
+    project,
     createdAt,
     updatedAt,
     dueDate,
@@ -182,6 +188,7 @@ export function summaryOf(detail: RequestDetail): RequestSummary {
     waitingForMe,
     unit,
     requester,
+    project,
     createdAt,
     updatedAt,
     dueDate,
