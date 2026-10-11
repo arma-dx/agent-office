@@ -8,13 +8,18 @@ import {
   OFFICE_REQUEST_LIMIT,
   REQUEST_COMMENT_MAX,
   TODAY_REQUEST_LIMIT,
+  agentOpenResponseSchema,
   agentStopIfOpenResponseSchema,
   apiErrorSchema,
   approvalDecisionDetails,
   approvalDeskSchema,
+  customerPermissionDetails,
+  customerPermissionsAnswerSchema,
   memberChangeDetails,
   officeAgentSchema,
   officeResponseSchema,
+  projectAiPermissionAnswerSchema,
+  projectAiPermissionDetails,
   projectDetailSchema,
   requestDetailSchema,
   requestIntakeSchema,
@@ -22,6 +27,7 @@ import {
   routingOptionsSchema,
   sidebarCountsSchema,
   todaySchema,
+  waitingWorkResponseSchema,
   officeDay,
   type OfficeAgentWork,
   type ProjectDetail,
@@ -30,7 +36,7 @@ import {
   type Today,
 } from '@agent-office/shared';
 import type { LightMyRequestResponse } from 'fastify';
-import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, inject, it, vi } from 'vitest';
 import { hashSessionKey } from '../src/session.ts';
 import { SoftwareAuthenticator } from './authenticator.ts';
 import { accounts, ids } from './fixtures.ts';
@@ -1467,9 +1473,90 @@ describe.skipIf(noDatabase)('requests', () => {
     });
   });
 
-  it('work that could not be started stays with a person, also after the agent is opened again', async () => {
-    const stop = () => put(founder, '/api/agents/HAF-2/switch', { status: 'stopped' });
-    const openAgain = () => put(founder, '/api/agents/HAF-2/switch', { status: 'enabled' });
+  // The acts around an opening (8 October decision 49), for the cases below and for the cases of
+  // a project further down.
+  const SWITCH = '/api/agents/HAF-2/switch';
+  const stop = () => put(founder, SWITCH, { status: 'stopped' });
+  /** Opens HAF-2 and answers how many waiting requests the opening started. */
+  async function openAgain(): Promise<number> {
+    const res = await put(founder, SWITCH, { status: 'enabled' });
+    expect(res.statusCode, res.body).toBe(200);
+    return agentOpenResponseSchema.parse(res.json()).restarted;
+  }
+  /** The number the confirmation of an opening is told. */
+  async function waitingFor(query: string): Promise<number> {
+    const res = await get(founder, `/api/waiting-work?${query}`);
+    expect(res.statusCode, res.body).toBe(200);
+    return waitingWorkResponseSchema.parse(res.json()).waiting;
+  }
+  const traceOf = (id: string) =>
+    adminQuery(
+      `select event, user_id, agent_code from office.audit_log
+       where record_type = 'task' and record_id = $1 and event like 'run_%' order by id`,
+      [id],
+    );
+  /** What the runner leaves when it refuses a job at its gate: one row, in the agent's context. */
+  const refusedAtTheGate = (taskId: string, agentCode: string, projectId: string | null = null) =>
+    agentStep(
+      workerPool,
+      { companyId: ids.arma, userId: ids.employee, agentCode, projectId },
+      (client) =>
+        client.query(
+          `insert into office.audit_log (company_id, project_id, event, record_type, record_id)
+           values (office.ctx_company_id(), office.ctx_project_id(), 'run_refused', 'task', $1)`,
+          [taskId],
+        ),
+    );
+  /** A run of HAF-2 on the request, left open. */
+  const openRun = (taskId: string, projectId: string | null = null): Promise<string> =>
+    agentStep(
+      workerPool,
+      { companyId: ids.arma, userId: ids.employee, agentCode: 'HAF-2', projectId },
+      async (client) => {
+        const run = await client.query<{ id: string }>(
+          `insert into office.runs (company_id, task_id, agent_code, card_version_id,
+             trigger_type, model) values ($1, $2, 'HAF-2', $3, 'handoff', 'test-model')
+           returning id`,
+          [ids.arma, taskId, CARD_HAF],
+        );
+        return run.rows[0]?.id ?? '';
+      },
+    );
+  /** The runner ends the run at its next step. */
+  const endRun = (runId: string, status: 'stopped' | 'failed', code: string) =>
+    agentStep(
+      workerPool,
+      { companyId: ids.arma, userId: ids.employee, agentCode: 'HAF-2' },
+      (client) =>
+        client.query(
+          `update office.runs set status = $2, finished_at = now(), error_code = $3
+           where id = $1`,
+          [runId, status, code],
+        ),
+    );
+  /**
+   * Earlier cases of this file left requests that wait for HAF-2. One stop and one opening
+   * start them once, so that a case counts only its own.
+   */
+  async function settle(): Promise<void> {
+    await stop();
+    await openAgain();
+    expect(await waitingFor('agent=HAF-2')).toBe(0);
+  }
+
+  // 8 October decision 49: the work that waited for a stopped agent starts again by itself when
+  // the founder opens the agent. (Until that decision it stayed with a person, who had to route
+  // the request again; the cases below pinned that rule and now pin the new one.)
+  describe('waiting work starts again when its agent is opened', () => {
+    const expectedOf = async (session: string): Promise<string[]> =>
+      todaySchema.parse((await get(session, '/api/today')).json()).expected.map((item) => item.id);
+
+    const stoppedAgent = {
+      status: 'in_progress',
+      stage: 'fell_to_person',
+      cause: 'agent_stopped',
+      turn: { kind: 'founder' },
+    };
     const notStarted = {
       status: 'in_progress',
       stage: 'fell_to_person',
@@ -1477,125 +1564,391 @@ describe.skipIf(noDatabase)('requests', () => {
       delayed: false,
       turn: { kind: 'founder' },
     };
-    const traceOf = (id: string) =>
-      adminQuery(
-        `select event, user_id, agent_code from office.audit_log
-         where record_type = 'task' and record_id = $1 and event like 'run_%' order by id`,
-        [id],
-      );
-    /** What the runner leaves when it refuses a job at its gate: one row, in the agent's context. */
-    const refusedAtTheGate = (taskId: string, agentCode: string) =>
-      agentStep(workerPool, { companyId: ids.arma, userId: ids.employee, agentCode }, (client) =>
-        client.query(
-          `insert into office.audit_log (company_id, event, record_type, record_id)
-           values (office.ctx_company_id(), 'run_refused', 'task', $1)`,
-          [taskId],
-        ),
-      );
 
-    // The approver asks for changes while the agent is stopped: no job, and the page says why.
-    const first = await open(employee);
-    await route(first.id, ids.employee);
-    const approvalId = await submit(first.id, ids.employee);
-    // The requester says "not what I asked for" while the agent is stopped.
-    const second = await open(employee);
-    await route(second.id, ids.employee);
-    await post(founder, `/api/approvals/${await submit(second.id, ids.employee)}/decision`, {
-      decision: 'approved',
-      selectedOption: 'A',
-    });
-    // A job the runner refuses at its gate because the agent is stopped when it arrives.
-    const third = await open(employee);
-    await route(third.id, ids.employee);
-    const jobs = server.jobs.sent.length;
-    await stop();
-    try {
+    it('opening a stopped agent restarts exactly the waiting work once and says how many', async () => {
+      await settle();
+      // (1) The approver asks for changes while the agent is stopped.
+      const first = await open(employee);
+      await route(first.id, ids.employee);
+      const approvalId = await submit(first.id, ids.employee);
+      // (2) The requester says "not what I asked for" while the agent is stopped.
+      const second = await open(employee);
+      await route(second.id, ids.employee);
+      await post(founder, `/api/approvals/${await submit(second.id, ids.employee)}/decision`, {
+        decision: 'approved',
+        selectedOption: 'A',
+      });
+      // (3) A job the runner refuses at its gate because the agent is stopped when it arrives.
+      const third = await open(employee);
+      await route(third.id, ids.employee);
+      // (4) A run that is open when the switch is stopped; the runner ends it at its next step.
+      const fourth = await open(employee);
+      await route(fourth.id, ids.employee);
+      const stoppedRun = await openRun(fourth.id);
+      // (5) A run that failed: a person decides that one, and an opening does not touch it.
+      const failed = await open(employee);
+      await route(failed.id, ids.employee);
+      await endRun(await openRun(failed.id), 'failed', 'runner_error');
+      const waitingIds = [first.id, second.id, third.id, fourth.id];
+      // The agent is open: an opening would start nothing.
+      expect(await waitingFor('agent=HAF-2')).toBe(0);
+
+      const jobs = server.jobs.sent.length;
+      expect((await stop()).json()).not.toHaveProperty('restarted');
       const sentBack = await post(founder, `/api/approvals/${approvalId}/decision`, {
         decision: 'changes_requested',
         reason: 'incomplete',
       });
-      expect(requestDetailSchema.parse(sentBack.json())).toMatchObject({
-        stage: 'fell_to_person',
-        cause: 'agent_stopped',
-      });
+      expect(requestDetailSchema.parse(sentBack.json())).toMatchObject(stoppedAgent);
       const refusedResult = await post(employee, `/api/requests/${second.id}/acceptance`, {
         decision: 'changes_requested',
         note: 'Açılış tarihi de yazsın.',
       });
-      expect(requestDetailSchema.parse(refusedResult.json())).toMatchObject({
-        stage: 'fell_to_person',
-        cause: 'agent_stopped',
-      });
+      expect(requestDetailSchema.parse(refusedResult.json())).toMatchObject(stoppedAgent);
       await refusedAtTheGate(third.id, 'HAF-2');
-      expect(await read(employee, third.id)).toMatchObject({ cause: 'agent_stopped' });
-    } finally {
-      await openAgain();
-    }
-    // Nothing was put on the queue, neither by the change requests nor by opening the agent.
-    expect(server.jobs.sent).toHaveLength(jobs);
-    expect(await traceOf(first.id)).toEqual([
-      { event: 'run_not_started', user_id: ids.founder, agent_code: null },
-    ]);
-    expect(await traceOf(second.id)).toEqual([
-      { event: 'run_not_started', user_id: ids.employee, agent_code: null },
-    ]);
-    // The agent is open again, and still nobody is told that it has the turn: the page says the
-    // work did not start, to the requester and to the founder, who is the one to act.
-    for (const id of [first.id, second.id, third.id]) {
-      expect(await read(employee, id)).toMatchObject({ ...notStarted, waitingForMe: false });
-      expect(await read(founder, id)).toMatchObject({
+      await endRun(stoppedRun, 'stopped', 'agent_stopped');
+
+      // While the agent is stopped: nothing was put on the queue, every one of the four reads
+      // "ajan durduruldu" and stands on the list of the one who decides (here the founder).
+      expect(server.jobs.sent).toHaveLength(jobs);
+      expect(await traceOf(first.id)).toEqual([
+        { event: 'run_not_started', user_id: ids.founder, agent_code: null },
+      ]);
+      expect(await traceOf(second.id)).toEqual([
+        { event: 'run_not_started', user_id: ids.employee, agent_code: null },
+      ]);
+      for (const id of waitingIds) {
+        expect(await read(employee, id), id).toMatchObject({
+          ...stoppedAgent,
+          waitingForMe: false,
+        });
+        expect(await read(founder, id), id).toMatchObject({
+          ...stoppedAgent,
+          waitingForMe: true,
+          actions: { cancel: false, stop: true, reroute: true },
+        });
+      }
+      expect(await expectedOf(founder)).toEqual(expect.arrayContaining([...waitingIds, failed.id]));
+      // The confirmation of the opening is told the number first.
+      expect(await waitingFor('agent=HAF-2')).toBe(4);
+      expect(await waitingFor('agent=KOR-1')).toBe(0);
+
+      // The opening starts exactly those four, and says so.
+      expect(await openAgain()).toBe(4);
+      const sent = server.jobs.sent.slice(jobs);
+      expect(sent).toHaveLength(4);
+      expect(sent).toEqual(
+        expect.arrayContaining(
+          waitingIds.map((taskId) => ({
+            companyId: ids.arma,
+            // The job names the requester, whoever opened the agent.
+            userId: ids.employee,
+            taskId,
+            agentCode: 'HAF-2',
+          })),
+        ),
+      );
+      // One trace on each request, in the founder's name, after the trace of the missed start.
+      const restarted = { event: 'run_restarted', user_id: ids.founder, agent_code: null };
+      expect(await traceOf(first.id)).toEqual([
+        { event: 'run_not_started', user_id: ids.founder, agent_code: null },
+        restarted,
+      ]);
+      expect(await traceOf(second.id)).toEqual([
+        { event: 'run_not_started', user_id: ids.employee, agent_code: null },
+        restarted,
+      ]);
+      expect(await traceOf(third.id)).toEqual([
+        { event: 'run_refused', user_id: ids.employee, agent_code: 'HAF-2' },
+        restarted,
+      ]);
+      expect(await traceOf(fourth.id)).toEqual([restarted]);
+      expect(await traceOf(failed.id)).toEqual([]);
+      expect(
+        await adminQuery(
+          `select event, user_id from office.audit_log
+           where record_type = 'company_agent' order by id desc limit 1`,
+        ),
+      ).toEqual([{ event: 'agent_enabled', user_id: ids.founder }]);
+
+      // The page and Bugün, afterwards: the agent has the turn again and nobody is waited for.
+      for (const [id, stage] of [
+        [first.id, 'revising'],
+        [second.id, 'revising'],
+        [third.id, 'working'],
+        [fourth.id, 'working'],
+      ] as const) {
+        for (const reader of [founder, employee]) {
+          expect(await read(reader, id), id).toMatchObject({
+            status: 'in_progress',
+            stage,
+            cause: null,
+            delayed: false,
+            turn: { kind: 'agent', code: 'HAF-2' },
+            waitingForMe: false,
+          });
+        }
+      }
+      const list = requestListSchema.parse((await get(employee, '/api/requests')).json());
+      expect(list.requests.find((request) => request.id === third.id)).toMatchObject({
+        stage: 'working',
+        cause: null,
+      });
+      const after = await expectedOf(founder);
+      for (const id of waitingIds) {
+        expect(after, id).not.toContain(id);
+      }
+      // The run that failed is as it was: with a person.
+      expect(after).toContain(failed.id);
+      expect(await read(founder, failed.id)).toMatchObject({
+        stage: 'fell_to_person',
+        cause: 'run_failed',
+        waitingForMe: true,
+      });
+
+      // Exactly once: the same opening again, and a stop and an opening, start nothing more.
+      expect(await waitingFor('agent=HAF-2')).toBe(0);
+      expect(await openAgain()).toBe(0);
+      await stop();
+      expect(await waitingFor('agent=HAF-2')).toBe(0);
+      expect(await openAgain()).toBe(0);
+      expect(server.jobs.sent).toHaveLength(jobs + 4);
+      for (const id of waitingIds) {
+        expect(
+          (await traceOf(id)).filter((row) => row.event === 'run_restarted'),
+          id,
+        ).toHaveLength(1);
+      }
+
+      // A restarted job that the runner refuses again reads "çalışma başlamadı": the agent is
+      // open, so the switch does not explain it, and a person routes the request again.
+      await refusedAtTheGate(third.id, 'HAF-2');
+      expect(await read(employee, third.id)).toMatchObject({ ...notStarted, waitingForMe: false });
+      expect(await read(founder, third.id)).toMatchObject({
         ...notStarted,
         waitingForMe: true,
         actions: { cancel: false, stop: true, reroute: true },
       });
-    }
-    const list = requestListSchema.parse((await get(employee, '/api/requests')).json());
-    expect(list.requests.find((request) => request.id === first.id)).toMatchObject(notStarted);
-    // The way on: the founder gives the work to the agent again, and a job is sent.
-    const again = await post(founder, `/api/requests/${first.id}/routing`, {
-      unitCode: 'HAF',
-      agentCode: 'HAF-2',
+      // It is waiting work again (the next opening would take it), and the way on that does not
+      // wait for one is the founder's: the work is given to the agent again, and a job is sent.
+      expect(await waitingFor('agent=HAF-2')).toBe(1);
+      const again = await post(founder, `/api/requests/${third.id}/routing`, {
+        unitCode: 'HAF',
+        agentCode: 'HAF-2',
+      });
+      expect(requestDetailSchema.parse(again.json())).toMatchObject({
+        stage: 'working',
+        cause: null,
+        turn: { kind: 'agent', code: 'HAF-2' },
+      });
+      expect(server.jobs.sent.slice(jobs + 4)).toEqual([
+        { companyId: ids.arma, userId: ids.employee, taskId: third.id, agentCode: 'HAF-2' },
+      ]);
+      expect(await waitingFor('agent=HAF-2')).toBe(0);
     });
-    expect(requestDetailSchema.parse(again.json())).toMatchObject({
-      stage: 'working',
-      cause: null,
-      turn: { kind: 'agent', code: 'HAF-2' },
-    });
-    expect(server.jobs.sent.slice(jobs)).toEqual([
-      { companyId: ids.arma, userId: ids.employee, taskId: first.id, agentCode: 'HAF-2' },
-    ]);
 
-    // A refusal that is about another agent says nothing about this step: a stale job of the
-    // coordinator on a request that is routed.
-    const routed = await open(employee);
-    await route(routed.id, ids.employee);
-    await refusedAtTheGate(routed.id, COORDINATOR_AGENT_CODE);
-    expect(await read(employee, routed.id)).toMatchObject({ stage: 'working', cause: null });
+    it('opening an agent that was already open, and a first opening, restart nothing; a stop answers without a count', async () => {
+      await settle();
+      // Work that waits while the agent is open: its job was refused at the gate.
+      const { id } = await open(employee);
+      await route(id, ids.employee);
+      await refusedAtTheGate(id, 'HAF-2');
+      expect(await read(founder, id)).toMatchObject(notStarted);
+      const jobs = server.jobs.sent.length;
+      // The agent is open already: this request opens nothing, so it starts nothing.
+      expect(await openAgain()).toBe(0);
+      expect(server.jobs.sent).toHaveLength(jobs);
+      expect(await read(founder, id)).toMatchObject(notStarted);
+      expect((await traceOf(id)).map((row) => row.event)).toEqual(['run_refused']);
 
-    // Before the routing: the coordinator's job was refused before a run existed. The founder
-    // makes the first routing.
-    const unrouted = await open(employee);
-    expect(await read(founder, unrouted.id)).toMatchObject({ stage: 'routing', cause: null });
-    await refusedAtTheGate(unrouted.id, COORDINATOR_AGENT_CODE);
-    expect(await read(employee, unrouted.id)).toMatchObject({
-      ...notStarted,
-      status: 'open',
-      waitingForMe: false,
+      // A stop says nothing about waiting work, plainly or "only if open".
+      const stopped = await stop();
+      expect(stopped.statusCode).toBe(200);
+      expect(stopped.json()).toEqual({
+        code: 'HAF-2',
+        name: 'Kurumsal Arama Ajanı',
+        status: 'stopped',
+        ready: true,
+      });
+      const already = await put(founder, SWITCH, { status: 'stopped', onlyIfOpen: true });
+      expect(already.json()).toEqual({
+        code: 'HAF-2',
+        name: 'Kurumsal Arama Ajanı',
+        status: 'stopped',
+        ready: true,
+        changed: false,
+      });
+      // Opened from stopped, the one request that waited starts.
+      expect(await openAgain()).toBe(1);
+      expect(server.jobs.sent.slice(jobs)).toEqual([
+        { companyId: ids.arma, userId: ids.employee, taskId: id, agentCode: 'HAF-2' },
+      ]);
+
+      // A first opening: Pillika never had a switch for HAF-2, so nothing can wait for it there.
+      expect(
+        await adminQuery(
+          `select 1 from office.company_agents where company_id = $1 and agent_code = 'HAF-2'`,
+          [ids.pillika],
+        ),
+      ).toEqual([]);
+      const first = await send(server, founder, 'PUT', SWITCH, {
+        company: ids.pillika,
+        payload: { status: 'enabled' },
+      });
+      expect(first.statusCode, first.body).toBe(200);
+      expect(agentOpenResponseSchema.parse(first.json())).toMatchObject({
+        status: 'enabled',
+        restarted: 0,
+      });
+      expect(server.jobs.sent).toHaveLength(jobs + 1);
+      await adminQuery(
+        `delete from office.company_agents where company_id = $1 and agent_code = 'HAF-2'`,
+        [ids.pillika],
+      );
     });
-    expect(await read(founder, unrouted.id)).toMatchObject({
-      ...notStarted,
-      status: 'open',
-      waitingForMe: true,
-      actions: { cancel: false, stop: true, reroute: true },
+
+    it('the opening, the traces and the jobs are stored together', async () => {
+      await settle();
+      const waiting: string[] = [];
+      for (let index = 0; index < 2; index += 1) {
+        const { id } = await open(employee);
+        await route(id, ids.employee);
+        waiting.push(id);
+      }
+      await stop();
+      for (const id of waiting) {
+        await refusedAtTheGate(id, 'HAF-2');
+      }
+      const [mark] = await adminQuery<{ id: string }>(
+        'select coalesce(max(id), 0)::text as id from office.audit_log',
+      );
+      // What an opening writes: the opening itself and one restart per request.
+      const audit = async () =>
+        adminQuery(
+          `select event from office.audit_log
+           where id > $1 and event in ('agent_enabled', 'run_restarted') order by id`,
+          [mark?.id ?? '0'],
+        );
+      // The queue takes the first job and fails at the second.
+      const jobs = server.jobs.sent.length;
+      let calls = 0;
+      const send = vi.spyOn(server.jobs, 'send').mockImplementation(async (client) => {
+        calls += 1;
+        await client.query('select 1');
+        if (calls === 2) {
+          throw new Error('The queue is not reachable');
+        }
+      });
+      try {
+        const res = await put(founder, SWITCH, { status: 'enabled' });
+        expect([res.statusCode, errorCode(res)]).toEqual([500, 'internal_error']);
+      } finally {
+        send.mockRestore();
+      }
+      expect(calls).toBe(2);
+      // Nothing of the opening stayed: the switch is still stopped, no request carries the trace
+      // of a restart, and the audit log knows no opening. (The job of the real queue is a row
+      // written through the same connection, so it goes with the transaction; apps/worker tests
+      // that with the queue itself.)
+      expect(
+        await adminQuery(
+          `select status from office.company_agents where company_id = $1 and agent_code = 'HAF-2'`,
+          [ids.arma],
+        ),
+      ).toEqual([{ status: 'stopped' }]);
+      expect(await audit()).toEqual([]);
+      for (const id of waiting) {
+        expect(await read(founder, id), id).toMatchObject(stoppedAgent);
+      }
+      expect(await waitingFor('agent=HAF-2')).toBe(2);
+      // The founder tries again: now both start.
+      expect(await openAgain()).toBe(2);
+      expect(
+        server.jobs.sent
+          .slice(jobs)
+          .map((job) => job.taskId)
+          .sort(),
+      ).toEqual([...waiting].sort());
+      expect((await audit()).map((row) => row.event).sort()).toEqual([
+        'agent_enabled',
+        'run_restarted',
+        'run_restarted',
+      ]);
     });
-    const byHand = await post(founder, `/api/requests/${unrouted.id}/routing`, {
-      unitCode: 'HAF',
-      agentCode: 'HAF-2',
+
+    it('GET /api/waiting-work: only the founder, with exactly one scope; nothing of another company is counted', async () => {
+      for (const session of [employee, rightHolder, external]) {
+        const res = await get(session, '/api/waiting-work?agent=HAF-2');
+        expect([res.statusCode, errorCode(res)]).toEqual([403, 'founder_only']);
+      }
+      const id = randomUUID();
+      for (const query of [
+        '',
+        `agent=HAF-2&project=${id}`,
+        `project=${id}&customer=${id}`,
+        'project=x',
+        'customer=',
+        'agent=haf%202',
+        'agent=HAF-2&mine=true',
+        `company=${id}`,
+      ]) {
+        const res = await get(founder, `/api/waiting-work?${query}`);
+        expect([res.statusCode, errorCode(res)], query).toEqual([400, 'invalid_request']);
+      }
+      // A project, a customer and an agent that are not of this company count nothing.
+      expect(await waitingFor(`project=${id}`)).toBe(0);
+      expect(await waitingFor(`customer=${id}`)).toBe(0);
+      expect(await waitingFor('agent=P-IST-1')).toBe(0);
+      // And the founder of Arma DX, asking in Pillika's name, is told nothing of Arma DX.
+      await settle();
+      const waits = await open(employee);
+      await route(waits.id, ids.employee);
+      await stop();
+      await refusedAtTheGate(waits.id, 'HAF-2');
+      try {
+        expect(await waitingFor('agent=HAF-2')).toBe(1);
+        const elsewhere = await get(founder, '/api/waiting-work?agent=HAF-2', ids.pillika);
+        expect(waitingWorkResponseSchema.parse(elsewhere.json())).toEqual({ waiting: 0 });
+        // Counting wrote nothing and started nothing.
+        expect((await traceOf(waits.id)).map((row) => row.event)).toEqual(['run_refused']);
+      } finally {
+        await openAgain();
+      }
     });
-    expect(requestDetailSchema.parse(byHand.json())).toMatchObject({
-      status: 'in_progress',
-      stage: 'working',
-      cause: null,
+
+    it('a job the runner refused although the agent is open reads çalışma başlamadı until a person routes the request', async () => {
+      // A refusal that is about another agent says nothing about this step: a stale job of the
+      // coordinator on a request that is routed.
+      const routed = await open(employee);
+      await route(routed.id, ids.employee);
+      await refusedAtTheGate(routed.id, COORDINATOR_AGENT_CODE);
+      expect(await read(employee, routed.id)).toMatchObject({ stage: 'working', cause: null });
+
+      // Before the routing: the coordinator's job was refused before a run existed. The founder
+      // makes the first routing.
+      const unrouted = await open(employee);
+      expect(await read(founder, unrouted.id)).toMatchObject({ stage: 'routing', cause: null });
+      await refusedAtTheGate(unrouted.id, COORDINATOR_AGENT_CODE);
+      expect(await read(employee, unrouted.id)).toMatchObject({
+        ...notStarted,
+        status: 'open',
+        waitingForMe: false,
+      });
+      expect(await read(founder, unrouted.id)).toMatchObject({
+        ...notStarted,
+        status: 'open',
+        waitingForMe: true,
+        actions: { cancel: false, stop: true, reroute: true },
+      });
+      const byHand = await post(founder, `/api/requests/${unrouted.id}/routing`, {
+        unitCode: 'HAF',
+        agentCode: 'HAF-2',
+      });
+      expect(requestDetailSchema.parse(byHand.json())).toMatchObject({
+        status: 'in_progress',
+        stage: 'working',
+        cause: null,
+      });
     });
   });
 
@@ -4288,6 +4641,248 @@ describe.skipIf(noDatabase)('requests', () => {
       expect(await listed(founder, `?project=${made.id}`)).toEqual(
         expect.arrayContaining([first.id, second.id]),
       );
+    });
+
+    // Waiting work starts again when the permission is opened (8 October decision 49) -------------
+
+    /** The founder opens the project's AI permission with the passkey; the answer of the route. */
+    async function openAi(projectId: string, customerId: string | null = null) {
+      const stepUp = await signStepUp(server, founder, founderKey, {
+        purpose: 'project_ai_permission',
+        companyId: ids.arma,
+        subjectId: projectId,
+        details: projectAiPermissionDetails(customerId),
+      });
+      const res = await put(founder, `/api/projects/${projectId}/ai-permission`, {
+        allowed: true,
+        customerId,
+        stepUp,
+      });
+      expect(res.statusCode, res.body).toBe(200);
+      return projectAiPermissionAnswerSchema.parse(res.json());
+    }
+
+    const working = {
+      status: 'in_progress',
+      stage: 'working',
+      cause: null,
+      delayed: false,
+      turn: { kind: 'agent', code: 'HAF-2' },
+      waitingForMe: false,
+      agentsMayWork: true,
+    };
+
+    it('opening the project’s AI permission again restarts its held requests once', async () => {
+      await freshPasskey(server, founder, founderKey, ids.founder, 'Kurucu telefonu');
+      await settle();
+      const made = await workable({ name: 'İzni açılınca süren proje' });
+      // One request whose run is open when the permission is closed, one whose job arrives while
+      // it is closed, and one outside the project whose job was refused for another reason.
+      const heldRun = await routedIn(made.id);
+      const runId = await openRun(heldRun, made.id);
+      const heldJob = await routedIn(made.id);
+      const outside = await open(employee);
+      await route(outside.id, ids.employee);
+      await refusedAtTheGate(outside.id, 'HAF-2');
+      expect(await waitingFor(`project=${made.id}`)).toBe(0);
+
+      await closeAi(made.id);
+      expect(
+        await adminQuery('select status, error_code from office.runs where id = $1', [runId]),
+      ).toEqual([{ status: 'stopped', error_code: 'ai_permission_closed' }]);
+      await refusedAtTheGate(heldJob, 'HAF-2', made.id);
+      for (const id of [heldRun, heldJob]) {
+        expect(await read(founder, id), id).toMatchObject({
+          stage: 'fell_to_person',
+          cause: 'ai_permission_closed',
+          agentsMayWork: false,
+        });
+      }
+      // The confirmation of the opening is told the number: the two of this project. The agent's
+      // switch is not what holds them; it would start the one outside.
+      expect(await waitingFor(`project=${made.id}`)).toBe(2);
+      expect(await waitingFor('agent=HAF-2')).toBe(1);
+
+      const jobs = server.jobs.sent.length;
+      const opened = await openAi(made.id);
+      expect(opened).toMatchObject({ id: made.id, aiAllowed: true, restarted: 2 });
+      const sent = server.jobs.sent.slice(jobs);
+      expect(sent).toHaveLength(2);
+      expect(sent).toEqual(
+        expect.arrayContaining(
+          [heldRun, heldJob].map((taskId) => ({
+            companyId: ids.arma,
+            userId: ids.employee,
+            taskId,
+            agentCode: 'HAF-2',
+          })),
+        ),
+      );
+      for (const id of [heldRun, heldJob]) {
+        for (const reader of [founder, employee]) {
+          expect(await read(reader, id), id).toMatchObject(working);
+        }
+        expect((await traceOf(id)).at(-1), id).toEqual({
+          event: 'run_restarted',
+          user_id: ids.founder,
+          agent_code: null,
+        });
+      }
+      // The request outside the project was not this opening's to start.
+      expect((await traceOf(outside.id)).map((row) => row.event)).toEqual(['run_refused']);
+      expect(await read(founder, outside.id)).toMatchObject({ cause: 'not_started' });
+
+      // Exactly once: asked for the value the project has, and closed and opened with nothing
+      // held, the opening starts nothing.
+      expect(await waitingFor(`project=${made.id}`)).toBe(0);
+      const same = await put(founder, `/api/projects/${made.id}/ai-permission`, {
+        allowed: true,
+        customerId: null,
+      });
+      expect(projectAiPermissionAnswerSchema.parse(same.json()).restarted).toBe(0);
+      const closed = await put(founder, `/api/projects/${made.id}/ai-permission`, {
+        allowed: false,
+      });
+      expect(projectAiPermissionAnswerSchema.parse(closed.json())).toMatchObject({
+        aiAllowed: false,
+        restarted: 0,
+      });
+      expect(await waitingFor(`project=${made.id}`)).toBe(0);
+      expect((await openAi(made.id)).restarted).toBe(0);
+      expect(server.jobs.sent).toHaveLength(jobs + 2);
+
+      // A restarted job that the runner refuses again reads "çalışma başlamadı": the permission
+      // and the agent are open, so neither switch explains it, and a person routes it again.
+      await refusedAtTheGate(heldJob, 'HAF-2', made.id);
+      expect(await read(founder, heldJob)).toMatchObject({
+        stage: 'fell_to_person',
+        cause: 'not_started',
+        agentsMayWork: true,
+        waitingForMe: true,
+        actions: { reroute: true },
+      });
+    });
+
+    it('with the request’s agent stopped the reopened permission starts nothing; the agent’s opening does', async () => {
+      await freshPasskey(server, founder, founderKey, ids.founder, 'Kurucu telefonu');
+      await settle();
+      const made = await workable({ name: 'Ajanı da duran proje' });
+      const id = await routedIn(made.id);
+      await openRun(id, made.id);
+      await closeAi(made.id);
+      await stop();
+      try {
+        // Held by both: counted for neither opening while the other is closed.
+        expect(await waitingFor(`project=${made.id}`)).toBe(0);
+        expect(await waitingFor('agent=HAF-2')).toBe(0);
+        const jobs = server.jobs.sent.length;
+        expect((await openAi(made.id)).restarted).toBe(0);
+        expect(server.jobs.sent).toHaveLength(jobs);
+        // The permission is open again and the work was not started again: the page says that
+        // the close interrupted it. The agent's opening is what would start it now.
+        expect(await read(founder, id)).toMatchObject({
+          stage: 'fell_to_person',
+          cause: 'ai_permission_interrupted',
+          agentsMayWork: true,
+          waitingForMe: true,
+        });
+        // Only the close left its trace on the request: no restart.
+        expect((await traceOf(id)).map((row) => row.event)).toEqual(['run_stopped']);
+        expect(await waitingFor('agent=HAF-2')).toBe(1);
+
+        expect(await openAgain()).toBe(1);
+        expect(server.jobs.sent.slice(jobs)).toEqual([
+          { companyId: ids.arma, userId: ids.employee, taskId: id, agentCode: 'HAF-2' },
+        ]);
+        expect(await read(founder, id)).toMatchObject(working);
+      } finally {
+        await openAgain();
+      }
+    });
+
+    it('opening a customer’s AI permission again restarts the held requests of its projects', async () => {
+      await freshPasskey(server, founder, founderKey, ids.founder, 'Kurucu telefonu');
+      await settle();
+      const customerId = randomUUID();
+      const otherCustomerId = randomUUID();
+      const one = await workable({
+        name: 'Müşterinin ilk projesi',
+        customer: { kind: 'new', id: customerId, name: `Müşteri ${customerId}` },
+      });
+      const two = await workable({
+        name: 'Müşterinin ikinci projesi',
+        customer: { kind: 'existing', customerId },
+      });
+      const other = await workable({
+        name: 'Başka müşterinin projesi',
+        customer: { kind: 'new', id: otherCustomerId, name: `Müşteri ${otherCustomerId}` },
+      });
+      await adminQuery('update office.customers set ai_allowed = true where id = any ($1)', [
+        [customerId, otherCustomerId],
+      ]);
+      const inOne = await routedIn(one.id);
+      const runId = await openRun(inOne, one.id);
+      const inTwo = await routedIn(two.id);
+      // A request of another customer's project that waits for another reason.
+      const inOther = await routedIn(other.id);
+      await refusedAtTheGate(inOther, 'HAF-2', other.id);
+
+      const permissions = (payload: object) =>
+        send(server, founder, 'PATCH', `/api/customers/${customerId}/permissions`, {
+          company: ids.arma,
+          payload,
+        });
+      const closed = await permissions({ aiAllowed: false });
+      expect(closed.statusCode, closed.body).toBe(200);
+      expect(customerPermissionsAnswerSchema.parse(closed.json())).toMatchObject({
+        aiAllowed: false,
+        restarted: 0,
+      });
+      expect(
+        await adminQuery('select status, error_code from office.runs where id = $1', [runId]),
+      ).toEqual([{ status: 'stopped', error_code: 'ai_permission_closed' }]);
+      await refusedAtTheGate(inTwo, 'HAF-2', two.id);
+
+      // The number before the opening: the two of this customer's projects. The projects' own
+      // permissions are open, so their opening would start nothing.
+      expect(await waitingFor(`customer=${customerId}`)).toBe(2);
+      expect(await waitingFor(`project=${one.id}`)).toBe(0);
+
+      const jobs = server.jobs.sent.length;
+      // The other permission alone opens nothing and starts nothing.
+      const automated = await permissions({ automatedProcessingAllowed: true });
+      expect(customerPermissionsAnswerSchema.parse(automated.json())).toMatchObject({
+        aiAllowed: false,
+        restarted: 0,
+      });
+      expect(server.jobs.sent).toHaveLength(jobs);
+
+      const stepUp = await signStepUp(server, founder, founderKey, {
+        purpose: 'customer_ai_permission',
+        companyId: ids.arma,
+        subjectId: customerId,
+        details: customerPermissionDetails({}),
+      });
+      const opened = await permissions({ aiAllowed: true, stepUp });
+      expect(opened.statusCode, opened.body).toBe(200);
+      expect(customerPermissionsAnswerSchema.parse(opened.json())).toMatchObject({
+        id: customerId,
+        aiAllowed: true,
+        restarted: 2,
+      });
+      const sent = server.jobs.sent.slice(jobs);
+      expect(sent).toHaveLength(2);
+      expect(sent.map((job) => job.taskId).sort()).toEqual([inOne, inTwo].sort());
+      for (const id of [inOne, inTwo]) {
+        expect(await read(founder, id), id).toMatchObject(working);
+      }
+      // Nothing of the other customer was started.
+      expect((await traceOf(inOther)).map((row) => row.event)).toEqual(['run_refused']);
+      // Open already: the same request again starts nothing.
+      expect(await waitingFor(`customer=${customerId}`)).toBe(0);
+      const again = await permissions({ aiAllowed: true });
+      expect(customerPermissionsAnswerSchema.parse(again.json()).restarted).toBe(0);
+      expect(server.jobs.sent).toHaveLength(jobs + 2);
     });
 
     // A request that goes on in the founder's name (8 October decision 45) ------------------------

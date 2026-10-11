@@ -1958,6 +1958,8 @@ describe('projects: permissions', () => {
     expect(dialog).toHaveTextContent(
       'İzin açılınca ajanlar bu projede çalışabilir ve projenin kayıtları yapay zekâ modeline gönderilebilir. Projenin müşterisi varsa izni yalnızca müşterinin sözleşmesi yapay zekâ kullanımına izin veriyorsa açın. İzin açıkken projenin müşterisi değiştirilemez. Müşterinin sözleşme izni kapalı olduğu için ajanlar yine de çalışamaz.',
     );
+    // Nothing starts while the contract keeps agents out, so no restart is promised.
+    expect(dialog).not.toHaveTextContent(/yeniden başlar|ücretli/);
     // The click changed nothing: the switch keeps the saved value and nothing was sent.
     expect(aiSwitchBehindDialog()).not.toBeChecked();
     expect(api.callsTo(AI)).toEqual([]);
@@ -1983,7 +1985,7 @@ describe('projects: permissions', () => {
     // Still on its way: the switch has not moved.
     expect(aiSwitchBehindDialog()).not.toBeChecked();
 
-    answer(json(projectDetail({ aiAllowed: true, agentsMayWork: false })));
+    answer(json({ ...projectDetail({ aiAllowed: true, agentsMayWork: false }), restarted: 0 }));
     await closed();
     expect(aiSwitch()).toBeChecked();
     expect(within(aiSection()).getByText('İzin açık')).toBeVisible();
@@ -1999,7 +2001,11 @@ describe('projects: permissions', () => {
     const api = mockApi(
       projectHandlers(projectDetail({ customer: null }), {
         'POST /step-up/options': stepUp.handler,
-        [AI]: () => json(projectDetail({ customer: null, aiAllowed: true, agentsMayWork: true })),
+        [AI]: () =>
+          json({
+            ...projectDetail({ customer: null, aiAllowed: true, agentsMayWork: true }),
+            restarted: 0,
+          }),
       }),
     );
     renderApp(PAGE);
@@ -2007,6 +2013,11 @@ describe('projects: permissions', () => {
     await userEvent.click(aiSwitch());
     const dialog = await screen.findByRole('alertdialog');
     expect(dialog).not.toHaveTextContent('ajanlar yine de çalışamaz');
+    // Agents can work once it is open: the requests that waited start again, each a paid run,
+    // and the founder reads that before confirming (8 October decision 49).
+    expect(dialog).toHaveTextContent(
+      'İzin açıkken projenin müşterisi değiştirilemez. Bu projede bekleyen talep varsa izni açınca hemen yeniden başlar; her biri ücretli bir yapay zekâ çalışmasıdır.',
+    );
     await waitFor(() => {
       expect(stepUp.issued).toHaveLength(1);
     });
@@ -2029,7 +2040,8 @@ describe('projects: permissions', () => {
     const open = projectDetail({ aiAllowed: true, agentsMayWork: true, customer: CUSTOMER_OPEN });
     const api = mockApi(
       projectHandlers(open, {
-        [AI]: () => json(projectDetail({ aiAllowed: false, customer: CUSTOMER_OPEN })),
+        [AI]: () =>
+          json({ ...projectDetail({ aiAllowed: false, customer: CUSTOMER_OPEN }), restarted: 0 }),
       }),
     );
     renderApp(PAGE);
@@ -2042,6 +2054,8 @@ describe('projects: permissions', () => {
     expect(dialog).toHaveTextContent(
       'Ajanlar bu projede artık çalışamaz. İzni yeniden açmak passkey ister.',
     );
+    // Closing starts nothing: only an opening speaks of waiting work.
+    expect(dialog).not.toHaveTextContent(/yeniden başlar|ücretli/);
     // The safe button has the focus; giving up sends nothing and returns the focus to the switch.
     expect(within(dialog).getByRole('button', { name: 'Vazgeç' })).toHaveFocus();
     await userEvent.click(within(dialog).getByRole('button', { name: 'Vazgeç' }));
@@ -2218,8 +2232,8 @@ describe('projects: permissions', () => {
     const api = mockApi(
       projectHandlers(projectDetail({ customer: beta }), {
         'POST /step-up/options': stepUp.handler,
-        [CONTRACT]: () => json({ ...beta, aiAllowed: true }),
-        [OTHER_CONTRACT]: () => json({ ...gama, automatedProcessingAllowed: true }),
+        [CONTRACT]: () => json({ ...beta, aiAllowed: true, restarted: 0 }),
+        [OTHER_CONTRACT]: () => json({ ...gama, automatedProcessingAllowed: true, restarted: 0 }),
       }),
     );
     renderApp(PAGE);
@@ -2305,7 +2319,7 @@ describe('projects: permissions', () => {
               ? {}
               : { automatedProcessingAllowed: body.automatedProcessingAllowed }),
           };
-          return json(customer);
+          return json({ ...customer, restarted: 0 });
         },
       }),
     );
@@ -2331,7 +2345,7 @@ describe('projects: permissions', () => {
       name: 'Beta Lojistik için yapay zekâ izni açılsın mı?',
     });
     expect(dialog).toHaveTextContent(
-      'Sözleşmenin yapay zekâ kullanımına izin verdiğini işaretliyorsunuz. Bu izin müşterinin bütün projeleri için geçerlidir; ajanlar yalnızca yapay zekâ izni açık projelerde çalışır.',
+      'Sözleşmenin yapay zekâ kullanımına izin verdiğini işaretliyorsunuz. Bu izin müşterinin bütün projeleri için geçerlidir; ajanlar yalnızca yapay zekâ izni açık projelerde çalışır. Bu müşterinin projelerinde bekleyen talep varsa izni açınca hemen yeniden başlar; her biri ücretli bir yapay zekâ çalışmasıdır.',
     );
     await waitFor(() => {
       expect(stepUp.issued).toHaveLength(1);
@@ -2360,6 +2374,8 @@ describe('projects: permissions', () => {
     dialog = await screen.findByRole('alertdialog', {
       name: 'Beta Lojistik için kodla otomatik işleme izni açılsın mı?',
     });
+    // This permission starts no agent, so its confirmation promises no restart.
+    expect(dialog).not.toHaveTextContent(/yeniden başlar|ücretli/);
     expect(dialog).toHaveTextContent(
       'Sözleşmenin kodla yapılan otomatik işlemeye izin verdiğini işaretliyorsunuz. Hatırlatma gibi model kullanmayan otomatik işler bu müşteri için çalışabilir.',
     );
@@ -2402,7 +2418,7 @@ describe('projects: permissions', () => {
           json(projectDetail({ aiAllowed: true, agentsMayWork: customer.aiAllowed, customer })),
         [CONTRACT]: () => {
           customer = { ...customer, aiAllowed: false };
-          return json(customer);
+          return json({ ...customer, restarted: 0 });
         },
       }),
     );

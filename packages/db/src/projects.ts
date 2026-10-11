@@ -252,19 +252,21 @@ export async function setProjectMemberRole(
 /**
  * The founder opens or closes the AI permission of a project. `customerId` is the customer the
  * founder confirmed the opening for (null: none); the database refuses the opening when the
- * project has another one by now. It is not read when the permission is closed.
+ * project has another one by now. It is not read when the permission is closed. Returns the
+ * database's own answer: whether this call changed the value (the route starts the waiting work
+ * again only when it opened the permission, 8 October decision 49).
  */
 export async function setProjectAiPermission(
   client: Queryable,
   projectId: string,
   allowed: boolean,
   customerId: string | null,
-): Promise<void> {
-  await client.query('select office.set_project_ai_permission($1, $2, $3)', [
-    projectId,
-    allowed,
-    customerId,
-  ]);
+): Promise<boolean> {
+  const { rows } = await client.query<{ changed: boolean }>(
+    'select office.set_project_ai_permission($1, $2, $3) as changed',
+    [projectId, allowed, customerId],
+  );
+  return rows[0]?.changed === true;
 }
 
 export interface MemberCandidateRow {

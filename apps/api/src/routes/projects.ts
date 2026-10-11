@@ -24,11 +24,12 @@ import {
   createProjectSchema,
   customerListSchema,
   customerPermissionDetails,
+  customerPermissionsAnswerSchema,
   customerPermissionsSchema,
-  customerSchema,
   mayAddProjectMembers,
   memberRemoval,
   memberRoleChanges,
+  projectAiPermissionAnswerSchema,
   projectAiPermissionDetails,
   projectAiPermissionSchema,
   projectDetailSchema,
@@ -38,9 +39,10 @@ import {
   projectSummarySchema,
   setProjectMemberRoleSchema,
   updateProjectSchema,
-  type Customer,
   type CustomerList,
+  type CustomerPermissionsAnswer,
   type ProjectActor,
+  type ProjectAiPermissionAnswer,
   type ProjectDetail,
   type ProjectList,
   type ProjectMemberRole,
@@ -57,6 +59,7 @@ import {
   notFound,
 } from '../errors.ts';
 import { stepUpRequired, verifyStepUp } from '../passkeys.ts';
+import { startWaitingWork } from '../restart.ts';
 import type { RouteDeps } from '../services.ts';
 
 /**
@@ -337,7 +340,10 @@ function descriptionOf(text: string): string | null {
   return text.trim() === '' ? null : text;
 }
 
-export function registerProjectRoutes(app: FastifyInstance, { runner, config }: RouteDeps): void {
+export function registerProjectRoutes(
+  app: FastifyInstance,
+  { runner, config, jobs }: RouteDeps,
+): void {
   const relyingParty = config.relyingParty;
 
   // In the founder space the answer is an empty list: no project can exist there.
@@ -689,12 +695,14 @@ export function registerProjectRoutes(app: FastifyInstance, { runner, config }: 
    * answer tells the panel to read the project again. Closing needs no passkey: it only stops
    * agents. The database closes the open runs of the project in the same transaction; its open
    * requests stay open and fall to the founder, and a result that waits is not approved until
-   * the permission is open again (8 October decisions 46 and 47). Asking for the value the
-   * project already has changes nothing and uses nothing.
+   * the permission is open again (8 October decisions 46 and 47). Opening it starts the requests
+   * it held again, in the same transaction: each is a new, paid run, and the answer says how many
+   * (decision 49). Asking for the value the project already has changes nothing, uses nothing and
+   * starts nothing.
    */
   app.put(
     '/api/projects/:projectId/ai-permission',
-    async (request, reply): Promise<ProjectDetail> =>
+    async (request, reply): Promise<ProjectAiPermissionAnswer> =>
       runner.withCompany(request, reply, INSIDERS, async (context) => {
         requireFounder(context);
         const projectId = projectIdOf(request);
@@ -705,7 +713,10 @@ export function registerProjectRoutes(app: FastifyInstance, { runner, config }: 
         const { client, session, companyId } = context;
         const row = await projectOf(context, projectId);
         if (row.ai_allowed === body.data.allowed) {
-          return detailOf(context, row);
+          return projectAiPermissionAnswerSchema.parse({
+            ...(await detailOf(context, row)),
+            restarted: 0,
+          });
         }
         // The customer the founder confirmed the opening for; not read when closing.
         let customerId: string | null = null;
@@ -722,9 +733,19 @@ export function registerProjectRoutes(app: FastifyInstance, { runner, config }: 
             details: projectAiPermissionDetails(customerId),
           });
         }
+        let restarted = 0;
         await client.query('savepoint set_ai_permission');
         try {
-          await setProjectAiPermission(client, projectId, body.data.allowed, customerId);
+          const changed = await setProjectAiPermission(
+            client,
+            projectId,
+            body.data.allowed,
+            customerId,
+          );
+          // Decision 49: opening the permission starts the requests it held again.
+          if (body.data.allowed && changed) {
+            restarted = await startWaitingWork(client, jobs, companyId, { projectId });
+          }
         } catch (error) {
           await client.query('rollback to savepoint set_ai_permission');
           const code = databaseErrorCode(error);
@@ -740,7 +761,10 @@ export function registerProjectRoutes(app: FastifyInstance, { runner, config }: 
           if (code === '40P01') throw permissionBusy();
           throw error;
         }
-        return detailOf(context, await projectOf(context, projectId));
+        return projectAiPermissionAnswerSchema.parse({
+          ...(await detailOf(context, await projectOf(context, projectId))),
+          restarted,
+        });
       }),
   );
 
@@ -768,60 +792,69 @@ export function registerProjectRoutes(app: FastifyInstance, { runner, config }: 
    * permission asks for a passkey for exactly this customer and this body; closing it, and the
    * automated processing permission either way, ask for none. A permission left out stays.
    * Closing the AI permission closes the open runs of every project of the customer, as closing
-   * a project's own does.
+   * a project's own does; opening it starts the requests it held in those projects again, and the
+   * answer says how many (8 October decision 49).
    */
-  app.patch('/api/customers/:customerId/permissions', async (request, reply): Promise<Customer> =>
-    runner.withCompany(request, reply, INSIDERS, async (context) => {
-      requireFounder(context);
-      const params = customerParams.safeParse(request.params);
-      if (!params.success) {
-        throw notFound();
-      }
-      const { customerId } = params.data;
-      const body = customerPermissionsSchema.safeParse(request.body);
-      if (!body.success) {
-        throw invalidRequest();
-      }
-      const { client, session, companyId } = context;
-      const row = await readCustomer(client, customerId);
-      if (!row) {
-        throw notFound();
-      }
-      const { aiAllowed, automatedProcessingAllowed } = body.data;
-      if (aiAllowed === true && !row.ai_allowed) {
-        await verifyStepUp({ client, session }, relyingParty, body.data.stepUp, {
-          purpose: 'customer_ai_permission',
-          companyId,
-          subjectId: customerId,
-          details: customerPermissionDetails({ automatedProcessingAllowed }),
+  app.patch(
+    '/api/customers/:customerId/permissions',
+    async (request, reply): Promise<CustomerPermissionsAnswer> =>
+      runner.withCompany(request, reply, INSIDERS, async (context) => {
+        requireFounder(context);
+        const params = customerParams.safeParse(request.params);
+        if (!params.success) {
+          throw notFound();
+        }
+        const { customerId } = params.data;
+        const body = customerPermissionsSchema.safeParse(request.body);
+        if (!body.success) {
+          throw invalidRequest();
+        }
+        const { client, session, companyId } = context;
+        const row = await readCustomer(client, customerId);
+        if (!row) {
+          throw notFound();
+        }
+        const { aiAllowed, automatedProcessingAllowed } = body.data;
+        if (aiAllowed === true && !row.ai_allowed) {
+          await verifyStepUp({ client, session }, relyingParty, body.data.stepUp, {
+            purpose: 'customer_ai_permission',
+            companyId,
+            subjectId: customerId,
+            details: customerPermissionDetails({ automatedProcessingAllowed }),
+          });
+        }
+        let restarted = 0;
+        await client.query('savepoint set_customer_permissions');
+        try {
+          await setCustomerPermissions(client, customerId, {
+            aiAllowed,
+            automatedProcessingAllowed,
+          });
+          // Decision 49: opening the permission starts the requests it held again.
+          if (aiAllowed === true && !row.ai_allowed) {
+            restarted = await startWaitingWork(client, jobs, companyId, { customerId });
+          }
+        } catch (error) {
+          await client.query('rollback to savepoint set_customer_permissions');
+          const code = databaseErrorCode(error);
+          if (code === '28000') throw stepUpRequired();
+          if (code === '42501') throw founderOnly();
+          if (code === 'P0002') throw notFound();
+          // Closing a permission also closes the open runs of the customer's projects.
+          if (code === '40P01') throw permissionBusy();
+          throw error;
+        }
+        const now = await readCustomer(client, customerId);
+        if (!now) {
+          throw notFound();
+        }
+        return customerPermissionsAnswerSchema.parse({
+          id: now.id,
+          name: now.name,
+          aiAllowed: now.ai_allowed,
+          automatedProcessingAllowed: now.automated_processing_allowed,
+          restarted,
         });
-      }
-      await client.query('savepoint set_customer_permissions');
-      try {
-        await setCustomerPermissions(client, customerId, {
-          aiAllowed,
-          automatedProcessingAllowed,
-        });
-      } catch (error) {
-        await client.query('rollback to savepoint set_customer_permissions');
-        const code = databaseErrorCode(error);
-        if (code === '28000') throw stepUpRequired();
-        if (code === '42501') throw founderOnly();
-        if (code === 'P0002') throw notFound();
-        // Closing a permission also closes the open runs of the customer's projects.
-        if (code === '40P01') throw permissionBusy();
-        throw error;
-      }
-      const now = await readCustomer(client, customerId);
-      if (!now) {
-        throw notFound();
-      }
-      return customerSchema.parse({
-        id: now.id,
-        name: now.name,
-        aiAllowed: now.ai_allowed,
-        automatedProcessingAllowed: now.automated_processing_allowed,
-      });
-    }),
+      }),
   );
 }

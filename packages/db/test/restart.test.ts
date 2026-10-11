@@ -1,5 +1,11 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import type { ContextInput } from '../src/context.ts';
+import {
+  countWaitingWork,
+  restartWaitingWork,
+  setAgentSwitch,
+  type OpeningScope,
+} from '../src/requests.ts';
 import { ids } from './fixtures.ts';
 import {
   adminQuery,
@@ -850,6 +856,96 @@ describe.skipIf(noDatabase)('who starts waiting work again, and the hand-over of
       expect(await tx.rows(RESTART, agentScope)).toEqual([
         { task_id: task, agent_code: 'HAF-1', requester_user_id: ids.employeeA },
       ]);
+    });
+  });
+
+  // The statements the API runs for an opening (packages/db/src/requests.ts) ---------------------
+
+  it('setAgentSwitch says whether this call opened the agent', async () => {
+    await inAdminTransaction(async (tx) => {
+      await asPerson(tx, founderA);
+      const switchOf = (agent: string): Promise<Record<string, unknown>[]> =>
+        tx.rows(
+          `select status from office.company_agents
+           where company_id = office.ctx_company_id() and agent_code = $1`,
+          [agent],
+        );
+      // The fixtures: HAF-1 is stopped in Arma DX.
+      expect(await switchOf('HAF-1')).toEqual([{ status: 'stopped' }]);
+      const opened = await setAgentSwitch(tx.client, 'HAF-1', 'enabled');
+      expect(opened).toMatchObject({ opened: true });
+      // Already open: the same call again opened nothing.
+      expect(await setAgentSwitch(tx.client, 'HAF-1', 'enabled')).toEqual({
+        ...(opened as object),
+        opened: false,
+      });
+      // A stop never opens, whatever the switch was.
+      expect(await setAgentSwitch(tx.client, 'HAF-1', 'stopped')).toMatchObject({ opened: false });
+      expect(await setAgentSwitch(tx.client, 'HAF-1', 'stopped')).toMatchObject({ opened: false });
+      expect(await setAgentSwitch(tx.client, 'HAF-1', 'enabled')).toMatchObject({ opened: true });
+      // A closed switch ("disabled") is opened like a stopped one.
+      await asRole(tx, null);
+      await tx.exec(
+        `update office.company_agents set status = 'disabled'
+         where company_id = $1 and agent_code = 'HAF-1'`,
+        [ids.arma],
+      );
+      await asPerson(tx, founderA);
+      expect(await setAgentSwitch(tx.client, 'HAF-1', 'enabled')).toMatchObject({ opened: true });
+
+      // No row yet: Pillika never opened HAF-1. The first opening is an opening.
+      await tx.setContext(founderP);
+      expect(await switchOf('HAF-1')).toEqual([]);
+      expect(await setAgentSwitch(tx.client, 'HAF-1', 'enabled')).toMatchObject({ opened: true });
+      expect(await switchOf('HAF-1')).toEqual([{ status: 'enabled' }]);
+      expect(await setAgentSwitch(tx.client, 'HAF-1', 'enabled')).toMatchObject({ opened: false });
+      // A first row that is a stop opens nothing either.
+      await tx.exec(
+        `delete from office.company_agents
+         where company_id = office.ctx_company_id() and agent_code = 'HAF-1'`,
+      );
+      expect(await setAgentSwitch(tx.client, 'HAF-1', 'stopped')).toMatchObject({ opened: false });
+      // The other answers are as before.
+      expect(await setAgentSwitch(tx.client, 'YOK-9', 'enabled')).toBe('unknown');
+    });
+  });
+
+  it('restartWaitingWork and countWaitingWork pass exactly one scope', async () => {
+    await inAdminTransaction(async (tx) => {
+      const task = await waitingRequest(tx);
+      const picked = { task_id: task, agent_code: 'HAF-1', requester_user_id: ids.employeeA };
+      await asPerson(tx, founderA);
+      const scopes: OpeningScope[] = [
+        { agentCode: 'HAF-1' },
+        { projectId: ids.projectA },
+        { customerId: ids.customerA },
+      ];
+      // Each scope finds the request by itself, and a scope that is not the request's finds none.
+      for (const scope of scopes) {
+        expect(await countWaitingWork(tx.client, scope), JSON.stringify(scope)).toBe(1);
+      }
+      for (const scope of [
+        { agentCode: 'KOR-1' },
+        { projectId: ids.projectANoAi },
+        { customerId: ids.customerANoAi },
+      ]) {
+        expect(await countWaitingWork(tx.client, scope), JSON.stringify(scope)).toBe(0);
+        expect(await restartWaitingWork(tx.client, scope), JSON.stringify(scope)).toEqual([]);
+      }
+      // Counting started nothing; every scope restarts the request, and only once.
+      for (const [index, scope] of scopes.entries()) {
+        const savepoint = `scope_${String(index)}`;
+        await tx.exec(`savepoint ${savepoint}`);
+        expect(await restartWaitingWork(tx.client, scope), JSON.stringify(scope)).toEqual([picked]);
+        expect(await restartWaitingWork(tx.client, scope), JSON.stringify(scope)).toEqual([]);
+        expect(await countWaitingWork(tx.client, scope), JSON.stringify(scope)).toBe(0);
+        await tx.exec(`rollback to savepoint ${savepoint}`);
+      }
+      // Nobody but the founder gets a row or a number through the statements.
+      await tx.setContext(employeeA);
+      await expect(restartWaitingWork(tx.client, { agentCode: 'HAF-1' })).rejects.toMatchObject({
+        code: '42501',
+      });
     });
   });
 

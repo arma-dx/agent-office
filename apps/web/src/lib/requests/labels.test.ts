@@ -1,7 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import { requestDetail, summaryOf } from '../../test/request-fixtures.ts';
 import { textWidth } from '../../test/text-width.ts';
-import { dueText, rowSentence, stepText } from './labels.ts';
+import {
+  CAUSE_FOR_FOUNDER,
+  CAUSE_NEXT,
+  CAUSE_SENTENCE,
+  WAITING_WORK_IF_ANY,
+  dueText,
+  rowSentence,
+  stepText,
+  waitingWorkSentence,
+  type OpeningKind,
+} from './labels.ts';
 
 describe('the text of a step of a run', () => {
   it('does not claim a routing: the coordinator calls its tool also when no unit fits', () => {
@@ -79,5 +89,107 @@ describe('the due day of a request in words', () => {
     const widest = dueText({ dueDate: '2025-12-30', overdue: true }, NOW);
     if (widest === null) throw new Error('No due text');
     expect(ROW - textWidth(widest, 12) * 1.05).toBeGreaterThan(200);
+  });
+});
+
+// 8 October decision 49: work that waited for a stopped agent or a closed AI permission starts
+// again when the switch is opened. The sentences that said the opposite were reworded.
+describe('the sentences decision 49 changed', () => {
+  it('a stopped agent and a closed coordinator: opening starts the work again, and the way that does not wait is named', () => {
+    expect(CAUSE_NEXT.agent_stopped).toBe(
+      'Ajan Ofis görünümünden yeniden açıldığında bu iş kendiliğinden yeniden başlar. Beklemek istemiyorsanız "Yönlendirmeyi düzelt" ile işi açık bir ajana verebilirsiniz.',
+    );
+    expect(CAUSE_NEXT.coordinator_closed).toBe(
+      'Koordinasyon merkezi yeniden açıldığında bu talebi kendiliğinden ele alır. Beklemek istemiyorsanız "Yönlendirmeyi düzelt" ile talebi bir birime ve ajana kendiniz verebilirsiniz.',
+    );
+  });
+
+  it('çalışma başlamadı reads as a job the runner refused although the agent is open', () => {
+    expect(CAUSE_SENTENCE.not_started).toBe(
+      'Ajanın çalışması başlatılamadı: ajan açık olduğu hâlde çalıştırıcı işi başlatmadı (ajanın kartı okunamadı, iş verildikten sonra talep değişti ya da çalıştırıcı işi o an alamadı).',
+    );
+    // The way on is unchanged: a person gives the work to an agent again.
+    expect(CAUSE_NEXT.not_started).toBe(
+      '"Yönlendirmeyi düzelt" ile işi bir ajana yeniden verin; yeni bir çalışma başlar. İş gerekmiyorsa talebi kapatabilirsiniz.',
+    );
+  });
+
+  it('a closed AI permission: the founder is told that opening it starts the waiting work', () => {
+    expect(CAUSE_FOR_FOUNDER.ai_permission_closed).toBe(
+      'İzni projenin sayfasından açabilirsiniz; passkey ister. İzin açılınca bekleyen iş kendiliğinden yeniden başlar. İş gerekmiyorsa talebi durdurabilirsiniz.',
+    );
+    // While it holds, the routing cannot be corrected: no way on is named for it.
+    expect(CAUSE_NEXT.ai_permission_closed).toBeUndefined();
+    expect(CAUSE_SENTENCE.ai_permission_interrupted).toBe(
+      'Yapay zekâ izni kapatıldığı için ajanın çalışması durduruldu. İzin yeniden açık, ama iş yeniden başlamadı.',
+    );
+    expect(CAUSE_NEXT.ai_permission_interrupted).toBe(
+      'Ajan kapalıysa Ofis görünümünden açıldığında iş kendiliğinden başlar. Ajan açıksa "Yönlendirmeyi düzelt" ile işi yeniden verin.',
+    );
+  });
+
+  it('no sentence says any more that opening an agent starts nothing', () => {
+    const all = [
+      ...Object.values(CAUSE_SENTENCE),
+      ...Object.values(CAUSE_NEXT),
+      ...Object.values(CAUSE_FOR_FOUNDER),
+    ];
+    for (const sentence of all) {
+      expect(sentence).not.toMatch(
+        /kendiliğinden (yeniden )?başlatmaz|kendiliğinden başlamaz|yeniden ele almaz/,
+      );
+    }
+  });
+});
+
+describe('the sentence of an opening: counting, none, a number, not counted', () => {
+  const KINDS: OpeningKind[] = ['agent', 'project', 'customer'];
+
+  it('says that the count is on its way, in the same words for the three openings', () => {
+    for (const kind of KINDS) {
+      expect(waitingWorkSentence(kind, 'counting')).toBe('Bekleyen talepler sayılıyor.');
+    }
+  });
+
+  it('says that nothing starts when nothing waits', () => {
+    expect(waitingWorkSentence('agent', 0)).toBe(
+      'Bu ajanı bekleyen talep yok; açmak hiçbir çalışmayı başlatmaz.',
+    );
+    expect(waitingWorkSentence('project', 0)).toBe(
+      'Bu projede bekleyen talep yok; izni açmak hiçbir çalışmayı başlatmaz.',
+    );
+    expect(waitingWorkSentence('customer', 0)).toBe(
+      'Bu müşterinin projelerinde bekleyen talep yok; izni açmak hiçbir çalışmayı başlatmaz.',
+    );
+  });
+
+  it('names the number twice: how many wait, and how many paid runs the opening starts', () => {
+    expect(waitingWorkSentence('agent', 3)).toBe(
+      'Bu ajanı 3 talep bekliyor. Ajanı açınca 3 talebin çalışması hemen yeniden başlar; her biri ücretli bir yapay zekâ çalışmasıdır.',
+    );
+    expect(waitingWorkSentence('project', 1)).toBe(
+      'Bu projede 1 talep bekliyor. İzni açınca 1 talebin çalışması hemen yeniden başlar; her biri ücretli bir yapay zekâ çalışmasıdır.',
+    );
+    expect(waitingWorkSentence('customer', 12)).toBe(
+      'Bu müşterinin projelerinde 12 talep bekliyor. İzni açınca 12 talebin çalışması hemen yeniden başlar; her biri ücretli bir yapay zekâ çalışmasıdır.',
+    );
+  });
+
+  it('says so when the count could not be read, and what may start', () => {
+    expect(waitingWorkSentence('agent', 'unknown')).toBe(
+      'Bekleyen talepler sayılamadı. Bu ajanı bekleyen talep varsa açınca hemen yeniden başlar; her biri ücretli bir yapay zekâ çalışmasıdır.',
+    );
+    expect(waitingWorkSentence('project', 'unknown')).toBe(
+      'Bekleyen talepler sayılamadı. Bu projede bekleyen talep varsa izni açınca hemen yeniden başlar; her biri ücretli bir yapay zekâ çalışmasıdır.',
+    );
+    expect(waitingWorkSentence('customer', 'unknown')).toBe(
+      'Bekleyen talepler sayılamadı. Bu müşterinin projelerinde bekleyen talep varsa izni açınca hemen yeniden başlar; her biri ücretli bir yapay zekâ çalışmasıdır.',
+    );
+    // The confirmations that do not count yet say the same without the first sentence.
+    for (const kind of KINDS) {
+      expect(waitingWorkSentence(kind, 'unknown')).toBe(
+        `Bekleyen talepler sayılamadı. ${WAITING_WORK_IF_ANY[kind]}`,
+      );
+    }
   });
 });

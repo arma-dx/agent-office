@@ -961,12 +961,14 @@ export async function peopleNames(
  * row; 'unknown' when the agent does not exist; 'not_ready' when it is to be opened but its
  * card has no version to run with (the definitions were not synchronised, or its skills are not
  * written): such an agent could be given a request and would never start.
+ * `opened`: this call took the switch from stopped, closed or missing to enabled; the route
+ * starts the waiting work again only then (decision 49).
  */
 export async function setAgentSwitch(
   client: Queryable,
   agentCode: string,
   status: 'enabled' | 'stopped',
-): Promise<{ id: string } | 'unknown' | 'not_ready'> {
+): Promise<{ id: string; opened: boolean } | 'unknown' | 'not_ready'> {
   const known = await client.query<{ ready: boolean; named: boolean }>(
     `select d.current_version_id is not null as ready,
             exists (
@@ -984,6 +986,13 @@ export async function setAgentSwitch(
   if (status === 'enabled' && definition.named && !definition.ready) {
     return 'not_ready';
   }
+  // Locked first: of two openings at the same moment only one finds the switch not open.
+  const before = await client.query<{ status: string }>(
+    `select ca.status from office.company_agents ca
+     where ca.company_id = office.ctx_company_id() and ca.agent_code = $1
+     for update`,
+    [agentCode],
+  );
   const { rows } = await client.query<{ id: string }>(
     `insert into office.company_agents (company_id, agent_code, status)
      values (office.ctx_company_id(), $1, $2)
@@ -992,7 +1001,9 @@ export async function setAgentSwitch(
     [agentCode, status],
   );
   const row = rows[0];
-  return row ? { id: row.id } : 'unknown';
+  return row
+    ? { id: row.id, opened: status === 'enabled' && before.rows[0]?.status !== 'enabled' }
+    : 'unknown';
 }
 
 /**
@@ -1012,6 +1023,55 @@ export async function stopAgentIfOpen(
     [agentCode],
   );
   return rows[0] ?? null;
+}
+
+export interface WorkToRestart {
+  task_id: string;
+  agent_code: string;
+  requester_user_id: string;
+}
+
+/** What an opening is asked for: the agent, the project's AI permission or the customer's. */
+export type OpeningScope = { agentCode: string } | { projectId: string } | { customerId: string };
+
+/** The three arguments of the database's functions: exactly one of them is not null. */
+function scopeArguments(scope: OpeningScope): (string | null)[] {
+  return [
+    'agentCode' in scope ? scope.agentCode : null,
+    'projectId' in scope ? scope.projectId : null,
+    'customerId' in scope ? scope.customerId : null,
+  ];
+}
+
+/**
+ * The founder opened an agent or an AI permission again (8 October decision 49): the database
+ * picks the work that waited for it, writes the trace on each request and gives the ids back.
+ * The caller puts one job per row on the queue in the same transaction. Exactly one scope.
+ */
+export async function restartWaitingWork(
+  client: Queryable,
+  scope: OpeningScope,
+): Promise<WorkToRestart[]> {
+  const { rows } = await client.query<WorkToRestart>(
+    `select task_id, agent_code, requester_user_id
+     from office.restart_waiting_work($1, $2, $3)
+     order by task_id`,
+    scopeArguments(scope),
+  );
+  return rows;
+}
+
+/**
+ * How many waiting requests an opening would start (decision 49): the number the confirmation
+ * shows before the founder confirms. The database counts by the rule of the restart, with the
+ * one switch read as open; nothing is written.
+ */
+export async function countWaitingWork(client: Queryable, scope: OpeningScope): Promise<number> {
+  const { rows } = await client.query<{ waiting: number }>(
+    'select office.count_waiting_work($1, $2, $3) as waiting',
+    scopeArguments(scope),
+  );
+  return rows[0]?.waiting ?? 0;
 }
 
 export interface AgentSwitchRow {

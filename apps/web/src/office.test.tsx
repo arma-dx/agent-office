@@ -669,7 +669,8 @@ describe('office page: the agent switch', () => {
       /** The API stores the change and answers with the agent as it now is. */
       store: (status: CompanyAgentStatus): void => {
         body = officeBody(ARMADX_OFFICE, { ...switches, 'KOR-1': status });
-        answer(json({ ...KOR_1, status }));
+        // An opening also says how many waiting requests it started (8 October decision 49).
+        answer(json({ ...KOR_1, status, ...(status === 'enabled' ? { restarted: 0 } : {}) }));
       },
     };
   }
@@ -687,6 +688,8 @@ describe('office page: the agent switch', () => {
     expect(dialog).toHaveTextContent(
       'Yeni iş almaz; süren çalışması bir sonraki adımdan önce durur.',
     );
+    // A stop starts nothing, and its confirmation does not speak of waiting work.
+    expect(dialog).not.toHaveTextContent(/yeniden başlar|ücretli/);
     // Opening the dialog sends nothing.
     expect(api.callsTo(switchKey('KOR-1'))).toEqual([]);
 
@@ -747,9 +750,11 @@ describe('office page: the agent switch', () => {
     const dialog = await screen.findByRole('alertdialog', {
       name: 'KOR-1 bu şirkette açılsın mı?',
     });
-    // What opening means is said before it is confirmed.
-    expect(dialog).toHaveTextContent(
-      'Açık ajan kendisine yönlendirilen talepleri çalıştırır ve yapay zekâ modelini kullanır.',
+    // What opening means is said before it is confirmed: the agent works and uses the model, and
+    // the requests that waited for it start again at once, each a paid run (8 October decision
+    // 49).
+    expect(within(dialog).getByText(/^Açık ajan/).textContent).toBe(
+      'Açık ajan kendisine yönlendirilen talepleri çalıştırır ve yapay zekâ modelini kullanır. Bu ajanı bekleyen talep varsa açınca hemen yeniden başlar; her biri ücretli bir yapay zekâ çalışmasıdır.',
     );
     await userEvent.click(within(dialog).getByRole('button', { name: label }));
     await waitFor(() => {

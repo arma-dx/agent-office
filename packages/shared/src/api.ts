@@ -785,3 +785,30 @@ export type AgentSwitchRequest = z.input<typeof agentSwitchRequestSchema>;
  */
 export const agentStopIfOpenResponseSchema = officeAgentSchema.extend({ changed: z.boolean() });
 export type AgentStopIfOpenResponse = z.output<typeof agentStopIfOpenResponseSchema>;
+
+/**
+ * The answer of an opening ({ status: 'enabled' }): the agent as the office lists it, and how
+ * many waiting requests were started again by this opening (8 October decision 49). 0 when the
+ * agent was already open or nothing waited for it.
+ */
+export const agentOpenResponseSchema = officeAgentSchema.extend({
+  restarted: z.number().int().nonnegative(),
+});
+export type AgentOpenResponse = z.output<typeof agentOpenResponseSchema>;
+
+/**
+ * GET /api/waiting-work?agent=<code> | ?project=<id> | ?customer=<id> (the founder): how many
+ * waiting requests would start if that agent, that project's AI permission or that customer's AI
+ * permission were opened now (8 October decision 49). Exactly one of the three.
+ */
+export const waitingWorkQuerySchema = z.union([
+  z.strictObject({ agent: agentCodeSchema }),
+  z.strictObject({ project: z.uuid() }),
+  z.strictObject({ customer: z.uuid() }),
+]);
+export type WaitingWorkQuery = z.output<typeof waitingWorkQuerySchema>;
+
+export const waitingWorkResponseSchema = z.strictObject({
+  waiting: z.number().int().nonnegative(),
+});
+export type WaitingWorkResponse = z.output<typeof waitingWorkResponseSchema>;

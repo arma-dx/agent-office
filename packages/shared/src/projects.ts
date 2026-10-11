@@ -222,6 +222,16 @@ export const customerSchema = z.object({
 export type Customer = z.output<typeof customerSchema>;
 
 /**
+ * The answer of PATCH /api/customers/:customerId/permissions: the customer, and how many waiting
+ * requests of its projects were started again because this request opened its AI permission
+ * (8 October decision 49). 0 when nothing was opened or nothing waited.
+ */
+export const customerPermissionsAnswerSchema = customerSchema.extend({
+  restarted: z.number().int().nonnegative(),
+});
+export type CustomerPermissionsAnswer = z.output<typeof customerPermissionsAnswerSchema>;
+
+/**
  * GET /api/customers: the customers of the selected company to choose from, by name. The founder
  * gets the two contract permissions; an employee gets the names only (both are null).
  */
@@ -363,3 +373,13 @@ export const projectDetailSchema = projectSummarySchema.extend({
   }),
 });
 export type ProjectDetail = z.output<typeof projectDetailSchema>;
+
+/**
+ * The answer of PUT /api/projects/:projectId/ai-permission: the project, and how many waiting
+ * requests of it were started again because this request opened the permission (8 October
+ * decision 49). 0 when the permission was closed, was open already, or nothing waited.
+ */
+export const projectAiPermissionAnswerSchema = projectDetailSchema.extend({
+  restarted: z.number().int().nonnegative(),
+});
+export type ProjectAiPermissionAnswer = z.output<typeof projectAiPermissionAnswerSchema>;

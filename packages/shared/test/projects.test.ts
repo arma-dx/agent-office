@@ -19,11 +19,13 @@ import {
   PROJECT_NAME_MAX,
   PROJECT_STATUSES,
   createProjectSchema,
+  customerPermissionsAnswerSchema,
   customerPermissionsSchema,
   isClosedProjectStatus,
   mayAddProjectMembers,
   memberRemoval,
   memberRoleChanges,
+  projectAiPermissionAnswerSchema,
   projectAiPermissionSchema,
   projectDetailSchema,
   projectMemberRoleSchema,
@@ -357,6 +359,33 @@ describe('the contracts of the Projects section', () => {
     expect(
       projectDetailSchema.safeParse({ ...detail, customer: { id: uuid(2), name: 'Beta' } }).success,
     ).toBe(false);
+
+    // 8 October decision 49: the answer of a permission route also says how many waiting
+    // requests this very request started again.
+    expect(projectAiPermissionAnswerSchema.parse({ ...detail, restarted: 2 })).toEqual({
+      ...detail,
+      restarted: 2,
+    });
+    const customer = {
+      id: uuid(2),
+      name: 'Beta',
+      aiAllowed: true,
+      automatedProcessingAllowed: false,
+    };
+    expect(customerPermissionsAnswerSchema.parse({ ...customer, restarted: 0 })).toEqual({
+      ...customer,
+      restarted: 0,
+    });
+    for (const [schema, answer] of [
+      [projectAiPermissionAnswerSchema, detail],
+      [customerPermissionsAnswerSchema, customer],
+    ] as const) {
+      // The count is the server's word: never left out, never a guess.
+      expect(schema.safeParse(answer).success).toBe(false);
+      for (const restarted of [-1, 1.5, '2', null]) {
+        expect(schema.safeParse({ ...answer, restarted }).success, String(restarted)).toBe(false);
+      }
+    }
   });
 });
 

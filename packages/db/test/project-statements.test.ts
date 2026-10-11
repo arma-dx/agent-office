@@ -508,13 +508,18 @@ describe.skipIf(noDatabase)('statements of the Projects section', () => {
     });
   });
 
-  it('setProjectAiPermission and readCompanyKind: the function call with the customer the founder saw; the kind of the context company', async () => {
+  it('setProjectAiPermission and readCompanyKind: the function call with the customer the founder saw, answering whether the value changed; the kind of the context company', async () => {
     await inTransaction(async (tx) => {
       await stepUp(tx, founderA, 'project_ai_permission', ids.projectANoAi);
-      await setProjectAiPermission(tx.client, ids.projectANoAi, true, null);
+      // The answer says whether this call changed the value: the route starts the waiting work
+      // again only for the call that opened the permission (8 October decision 49).
+      expect(await setProjectAiPermission(tx.client, ids.projectANoAi, false, null)).toBe(false);
+      expect(await setProjectAiPermission(tx.client, ids.projectANoAi, true, null)).toBe(true);
       expect((await readProject(tx.client, ids.projectANoAi))?.ai_allowed).toBe(true);
-      await setProjectAiPermission(tx.client, ids.projectANoAi, false, null);
+      expect(await setProjectAiPermission(tx.client, ids.projectANoAi, true, null)).toBe(false);
+      expect(await setProjectAiPermission(tx.client, ids.projectANoAi, false, null)).toBe(true);
       expect((await readProject(tx.client, ids.projectANoAi))?.ai_allowed).toBe(false);
+      expect(await setProjectAiPermission(tx.client, ids.projectANoAi, false, null)).toBe(false);
 
       expect(await readCompanyKind(tx.client)).toBe('company');
       await tx.setContext(founderSpace);

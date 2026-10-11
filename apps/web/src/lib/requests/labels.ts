@@ -75,11 +75,10 @@ export const CAUSE_SENTENCE: Record<RequestCause, string> = {
   coordinator_closed: 'Koordinasyon merkezi bu şirkette açık olmadığı için talep yönlendirilemedi.',
   no_routing: 'Koordinasyon merkezi bu talebi bir birime yönlendiremedi.',
   agent_stopped: 'Ajan durdurulduğu için iş yarıda kaldı.',
-  // Read only while the agent is open: while it is stopped the cause is agent_stopped (or
-  // coordinator_closed). So the notice can say that the agent is open and must say that this
-  // alone starts nothing.
+  // Read only while the agent is open and after no restart made the missed start good: the job
+  // was refused for a reason the switch does not explain.
   not_started:
-    'Ajanın çalışması başlatılamadı: iş verildiğinde ajan kapalıydı ya da çalışmaya hazır değildi. Ajan şimdi açık, ama iş kendiliğinden başlamaz.',
+    'Ajanın çalışması başlatılamadı: ajan açık olduğu hâlde çalıştırıcı işi başlatmadı (ajanın kartı okunamadı, iş verildikten sonra talep değişti ya da çalıştırıcı işi o an alamadı).',
   no_submission: 'Ajan sonucu onaya sunmadan çalışmasını bitirdi.',
   run_failed: 'Ajanın çalışması bir hata nedeniyle tamamlanamadı.',
   run_interrupted: 'Talep değiştiği için ajanın çalışması yarıda kesildi.',
@@ -120,15 +119,18 @@ export const RETURNED_NEXT =
 /**
  * What the person who can act is told to do (the founder, the approver of the request): every way
  * an open request stops has a way on, "Yönlendirmeyi düzelt", which gives the work to an agent
- * again and starts a new run. No sentence here promises that opening an agent revives a request by
- * itself. A closed request (returned, cancelled, stopped, rejected) has no way on and no entry.
+ * again and starts a new run. Two ways stop by a switch (a stopped agent, a closed coordinator):
+ * opening the switch starts the work again (8 October decision 49), and the sentence says so.
+ * Every other way on is "Yönlendirmeyi düzelt". A closed request (returned, cancelled, stopped,
+ * rejected) has no way on and no entry. A request held by a closed AI permission has none either:
+ * while it holds, the routing cannot be corrected.
  */
 export const CAUSE_NEXT: Partial<Record<RequestCause, string>> = {
   coordinator_closed:
-    'Koordinasyon merkezi bu talebi kendiliğinden yeniden ele almaz. "Yönlendirmeyi düzelt" ile talebi bir birime ve ajana kendiniz verebilirsiniz.',
+    'Koordinasyon merkezi yeniden açıldığında bu talebi kendiliğinden ele alır. Beklemek istemiyorsanız "Yönlendirmeyi düzelt" ile talebi bir birime ve ajana kendiniz verebilirsiniz.',
   no_routing: '"Yönlendirmeyi düzelt" ile talebi bir birime ve ajana kendiniz verebilirsiniz.',
   agent_stopped:
-    'Ajanı Ofis görünümünden yeniden açmak bu talebi kendiliğinden başlatmaz. Açtıktan sonra "Yönlendirmeyi düzelt" ile işi yeniden verin.',
+    'Ajan Ofis görünümünden yeniden açıldığında bu iş kendiliğinden yeniden başlar. Beklemek istemiyorsanız "Yönlendirmeyi düzelt" ile işi açık bir ajana verebilirsiniz.',
   // Also for a request the coordinator never routed: the person makes the first routing.
   not_started:
     '"Yönlendirmeyi düzelt" ile işi bir ajana yeniden verin; yeni bir çalışma başlar. İş gerekmiyorsa talebi kapatabilirsiniz.',
@@ -144,6 +146,10 @@ export const CAUSE_NEXT: Partial<Record<RequestCause, string>> = {
     'Talep metni modelin yanıtlamadığı bir içerik taşıyor olabilir. İşi "Yönlendirmeyi düzelt" ile yeniden verebilir ya da talebi kapatabilirsiniz.',
   second_change_request:
     'İş ajana kendiliğinden dönmez. "Yönlendirmeyi düzelt" ile bir açıklama yazarak yeniden verebilir ya da talebi kapatabilirsiniz.',
+  // The permission is open again and the work did not start again: its agent was stopped at that
+  // moment, or the permission was opened outside the panel.
+  ai_permission_interrupted:
+    'Ajan kapalıysa Ofis görünümünden açıldığında iş kendiliğinden başlar. Ajan açıksa "Yönlendirmeyi düzelt" ile işi yeniden verin.',
 };
 
 /** What only the founder is told, because only the founder can remove the cause. */
@@ -157,7 +163,58 @@ export const CAUSE_FOR_FOUNDER: Partial<Record<RequestCause, string>> = {
     'Kartın yazdığı model bu Anthropic hesabında kullanılamıyor. Hesabın model erişimini ve agents/models.yaml dosyasını kontrol edin.',
   card_not_runnable:
     'Kart taslak durumunda, ya da deneme durumunda ve talep kurucuya ait değil. Kartın durumu depoda değiştirilir.',
+  ai_permission_closed:
+    'İzni projenin sayfasından açabilirsiniz; passkey ister. İzin açılınca bekleyen iş kendiliğinden yeniden başlar. İş gerekmiyorsa talebi durdurabilirsiniz.',
 };
+
+/** The three switches whose opening starts waiting work again (8 October decision 49). */
+export type OpeningKind = 'agent' | 'project' | 'customer';
+
+/** Where the waiting requests of an opening are, as the sentence starts. */
+const WAITING_WHERE: Record<OpeningKind, string> = {
+  agent: 'Bu ajanı',
+  project: 'Bu projede',
+  customer: 'Bu müşterinin projelerinde',
+};
+
+/**
+ * What an opening starts when nobody counted: said in the confirmation of the opening before the
+ * founder confirms, because every restarted request is a paid run.
+ */
+export const WAITING_WORK_IF_ANY: Record<OpeningKind, string> = {
+  agent:
+    'Bu ajanı bekleyen talep varsa açınca hemen yeniden başlar; her biri ücretli bir yapay zekâ çalışmasıdır.',
+  project:
+    'Bu projede bekleyen talep varsa izni açınca hemen yeniden başlar; her biri ücretli bir yapay zekâ çalışmasıdır.',
+  customer:
+    'Bu müşterinin projelerinde bekleyen talep varsa izni açınca hemen yeniden başlar; her biri ücretli bir yapay zekâ çalışmasıdır.',
+};
+
+/**
+ * What the confirmation of an opening says about the work it starts (8 October decision 49).
+ * The number is the database's (GET /api/waiting-work); the page never counts by itself.
+ * 'counting': the number is on its way; 'unknown': it could not be read, so the sentence says
+ * what may start without a number.
+ */
+export function waitingWorkSentence(
+  kind: OpeningKind,
+  waiting: number | 'counting' | 'unknown',
+): string {
+  if (waiting === 'counting') {
+    return 'Bekleyen talepler sayılıyor.';
+  }
+  if (waiting === 'unknown') {
+    return `Bekleyen talepler sayılamadı. ${WAITING_WORK_IF_ANY[kind]}`;
+  }
+  const where = WAITING_WHERE[kind];
+  if (waiting === 0) {
+    return kind === 'agent'
+      ? `${where} bekleyen talep yok; açmak hiçbir çalışmayı başlatmaz.`
+      : `${where} bekleyen talep yok; izni açmak hiçbir çalışmayı başlatmaz.`;
+  }
+  const count = String(waiting);
+  return `${where} ${count} talep bekliyor. ${kind === 'agent' ? 'Ajanı' : 'İzni'} açınca ${count} talebin çalışması hemen yeniden başlar; her biri ücretli bir yapay zekâ çalışmasıdır.`;
+}
 
 /** Why the form does not take a request now. */
 export const INTAKE_SENTENCE: Record<RequestIntakeReason, string> = {

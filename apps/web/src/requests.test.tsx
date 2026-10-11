@@ -1677,8 +1677,9 @@ describe('the page of a request', () => {
     expect(api.unexpected).toEqual([]);
   });
 
-  // The agent was stopped when the approver asked for changes, so no run was called for; the
-  // founder opened it again, which starts nothing (the plan's decision for SV-4, SONRA Y-j). The
+  // A job was put on the queue and the runner refused it although the agent is open: no restart
+  // made the missed start good (8 October decision 49: work that waited for a stopped agent
+  // starts again when the agent is opened, so that is no longer what this cause means). The
   // request stays with a person and the page says so and names the way on.
   const neverStarted = (overrides: Parameters<typeof requestDetail>[0] = {}) =>
     requestDetail({
@@ -1690,7 +1691,7 @@ describe('the page of a request', () => {
       ...overrides,
     });
   const NOT_STARTED =
-    'Ajanın çalışması başlatılamadı: iş verildiğinde ajan kapalıydı ya da çalışmaya hazır değildi. Ajan şimdi açık, ama iş kendiliğinden başlamaz.';
+    'Ajanın çalışması başlatılamadı: ajan açık olduğu hâlde çalıştırıcı işi başlatmadı (ajanın kartı okunamadı, iş verildikten sonra talep değişti ya da çalıştırıcı işi o an alamadı).';
 
   it('a request whose run was never started tells the one who can act how the work is given again', async () => {
     mockApi({

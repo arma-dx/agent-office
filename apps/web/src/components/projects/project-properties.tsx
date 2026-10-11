@@ -36,7 +36,7 @@ import {
   setProjectAiPermission,
 } from '@/lib/projects/query';
 import { useStoreProject } from '@/lib/projects/store';
-import { personName } from '@/lib/requests/labels';
+import { WAITING_WORK_IF_ANY, personName } from '@/lib/requests/labels';
 import { useCompany } from '@/lib/session';
 import { busyProps } from '@/lib/utils';
 
@@ -225,9 +225,12 @@ function Permissions({ project }: { project: ProjectDetail }) {
         title={`${project.name} için yapay zekâ izni açılsın mı?`}
         description={
           'İzin açılınca ajanlar bu projede çalışabilir ve projenin kayıtları yapay zekâ modeline gönderilebilir. Projenin müşterisi varsa izni yalnızca müşterinin sözleşmesi yapay zekâ kullanımına izin veriyorsa açın. İzin açıkken projenin müşterisi değiştirilemez.' +
+          // Opening starts the waiting work again (8 October decision 49), unless the
+          // customer's contract still keeps agents out: then nothing starts, and nothing is
+          // promised.
           (confirmed && !confirmed.aiAllowed
             ? ' Müşterinin sözleşme izni kapalı olduğu için ajanlar yine de çalışamaz.'
-            : '')
+            : ` ${WAITING_WORK_IF_ANY.project}`)
         }
         confirmLabel="İzni aç"
       />
@@ -269,7 +272,7 @@ function Permissions({ project }: { project: ProjectDetail }) {
         onSuccess={close}
         onCloseAutoFocus={returnFocus}
         title={`${confirmed.name} için yapay zekâ izni açılsın mı?`}
-        description="Sözleşmenin yapay zekâ kullanımına izin verdiğini işaretliyorsunuz. Bu izin müşterinin bütün projeleri için geçerlidir; ajanlar yalnızca yapay zekâ izni açık projelerde çalışır."
+        description={`Sözleşmenin yapay zekâ kullanımına izin verdiğini işaretliyorsunuz. Bu izin müşterinin bütün projeleri için geçerlidir; ajanlar yalnızca yapay zekâ izni açık projelerde çalışır. ${WAITING_WORK_IF_ANY.customer}`}
         confirmLabel="İzni aç"
       />
     );

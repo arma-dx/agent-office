@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
+  agentOpenResponseSchema,
   agentStopIfOpenResponseSchema,
   agentSwitchRequestSchema,
   companyAgentStatusSchema,
   officeResponseSchema,
   officeWorkCountSchema,
+  waitingWorkQuerySchema,
+  waitingWorkResponseSchema,
 } from '../src/api.ts';
 import {
   AGENT_FAILURE_CAUSES,
@@ -275,5 +278,63 @@ describe('the office contract', () => {
     expect(agentStopIfOpenResponseSchema.safeParse({ ...agent, changed: 'yes' }).success).toBe(
       false,
     );
+  });
+
+  // 8 October decision 49: opening an agent starts the work that waited for it.
+  it('the answer of an opening is the agent and how many waiting requests it started again', () => {
+    const agent = { code: 'HAF-2', name: 'Kurumsal Hafıza', status: 'enabled', ready: true };
+    expect(agentOpenResponseSchema.parse({ ...agent, restarted: 3 })).toEqual({
+      ...agent,
+      restarted: 3,
+    });
+    expect(agentOpenResponseSchema.safeParse({ ...agent, restarted: 0 }).success).toBe(true);
+    expect(agentOpenResponseSchema.safeParse(agent).success).toBe(false);
+    for (const restarted of [-1, 0.5, '3', null]) {
+      expect(
+        agentOpenResponseSchema.safeParse({ ...agent, restarted }).success,
+        String(restarted),
+      ).toBe(false);
+    }
+  });
+
+  it('the waiting work query takes exactly one scope', () => {
+    const id = '00000000-0000-4000-8000-000000000001';
+    expect(waitingWorkQuerySchema.parse({ agent: 'HAF-2' })).toEqual({ agent: 'HAF-2' });
+    expect(waitingWorkQuerySchema.parse({ project: id })).toEqual({ project: id });
+    expect(waitingWorkQuerySchema.parse({ customer: id })).toEqual({ customer: id });
+    for (const query of [
+      {},
+      { agent: 'HAF-2', project: id },
+      { project: id, customer: id },
+      { agent: 'HAF-2', project: id, customer: id },
+      // An unknown key, also next to a scope.
+      { company: id },
+      { agent: 'HAF-2', mine: 'true' },
+      // A malformed id and a malformed agent code.
+      { project: 'x' },
+      { customer: '' },
+      { agent: 'haf 2' },
+      { agent: '' },
+    ]) {
+      expect(waitingWorkQuerySchema.safeParse(query).success, JSON.stringify(query)).toBe(false);
+    }
+  });
+
+  it('the answer is a count that is not negative', () => {
+    expect(waitingWorkResponseSchema.parse({ waiting: 0 })).toEqual({ waiting: 0 });
+    expect(waitingWorkResponseSchema.parse({ waiting: 4 })).toEqual({ waiting: 4 });
+    for (const answer of [
+      {},
+      { waiting: -1 },
+      { waiting: 1.5 },
+      { waiting: '4' },
+      { waiting: null },
+    ]) {
+      expect(waitingWorkResponseSchema.safeParse(answer).success, JSON.stringify(answer)).toBe(
+        false,
+      );
+    }
+    // Nothing else leaves with the number.
+    expect(waitingWorkResponseSchema.safeParse({ waiting: 1, requests: [] }).success).toBe(false);
   });
 });

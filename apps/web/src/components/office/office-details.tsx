@@ -15,6 +15,7 @@ import { userMessage } from '@/lib/api';
 import { useReturnFocus } from '@/lib/focus';
 import { useOfficeDialog } from '@/lib/office/hold';
 import { officeQueryOptions } from '@/lib/office/query';
+import { WAITING_WORK_IF_ANY } from '@/lib/requests/labels';
 import { setAgentSwitch } from '@/lib/requests/query';
 import { useCompany } from '@/lib/session';
 import { busyProps } from '@/lib/utils';
@@ -77,9 +78,10 @@ function UnitDetails({ unit, onSelect }: { unit: OfficeUnit; onSelect: (id: stri
 
 /**
  * The founder's switch for one agent in this company (CLAUDE.md: every agent has a stop switch per
- * company). Opening lets the agent take the requests routed to it; stopping keeps it from taking
- * new work and ends its open run before the next step. Nothing is shown as changed before the API
- * has stored it.
+ * company). Opening lets the agent take the requests routed to it and starts the work that waited
+ * for it again (8 October decision 49; each is a paid run, and the confirmation says so before it
+ * is confirmed); stopping keeps it from taking new work and ends its open run before the next
+ * step. Nothing is shown as changed before the API has stored it.
  *
  * An agent whose card has no version to run with cannot be opened: the API refuses it. The panel
  * knows that from the office answer (`ready`), so it says so in a sentence and offers no button
@@ -147,7 +149,7 @@ function AgentSwitchButton({ agent }: { agent: OfficeAgent }) {
           <AlertDialogDescription>
             {next === 'stopped'
               ? 'Yeni iş almaz; süren çalışması bir sonraki adımdan önce durur.'
-              : 'Açık ajan kendisine yönlendirilen talepleri çalıştırır ve yapay zekâ modelini kullanır.'}
+              : `Açık ajan kendisine yönlendirilen talepleri çalıştırır ve yapay zekâ modelini kullanır. ${WAITING_WORK_IF_ANY.agent}`}
           </AlertDialogDescription>
           {change.isError ? (
             <p role="alert" className="text-sm text-destructive">
