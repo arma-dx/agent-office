@@ -49,6 +49,8 @@ Henüz olmayanlar: veritabanı (göç dosyası yok), giriş, işlevli ekran (yal
 
 12 Ekim 2026: Projeler'in üçüncü adımının ilk parçası kuruldu (0.4c adım 3): bütçe ve kilometre taşları. Proje sayfasında "Kilometre taşları" sekmesi var: ad, isteğe bağlı gün ve tamamlandı işareti; projenin her üyesi ve kurucu ekler, değiştirir ve siler. Bütçe özellikler panelinde bir satırdır ve kendi penceresi vardır: tutar ve para birimi (TL, dolar ya da avro); bütçeyi projenin sahibi, yöneticileri ve kurucu görür ve değiştirir (12 Ekim, karar 2), düz üyenin sayfasında bütçe hiç görünmez. Türetilen seçimler `docs/SONRA.md` içinde P3-a ila P3-f; P3-a ve P3-b karara bağlandı, ötekiler kurucu onayı bekliyor. Ekranlar tarayıcıda görülmeden yazıldı; kurucunun bir proje sayfasına bir kez bakması gerekir. Yeni göç (`20261008102700_project_budget_and_milestones.sql`) yerel veritabanına uygulanana kadar yerelde proje listesi ve proje sayfası sunucu hatası verir.
 
+12 Ekim 2026 (devam): adım 3'ün ikinci parçası kuruldu: ajan çalışmaları ve maliyeti. Proje sayfasında "Çalışmalar" sekmesi var: projeyi görebilen herkes o projenin en yeni 200 ajan çalışmasını görür (talep, ajan, başlangıç, süre, sonuç); token sayılarını, çalışma başına maliyeti ve toplamı yalnızca kurucu görür. Listede ajanın yazdığı hiçbir metin yoktur; liste yarım dakikada bir kendiliğinden yenilenir. Türetilen seçimler `docs/SONRA.md` içinde P3-h ila P3-j; hepsi kurucu onayı bekliyor. Yeni göç (`20261008102800_project_runs_index.sql`) yalnızca bir dizin ekler.
+
 ## Sprint 0
 
 ### 0.1 Arayüz temeli
@@ -429,11 +431,12 @@ Adım 2: talep formunda proje alanı
 Adım 3: proje sayfasının öteki bölümleri (karar 17; her biri ayrı küçük adım)
 
 - [x] Bütçe ve kilometre taşları (bütçeyi sahip, yöneticiler ve kurucu görür ve değiştirir, 12 Ekim karar 2; para birimi her seferinde seçilir, SONRA P3-c; yapay zekâ maliyeti bütçeden düşülmez, SONRA P3-d; kilometre taşlarını her üye tutar, SONRA P3-e, P3-f)
-- [ ] Ajan çalışmaları ve maliyeti
+- [x] Ajan çalışmaları ve maliyeti ("Çalışmalar" sekmesi: en yeni 200 çalışma; token ve maliyeti yalnızca kurucu görür; listede ajan metni yok, SONRA P3-h ila P3-j)
 - [ ] Onaylar
 - [ ] Projenin notları (Notlar işiyle birlikte) (adım 3'te kurulmadı: Notlar işi (1.3) bekleniyor; proje sayfasında not sekmesi yok)
 - [ ] Projeye yapay zekâ harcama sınırı: aşılınca o projede ajanlar durur
 - [ ] `20261008102700_project_budget_and_milestones.sql` göçünün yerel veritabanına ve test ortamına uygulanması
+- [ ] `20261008102800_project_runs_index.sql` göçünün yerel veritabanına ve test ortamına uygulanması
 
 Adım 4: proje dosyaları (karar 20)
 

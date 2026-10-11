@@ -278,7 +278,7 @@ Açık sorular:
 - U11: Dış kişinin yorumu ajan için talimat mı, veri mi? İncelemenin önerisi: veri. (inceleme 14.7)
 - U12: Göreve yazılan insan yorumu ajanı ne zaman çalıştırır? İncelemenin önerisi: yalnızca görev "Yanıt bekliyor" durumundayken ve yazan muhatapsa; yazma kutusu bunu belirtir. X1-6 ile birlikte. (inceleme 13.4)
 - U13: Tarayıcıda saklanan yarım metinler, "Son görevler" listesi ve saklanan görünümler oturum kapanınca silinsin mi? Kabuğun sakladığı tema ve görünüm seçimleri için U25. (inceleme 13.4, 14.7)
-- U14: `employee` rolü Ajanlar ve Ölçümler ekranlarını ve maliyet bilgisini görür mü? Öneri yok. Ofis görünümü için yanıtlandı (6 Ekim, karar 6): kurucu ve çalışanlar görür, dış kişiler görmez; ofis maliyet bilgisi göstermez. Ajanlar ve Ölçümler ekranları ile maliyet bilgisi açık. (inceleme 14.7)
+- U14: `employee` rolü Ajanlar ve Ölçümler ekranlarını ve maliyet bilgisini görür mü? Öneri yok. Ofis görünümü için yanıtlandı (6 Ekim, karar 6): kurucu ve çalışanlar görür, dış kişiler görmez; ofis maliyet bilgisi göstermez. Ajanlar ve Ölçümler ekranları ile maliyet bilgisi açık. Proje sayfasındaki çalışma listesi için yanıtlandı sayıldı (P-t): token ve maliyeti yalnızca kurucu görür; Ajanlar ve Ölçümler ekranları açık. (inceleme 14.7)
 - U15: Süren çalışmayı kesmek için Görev ayrıntısında ayrı bir "Çalışmayı kes" düğmesi gerekir mi? X1-5 ile birlikte. (inceleme 14.7)
 - U16: Telefondan onay kalktı (5 Ekim, karar 8): onay yükünün tek kişide toplanmasına karşı tasarım raporundaki "telefon dahil her cihazdan" önleminin yerine, mobil uygulama gelene kadar ne konacak? "Onay bekleme süresi" ölçütü bundan etkilenir.
 - U17: Telefon bildirimi (KALAN-ISLER 2.6) ve PLAN'daki "Telefon bildirimleri hassas bilgi taşımaz" kuralı: telefon bildirimi mobil uygulamaya mı kalır? Tarayıcı bildirimi dizüstünde sürer mi? (M53 ile birlikte.)
@@ -480,7 +480,7 @@ Projeler (8 Ekim, karar 11 ve 14-22) için türetilen yorumlar ve ön planda bil
 - P-p: bağlı deponun listesini bütün proje üyeleri görür; GitHub'da o depoya yetkisi olmayan üye de.
 - P-r: yalnızca şirketin kendi GitHub kuruluşundaki depolar bağlanır; müşterinin kendi GitHub'ı bağlanmaz.
 - P-s: yapay zekâ izni kapalı müşterinin projesine depo, ancak o müşteride "kodla otomatik işleme" izni açıksa bağlanır (kural 12).
-- P-t: Paperclip'teki hedefler ve ajanın çalışma ayarları kurulmaz. Bizde "bütçe" projenin parasıdır; yapay zekâ maliyeti ona yazılır. Ajan çalışmalarının maliyetini yalnızca kurucu görür.
+- P-t: Paperclip'teki hedefler ve ajanın çalışma ayarları kurulmaz. Bizde "bütçe" projenin parasıdır; yapay zekâ maliyeti ona yazılır. Ajan çalışmalarının maliyetini yalnızca kurucu görür. Adım 3'te böyle kuruldu: bütçe ile yapay zekâ maliyeti ayrı gösterilir, maliyet bütçeden düşülmez (P3-d).
 - P-u: Paperclip'ten liste düzeni ve sayfa iskeleti örnek alınır; GitHub logosu alınmaz.
 
 Bu kararlarla kapananlar: M48 (projelerin yeri: ayrı bölüm, karar 11 ve 14). Yanıtlara göre güncellenecekler, ilgili adım tasarlanırken: M47, R8, W-i, W-g, M38, M13, M10, U14, N26, X1-3.
@@ -572,6 +572,9 @@ Projeler adım 3 (proje sayfasının öteki bölümleri) tasarlanırken ve yapı
 - P3-d (P-t; rapor ve PLAN "Maliyet"): Rapor ve PLAN "proje işlerinin maliyeti o projenin bütçesine yazılır" der; P-t de aynısını söyler. Bu adımda yazma kurulmadı: yapay zekâ maliyeti proje sayfasında kurucuya dolar olarak ayrı gösterilir ve bütçeden düşülmez, çünkü kur belirlenmedi ve bütçeyi sahip ile yöneticiler de görür (maliyeti yalnızca kurucu görür). Bütçe penceresi yalnızca bunu söyler ("bu tutardan düşülmüyor"). Öbür seçenek: maliyet bütçenin para birimine çevrilip bütçeden düşülür; o zaman sahip ve yöneticiler maliyeti bütçe üzerinden görür.
 - P3-e (karar 17): Kilometre taşı bir ad (en çok 120 karakter), isteğe bağlı bir gün ve "tamamlandı" işaretidir; bir projede en çok 50 tane olur. Sorumlusu, açıklaması ve elle sıralaması yoktur; güne göre sıralanır, günü olmayanlar sonda durur. Günü geçen kilometre taşı için uyarı çıkmaz (P1-k'deki hedef tarih gibi). Öbür seçenek: gün zorunludur; günü geçen kilometre taşı işaretlenir.
 - P3-f: Kilometre taşlarını projenin her üyesi ve kurucu ekler, değiştirir, işaretler ve siler (öteki alanların kuralı; P1b-i değişirse bu da değişir). Proje sayfasında ayrı bir sekmede durur; bütçe özellikler panelinde bir satırdır; ikisi de proje listesinde görünmez. Öbür seçenek: kilometre taşlarını yalnızca sahip ve yöneticiler tutar; bütçe ve kilometre taşları tek sekmede durur.
+- P3-h (V-c, U14): Proje sayfasındaki "Çalışmalar" sekmesi projeyi görebilen herkese o projenin en yeni 200 ajan çalışmasını gösterir: talep, ajan, başlangıç, süre ve sonuç. Listede hiçbir metin yoktur; ajanın yazdığı hiçbir şey ve çalışmanın özet cümlesi gösterilmez, ayrıntı talebin sayfasındadır. Öbür seçenek: üyeler çalışmaları görmez; ya da özet cümlesi de gösterilir.
+- P3-i (P-t): Çalışmaların toplamı projenin bütün ömrü için hesaplanır. Token ve maliyeti (çalışma başına ve toplam) yalnızca kurucu görür; üyeler yalnızca çalışma sayısını görür. Öbür seçenek: toplam aylık gösterilir; ya da maliyeti üyeler de görür.
+- P3-j (U22): Çalışmanın sonucu, durum dilindeki beş sözle ve gerekiyorsa dokuz sabit nedenden biriyle yazılır (örneğin "Durduruldu, harcama sınırı doldu"); hata kodu hiçbir zaman gösterilmez, listenin tanımadığı kod için yalnızca durum sözü yazar. Süren çalışmanın süresi sayfada sayılmaz, "Sürüyor" yazar. Öbür seçenek: sözler değiştirilir.
 
 İlk dilimin incelemesinden kalan açık sorular ve bilerek ertelenenler:
 

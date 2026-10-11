@@ -28,7 +28,7 @@ Kapsam dışı: dış müşterilere kurulum (Ürünleşme), WhatsApp ve Uyumsoft
 | Kimlik | Google ile davetli giriş (giriş istemcisi: External; `openid`, `email`, `profile`), API üzerinden sunucu tarafında; yalnızca geçerli daveti ya da üyeliği olan, Google'ın doğruladığı adres girer; iki adımlı doğrulama zorunlu (şirket hesaplarında Workspace ayarıyla; dış kişilerde `amr` iki adımlı doğrulama göstermiyorsa giriş reddedilir); oturum 30 dakika hareketsizlikte, en geç 10 saatte kapanır; önemli onaylarda yeniden doğrulama panelde passkey ile. Ajanların Workspace erişimi ayrı bağlantı istemcisiyle (Internal; `gmail.readonly`, `calendar.readonly`, `drive.readonly`), bağlantıyı kuran kişinin kimliğiyle |
 | Model | Claude API, araç kullanımı ile ajan döngüsü; model adı görev kartından; rutin işte hızlı, zor işte güçlü model; tekrar eden talimatlarda istem önbelleği. Model katmanı değiştirilebilir tasarlanır, kartlar modelden bağımsız yazılır |
 | Dil | Ana dil Türkçe; ajan çıktıları İngilizce ve Arapça da istenebilir. Pilotta arayüz yalnızca Türkçe |
-| Maliyet | Model kullanımı ilk günden iş başına ölçülür; iç işler ve projeler ayrı izlenir, proje işlerinin maliyeti o projenin bütçesine yazılır. Gündelik iç işlerde ayrı üst sınır yok; ajan bazında bütçe uyarısı var |
+| Maliyet | Model kullanımı ilk günden iş başına ölçülür; iç işler ve projeler ayrı izlenir, proje işlerinin maliyeti o projenin bütçesine yazılır (henüz kurulmadı: maliyet proje sayfasında kurucuya ayrı gösterilir ve bütçeden düşülmez; kurucu onayı bekliyor, `docs/SONRA.md` P3-d). Gündelik iç işlerde ayrı üst sınır yok; ajan bazında bütçe uyarısı var |
 | Skill'ler | `skills/` altında SKILL.md klasörleri; çalıştırıcı okuyup çağrıya ekler, API'ye yüklenmez |
 | Not sistemi | Kurumsal hafıza Obsidian gibi markdown notlar: YAML özellikler, `[[bağlantı]]`, geri bağlantılar, etiketler; kaynak veritabanı |
 | Arama | PostgreSQL tam metin arama; gerekirse pgvector |
@@ -58,7 +58,7 @@ Pilotta panel internete açık; ileride yalnızca ofis ağından, dışarıdan V
 | agent_definitions, card_versions | Global, `company_id` yok. Görev kartı: amaç, talimat, skill'ler, araç izinleri, yetki seviyesi, onay noktaları, model, sınırlar, sürüm geçmişi; depodaki YAML'dan her yayında git commit kimliğiyle senkronize edilir |
 | company_agents | Şirkete özel ajan satırı: `company_id`, `agent_code`, durum (durdurma düğmesi), ayarlar (Drive klasörleri, öncelikli göndericiler, Figma çalışma dosyası, bütçe) |
 | tasks | Talep, şirket, proje, atanan (insan ya da ajan), durum, öncelik, son tarih, yorumlar |
-| runs | Ajan çalışması: girdi, çıktı, araç çağrıları, model, kart sürümü, token, maliyet, süre, iç iş ya da proje etiketi |
+| runs | Ajan çalışması: girdi, çıktı, araç çağrıları, model, kart sürümü, token, maliyet, süre, iç iş ya da proje etiketi; projenin çalışmaları proje sayfasında listelenir; token ve maliyeti yalnızca kurucu görür (`docs/SONRA.md` P-t) |
 | approvals | Onay bekleyen çıktı, özet, risk notu, fark, durum, gerekçe, onaylayan, zaman; para içerip içermediği ve onaydan sonra dışarı gönderilip gönderilmeyeceği (5 Ekim, karar 2) |
 | audit_log | Değiştirilemeyen olay kaydı: kim, ne yaptı, hangi veriye baktı, ne zaman |
 | notes, note_versions | Markdown not: klasör yolu, başlık, YAML özellikler, gövde, sürüm, arama dizini, taslak durumu (Y1 ajanın notu onaydan sonra paylaşılır); kararlar ve tutanaklar da not türü |
@@ -124,7 +124,7 @@ Bir satır, ekranı yapıldığında menüye eklenir. Panel telefona uyumlu yap�
 | Ajanlar | Birimlere göre ajanlar, durumları, yetki seviyeleri, şirket başına durdurma düğmesi ve "her yerde durdur" | 1 |
 | Görev kartı | Kart ve skill'ler salt okunur (değişiklik depoda PR ile), sürüm geçmişi, test sonuçları | 1 |
 | Notlar | Klasör ağacı, editör, geri bağlantılar, etiketler, arama; HAF-2'ye soru (proje sayfasından o projede; genel ekranda proje seçilerek) | 1 |
-| Projeler | Proje listesi; yeni proje (ad, açıklama, müşteri, üyeler); proje sayfası: Talepler ve Ayarlar sekmeleri (0.4c adım 2), Kilometre taşları sekmesi ve özellikler panelinde bütçe (0.4c adım 3), beş durum, renk ve simge, hedef tarih, üyeler (üyelerde sahip, yönetici, üye; 8 Ekim, karar 44), yapay zekâ izni, talepler, dosyalar, GitHub, bütçe ve kilometre taşları, notlar, ajan çalışmaları ve maliyeti, onaylar, yapay zekâ harcama sınırı (8 Ekim, karar 11 ve 14-22). Adımları KALAN-ISLER 0.4c içinde | 0 ve sonrası |
+| Projeler | Proje listesi; yeni proje (ad, açıklama, müşteri, üyeler); proje sayfası: Talepler ve Ayarlar sekmeleri (0.4c adım 2), Kilometre taşları ve Çalışmalar sekmeleri, özellikler panelinde bütçe (0.4c adım 3), beş durum, renk ve simge, hedef tarih, üyeler (üyelerde sahip, yönetici, üye; 8 Ekim, karar 44), yapay zekâ izni, talepler, dosyalar, GitHub, bütçe ve kilometre taşları, notlar, ajan çalışmaları ve maliyeti, onaylar, yapay zekâ harcama sınırı (8 Ekim, karar 11 ve 14-22). Adımları KALAN-ISLER 0.4c içinde | 0 ve sonrası |
 | Müşteriler | Müşteri ve fırsat listesi | 2 |
 | İz kaydı | Kim, ne yaptı, ne zaman; filtreler | 2 |
 | Ayarlar | Kullanıcılar ve roller, şirketler, entegrasyonlar (Drive bağlantısı ve klasör izin listesi Sprint 1, Gmail ve Takvim Sprint 3) | 0, 1 ve 3 |

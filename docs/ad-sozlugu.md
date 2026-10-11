@@ -512,7 +512,7 @@ Ajan çalışmaları ve maliyeti (8 Ekim karar 17):
 - API yanıt alanları: `runs` (her çalışmada `id`, `request`: talebin kimliği ve başlığı ya da talebe bağlı değilse `null`, `agent`, `status`, `errorCode`, `startedAt`, `finishedAt`, `durationMs`, `usage`), `truncated` (liste 200'de kesildi), `totals` (`runCount`: bütün çalışmaların sayısı; `usage`: toplam, kurucu değilse `null`), `serverTime`. `usage` içinde `inputTokens`, `outputTokens`, `cacheWriteTokens`, `cacheReadTokens`, `costUsd` (ABD doları, metin olarak).
 - Şemalar: `usdSchema` (ABD doları tutarı, metin; en çok altı ondalık), `runUsageSchema`, `projectRunSchema`, `projectRunsSchema` (`packages/shared/src/project-sections.ts`). Sabit: `PROJECT_RUN_LIST_LIMIT` (200).
 - Veritabanı ifadeleri: `listProjectRuns` (satır türü `ProjectRunRow`; kurucu olmayan okur için beş kullanım sütunu boş gelir), `projectRunTotals` (satır türü `ProjectRunTotalsRow`; `run_count` herkese, toplamlar yalnızca kurucuya).
-- Panel adresi: proje sayfasında `?tab=runs` ("Çalışmalar" sekmesi).
+- Panel adresi: proje sayfasında `?tab=runs` ("Çalışmalar" sekmesi). Panel işlevleri: `fetchProjectRuns` ve `projectRunsQueryOptions` (istek; anahtarı `projectRunsKey`), `runResultReason` (durum sözünün ardından yazılan sabit neden; kod hiçbir zaman gösterilmez), `runDurationText` (süre; süren çalışma için "Sürüyor"), `formatCount` (token sayısı).
 
 Projenin onayları (8 Ekim karar 17):
 
