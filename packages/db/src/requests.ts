@@ -55,6 +55,13 @@ const agentsMayWork = (project: string): string => `(
   )
 )`;
 
+// Is the AI spending limit of a request's project reached now (8 October decision 17). The
+// database's own answer, for what a person is shown and offered; false without a project. (The
+// function gives no value to somebody who may not read the project; whoever reads a request
+// inside a project reads that project.)
+const spendingLimitReached = (project: string): string =>
+  `coalesce(office.project_spending_limit_reached(${project}), false)`;
+
 export interface RequestRow {
   id: string;
   title: string;
@@ -69,6 +76,8 @@ export interface RequestRow {
   // Null when the request has no project.
   project_name: string | null;
   agents_may_work: boolean;
+  // The AI spending limit of the request's project is reached now (decision 17).
+  spending_limit_reached: boolean;
   // May the requester still read the request (decision 45); the database's own answer.
   requester_reads: boolean;
   // The latest time waiting work of this request was called for again (decision 49).
@@ -122,6 +131,7 @@ const requestSql = (chosen: string): string => `
          t.project_id,
          (select p.name from office.projects p where p.id = t.project_id) as project_name,
          ${agentsMayWork('t.project_id')} as agents_may_work,
+         ${spendingLimitReached('t.project_id')} as spending_limit_reached,
          coalesce(office.request_run_identity(t.id) = t.requester_user_id, true) as requester_reads,
          ${dueDaySql('t.due_at')} as due_date,
          t.unit_code, u.name as unit_name,
@@ -601,6 +611,8 @@ export interface ResultApprovalRow {
   // Null when the request has no project.
   project_name: string | null;
   agents_may_work: boolean;
+  // The AI spending limit of the request's project is reached now (decision 17).
+  spending_limit_reached: boolean;
   agent_code: string;
   agent_name: string;
   attempt: number;
@@ -651,6 +663,7 @@ const RESULT_APPROVAL_SQL = `
          t.project_id,
          (select p.name from office.projects p where p.id = t.project_id) as project_name,
          ${agentsMayWork('t.project_id')} as agents_may_work,
+         ${spendingLimitReached('t.project_id')} as spending_limit_reached,
          a.agent_code,
          d.name as agent_name, a.attempt, a.status, a.created_at, a.decided_at,
          a.decided_by_user_id, a.rejection_reason, a.decision_reason, a.invalidated_at,
@@ -766,6 +779,8 @@ export interface AcceptanceRow {
   reader_stands_in: boolean;
   // May agents work in the project of the request now (rule 12).
   agents_may_work: boolean;
+  // The AI spending limit of the request's project is reached now (decision 17).
+  spending_limit_reached: boolean;
   // The requester has not asked for changes on this request before: the next "not what I asked
   // for" goes back to the agent (the rule of office.flow_on_requester_approval, as a question).
   returns_to_agent: boolean;
@@ -799,6 +814,7 @@ const ACCEPTANCE_SQL = `
            and office.request_run_identity(q.task_id) is distinct from q.requester_user_id
          ) as reader_stands_in,
          ${agentsMayWork('t.project_id')} as agents_may_work,
+         ${spendingLimitReached('t.project_id')} as spending_limit_reached,
          not exists (
            select 1 from office.requester_approvals p
            where p.task_id = q.task_id and p.status = 'changes_requested'

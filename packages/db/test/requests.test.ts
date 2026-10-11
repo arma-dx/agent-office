@@ -4398,6 +4398,110 @@ describe.skipIf(noDatabase)('a request inside a project', () => {
     });
   });
 
+  // 8 October decision 17: the AI spending limit of the request's project.
+  it("a request row says whether its project's limit is reached; false without a project", async () => {
+    await inTransaction(async (tx) => {
+      await enableHaf(tx);
+      const inProject = (agent: string): ContextInput => ({
+        ...agentRun(ids.employeeA, agent),
+        projectId: ids.projectA,
+      });
+      await tx.setContext(employeeA);
+      const plain = await openRequest(tx);
+      // A project request whose result waits for the approver, and one whose approved result
+      // waits for its requester. The coordinator's run of each has cost 0.25.
+      const walked = async (): Promise<{ task: string; approval: string }> => {
+        await tx.setContext(employeeA);
+        const task = await openRequest(tx, ids.projectA);
+        await tx.setContext(inProject('KOR-1'));
+        const kor = await openRun(tx, task, 'KOR-1');
+        await tx.rows(ROUTE, [task, HAF_STEP, kor]);
+        await tx.exec(
+          `update office.runs set status = 'completed', finished_at = now(), cost_usd = 0.25
+           where id = $1`,
+          [kor],
+        );
+        await tx.setContext(inProject('HAF-1'));
+        const haf = await openRun(tx, task, 'HAF-1');
+        return { task, approval: (await one<{ id: string }>(tx, SUBMIT, [task, haf, null])).id };
+      };
+      const waiting = await walked();
+      const accepted = await walked();
+      await tx.setContext(founderA);
+      await tx.exec(`update office.approvals set status = 'approved' where id = $1`, [
+        accepted.approval,
+      ]);
+
+      const list = (projectId: string | null): Promise<RequestRow[]> =>
+        listRequests(tx.client, { coordinator: 'KOR-1', mine: false, limit: 50, projectId });
+      /** Every statement that carries the flag, as its own reader gets it. */
+      const state = async (): Promise<unknown> => {
+        const flags: Record<string, unknown> = {};
+        for (const [name, reader] of [
+          ['member', employeeA],
+          ['founder', founderA],
+        ] as const) {
+          await tx.setContext(reader);
+          const row = await readRequest(tx.client, 'KOR-1', waiting.task);
+          flags[name] = {
+            request: [row?.spending_limit_reached, row?.agents_may_work],
+            listed: (await list(ids.projectA)).map((item) => item.spending_limit_reached),
+            plain: (await readRequest(tx.client, 'KOR-1', plain))?.spending_limit_reached,
+            plainListed: (await list(null)).find((item) => item.id === plain)
+              ?.spending_limit_reached,
+          };
+        }
+        await tx.setContext(founderA);
+        flags.approvals = (await listPendingApprovals(tx.client))
+          .filter((row) => row.task_id === waiting.task)
+          .map((row) => [row.spending_limit_reached, row.agents_may_work]);
+        await tx.setContext(employeeA);
+        flags.acceptances = (await listPendingAcceptances(tx.client))
+          .filter((row) => row.task_id === accepted.task)
+          .map((row) => [row.spending_limit_reached, row.agents_may_work]);
+        return flags;
+      };
+      // The permission is not touched by the limit: agents may work throughout.
+      const expected = (reached: boolean) => {
+        const reader = {
+          request: [reached, true],
+          listed: [reached, reached],
+          plain: false,
+          plainListed: false,
+        };
+        return {
+          member: reader,
+          founder: reader,
+          approvals: [[reached, true]],
+          acceptances: [[reached, true]],
+        };
+      };
+      const setLimit = async (limit: string | null): Promise<void> => {
+        await tx.setContext(founderA);
+        await tx.rows('select office.set_project_ai_spending_limit($1, $2::numeric)', [
+          ids.projectA,
+          limit,
+        ]);
+      };
+
+      // No limit; a limit above what was spent (0.50); at it; below it.
+      expect(await state()).toEqual(expected(false));
+      await setLimit('0.51');
+      expect(await state()).toEqual(expected(false));
+      await setLimit('0.50');
+      expect(await state()).toEqual(expected(true));
+      await setLimit('0.10');
+      expect(await state()).toEqual(expected(true));
+      // Raised (with the founder's passkey), and taken away: not reached any more.
+      await stepUp(tx, founderA, 'project_ai_spending_limit', ids.projectA);
+      await setLimit('5');
+      expect(await state()).toEqual(expected(false));
+      await stepUp(tx, founderA, 'project_ai_spending_limit', ids.projectA);
+      await setLimit(null);
+      expect(await state()).toEqual(expected(false));
+    });
+  });
+
   it('the lists of the Bugün screen hold a project request only for its readers', async () => {
     await inTransaction(async (tx) => {
       await enableHaf(tx);

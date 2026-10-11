@@ -16,6 +16,7 @@ import {
   readCompanyKind,
   readCustomer,
   readProject,
+  readProjectAiSpending,
   readerSeesUndecided,
   removeProjectMember,
   removeProjectMilestone,
@@ -320,6 +321,7 @@ function summaryFields(row: ProjectRow) {
     targetDate: row.target_date,
     aiAllowed: row.ai_allowed,
     agentsMayWork: agentsMayWork(row),
+    spendingLimitReached: row.spending_limit_reached,
     memberCount: row.member_count,
   };
 }
@@ -377,7 +379,9 @@ function actorOf(context: CompanyContext, row: ProjectRow): ProjectActor {
  * customer an employee gets the name and whether its AI permission is open (the page must say why
  * agents do not work), never the automated processing permission. The budget is in the answer
  * only for who may change it (the founder, the owner, a manager); the statement already left the
- * amount out of the row for anybody else. The milestones are every reader's.
+ * amount out of the row for anybody else. The milestones are every reader's. Whether the AI
+ * spending limit is reached is every reader's too (a yes or a no); the limit and what was spent
+ * are the founder's (docs/SONRA.md P-t).
  */
 async function detailOf(context: CompanyContext, row: ProjectRow): Promise<ProjectDetail> {
   const { client } = context;
@@ -387,6 +391,9 @@ async function detailOf(context: CompanyContext, row: ProjectRow): Promise<Proje
     client,
     row.created_by_user_id !== null ? [row.created_by_user_id] : [],
   );
+  // What the project's agents spent and its limit: the founder's alone (the statement answers
+  // nobody else).
+  const spending = row.reader_is_founder ? await readProjectAiSpending(client, row.id) : null;
   return projectDetailSchema.parse({
     ...summaryFields(row),
     description: row.description,
@@ -428,12 +435,14 @@ async function detailOf(context: CompanyContext, row: ProjectRow): Promise<Proje
         }
       : { visible: false },
     milestones: milestonesOf(row),
+    aiSpending: spending ? { limitUsd: spending.limit_usd, spentUsd: spending.spent_usd } : null,
     actions: {
       edit: true,
       addMembers: mayAddProjectMembers(actor),
       setBudget: managesBudget(actor),
       setAiPermission: row.reader_is_founder,
       setCustomerPermissions: row.reader_is_founder && row.customer_id !== null,
+      setAiSpendingLimit: row.reader_is_founder,
     },
   });
 }

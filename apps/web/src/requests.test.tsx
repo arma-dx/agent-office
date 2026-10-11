@@ -3357,6 +3357,7 @@ describe('Onaylar', () => {
               round: 1,
               returnsToAgent: false,
               agentsMayWork: true,
+              spendingLimitReached: false,
               forRequester: null,
               openedAt: '2026-10-07T09:00:00.000Z',
               result: RESULT,

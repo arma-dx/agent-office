@@ -43,6 +43,7 @@ function row(overrides: Partial<RequestRow> = {}): RequestRow {
     project_id: null,
     project_name: null,
     agents_may_work: true,
+    spending_limit_reached: false,
     requester_reads: true,
     restarted_at: null,
     closed_by_user_id: null,
@@ -277,6 +278,47 @@ describe('the project, the permission and the stand-in of a request as the panel
     expect(summaryOf(routed, FOUNDER).stage).toBe('working');
   });
 
+  // 8 October decision 17.
+  it('a request held by a reached spending limit is the founder’s, also when the step has an approver', () => {
+    const routed: Partial<RequestRow> = {
+      status: 'in_progress',
+      project_id: id(31),
+      project_name: 'Lansman',
+      routed: true,
+      step_agent_code: 'SOS-2',
+      step_agent_name: 'Sosyal İçerik Yazım Ajanı',
+      step_agent_enabled: true,
+      step_approver_user_id: id(900),
+      step_created_at: ago(5_000),
+    };
+    expect(factsOf(row(routed))).toMatchObject({ spendingLimitReached: false });
+    expect(factsOf(row({ ...routed, spending_limit_reached: true }))).toMatchObject({
+      spendingLimitReached: true,
+      agentsMayWork: true,
+    });
+    const held = summaryOf({ ...routed, spending_limit_reached: true }, FOUNDER);
+    expect([held.stage, held.cause, held.turn, held.waitingForMe]).toEqual([
+      'fell_to_person',
+      'spending_limit_reached',
+      { kind: 'founder' },
+      true,
+    ]);
+    // For the appointed approver of the step it is not their turn: only the founder raises it.
+    expect(summaryOf({ ...routed, spending_limit_reached: true }).waitingForMe).toBe(false);
+    // Before any routing too.
+    const unrouted = summaryOf(
+      { project_id: id(31), project_name: 'Lansman', spending_limit_reached: true },
+      FOUNDER,
+    );
+    expect([unrouted.stage, unrouted.cause, unrouted.waitingForMe]).toEqual([
+      'fell_to_person',
+      'spending_limit_reached',
+      true,
+    ]);
+    // Under the limit the same row reads as work.
+    expect(summaryOf(routed, FOUNDER).stage).toBe('working');
+  });
+
   it('a restart is the latest call for the work', () => {
     const stopped: Partial<RequestRow> = {
       status: 'in_progress',
@@ -343,6 +385,7 @@ describe('the project, the permission and the stand-in of a request as the panel
     project_id: null,
     project_name: null,
     agents_may_work: true,
+    spending_limit_reached: false,
     agent_code: 'SOS-2',
     agent_name: 'Sosyal İçerik Yazım Ajanı',
     attempt: 1,
@@ -378,6 +421,20 @@ describe('the project, the permission and the stand-in of a request as the panel
     expect([held.project, held.agentsMayWork]).toEqual([{ id: id(31), name: 'Lansman' }, false]);
   });
 
+  it('an approval card says whether the spending limit of its project is reached', () => {
+    expect(approvalCardSchema.parse(toApprovalCard(approval(), PEOPLE)).spendingLimitReached).toBe(
+      false,
+    );
+    const atLimit = approvalCardSchema.parse(
+      toApprovalCard(
+        approval({ project_id: id(31), project_name: 'Lansman', spending_limit_reached: true }),
+        PEOPLE,
+      ),
+    );
+    // The limit holds no result back: agents may work, and the card can be decided.
+    expect([atLimit.spendingLimitReached, atLimit.agentsMayWork]).toEqual([true, true]);
+  });
+
   const acceptance = (overrides: Partial<AcceptanceRow> = {}): AcceptanceRow => ({
     id: id(3),
     task_id: id(1),
@@ -394,6 +451,7 @@ describe('the project, the permission and the stand-in of a request as the panel
     decided_by_user_id: id(900),
     reader_stands_in: false,
     agents_may_work: true,
+    spending_limit_reached: false,
     returns_to_agent: true,
     ...overrides,
   });

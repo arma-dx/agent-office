@@ -49,6 +49,9 @@ const PILLIKA_CUSTOMER = '00000000-0000-4000-8000-000000000951';
 const PILLIKA_PROJECT = '00000000-0000-4000-8000-000000000952';
 const ARMA_CUSTOMER = '00000000-0000-4000-8000-000000000953';
 const DEACTIVATED = '00000000-0000-4000-8000-000000000954';
+// A card version of the coordinator, for the runs the spending limit tests write (a run names the
+// card version it ran with). It is never made the current one.
+const SPENDING_CARD = '00000000-0000-4000-8000-000000000964';
 
 const database = inject('database');
 
@@ -447,6 +450,7 @@ describe.skipIf(noDatabase)('projects', () => {
       targetDate: '2026-12-31',
       aiAllowed: false,
       agentsMayWork: false,
+      spendingLimitReached: false,
       customer: { id: ARMA_CUSTOMER, name: 'Arma Müşterisi' },
       memberCount: 1,
     });
@@ -907,6 +911,7 @@ describe.skipIf(noDatabase)('projects', () => {
       setBudget: true,
       setAiPermission: true,
       setCustomerPermissions: true,
+      setAiSpendingLimit: true,
     });
     // Without a customer there is no customer permission to set.
     const plain = await open(founder, { name: 'Müşterisiz proje' });
@@ -2857,6 +2862,146 @@ describe.skipIf(noDatabase)('projects', () => {
         milestones: [],
       });
       expect((await read(employee, project.id)).name).toBe('Alanları ayrı proje');
+    });
+  });
+
+  // Step 3 of the Projects section (8 October decision 17): the AI spending limit of a project.
+  describe('the AI spending limit', () => {
+    beforeAll(async () => {
+      await adminExec(`
+        insert into office.card_versions
+            (id, agent_code, git_commit, content, authority_level, model)
+          values ('${SPENDING_CARD}', 'KOR-1', 'abc0964', '{"card": {"status": "active"}}', 'Y2',
+                   'test-model')
+          on conflict do nothing;
+      `);
+    });
+
+    /** A project of the employee (its owner) with a manager (holder) and a plain member (newcomer). */
+    async function staffed(name: string): Promise<ProjectDetail> {
+      const project = await open(employee, { name, memberIds: [ids.holder, ids.newcomer] });
+      return giveRole(employee, project.id, ids.holder, 'manager');
+    }
+
+    /**
+     * What the project's agents have spent: one finished run with that recorded cost, written as
+     * an administrator in the run's own context (the statements of one call are one transaction,
+     * so the context holds for the insert).
+     */
+    async function spend(projectId: string, cost: string): Promise<void> {
+      if (!/^[0-9a-f-]{36}$/.test(projectId) || !/^\d+(\.\d+)?$/.test(cost)) {
+        throw new Error('Unexpected value for a run of the test');
+      }
+      await adminExec(`
+        select set_config('app.company_id', '${ids.arma}', true),
+               set_config('app.user_id', '${ids.founder}', true),
+               set_config('app.agent_code', 'KOR-1', true),
+               set_config('app.project_id', '${projectId}', true);
+        insert into office.runs
+            (company_id, agent_code, card_version_id, trigger_type, model, cost_usd, status,
+             finished_at)
+          values ('${ids.arma}', 'KOR-1', '${SPENDING_CARD}', 'scheduled', 'test-model', ${cost},
+                  'completed', now());
+      `);
+    }
+
+    /** The limit, written as an administrator would (the route has its own tests). */
+    const limitByHand = (projectId: string, limit: string | null) =>
+      adminQuery('update office.projects set ai_spend_limit_usd = $2::numeric where id = $1', [
+        projectId,
+        limit,
+      ]);
+
+    it('GET project: the founder reads the limit and what was spent; a member reads only whether the limit is reached, and no amount is in the body', async () => {
+      const project = await staffed('Harcaması olan proje');
+      // No limit and no run: the founder reads that, a member no figure at all.
+      expect(await read(founder, project.id)).toMatchObject({
+        spendingLimitReached: false,
+        aiSpending: { limitUsd: null, spentUsd: '0' },
+        actions: { setAiSpendingLimit: true },
+      });
+      await spend(project.id, '1.674690');
+      await spend(project.id, '0.325310');
+      await limitByHand(project.id, '50');
+      expect(await read(founder, project.id)).toMatchObject({
+        spendingLimitReached: false,
+        aiSpending: { limitUsd: '50.00', spentUsd: '2.000000' },
+      });
+      // Reached at the limit, and above it.
+      for (const limit of ['2.00', '1.50']) {
+        await limitByHand(project.id, limit);
+        expect(await read(founder, project.id)).toMatchObject({
+          spendingLimitReached: true,
+          aiSpending: { limitUsd: limit, spentUsd: '2.000000' },
+        });
+        // The owner, a manager and a plain member: the flag, and nothing else of it.
+        for (const session of [employee, colleague, third]) {
+          const res = await call(session, 'GET', `/api/projects/${project.id}`);
+          expect(res.statusCode, res.body).toBe(200);
+          const detail = projectDetailSchema.parse(res.json());
+          expect(detail.spendingLimitReached).toBe(true);
+          expect(detail.aiSpending).toBeNull();
+          expect(detail.actions.setAiSpendingLimit).toBe(false);
+          // The raw body, before any schema dropped a field.
+          expect(res.json<{ aiSpending: unknown }>().aiSpending).toBeNull();
+          for (const text of ['2.000000', '1.674690', 'limitUsd', 'spentUsd', `"${limit}"`]) {
+            expect(res.body, text).not.toContain(text);
+          }
+        }
+      }
+      // The answer of a change a member makes carries no figure either.
+      const changed = await call(third, 'PATCH', `/api/projects/${project.id}`, { color: 'teal' });
+      expect(changed.statusCode, changed.body).toBe(200);
+      expect(changed.body).not.toContain('2.000000');
+      expect(changed.body).not.toContain('limitUsd');
+      // Under the limit again: every reader is told so.
+      await limitByHand(project.id, '2.01');
+      for (const session of [founder, employee, third]) {
+        expect((await read(session, project.id)).spendingLimitReached).toBe(false);
+      }
+      await limitByHand(project.id, null);
+      expect(await read(founder, project.id)).toMatchObject({
+        spendingLimitReached: false,
+        aiSpending: { limitUsd: null, spentUsd: '2.000000' },
+      });
+    });
+
+    it('GET projects: spendingLimitReached on every row', async () => {
+      const atLimit = await staffed('Sınırı dolan proje');
+      const under = await staffed('Sınırı dolmayan proje');
+      const none = await staffed('Sınırı olmayan proje');
+      for (const project of [atLimit, under, none]) {
+        await spend(project.id, '3');
+      }
+      await limitByHand(atLimit.id, '3');
+      await limitByHand(under.id, '3.01');
+      for (const session of [founder, employee, third]) {
+        const res = await call(session, 'GET', '/api/projects');
+        expect(res.statusCode, res.body).toBe(200);
+        const { projects } = projectListSchema.parse(res.json());
+        const flags = new Map(projects.map((row) => [row.id, row.spendingLimitReached]));
+        expect([flags.get(atLimit.id), flags.get(under.id), flags.get(none.id)]).toEqual([
+          true,
+          false,
+          false,
+        ]);
+        // Every row carries the flag, and no row an amount.
+        for (const row of res.json<{ projects: Record<string, unknown>[] }>().projects) {
+          expect(typeof row.spendingLimitReached).toBe('boolean');
+          expect(Object.keys(row)).not.toContain('aiSpending');
+        }
+        expect(res.body).not.toContain('3.000000');
+        expect(res.body).not.toContain('limitUsd');
+      }
+      // The limit is not the AI permission: the two words are told apart.
+      const row = projectListSchema
+        .parse((await call(founder, 'GET', '/api/projects')).json())
+        .projects.find((candidate) => candidate.id === atLimit.id);
+      expect(row).toMatchObject({
+        aiAllowed: false,
+        agentsMayWork: false,
+        spendingLimitReached: true,
+      });
     });
   });
 });

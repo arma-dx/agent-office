@@ -96,6 +96,11 @@ export const apiErrorCodeSchema = z.enum([
   // The request is inside a project where agents may not work now: the act is not possible until
   // the permission is open again.
   'ai_permission_closed',
+  // A request names a project whose AI spending limit is reached (8 October decision 17).
+  'project_spending_limit_reached',
+  // The request is inside such a project: an act that calls for an agent run is not possible
+  // until the founder raises the limit.
+  'spending_limit_reached',
   // Project members (8 October decision 44): who adds, removes and gives roles.
   'project_members_not_allowed',
   'project_manager_protected',

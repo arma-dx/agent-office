@@ -22,6 +22,9 @@ import type { Queryable } from './queryable.ts';
  * docs/SONRA.md V-c (a waiting or refused result is a row only for who holds the approval right;
  * an approved one for every reader of the project). The statement adds no condition of its own
  * about who reads, and selects nothing an agent wrote.
+ *
+ * The AI spending limit: every reader of a project is told whether it is reached (a yes or a no,
+ * the database's own answer); the limit and the sum are read by the founder alone.
  */
 
 export interface ProjectRow {
@@ -39,6 +42,9 @@ export interface ProjectRow {
   budget_currency: string | null;
   // As stored: [{ id, name, date, done }]; the route parses it with the contract.
   milestones: unknown;
+  // Is the AI spending limit of the project reached now (8 October decision 17): the database's
+  // own answer, a yes or a no for every reader of the project.
+  spending_limit_reached: boolean;
   ai_allowed: boolean;
   customer_id: string | null;
   customer_name: string | null;
@@ -62,6 +68,7 @@ const PROJECT_SQL = `
                 or coalesce(office.project_role(p.id) in ('owner', 'manager'), false)
               then p.budget_currency end as budget_currency,
          p.milestones,
+         coalesce(office.project_spending_limit_reached(p.id), false) as spending_limit_reached,
          p.ai_allowed,
          c.id as customer_id, c.name as customer_name, c.ai_allowed as customer_ai_allowed,
          c.automated_processing_allowed as customer_automated_processing_allowed,
@@ -377,6 +384,29 @@ export async function projectRunTotals(
   const row = rows[0];
   if (!row) throw new Error('The totals of a project gave no row');
   return row;
+}
+
+/**
+ * What the founder reads of a project's AI spending (8 October decision 17): the limit in US
+ * dollars (null: none) and what the project's runs have cost so far. Null for anybody else and
+ * for no project: the amounts are the founder's (docs/SONRA.md P-t). The founder reads every run
+ * of the company through the row policy, so this sum is the one the database's own function
+ * compares with the limit.
+ */
+export async function readProjectAiSpending(
+  client: Queryable,
+  projectId: string,
+): Promise<{ limit_usd: string | null; spent_usd: string } | null> {
+  const { rows } = await client.query<{ limit_usd: string | null; spent_usd: string }>(
+    `select p.ai_spend_limit_usd::text as limit_usd,
+            (select coalesce(sum(r.cost_usd), 0)::text from office.runs r
+              where r.project_id = p.id) as spent_usd
+       from office.projects p
+      where p.id = $1 and p.company_id = office.ctx_company_id() and office.is_founder()
+        and office.ctx_agent_code() is null`,
+    [projectId],
+  );
+  return rows[0] ?? null;
 }
 
 export interface ProjectApprovalRow {

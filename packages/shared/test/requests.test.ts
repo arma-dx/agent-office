@@ -260,6 +260,7 @@ describe('the due day and the comments in an answer', () => {
       agent: { code: 'SOS-2', name: 'Sosyal İçerik Yazım Ajanı' },
       approver: null,
       agentsMayWork: true,
+      spendingLimitReached: false,
       requesterReads: true,
       closure: null,
       journey: [],
@@ -316,6 +317,7 @@ describe('where a request is and whose turn it is', () => {
     returnedNoAgent: false,
     coordinatorEnabled: true,
     agentsMayWork: true,
+    spendingLimitReached: false,
     requesterReads: true,
     routed: false,
     step: null,
@@ -759,6 +761,146 @@ describe('where a request is and whose turn it is', () => {
       'fell_to_person not_started approver on time',
     );
   });
+
+  // 8 October decision 17: the AI spending limit of the request's project.
+  it('a request in a project at its limit falls to the founder, routed or not', () => {
+    const held = 'fell_to_person spending_limit_reached founder on time';
+    const reached = { spendingLimitReached: true };
+    // Not routed: nothing yet, a start that was queued long ago, a coordinator that is stopped,
+    // a job that was refused, a run that ended without a routing.
+    expect(of(reached)).toBe(held);
+    expect(of({ ...reached, createdAt: ago(60 * MINUTE) })).toBe(held);
+    expect(of({ ...reached, coordinatorEnabled: false })).toBe(held);
+    expect(of({ ...reached, notStartedAt: ago(4_000) })).toBe(held);
+    expect(of({ ...reached, lastRun: run('KOR-1', 'completed') })).toBe(held);
+    expect(of({ ...reached, lastRun: run('KOR-1', 'failed', 'runner_error') })).toBe(held);
+    expect(of({ ...reached, lastRun: run('KOR-1', 'stopped', 'spending_limit_reached') })).toBe(
+      held,
+    );
+    // Routed, with an active step: no run, a queue that would be late, a stopped agent, a job
+    // that was refused. The turn is the founder's, also when the step has an approver: only the
+    // founder raises the limit.
+    expect(of(reached, routed)).toBe(held);
+    expect(of({ ...reached, awaitedSince: ago(60 * MINUTE) }, routed)).toBe(held);
+    expect(of({ ...reached, step: { agentCode: 'SOS-2', agentEnabled: false } }, routed)).toBe(
+      held,
+    );
+    expect(of({ ...reached, notStartedAt: ago(4_000) }, routed)).toBe(held);
+    expect(of({ ...reached, changesRequested: true }, routed)).toBe(held);
+    // The run the limit stopped, a run that failed, a run that ended without a result.
+    for (const last of [
+      run('SOS-2', 'stopped', 'spending_limit_reached'),
+      run('SOS-2', 'failed', 'runner_error'),
+      run('SOS-2', 'completed'),
+      run('SOS-2', 'limit_reached', 'time_limit'),
+    ]) {
+      expect(of({ ...reached, lastRun: last }, routed)).toBe(held);
+    }
+    // Without the flag every one of these reads as before.
+    expect(of({})).toBe('routing - coordinator on time');
+    expect(of({}, routed)).toBe('working - agent on time');
+  });
+
+  it('a run that is still open keeps its stage while the limit is reached', () => {
+    const reached = { spendingLimitReached: true };
+    // It uses the answer it has paid for and ends before its next model call.
+    expect(of({ ...reached, lastRun: run('KOR-1', 'running') })).toBe(
+      'routing - coordinator on time',
+    );
+    expect(of({ ...reached, lastRun: run('SOS-2', 'running') }, routed)).toBe(
+      'working - agent on time',
+    );
+    expect(
+      of({ ...reached, changesRequested: true, lastRun: run('SOS-2', 'running') }, routed),
+    ).toBe('revising - agent on time');
+    // Also when it takes long: it is late, not held.
+    expect(of({ ...reached, lastRun: run('SOS-2', 'running', null, 60 * MINUTE) }, routed)).toBe(
+      'working - agent delayed',
+    );
+    // An open run of another agent is not the step's work: the request is held.
+    expect(of({ ...reached, lastRun: run('KOR-1', 'running') }, routed)).toBe(
+      'fell_to_person spending_limit_reached founder on time',
+    );
+  });
+
+  it('a result that waits keeps its stage while the limit is reached', () => {
+    const reached = { spendingLimitReached: true };
+    // The limit is about money, not about permission: the result can be approved, rejected and
+    // accepted as always.
+    expect(of({ ...reached, status: 'awaiting_approval', pendingApproval: true }, routed)).toBe(
+      'unit_approval - approver on time',
+    );
+    expect(of({ ...reached, status: 'awaiting_approval', pendingAcceptance: true }, routed)).toBe(
+      'requester_approval - requester on time',
+    );
+    expect(
+      of(
+        { ...reached, status: 'awaiting_approval', pendingAcceptance: true, requesterReads: false },
+        routed,
+      ),
+    ).toBe('requester_approval - founder on time');
+    // A closed request stays closed; the second change request stays the approver's.
+    expect(of({ ...reached, status: 'done' }, routed)).toBe('done - none on time');
+    expect(of({ ...reached, status: 'cancelled', closedBy: 'other' }, routed)).toBe(
+      'cancelled stopped none on time',
+    );
+    expect(
+      of({ ...reached, lastResult: { status: 'changes_requested', attempt: 2 } }, routed),
+    ).toBe('fell_to_person second_change_request approver on time');
+    expect(of({ ...reached, step: null, changesRequested: true }, routed)).toBe(
+      'fell_to_person second_change_request approver on time',
+    );
+  });
+
+  it('a closed AI permission is said before a reached limit', () => {
+    const both = { agentsMayWork: false, spendingLimitReached: true };
+    const held = 'fell_to_person ai_permission_closed founder on time';
+    expect(of(both)).toBe(held);
+    expect(of(both, routed)).toBe(held);
+    expect(
+      of({ ...both, lastRun: run('SOS-2', 'stopped', 'spending_limit_reached') }, routed),
+    ).toBe(held);
+    // Also where a reached limit alone leaves the stage as it is.
+    expect(of({ ...both, lastRun: run('SOS-2', 'running') }, routed)).toBe(held);
+    expect(of({ ...both, step: null, changesRequested: true }, routed)).toBe(held);
+  });
+
+  it("after the limit is raised a run it stopped reads spending_limit_interrupted, with the approver's turn", () => {
+    const stopped = run('SOS-2', 'stopped', 'spending_limit_reached');
+    // Raising the limit starts nothing by itself: a person gives the work again.
+    expect(of({ lastRun: stopped }, routed)).toBe(
+      'fell_to_person spending_limit_interrupted approver on time',
+    );
+    // Before any routing the turn is the founder's.
+    expect(of({ lastRun: run('KOR-1', 'stopped', 'spending_limit_reached') })).toBe(
+      'fell_to_person spending_limit_interrupted founder on time',
+    );
+    // While the agent of the step is stopped, its last run still says why the work stopped.
+    expect(
+      of({ lastRun: stopped, step: { agentCode: 'SOS-2', agentEnabled: false } }, routed),
+    ).toBe('fell_to_person spending_limit_interrupted approver on time');
+    // A person routed it again (or an opening called for it): it reads as work.
+    expect(of({ lastRun: stopped, awaitedSince: ago(1_000) }, routed)).toBe(
+      'working - agent on time',
+    );
+    // A stop for another reason keeps its own cause.
+    expect(of({ lastRun: run('SOS-2', 'stopped', 'routing_changed') }, routed)).toBe(
+      'fell_to_person run_interrupted approver on time',
+    );
+  });
+
+  it('after the limit is raised a refused job reads not_started', () => {
+    // The job was refused at the start of the run while the limit was reached; nothing has
+    // called for the work again since.
+    expect(of({ notStartedAt: ago(4_000) }, routed)).toBe(
+      'fell_to_person not_started approver on time',
+    );
+    expect(of({ notStartedAt: ago(4_000) })).toBe('fell_to_person not_started founder on time');
+    // While the limit held, the same records read as the limit.
+    expect(of({ notStartedAt: ago(4_000), spendingLimitReached: true }, routed)).toBe(
+      'fell_to_person spending_limit_reached founder on time',
+    );
+  });
 });
 
 describe('the project of a request and who stands in, in an answer', () => {
@@ -803,6 +945,7 @@ describe('the project of a request and who stands in, in an answer', () => {
     goesExternal: false,
     needsStepUp: false,
     agentsMayWork: false,
+    spendingLimitReached: false,
   };
   const result = {
     approvalId: id,
@@ -818,6 +961,7 @@ describe('the project of a request and who stands in, in an answer', () => {
     round: 1,
     returnsToAgent: true,
     agentsMayWork: true,
+    spendingLimitReached: false,
     forRequester: person,
     openedAt: at,
     result,
@@ -828,6 +972,7 @@ describe('the project of a request and who stands in, in an answer', () => {
     agent,
     approver: null,
     agentsMayWork: false,
+    spendingLimitReached: false,
     requesterReads: false,
     closure: null,
     journey: [],
@@ -864,6 +1009,31 @@ describe('the project of a request and who stands in, in an answer', () => {
     expect(acceptanceCardSchema.safeParse(without(acceptance, 'agentsMayWork')).success).toBe(
       false,
     );
+  });
+
+  // 8 October decision 17.
+  it("every answer that carries a request says whether its project's spending limit is reached", () => {
+    const schemas = [
+      [requestDetailSchema, detail],
+      [approvalCardSchema, card],
+      [acceptanceCardSchema, acceptance],
+    ] as const;
+    for (const [schema, value] of schemas) {
+      for (const spendingLimitReached of [true, false]) {
+        expect(schema.safeParse({ ...value, spendingLimitReached }).success).toBe(true);
+      }
+      // The server's word: never left out, never a guess.
+      expect(schema.safeParse(without(value, 'spendingLimitReached')).success).toBe(false);
+      for (const guess of [null, 'yes', 1]) {
+        expect(
+          schema.safeParse({ ...value, spendingLimitReached: guess }).success,
+          String(guess),
+        ).toBe(false);
+      }
+    }
+    expect(requestDetailSchema.parse({ ...detail, spendingLimitReached: true })).toMatchObject({
+      spendingLimitReached: true,
+    });
   });
 
   it('every answer says whether the requester reads the request and who stands in', () => {
@@ -908,5 +1078,11 @@ describe('the project of a request and who stands in, in an answer', () => {
     const causes: readonly string[] = requestCauseSchema.options;
     expect(causes).toContain('ai_permission_closed');
     expect(causes).toContain('ai_permission_interrupted');
+  });
+
+  it('the two causes of a reached spending limit are causes of a request', () => {
+    const causes: readonly string[] = requestCauseSchema.options;
+    expect(causes).toContain('spending_limit_reached');
+    expect(causes).toContain('spending_limit_interrupted');
   });
 });

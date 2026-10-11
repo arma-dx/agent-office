@@ -353,6 +353,7 @@ async function detailOf(context: CompanyContext, row: RequestRow): Promise<Reque
         ? { userId: row.step_approver_user_id, name: names.get(row.step_approver_user_id) ?? null }
         : null,
     agentsMayWork: row.agents_may_work,
+    spendingLimitReached: row.spending_limit_reached,
     requesterReads: row.requester_reads,
     closure: closureOf(row, names),
     journey: toJourney(journeyRows, names),
@@ -780,6 +781,7 @@ export function registerRequestRoutes(
                   round: acceptance.round,
                   returnsToAgent: acceptance.returns_to_agent,
                   agentsMayWork: acceptance.agents_may_work,
+                  spendingLimitReached: acceptance.spending_limit_reached,
                   forRequester: acceptance.reader_stands_in
                     ? person(names, acceptance.requester_user_id)
                     : null,

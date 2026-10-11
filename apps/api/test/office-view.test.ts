@@ -24,6 +24,7 @@ function row(n: number, overrides: Partial<RequestRow> = {}): RequestRow {
     project_id: null,
     project_name: null,
     agents_may_work: true,
+    spending_limit_reached: false,
     requester_reads: true,
     restarted_at: null,
     closed_by_user_id: null,
@@ -116,6 +117,44 @@ describe('the desk a request row stands on', () => {
       ),
     ).toBeNull();
     expect(workOfRequest(row(7, { ...routed('SOS-2'), status: 'cancelled' }), NOW)).toBeNull();
+  });
+
+  // 8 October decision 17: a request held by its project's AI spending limit stands on no desk
+  // and is no error of the agent, whatever its last run was; nor is one whose run the limit
+  // stopped, once the limit is raised.
+  it('a request held by a spending limit stands on no desk and is no error', () => {
+    const inProject: Partial<RequestRow> = { project_id: id(31), project_name: 'Lansman' };
+    const held = { ...inProject, spending_limit_reached: true };
+    const rows: Partial<RequestRow>[] = [
+      held,
+      { ...held, ...routed('SOS-2') },
+      { ...held, ...routed('SOS-2'), ...ran('SOS-2', 'failed', 'tool_error') },
+      { ...held, ...routed('SOS-2'), ...ran('SOS-2', 'stopped', 'spending_limit_reached') },
+      { ...held, ...ran('KOR-1', 'completed') },
+      // The limit was raised: the run it stopped is no failure of the agent either.
+      { ...inProject, ...routed('SOS-2'), ...ran('SOS-2', 'stopped', 'spending_limit_reached') },
+      { ...inProject, ...ran('KOR-1', 'stopped', 'spending_limit_reached') },
+    ];
+    rows.forEach((overrides, n) => {
+      expect(workOfRequest(row(20 + n, overrides), NOW), String(n)).toBeNull();
+    });
+    // A run that is still open while the limit is reached is work on its agent's desk: it ends
+    // before its next model call.
+    expect(
+      workOfRequest(row(30, { ...held, ...routed('SOS-2'), ...ran('SOS-2', 'running') }), NOW),
+    ).toMatchObject({ agentCode: 'SOS-2', kind: 'running' });
+    // A result that waits is on the desk as always: it can be decided.
+    expect(
+      workOfRequest(
+        row(31, {
+          ...held,
+          ...routed('SOS-2'),
+          status: 'awaiting_approval',
+          pending_result: true,
+        }),
+        NOW,
+      ),
+    ).toMatchObject({ agentCode: 'SOS-2', kind: 'awaiting_approval' });
   });
 });
 

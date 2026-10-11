@@ -37,9 +37,12 @@ import {
   projectDetailSchema,
   projectMemberRoleSchema,
   projectMemberSchema,
+  projectSummarySchema,
   setProjectBudgetSchema,
   setProjectMemberRoleSchema,
   sortedMilestones,
+  spendingState,
+  SPENDING_WARN_SHARE,
   updateMilestoneSchema,
   updateProjectSchema,
   type MemberRemoval,
@@ -342,6 +345,7 @@ describe('the contracts of the Projects section', () => {
       targetDate: '2026-12-31',
       aiAllowed: true,
       agentsMayWork: false,
+      spendingLimitReached: false,
       customer: { id: uuid(2), name: 'Beta', aiAllowed: false, automatedProcessingAllowed: null },
       memberCount: 1,
       description: null,
@@ -360,12 +364,14 @@ describe('the contracts of the Projects section', () => {
       ],
       budget: { visible: false },
       milestones: [],
+      aiSpending: null,
       actions: {
         edit: true,
         addMembers: true,
         setBudget: false,
         setAiPermission: false,
         setCustomerPermissions: false,
+        setAiSpendingLimit: false,
       },
     };
     expect(projectDetailSchema.parse(detail)).toEqual(detail);
@@ -526,6 +532,7 @@ describe('the owner, the managers and the members of a project', () => {
       targetDate: null,
       aiAllowed: false,
       agentsMayWork: false,
+      spendingLimitReached: false,
       customer: null,
       memberCount: 1,
       description: null,
@@ -534,12 +541,14 @@ describe('the owner, the managers and the members of a project', () => {
       members: [person],
       budget: { visible: false },
       milestones: [],
+      aiSpending: null,
     };
     const actions = {
       edit: true,
       setBudget: false,
       setAiPermission: false,
       setCustomerPermissions: false,
+      setAiSpendingLimit: false,
     };
     expect(
       projectDetailSchema.safeParse({ ...detail, actions: { ...actions, addMembers: false } })
@@ -593,6 +602,7 @@ describe('the budget and the milestones of a project', () => {
     targetDate: null,
     aiAllowed: false,
     agentsMayWork: false,
+    spendingLimitReached: false,
     customer: null,
     memberCount: 0,
     description: null,
@@ -601,12 +611,14 @@ describe('the budget and the milestones of a project', () => {
     members: [],
     budget: { visible: false },
     milestones: [],
+    aiSpending: null,
     actions: {
       edit: true,
       addMembers: false,
       setBudget: false,
       setAiPermission: false,
       setCustomerPermissions: false,
+      setAiSpendingLimit: false,
     },
   };
 
@@ -822,6 +834,127 @@ describe('the budget and the milestones of a project', () => {
         .success,
     ).toBe(false);
     for (const code of ['project_budget_not_allowed', 'milestone_limit', 'milestone_not_found']) {
+      expect(apiErrorCodeSchema.safeParse(code).success, code).toBe(true);
+    }
+  });
+});
+
+// Step 3 of the Projects section (8 October decision 17): the AI spending limit of a project.
+describe('the AI spending limit of a project', () => {
+  const SUMMARY = {
+    id: uuid(1),
+    name: 'Yeni site',
+    status: 'planned',
+    closed: false,
+    color: 'gray',
+    icon: 'folder',
+    targetDate: null,
+    aiAllowed: true,
+    agentsMayWork: true,
+    spendingLimitReached: false,
+    customer: null,
+    memberCount: 1,
+  };
+  const DETAIL = {
+    ...SUMMARY,
+    description: null,
+    createdAt: '2026-10-08T09:00:00.000Z',
+    createdBy: null,
+    members: [],
+    budget: { visible: false },
+    milestones: [],
+    aiSpending: null,
+    actions: {
+      edit: true,
+      addMembers: false,
+      setBudget: false,
+      setAiPermission: false,
+      setCustomerPermissions: false,
+      setAiSpendingLimit: false,
+    },
+  };
+  const without = (object: Record<string, unknown>, field: string) =>
+    Object.fromEntries(Object.entries(object).filter(([name]) => name !== field));
+
+  it("the state of a project's spending: no limit, under, from 80 percent on, reached", () => {
+    expect(SPENDING_WARN_SHARE).toBe(0.8);
+    expect(spendingState(null, '0', false)).toBe('no_limit');
+    expect(spendingState(null, '1234.5', false)).toBe('no_limit');
+    expect(spendingState('100.00', '0', false)).toBe('ok');
+    expect(spendingState('100.00', '79.99', false)).toBe('ok');
+    expect(spendingState('100.00', '79.999999', false)).toBe('ok');
+    // The warning begins AT 80 percent.
+    expect(spendingState('100.00', '80', false)).toBe('near');
+    expect(spendingState('100.00', '80.000000', false)).toBe('near');
+    expect(spendingState('100.00', '99.999999', false)).toBe('near');
+    expect(spendingState('0.05', '0.040000', false)).toBe('near');
+    // "Reached" is the server's word alone: the database compared the sum with the limit. The
+    // panel does not decide it from the two amounts it was given, in either direction.
+    expect(spendingState('100.00', '100.000000', true)).toBe('reached');
+    expect(spendingState('100.00', '250', true)).toBe('reached');
+    expect(spendingState('100.00', '10', true)).toBe('reached');
+    expect(spendingState('100.00', '100.000000', false)).toBe('near');
+    // Without a limit nothing is reached, whatever the flag says.
+    expect(spendingState(null, '10', true)).toBe('no_limit');
+  });
+
+  it('every reader is told whether the limit is reached; the amounts are in the answer only for the founder', () => {
+    for (const spendingLimitReached of [true, false]) {
+      expect(projectSummarySchema.parse({ ...SUMMARY, spendingLimitReached })).toEqual({
+        ...SUMMARY,
+        spendingLimitReached,
+      });
+    }
+    // The flag is the server's word: never left out, never a guess.
+    expect(projectSummarySchema.safeParse(without(SUMMARY, 'spendingLimitReached')).success).toBe(
+      false,
+    );
+    for (const value of [null, 'yes', 1]) {
+      expect(
+        projectSummarySchema.safeParse({ ...SUMMARY, spendingLimitReached: value }).success,
+        String(value),
+      ).toBe(false);
+    }
+    // A member: the flag, and no amount anywhere.
+    const forMember = projectDetailSchema.parse({ ...DETAIL, spendingLimitReached: true });
+    expect(forMember.aiSpending).toBeNull();
+    expect(forMember.actions.setAiSpendingLimit).toBe(false);
+    // The founder: the limit (or none) and what was spent, as text.
+    for (const aiSpending of [
+      { limitUsd: null, spentUsd: '0' },
+      { limitUsd: '50.00', spentUsd: '1.674690' },
+      { limitUsd: '999999.99', spentUsd: '1000000.5' },
+    ]) {
+      const detail = {
+        ...DETAIL,
+        aiSpending,
+        actions: { ...DETAIL.actions, setAiSpendingLimit: true },
+      };
+      expect(projectDetailSchema.parse(detail), JSON.stringify(aiSpending)).toEqual(detail);
+    }
+    for (const aiSpending of [
+      undefined,
+      {},
+      { limitUsd: '50.00' },
+      { spentUsd: '1.5' },
+      { limitUsd: 50, spentUsd: '1.5' },
+      { limitUsd: '50.00', spentUsd: 1.5 },
+      { limitUsd: '50,00', spentUsd: '1.5' },
+      { limitUsd: '50.00', spentUsd: null },
+      { limitUsd: '-1', spentUsd: '0' },
+    ]) {
+      expect(
+        projectDetailSchema.safeParse({ ...DETAIL, aiSpending }).success,
+        JSON.stringify(aiSpending),
+      ).toBe(false);
+    }
+    expect(
+      projectDetailSchema.safeParse({
+        ...DETAIL,
+        actions: without(DETAIL.actions, 'setAiSpendingLimit'),
+      }).success,
+    ).toBe(false);
+    for (const code of ['project_spending_limit_reached', 'spending_limit_reached']) {
       expect(apiErrorCodeSchema.safeParse(code).success, code).toBe(true);
     }
   });

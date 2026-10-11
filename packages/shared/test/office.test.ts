@@ -35,6 +35,7 @@ const base: RequestFacts = {
   returnedNoAgent: false,
   coordinatorEnabled: true,
   agentsMayWork: true,
+  spendingLimitReached: false,
   requesterReads: true,
   routed: false,
   step: null,
@@ -162,6 +163,31 @@ describe('the desk an open request stands on', () => {
       [
         'ai_permission_interrupted',
         { ...base, lastRun: run('KOR-1', 'stopped', 'ai_permission_closed') },
+      ],
+      // Held by a reached AI spending limit (8 October decision 17), whatever its last run was:
+      // no desk, no error. Not the agent's failure: the project has spent what it was allowed.
+      ['spending_limit_reached', { ...routed, spendingLimitReached: true }],
+      [
+        'spending_limit_reached',
+        { ...routed, spendingLimitReached: true, lastRun: run('SOS-2', 'failed') },
+      ],
+      [
+        'spending_limit_reached',
+        {
+          ...routed,
+          spendingLimitReached: true,
+          lastRun: run('SOS-2', 'stopped', 'spending_limit_reached'),
+        },
+      ],
+      ['spending_limit_reached', { ...base, spendingLimitReached: true }],
+      // The limit was raised and the run it stopped was not started again.
+      [
+        'spending_limit_interrupted',
+        { ...routed, lastRun: run('SOS-2', 'stopped', 'spending_limit_reached') },
+      ],
+      [
+        'spending_limit_interrupted',
+        { ...base, lastRun: run('KOR-1', 'stopped', 'spending_limit_reached') },
       ],
     ];
     for (const [cause, facts] of others) {

@@ -140,6 +140,12 @@ export const requestCauseSchema = z.enum([
   // was stopped at that moment (opening the agent starts it), or the permission was opened
   // outside the panel.
   'ai_permission_interrupted',
+  // The request is inside a project whose AI spending limit is reached (8 October decision 17).
+  // Nothing runs there until the founder raises the limit; raising it starts nothing by itself.
+  'spending_limit_reached',
+  // The limit is no longer reached, and the run it stopped was not started again: a person gives
+  // the work again.
+  'spending_limit_interrupted',
   // cancelled
   // Returned to its requester by the routing: the coordinator named the unit, and no open agent
   // of it could take the work (8 October decision 2).
@@ -182,6 +188,8 @@ export interface RequestFacts {
   // May agents work on this request now (rule 12): false only for a request inside a project
   // whose AI permission, or whose customer's, is closed.
   agentsMayWork: boolean;
+  // The AI spending limit of the request's project is reached now. False without a project.
+  spendingLimitReached: boolean;
   // May the requester still read the request (8 October decision 45). False: runs go in the
   // founder's name and the founder gives the requester's approval in their place.
   requesterReads: boolean;
@@ -246,10 +254,12 @@ export function runGraceMs(limitMinutes: number | null): number {
 function causeOfRun(run: NonNullable<RequestFacts['lastRun']>, coordinator: boolean): RequestCause {
   if (run.status === 'limit_reached') return 'limit_reached';
   if (run.status === 'stopped') {
-    // The stop switch stops an agent; a closed AI permission stops every run of its projects;
-    // every other stop is the request changing under the run.
+    // The stop switch stops an agent; a closed AI permission stops every run of its projects; a
+    // reached AI spending limit ends a run before its next model call; every other stop is the
+    // request changing under the run.
     if (run.errorCode === 'agent_stopped') return 'agent_stopped';
     if (run.errorCode === 'ai_permission_closed') return 'ai_permission_interrupted';
+    if (run.errorCode === 'spending_limit_reached') return 'spending_limit_interrupted';
     return 'run_interrupted';
   }
   if (run.status === 'completed') return coordinator ? 'no_routing' : 'no_submission';
@@ -325,6 +335,12 @@ export function deriveStage(facts: RequestFacts, now: Date): DerivedStage {
         delayed: since(run.startedAt) > runGraceMs(run.limitMinutes),
       });
     }
+    if (facts.spendingLimitReached) {
+      // Decision 17: no run starts in this project until the limit is raised, whatever the
+      // records say was called for. A run that is still open keeps its stage (above): it ends
+      // before its next model call. Only the founder raises the limit.
+      return at('fell_to_person', 'founder', { cause: 'spending_limit_reached' });
+    }
     if (run && run.startedAt >= called) {
       // The run that was called for has ended without a routing.
       return at('fell_to_person', 'founder', { cause: causeOfRun(run, true) });
@@ -352,6 +368,12 @@ export function deriveStage(facts: RequestFacts, now: Date): DerivedStage {
   if (facts.lastResult?.status === 'changes_requested' && facts.lastResult.attempt >= 2) {
     // 2 October decision 10: after the second change request the work falls to a person.
     return at('fell_to_person', 'approver', { cause: 'second_change_request' });
+  }
+  if (facts.spendingLimitReached) {
+    // Decision 17: no run starts in this project until the limit is raised, whatever the
+    // records say was called for. A run that is still open keeps its stage (above): it ends
+    // before its next model call. Only the founder raises the limit.
+    return at('fell_to_person', 'founder', { cause: 'spending_limit_reached' });
   }
   const awaitedSince = facts.awaitedSince ?? facts.createdAt;
   if (run && run.agentCode === step.agentCode && run.startedAt >= awaitedSince) {
@@ -473,6 +495,10 @@ export const approvalCardSchema = z.object({
   needsStepUp: z.boolean(),
   // See requestDetailSchema.
   agentsMayWork: z.boolean(),
+  // True: the AI spending limit of the request's project is reached; changes cannot be asked for
+  // and the routing cannot be corrected until the founder raises it. Approving, rejecting and
+  // accepting stay possible.
+  spendingLimitReached: z.boolean(),
 });
 export type ApprovalCard = z.output<typeof approvalCardSchema>;
 
@@ -508,6 +534,10 @@ export const acceptanceCardSchema = z.object({
   // See requestDetailSchema: while false, "not what I asked for" cannot be said (it calls for a
   // run); accepting the approved result stays possible.
   agentsMayWork: z.boolean(),
+  // True: the AI spending limit of the request's project is reached; changes cannot be asked for
+  // and the routing cannot be corrected until the founder raises it. Approving, rejecting and
+  // accepting stay possible.
+  spendingLimitReached: z.boolean(),
   // Set when the reader gives this approval in the requester's place: the requester.
   forRequester: taskPersonSchema.nullable(),
   openedAt: instantSchema,
@@ -645,6 +675,10 @@ export const requestDetailSchema = requestSummarySchema.extend({
   // cannot be approved, changes cannot be asked for and the routing cannot be corrected until the
   // founder opens the permission.
   agentsMayWork: z.boolean(),
+  // True: the AI spending limit of the request's project is reached; changes cannot be asked for
+  // and the routing cannot be corrected until the founder raises it. Approving, rejecting and
+  // accepting stay possible.
+  spendingLimitReached: z.boolean(),
   // False: the requester can no longer read this request (taken out of the project, made an
   // external person, left the company, deactivated). The request goes on in the founder's name
   // (8 October decision 45).

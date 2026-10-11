@@ -59,6 +59,8 @@ export const CAUSE_SHORT: Record<RequestCause, string> = {
   second_change_request: 'ikinci düzeltme isteği',
   ai_permission_closed: 'yapay zekâ izni kapalı',
   ai_permission_interrupted: 'izin kapanınca durdu',
+  spending_limit_reached: 'harcama sınırı doldu',
+  spending_limit_interrupted: 'sınır dolunca durdu',
   returned_no_agent: 'birimde açık ajan yok',
   cancelled_by_requester: 'talep sahibi iptal etti',
   stopped: 'durduruldu',
@@ -95,6 +97,11 @@ export const CAUSE_SENTENCE: Record<RequestCause, string> = {
   // The permission may have been the customer's, so the sentence names no owner.
   ai_permission_interrupted:
     'Yapay zekâ izni kapatıldığı için ajanın çalışması durduruldu. İzin yeniden açık, ama iş yeniden başlamadı.',
+  // 8 October decision 17: the AI spending limit of the request's project.
+  spending_limit_reached:
+    'Bu talebin projesinde yapay zekâ harcama sınırı doldu. Ajanlar bu projede yeni çalışma başlatmaz; süren çalışma bir sonraki adımında durur.',
+  spending_limit_interrupted:
+    'Projenin yapay zekâ harcama sınırı dolduğu için ajanın çalışması durduruldu. Sınır artık dolu değil, ama iş kendiliğinden yeniden başlamadı.',
   returned_no_agent: 'Talep geri çevrildi: birimde bu işi alabilecek açık ajan yok.',
   cancelled_by_requester: 'Talep sahibi talebi iptal etti.',
   stopped: 'İş durduruldu.',

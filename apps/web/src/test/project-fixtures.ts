@@ -97,6 +97,8 @@ export function projectDetail(overrides: Partial<ProjectDetail> = {}): ProjectDe
     targetDate: '2026-11-20',
     aiAllowed: false,
     agentsMayWork: false,
+    // The AI spending limit of step 3: not reached, and no figure, until a test says otherwise.
+    spendingLimitReached: false,
     customer: {
       id: CUSTOMER_ID,
       name: 'Beta Lojistik',
@@ -111,12 +113,14 @@ export function projectDetail(overrides: Partial<ProjectDetail> = {}): ProjectDe
     // The budget and the milestones of step 3: nothing of either until a test gives some.
     budget: { visible: false },
     milestones: [],
+    aiSpending: null,
     actions: {
       edit: true,
       addMembers: true,
       setBudget: false,
       setAiPermission: true,
       setCustomerPermissions: true,
+      setAiSpendingLimit: false,
     },
     ...overrides,
   });
@@ -227,6 +231,7 @@ export function project(overrides: Partial<ProjectSummary> = {}): ProjectSummary
     targetDate: detail.targetDate,
     aiAllowed: detail.aiAllowed,
     agentsMayWork: detail.agentsMayWork,
+    spendingLimitReached: detail.spendingLimitReached,
     customer: detail.customer ? { id: detail.customer.id, name: detail.customer.name } : null,
     memberCount: detail.memberCount,
     ...overrides,

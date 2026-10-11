@@ -53,6 +53,7 @@ export const APPROVAL_CARD: ApprovalCard = approvalCardSchema.parse({
   goesExternal: true,
   needsStepUp: true,
   agentsMayWork: true,
+  spendingLimitReached: false,
 });
 
 const JOURNEY: RequestDetail['journey'] = [
@@ -117,6 +118,7 @@ export function requestDetail(overrides: Partial<RequestDetail> = {}): RequestDe
     agent: SOS_2,
     approver: null,
     agentsMayWork: true,
+    spendingLimitReached: false,
     requesterReads: true,
     closure: null,
     journey: JOURNEY,

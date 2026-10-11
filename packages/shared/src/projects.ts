@@ -190,6 +190,32 @@ export function sortedMilestones(milestones: readonly Milestone[]): Milestone[] 
 /** US dollars as text, as the database holds them: up to six decimals (runs.cost_usd). */
 export const usdSchema = z.string().regex(/^\d+(\.\d{1,6})?$/);
 
+/** The share of the limit from which the founder is warned (Paperclip warns at the same share). */
+export const SPENDING_WARN_SHARE = 0.8;
+
+/** A dollar amount of usdSchema in millionths of a dollar: exact, whatever its size. */
+function microUsd(amount: string): bigint {
+  const [whole = '0', decimals = ''] = amount.split('.');
+  return BigInt(whole) * 1_000_000n + BigInt(decimals.padEnd(6, '0').slice(0, 6));
+}
+
+/**
+ * Where the spending of a project stands against its AI spending limit (8 October decision 17),
+ * for the founder's page. `reached` is the server's own word (the database compares the sum with
+ * the limit); the warning from 80 percent on is the panel's. The amounts are compared as whole
+ * millionths of a dollar, not as floating point numbers: exactly 80 percent is "near".
+ */
+export function spendingState(
+  limitUsd: string | null,
+  spentUsd: string,
+  reached: boolean,
+): 'no_limit' | 'ok' | 'near' | 'reached' {
+  if (limitUsd === null) return 'no_limit';
+  if (reached) return 'reached';
+  const share = BigInt(Math.round(SPENDING_WARN_SHARE * 100));
+  return microUsd(spentUsd) * 100n >= microUsd(limitUsd) * share ? 'near' : 'ok';
+}
+
 /**
  * The customer of a new project (decision 16): none, one that exists, or a new one by name. The
  * panel chooses a new customer's id. Its two contract permissions may be true only when the
@@ -355,6 +381,9 @@ export const projectSummarySchema = z.object({
   aiAllowed: z.boolean(),
   // Rule 12 as a whole: the project's permission and, if it has a customer, the customer's.
   agentsMayWork: z.boolean(),
+  // The AI spending limit of the project is reached (8 October decision 17): no agent run starts
+  // there until the founder raises it. A yes or a no for every reader; never an amount.
+  spendingLimitReached: z.boolean(),
   customer: z.object({ id: z.uuid(), name: z.string() }).nullable(),
   memberCount: z.number().int().min(0),
 });
@@ -456,6 +485,9 @@ export const projectDetailSchema = projectSummarySchema.extend({
   ]),
   // In the order they were added; the page sorts them (sortedMilestones).
   milestones: z.array(milestoneSchema),
+  // What the project's agents have spent and its limit, in US dollars. Null for a reader who is
+  // not the founder (docs/SONRA.md P-t).
+  aiSpending: z.object({ limitUsd: usdSchema.nullable(), spentUsd: usdSchema }).nullable(),
   actions: z.object({
     // Name, description, customer, status, colour, icon, target date; and the milestones.
     edit: z.boolean(),
@@ -466,6 +498,7 @@ export const projectDetailSchema = projectSummarySchema.extend({
     // The founder alone.
     setAiPermission: z.boolean(),
     setCustomerPermissions: z.boolean(),
+    setAiSpendingLimit: z.boolean(),
   }),
 });
 export type ProjectDetail = z.output<typeof projectDetailSchema>;

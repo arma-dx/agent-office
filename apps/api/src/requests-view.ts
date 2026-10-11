@@ -66,6 +66,7 @@ export function factsOf(row: RequestRow): RequestFacts {
     returnedNoAgent: row.returned_no_agent,
     coordinatorEnabled: row.coordinator_enabled,
     agentsMayWork: row.agents_may_work,
+    spendingLimitReached: row.spending_limit_reached,
     requesterReads: row.requester_reads,
     routed: row.routed,
     step:
@@ -270,6 +271,7 @@ export function toApprovalCard(row: ResultApprovalRow, names: Names): ApprovalCa
     goesExternal: row.goes_external,
     needsStepUp: row.needs_step_up,
     agentsMayWork: row.agents_may_work,
+    spendingLimitReached: row.spending_limit_reached,
   };
 }
 

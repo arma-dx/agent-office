@@ -18,6 +18,7 @@ import {
   readCompanyKind,
   readCustomer,
   readProject,
+  readProjectAiSpending,
   readerSeesUndecided,
   removeProjectMember,
   removeProjectMilestone,
@@ -1567,6 +1568,129 @@ describe.skipIf(noDatabase)('statements of the approvals of a project', () => {
       // And the other way round: nothing of Pillika's project in the context of Arma DX.
       await asPerson(tx, founderA);
       expect(await listProjectApprovals(tx.client, ids.projectP, 100)).toEqual([]);
+    });
+  });
+});
+
+// Step 3 of the Projects section (8 October decision 17): the AI spending limit. Every reader of
+// a project is told whether it is reached; the limit and the sum are the founder's.
+describe.skipIf(noDatabase)('statements of the AI spending limit', () => {
+  afterAll(closePools);
+
+  const sharedA: ContextInput = { companyId: ids.arma, userId: ids.sharedEmployee };
+
+  async function asPerson(tx: Tx, context: ContextInput): Promise<void> {
+    await asRole(tx, 'app');
+    await tx.setContext(context);
+  }
+
+  /** An administrator writes the limit and what the fixtures' own run of project A has cost. */
+  async function projectAt(tx: Tx, limit: string | null, spent: string): Promise<void> {
+    await asRole(tx, null);
+    await tx.setContext({});
+    await tx.exec('update office.runs set cost_usd = $2::numeric where id = $1', [
+      ids.runAProject,
+      spent,
+    ]);
+    await tx.exec('update office.projects set ai_spend_limit_usd = $2::numeric where id = $1', [
+      ids.projectA,
+      limit,
+    ]);
+  }
+
+  it('readProject: spending_limit_reached for every reader', async () => {
+    await inAdminTransaction(async (tx) => {
+      const cases: [string | null, boolean][] = [
+        [null, false],
+        ['1.26', false],
+        ['1.25', true],
+        ['0.50', true],
+      ];
+      for (const [limit, reached] of cases) {
+        await projectAt(tx, limit, '1.25');
+        // The founder, who is no member, and a plain member: the same yes or no.
+        for (const context of [founderA, employeeA]) {
+          await asPerson(tx, context);
+          const row = await readProject(tx.client, ids.projectA);
+          expect(row?.spending_limit_reached, `${String(limit)} ${context.userId ?? ''}`).toBe(
+            reached,
+          );
+          const listed = (await listProjects(tx.client, 100)).find(
+            (candidate) => candidate.id === ids.projectA,
+          );
+          expect(listed?.spending_limit_reached).toBe(reached);
+          // A yes or a no: neither the limit nor the sum is a column of the row.
+          const columns = Object.keys(row ?? {});
+          expect(columns).toContain('spending_limit_reached');
+          expect(columns.filter((name) => /limit_usd|spent|cost/.test(name))).toEqual([]);
+        }
+        // Another project of the reader is not touched by this one's limit.
+        await asPerson(tx, employeeA);
+        expect((await readProject(tx.client, ids.projectANoAi))?.spending_limit_reached).toBe(
+          false,
+        );
+        // Who cannot read the project gets no row at all, as before.
+        for (const context of [approverA, sharedA, externalA, founderP, ...NOBODY]) {
+          await asPerson(tx, context);
+          expect(await readProject(tx.client, ids.projectA), JSON.stringify(context)).toBeNull();
+        }
+      }
+    });
+  });
+
+  it('readProjectAiSpending: the limit and the sum for the founder, nothing for a member', async () => {
+    await inAdminTransaction(async (tx) => {
+      // No limit and nothing spent.
+      await asPerson(tx, founderA);
+      expect(await readProjectAiSpending(tx.client, ids.projectA)).toEqual({
+        limit_usd: null,
+        spent_usd: '0.000000',
+      });
+      // A project without a run.
+      expect(await readProjectAiSpending(tx.client, ids.projectANoAi)).toEqual({
+        limit_usd: null,
+        spent_usd: '0',
+      });
+      await projectAt(tx, '50', '1.674690');
+      await asPerson(tx, founderA);
+      expect(await readProjectAiSpending(tx.client, ids.projectA)).toEqual({
+        limit_usd: '50.00',
+        spent_usd: '1.674690',
+      });
+      // Nobody else: the owner of the project, a manager, a plain member, an employee who is no
+      // member, an external person, the other company's founder, nobody.
+      await tx.exec(
+        'insert into office.project_members (company_id, project_id, user_id) values ($1, $2, $3)',
+        [ids.arma, ids.projectA, ids.approverA],
+      );
+      await setProjectMemberRole(tx.client, ids.projectA, ids.employeeA, 'owner');
+      await setProjectMemberRole(tx.client, ids.projectA, ids.approverA, 'manager');
+      for (const context of [
+        employeeA,
+        approverA,
+        sharedA,
+        externalA,
+        founderP,
+        employeeP,
+        ...NOBODY,
+      ]) {
+        await asPerson(tx, context);
+        expect(
+          await readProjectAiSpending(tx.client, ids.projectA),
+          JSON.stringify(context),
+        ).toBeNull();
+      }
+      // Not an agent run in the founder's name either, with either role.
+      for (const role of ['app', 'worker'] as const) {
+        await asRole(tx, role);
+        await tx.setContext({ ...founderA, agentCode: 'KOR-1', projectId: ids.projectA });
+        expect(await readProjectAiSpending(tx.client, ids.projectA), role).toBeNull();
+      }
+      // The founder of Arma DX reads nothing of the other company's project, and nothing for an
+      // id nobody has.
+      await asPerson(tx, founderA);
+      expect(await readProjectAiSpending(tx.client, ids.projectP)).toBeNull();
+      expect(await readProjectAiSpending(tx.client, randomUUID())).toBeNull();
     });
   });
 });
