@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { ContextInput } from '../src/context.ts';
+import { listProjectRuns, projectRunTotals } from '../src/projects.ts';
 import { ids } from './fixtures.ts';
 import {
   adminQuery,
@@ -304,6 +305,56 @@ describe.skipIf(noDatabase)('tenant isolation', () => {
       await tx.setContext(person(ids.arma, ids.founder));
       expect(await tx.count('projects')).toBe(3);
       expect(await tx.count('tasks', 'project_id is not null')).toBe(2);
+    });
+  });
+
+  it('the runs of a project of Arma DX are not listed in the context of Pillika, and no row without a context', async () => {
+    await inTransaction(async (tx) => {
+      // The fixtures hold one run in project A; its founder lists it.
+      await tx.setContext(person(ids.arma, ids.founder));
+      expect((await listProjectRuns(tx.client, ids.projectA, 100)).map((row) => row.id)).toEqual([
+        ids.runAProject,
+      ]);
+      expect((await projectRunTotals(tx.client, ids.projectA)).run_count).toBe(1);
+      const others: ContextInput[] = [
+        person(ids.pillika, ids.founder),
+        person(ids.pillika, ids.employeeP),
+        // The project named in the context does not open it either.
+        person(ids.pillika, ids.founder, ids.projectA),
+        agent(ids.pillika, 'KOR-1'),
+        agent(ids.pillika, 'KOR-1', ids.projectA),
+        // Rule 9: without a company, without a person, without anything.
+        {},
+        { userId: ids.founder },
+        { companyId: ids.arma },
+        { projectId: ids.projectA },
+      ];
+      for (const context of others) {
+        await tx.setContext(context);
+        expect(
+          await listProjectRuns(tx.client, ids.projectA, 100),
+          JSON.stringify(context),
+        ).toEqual([]);
+        expect(
+          (await projectRunTotals(tx.client, ids.projectA)).run_count,
+          JSON.stringify(context),
+        ).toBe(0);
+      }
+      // And the other way round: nothing of Pillika's project in the context of Arma DX.
+      await tx.setContext(person(ids.arma, ids.founder));
+      expect(await listProjectRuns(tx.client, ids.projectP, 100)).toEqual([]);
+      expect((await projectRunTotals(tx.client, ids.projectP)).run_count).toBe(0);
+    });
+    // The worker's role in the context of Pillika reads none of them either.
+    await inWorkerTransaction(async (tx) => {
+      for (const context of [
+        agent(ids.pillika, 'KOR-1'),
+        agent(ids.pillika, 'KOR-1', ids.projectA),
+      ]) {
+        await tx.setContext(context);
+        expect(await listProjectRuns(tx.client, ids.projectA, 100)).toEqual([]);
+        expect((await projectRunTotals(tx.client, ids.projectA)).run_count).toBe(0);
+      }
     });
   });
 

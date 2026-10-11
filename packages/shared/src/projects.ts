@@ -187,6 +187,9 @@ export function sortedMilestones(milestones: readonly Milestone[]): Milestone[] 
     .map((entry) => entry.milestone);
 }
 
+/** US dollars as text, as the database holds them: up to six decimals (runs.cost_usd). */
+export const usdSchema = z.string().regex(/^\d+(\.\d{1,6})?$/);
+
 /**
  * The customer of a new project (decision 16): none, one that exists, or a new one by name. The
  * panel chooses a new customer's id. Its two contract permissions may be true only when the

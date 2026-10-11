@@ -503,6 +503,16 @@ Bütçe ve kilometre taşları (8 Ekim karar 17):
 - Şemalar: `budgetCurrencySchema`, `budgetAmountSchema` (tutar metin olarak gider: en çok on iki basamak, en çok iki ondalık), `projectBudgetSchema`, `setProjectBudgetSchema`, `milestoneNameSchema`, `milestoneSchema`, `createMilestoneSchema`, `updateMilestoneSchema`. Sabitler: `BUDGET_CURRENCIES`, `MILESTONE_NAME_MAX` (120), `MILESTONE_MAX` (50). İşlev: `sortedMilestones` (sayfanın gösterdiği sıra: güne göre, günü olmayanlar sonda).
 - Veritabanı ifadeleri: `setProjectBudget`, `addProjectMilestone`, `changeProjectMilestone`, `removeProjectMilestone` (üçü de listeyi tek bir güncellemenin içinde kurar; aynı anda iki kişinin değişikliği birbirini silmez). İfade satırında `budget`, `budget_currency` (bütçeyi göremeyen okur için boş gelir), `milestones`.
 
+Ajan çalışmaları ve maliyeti (8 Ekim karar 17):
+
+- "Projenin çalışmaları" → `runs` (o projedeki ajan çalışmaları); "kullanım" → `usage` (bir çalışmanın ya da bütün çalışmaların token sayıları ve maliyeti; yalnızca kurucuya gider).
+- Dizin: `runs_project_started` (`runs`; projeye göre, en yeni çalışma önce; liste ve toplam bu dizinden okunur).
+- Uç nokta: `GET /api/projects/:projectId/runs` (projeyi görebilen herkes için projenin en yeni 200 çalışması ve bütün çalışmaların toplamı; token ve maliyet yalnızca kurucuya gider; çalışmanın özeti, girdisi ve çıktısı hiç gitmez).
+- API yanıt alanları: `runs` (her çalışmada `id`, `request`: talebin kimliği ve başlığı ya da talebe bağlı değilse `null`, `agent`, `status`, `errorCode`, `startedAt`, `finishedAt`, `durationMs`, `usage`), `truncated` (liste 200'de kesildi), `totals` (`runCount`: bütün çalışmaların sayısı; `usage`: toplam, kurucu değilse `null`), `serverTime`. `usage` içinde `inputTokens`, `outputTokens`, `cacheWriteTokens`, `cacheReadTokens`, `costUsd` (ABD doları, metin olarak).
+- Şemalar: `usdSchema` (ABD doları tutarı, metin; en çok altı ondalık), `runUsageSchema`, `projectRunSchema`, `projectRunsSchema` (`packages/shared/src/project-sections.ts`). Sabit: `PROJECT_RUN_LIST_LIMIT` (200).
+- Veritabanı ifadeleri: `listProjectRuns` (satır türü `ProjectRunRow`; kurucu olmayan okur için beş kullanım sütunu boş gelir), `projectRunTotals` (satır türü `ProjectRunTotalsRow`; `run_count` herkese, toplamlar yalnızca kurucuya).
+- Panel adresi: proje sayfasında `?tab=runs` ("Çalışmalar" sekmesi).
+
 ## Notlar
 
 - Hata metinleri (veritabanı tetikleyicilerinin `raise exception` metinleri, geliştiriciye dönük iletiler) İngilizcedir. Kullanıcıya gösterilecek Türkçe metni API üretir; API hata metnine göre değil SQLSTATE koduna göre dallanır.

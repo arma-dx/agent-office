@@ -10,8 +10,10 @@ import {
   listCustomers,
   listMemberCandidates,
   listProjectMembers,
+  listProjectRuns,
   listProjects,
   ownProjectExists,
+  projectRunTotals,
   readCompanyKind,
   readCustomer,
   readProject,
@@ -27,8 +29,10 @@ import {
 import { ids } from './fixtures.ts';
 import {
   adminQuery,
+  asRole,
   auditMark,
   closePools,
+  inAdminTransaction,
   inTransaction,
   noDatabase,
   openTransaction,
@@ -856,5 +860,339 @@ describe.skipIf(noDatabase)('statements of the budget and the milestones', () =>
       ]);
       await removeRequests([], mark);
     }
+  });
+});
+
+// Step 3 of the Projects section (8 October decision 17): the agent runs of a project and their
+// cost. A request is opened by a person through the API's role and a run by the worker's role, so
+// each case runs in one privileged transaction that goes on as the role whose act it is (asRole)
+// and is rolled back.
+describe.skipIf(noDatabase)('statements of the runs of a project', () => {
+  afterAll(closePools);
+
+  const MARKER = 'WHAT-THE-AGENT-WROTE';
+  const OPEN = `insert into office.tasks (company_id, project_id, kind, title, description)
+    values (office.ctx_company_id(), $1, 'request', $2, 'What is wanted') returning id`;
+  const RUN = `insert into office.runs
+      (company_id, task_id, agent_code, card_version_id, trigger_type, model, input)
+    values (office.ctx_company_id(), $1, 'KOR-1', $2, 'request', 'test-model', $3::jsonb)
+    returning id`;
+
+  async function asPerson(tx: Tx, context: ContextInput): Promise<void> {
+    await asRole(tx, 'app');
+    await tx.setContext(context);
+  }
+
+  interface Usage {
+    input: number;
+    output: number;
+    cacheWrite: number;
+    cacheRead: number;
+    cost: string;
+  }
+
+  /**
+   * A request of the employee in that project (or in none) with one run of KOR-1 on it, opened by
+   * the worker's role in the request's own context. With `usage` the run is closed after `seconds`
+   * with those numbers, and with an agent's words in its summary and its output; without it the
+   * run stays open.
+   */
+  async function requestWithRun(
+    tx: Tx,
+    project: string | null,
+    title: string,
+    usage?: Usage,
+    seconds = 42,
+  ): Promise<{ task: string; run: string }> {
+    await asPerson(tx, employeeA);
+    const [task] = await tx.rows<{ id: string }>(OPEN, [project, title]);
+    await asRole(tx, 'worker');
+    await tx.setContext({ ...employeeA, agentCode: 'KOR-1', projectId: project });
+    const [run] = await tx.rows<{ id: string }>(RUN, [
+      task?.id,
+      ids.cardKor,
+      JSON.stringify({ note: MARKER }),
+    ]);
+    if (!task || !run) {
+      throw new Error('The request or its run was not written');
+    }
+    if (usage) {
+      await tx.exec(
+        `update office.runs set status = 'completed',
+           finished_at = now() + make_interval(secs => $2), summary = $3, output = $4::jsonb,
+           input_tokens = $5, output_tokens = $6, cache_write_tokens = $7, cache_read_tokens = $8,
+           cost_usd = $9::numeric
+         where id = $1`,
+        [
+          run.id,
+          seconds,
+          MARKER,
+          JSON.stringify({ final_text: MARKER }),
+          usage.input,
+          usage.output,
+          usage.cacheWrite,
+          usage.cacheRead,
+          usage.cost,
+        ],
+      );
+    }
+    return { task: task.id, run: run.id };
+  }
+
+  /**
+   * Moves the start of a run into the past, as an administrator with the triggers off (the start
+   * of a run is never rewritten otherwise): every run of one transaction starts at the same
+   * moment, and the list is ordered by that moment.
+   */
+  async function startedAgo(tx: Tx, run: string, minutes: number): Promise<void> {
+    await asRole(tx, null);
+    await tx.exec(`set local session_replication_role = 'replica'`);
+    await tx.exec(
+      `update office.runs set started_at = now() - make_interval(mins => $2) where id = $1`,
+      [run, minutes],
+    );
+    await tx.exec(`set local session_replication_role = 'origin'`);
+  }
+
+  const FIRST: Usage = {
+    input: 900,
+    output: 120,
+    cacheWrite: 30,
+    cacheRead: 4000,
+    cost: '0.012345',
+  };
+  const SECOND: Usage = { input: 5000, output: 2100, cacheWrite: 0, cacheRead: 100, cost: '0.4' };
+
+  const COLUMNS = [
+    'agent_code',
+    'agent_name',
+    'cache_read_tokens',
+    'cache_write_tokens',
+    'cost_usd',
+    'duration_ms',
+    'error_code',
+    'finished_at',
+    'id',
+    'input_tokens',
+    'output_tokens',
+    'started_at',
+    'status',
+    'task_id',
+    'task_title',
+  ];
+
+  it('listProjectRuns: the founder reads tokens and cost; a member reads the same rows without them', async () => {
+    await inAdminTransaction(async (tx) => {
+      const first = await requestWithRun(tx, ids.projectA, 'First request', FIRST);
+      const second = await requestWithRun(tx, ids.projectA, 'Second request', SECOND, 90);
+      const open = await requestWithRun(tx, ids.projectA, 'Open request');
+
+      await asPerson(tx, founderA);
+      const forFounder = await listProjectRuns(tx.client, ids.projectA, 100);
+      const byId = new Map(forFounder.map((row) => [row.id, row]));
+      expect(byId.get(first.run)).toMatchObject({
+        task_id: first.task,
+        task_title: 'First request',
+        agent_code: 'KOR-1',
+        agent_name: 'Ofis Koordinatörü',
+        status: 'completed',
+        error_code: null,
+        duration_ms: '42000',
+        input_tokens: 900,
+        output_tokens: 120,
+        cache_write_tokens: 30,
+        cache_read_tokens: 4000,
+        cost_usd: '0.012345',
+      });
+      expect(byId.get(second.run)).toMatchObject({
+        task_title: 'Second request',
+        duration_ms: '90000',
+        input_tokens: 5000,
+        cost_usd: '0.400000',
+      });
+      // A run that is still open: no end, no duration, and the numbers it has so far.
+      expect(byId.get(open.run)).toMatchObject({
+        task_title: 'Open request',
+        status: 'running',
+        finished_at: null,
+        duration_ms: null,
+        input_tokens: 0,
+        cost_usd: '0.000000',
+      });
+      // The fixtures' own run of the project is on a task between people, not on a request: the
+      // row is listed and names no request.
+      expect(byId.get(ids.runAProject)).toMatchObject({
+        task_id: ids.taskAProject,
+        task_title: null,
+        status: 'running',
+      });
+      expect(forFounder).toHaveLength(4);
+      expect(byId.get(first.run)?.started_at).toBeInstanceOf(Date);
+      expect(byId.get(first.run)?.finished_at).toBeInstanceOf(Date);
+
+      // employeeA is a plain member of the project: the same rows, and no number of the five.
+      await tx.setContext(employeeA);
+      const forMember = await listProjectRuns(tx.client, ids.projectA, 100);
+      expect(forMember.map((row) => row.id)).toEqual(forFounder.map((row) => row.id));
+      for (const row of forMember) {
+        expect(row).toMatchObject({
+          input_tokens: null,
+          output_tokens: null,
+          cache_write_tokens: null,
+          cache_read_tokens: null,
+          cost_usd: null,
+        });
+      }
+      const without = (rows: object[]) =>
+        rows.map((row) =>
+          Object.fromEntries(
+            Object.entries(row).filter(([name]) => !/_tokens$|^cost_usd$/.test(name)),
+          ),
+        );
+      expect(without(forMember)).toEqual(without(forFounder));
+      // (The token counts are checked field by field above: a short number can stand in an id.)
+      for (const cost of ['0.012345', '0.400000']) {
+        expect(JSON.stringify(forMember)).not.toContain(cost);
+      }
+    });
+  });
+
+  it('listProjectRuns: newest first, cut at the limit, only runs of that project', async () => {
+    await inAdminTransaction(async (tx) => {
+      const oldest = await requestWithRun(tx, ids.projectA, 'Oldest', FIRST);
+      const middle = await requestWithRun(tx, ids.projectA, 'Middle', FIRST);
+      const newest = await requestWithRun(tx, ids.projectA, 'Newest');
+      // A run of a request without a project, and the runs of the other company.
+      const outside = await requestWithRun(tx, null, 'Without a project', SECOND);
+      await startedAgo(tx, oldest.run, 30);
+      await startedAgo(tx, ids.runAProject, 20);
+      await startedAgo(tx, middle.run, 10);
+
+      await asPerson(tx, founderA);
+      const all = await listProjectRuns(tx.client, ids.projectA, 100);
+      expect(all.map((row) => row.id)).toEqual([
+        newest.run,
+        middle.run,
+        ids.runAProject,
+        oldest.run,
+      ]);
+      expect(all.map((row) => row.id)).not.toContain(outside.run);
+      expect(all.map((row) => row.id)).not.toContain(ids.runA);
+      expect((await listProjectRuns(tx.client, ids.projectA, 2)).map((row) => row.id)).toEqual([
+        newest.run,
+        middle.run,
+      ]);
+      expect(await listProjectRuns(tx.client, ids.projectA, 0)).toEqual([]);
+      // A project without a run, a project of the other company, an id nobody has.
+      expect(await listProjectRuns(tx.client, ids.projectANoAi, 100)).toEqual([]);
+      expect(await listProjectRuns(tx.client, ids.projectP, 100)).toEqual([]);
+      expect(await listProjectRuns(tx.client, randomUUID(), 100)).toEqual([]);
+      // Two runs that started at the same moment keep one order (the id decides).
+      const again = await listProjectRuns(tx.client, ids.projectA, 100);
+      expect(again.map((row) => row.id)).toEqual(all.map((row) => row.id));
+    });
+  });
+
+  it("listProjectRuns: nothing for an employee who is no member, an appointed approver who is no member, an external person and the other company's founder", async () => {
+    await inAdminTransaction(async (tx) => {
+      await requestWithRun(tx, ids.projectA, 'A request', FIRST);
+      // approverA holds the approval right in Arma DX and is a member of no project.
+      const strangers: ContextInput[] = [
+        approverA,
+        { companyId: ids.arma, userId: ids.sharedEmployee },
+        externalA,
+        founderP,
+        employeeP,
+        ...NOBODY,
+      ];
+      for (const context of strangers) {
+        await asPerson(tx, context);
+        expect(
+          await listProjectRuns(tx.client, ids.projectA, 100),
+          JSON.stringify(context),
+        ).toEqual([]);
+        expect(
+          (await projectRunTotals(tx.client, ids.projectA)).run_count,
+          JSON.stringify(context),
+        ).toBe(0);
+      }
+      // The founder of Pillika reads the runs of Pillika's project and none of Arma DX's.
+      await asPerson(tx, founderP);
+      expect(await listProjectRuns(tx.client, ids.projectP, 100)).toEqual([]);
+      expect(await projectRunTotals(tx.client, ids.projectA)).toMatchObject({
+        run_count: 0,
+        cost_usd: '0',
+      });
+    });
+  });
+
+  it('projectRunTotals: the count for a member, the count and the sums for the founder, over all runs and not only the listed ones', async () => {
+    await inAdminTransaction(async (tx) => {
+      await requestWithRun(tx, ids.projectA, 'First request', FIRST);
+      await requestWithRun(tx, ids.projectA, 'Second request', SECOND);
+      await requestWithRun(tx, ids.projectA, 'Open request');
+      // Not of this project: counted nowhere.
+      await requestWithRun(tx, null, 'Without a project', SECOND);
+
+      await asPerson(tx, founderA);
+      // Four runs with the fixtures' own; the list was cut at one, the totals were not.
+      expect(await listProjectRuns(tx.client, ids.projectA, 1)).toHaveLength(1);
+      expect(await projectRunTotals(tx.client, ids.projectA)).toEqual({
+        run_count: 4,
+        cost_usd: '0.412345',
+        input_tokens: '5900',
+        output_tokens: '2220',
+        cache_write_tokens: '30',
+        cache_read_tokens: '4100',
+      });
+      await tx.setContext(employeeA);
+      expect(await projectRunTotals(tx.client, ids.projectA)).toEqual({
+        run_count: 4,
+        cost_usd: null,
+        input_tokens: null,
+        output_tokens: null,
+        cache_write_tokens: null,
+        cache_read_tokens: null,
+      });
+      // A project without a run: zero, not nothing.
+      await tx.setContext(founderA);
+      expect(await projectRunTotals(tx.client, ids.projectANoAi)).toEqual({
+        run_count: 0,
+        cost_usd: '0',
+        input_tokens: '0',
+        output_tokens: '0',
+        cache_write_tokens: '0',
+        cache_read_tokens: '0',
+      });
+    });
+  });
+
+  it("listProjectRuns: no column of the row is a run's summary, input or output", async () => {
+    await inAdminTransaction(async (tx) => {
+      const { run } = await requestWithRun(tx, ids.projectA, 'A request', FIRST);
+      // The words are on the run row ...
+      await asRole(tx, null);
+      expect(
+        await tx.rows('select summary, output, input from office.runs where id = $1', [run]),
+      ).toEqual([{ summary: MARKER, output: { final_text: MARKER }, input: { note: MARKER } }]);
+      // ... and in no row of the list, for the founder either.
+      for (const context of [founderA, employeeA]) {
+        await asPerson(tx, context);
+        const rows = await listProjectRuns(tx.client, ids.projectA, 100);
+        expect(rows.length).toBeGreaterThan(0);
+        for (const row of rows) {
+          expect(Object.keys(row).sort()).toEqual(COLUMNS);
+        }
+        expect(JSON.stringify(rows)).not.toContain(MARKER);
+        expect(Object.keys(await projectRunTotals(tx.client, ids.projectA)).sort()).toEqual([
+          'cache_read_tokens',
+          'cache_write_tokens',
+          'cost_usd',
+          'input_tokens',
+          'output_tokens',
+          'run_count',
+        ]);
+      }
+    });
   });
 });

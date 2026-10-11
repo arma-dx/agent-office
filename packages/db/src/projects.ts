@@ -13,6 +13,10 @@ import type { Queryable } from './queryable.ts';
  * Step 3 (decision 17): the budget and the milestones. The budget is in the row only for a reader
  * who may change it (the founder, the owner, a manager): the statement leaves the amount out for
  * a plain member, as the API leaves a customer's fields out (docs/SONRA.md P1-e).
+ *
+ * The runs of a project: whoever reads the project reads its runs (the row policy of runs), and
+ * the statements select no text of a run. Tokens and cost are the founder's (docs/SONRA.md P-t):
+ * the statements leave them out for everybody else, so no later code can hand them on by mistake.
  */
 
 export interface ProjectRow {
@@ -288,6 +292,86 @@ export async function removeProjectMilestone(
     [projectId, milestoneId],
   );
   return result.rowCount ?? 0;
+}
+
+export interface ProjectRunRow {
+  id: string;
+  task_id: string | null;
+  task_title: string | null;
+  agent_code: string;
+  agent_name: string;
+  status: string;
+  error_code: string | null;
+  started_at: Date;
+  finished_at: Date | null;
+  // bigint: pg gives it as text.
+  duration_ms: string | null;
+  // The five below are null for a reader who is not the founder (docs/SONRA.md P-t).
+  input_tokens: number | null;
+  output_tokens: number | null;
+  cache_write_tokens: number | null;
+  cache_read_tokens: number | null;
+  cost_usd: string | null;
+}
+
+/**
+ * The newest runs of a project the person may read (the row policy of runs: the founder and the
+ * members). No summary, no input and no output of a run is selected: the list carries no text
+ * (docs/SONRA.md V-c). Tokens and cost are selected for the founder only.
+ */
+export async function listProjectRuns(
+  client: Queryable,
+  projectId: string,
+  limit: number,
+): Promise<ProjectRunRow[]> {
+  const { rows } = await client.query<ProjectRunRow>(
+    `select r.id, r.task_id, t.title as task_title, r.agent_code, d.name as agent_name,
+            r.status, r.error_code, r.started_at, r.finished_at, r.duration_ms,
+            case when office.is_founder() then r.input_tokens end as input_tokens,
+            case when office.is_founder() then r.output_tokens end as output_tokens,
+            case when office.is_founder() then r.cache_write_tokens end as cache_write_tokens,
+            case when office.is_founder() then r.cache_read_tokens end as cache_read_tokens,
+            case when office.is_founder() then r.cost_usd::text end as cost_usd
+       from office.runs r
+       join office.agent_definitions d on d.code = r.agent_code
+       left join office.tasks t on t.id = r.task_id and t.kind = 'request'
+      where r.project_id = $1 and r.company_id = office.ctx_company_id()
+      order by r.started_at desc, r.id desc
+      limit $2`,
+    [projectId, limit],
+  );
+  return rows;
+}
+
+export interface ProjectRunTotalsRow {
+  run_count: number;
+  // Text (sums of integers and of numeric); null for a reader who is not the founder.
+  cost_usd: string | null;
+  input_tokens: string | null;
+  output_tokens: string | null;
+  cache_write_tokens: string | null;
+  cache_read_tokens: string | null;
+}
+
+/** The count and, for the founder, the sums over ALL runs of the project. */
+export async function projectRunTotals(
+  client: Queryable,
+  projectId: string,
+): Promise<ProjectRunTotalsRow> {
+  const { rows } = await client.query<ProjectRunTotalsRow>(
+    `select count(*)::int as run_count,
+            case when office.is_founder() then coalesce(sum(r.cost_usd), 0)::text end as cost_usd,
+            case when office.is_founder() then coalesce(sum(r.input_tokens), 0)::text end as input_tokens,
+            case when office.is_founder() then coalesce(sum(r.output_tokens), 0)::text end as output_tokens,
+            case when office.is_founder() then coalesce(sum(r.cache_write_tokens), 0)::text end as cache_write_tokens,
+            case when office.is_founder() then coalesce(sum(r.cache_read_tokens), 0)::text end as cache_read_tokens
+       from office.runs r
+      where r.project_id = $1 and r.company_id = office.ctx_company_id()`,
+    [projectId],
+  );
+  const row = rows[0];
+  if (!row) throw new Error('The totals of a project gave no row');
+  return row;
 }
 
 export interface ProjectMemberRow {

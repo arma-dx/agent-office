@@ -7,9 +7,11 @@ import {
   listCustomers,
   listMemberCandidates,
   listProjectMembers,
+  listProjectRuns,
   listProjects,
   ownProjectExists,
   peopleNames,
+  projectRunTotals,
   readCompanyKind,
   readCustomer,
   readProject,
@@ -22,9 +24,12 @@ import {
   updateProject,
   type ProjectChanges,
   type ProjectRow,
+  type ProjectRunRow,
+  type ProjectRunTotalsRow,
 } from '@agent-office/db';
 import {
   PROJECT_LIST_LIMIT,
+  PROJECT_RUN_LIST_LIMIT,
   createMilestoneSchema,
   createProjectSchema,
   customerListSchema,
@@ -42,6 +47,7 @@ import {
   projectListSchema,
   projectMemberCandidatesSchema,
   projectMemberRoleSchema,
+  projectRunsSchema,
   projectSummarySchema,
   setProjectBudgetSchema,
   setProjectMemberRoleSchema,
@@ -55,7 +61,9 @@ import {
   type ProjectList,
   type Milestone,
   type ProjectMemberRole,
+  type ProjectRuns,
   type ProjectSummary,
+  type RunUsage,
 } from '@agent-office/shared';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
@@ -73,7 +81,8 @@ import type { RouteDeps } from '../services.ts';
 
 /**
  * The Projects section (8 October decisions 11 and 14 to 22), step 1, the owner and the
- * managers of a project (decision 44), and of step 3 (decision 17) the budget and the milestones.
+ * managers of a project (decision 44), and of step 3 (decision 17) the budget, the milestones
+ * and the agent runs of a project with their cost.
  *
  *   GET   /api/projects                    the projects the person may read, open ones first
  *   POST  /api/projects                    a founder or an employee opens a project and is its
@@ -93,6 +102,9 @@ import type { RouteDeps } from '../services.ts';
  *   POST   /api/projects/:projectId/milestones        a member or the founder adds a milestone
  *   PATCH  /api/projects/:projectId/milestones/:milestoneId   ... changes one
  *   DELETE /api/projects/:projectId/milestones/:milestoneId   ... removes one
+ *   GET    /api/projects/:projectId/runs              the newest agent runs of the project and
+ *                                                     totals over all of them; tokens and cost
+ *                                                     for the founder only
  *   GET   /api/customers                   the customers of the company to choose from, by name
  *   PATCH /api/customers/:customerId/permissions      the founder sets the contract permissions
  *                                                     of a customer (the AI one with a passkey)
@@ -310,6 +322,34 @@ function toSummary(row: ProjectRow): ProjectSummary {
     customer:
       row.customer_id !== null ? { id: row.customer_id, name: row.customer_name ?? '' } : null,
   });
+}
+
+/**
+ * Tokens and cost as the statement gave them: all five, or nothing. The role is not asked here:
+ * what the statement left out for a reader who is not the founder is what the answer leaves out.
+ */
+function usageOf(
+  row: Pick<
+    ProjectRunRow | ProjectRunTotalsRow,
+    'input_tokens' | 'output_tokens' | 'cache_write_tokens' | 'cache_read_tokens' | 'cost_usd'
+  >,
+): RunUsage | null {
+  if (
+    row.cost_usd === null ||
+    row.input_tokens === null ||
+    row.output_tokens === null ||
+    row.cache_write_tokens === null ||
+    row.cache_read_tokens === null
+  ) {
+    return null;
+  }
+  return {
+    inputTokens: Number(row.input_tokens),
+    outputTokens: Number(row.output_tokens),
+    cacheWriteTokens: Number(row.cache_write_tokens),
+    cacheReadTokens: Number(row.cache_read_tokens),
+    costUsd: row.cost_usd,
+  };
 }
 
 /** Who the reader is to this project (decision 44). */
@@ -958,6 +998,42 @@ export function registerProjectRoutes(
         await removeProjectMilestone(context.client, projectId, milestoneId);
         return detailOf(context, await projectOf(context, projectId));
       }),
+  );
+
+  /**
+   * The agent runs of a project (decision 17): the newest ones, and totals over all of them. For
+   * everybody who reads the project: the request's title, the agent, times, the status and the
+   * error code. No summary, no closing words and nothing else an agent wrote (docs/SONRA.md
+   * V-c): whoever wants the story of a run opens its request. Tokens and cost are in the answer
+   * only for the founder (P-t); for anybody else the statements select none of them.
+   */
+  app.get('/api/projects/:projectId/runs', async (request, reply): Promise<ProjectRuns> =>
+    runner.withCompany(request, reply, INSIDERS, async (context) => {
+      const projectId = projectIdOf(request);
+      const { client } = context;
+      await projectOf(context, projectId);
+      const rows = await listProjectRuns(client, projectId, PROJECT_RUN_LIST_LIMIT + 1);
+      const totals = await projectRunTotals(client, projectId);
+      return projectRunsSchema.parse({
+        runs: rows.slice(0, PROJECT_RUN_LIST_LIMIT).map((row) => ({
+          id: row.id,
+          request:
+            row.task_id !== null && row.task_title !== null
+              ? { id: row.task_id, title: row.task_title }
+              : null,
+          agent: { code: row.agent_code, name: row.agent_name },
+          status: row.status,
+          errorCode: row.error_code,
+          startedAt: row.started_at.toISOString(),
+          finishedAt: row.finished_at?.toISOString() ?? null,
+          durationMs: row.duration_ms === null ? null : Number(row.duration_ms),
+          usage: usageOf(row),
+        })),
+        truncated: rows.length > PROJECT_RUN_LIST_LIMIT,
+        totals: { runCount: totals.run_count, usage: usageOf(totals) },
+        serverTime: new Date().toISOString(),
+      });
+    }),
   );
 
   /**
