@@ -30,6 +30,9 @@ import { errorCode, send, type Method } from './passkey-helpers.ts';
 //
 // The coordinator gets a card version for the length of this file (a request is taken only while
 // it has one) and loses it again at the end: other files read the office as the fixtures left it.
+// For the same reason the file removes at its end what it wrote: its projects with their requests,
+// runs and results (open requests of this file would stand in the founder's lists and counts in
+// every file that runs after it), the other company's project and its own person's membership.
 
 const database = inject('database');
 const CARD = '00000000-0000-4000-8000-000000000961';
@@ -57,8 +60,15 @@ describe.skipIf(noDatabase)('the reading sections of a project', () => {
   const workerPool = createPool(database?.worker ?? '', 'agent-office-api-test-worker', () => {});
   // A connection of the API's role beside the server's own, for an act the API has no route for.
   const besidePool = createPool(database?.app ?? '', 'agent-office-api-test-beside', () => {});
+  // The projects this file opened, and the newest audit row before its first write.
+  const projects: string[] = [PILLIKA_PROJECT];
+  let auditMark = '0';
 
   beforeAll(async () => {
+    const [newest] = await adminQuery<{ id: string }>(
+      'select coalesce(max(id), 0)::text as id from office.audit_log',
+    );
+    auditMark = newest?.id ?? '0';
     server = createTestServer();
     founder = await sessionOf(server, accounts.founder);
     employee = await sessionOf(server, accounts.employee);
@@ -87,12 +97,30 @@ describe.skipIf(noDatabase)('the reading sections of a project', () => {
   });
 
   afterAll(async () => {
-    // Removing a member needs a passkey re-verification; this clean-up is an administrator's.
+    // This clean-up is an administrator's. The flow lets nobody delete a request, a run or a
+    // project, so the triggers are off for this one transaction (the statements of one call are
+    // one transaction); with them off no foreign key cascades, so every table is named.
+    if (!projects.every((id) => /^[0-9a-f-]{36}$/.test(id)) || !/^\d+$/.test(auditMark)) {
+      throw new Error('Unexpected id in the clean-up');
+    }
+    const mine = `(${projects.map((id) => `'${id}'`).join(', ')})`;
+    const tasks = `(select id from office.tasks where project_id in ${mine})`;
     await adminExec(`
-      update office.agent_definitions set current_version_id = null where code = 'KOR-1';
-      alter table office.memberships disable trigger require_step_up;
+      set local session_replication_role = 'replica';
+      delete from office.requester_approvals where task_id in ${tasks};
+      delete from office.approvals where task_id in ${tasks};
+      delete from office.task_routings where task_id in ${tasks};
+      delete from office.tool_calls where run_id in (
+        select id from office.runs where task_id in ${tasks});
+      delete from office.runs where task_id in ${tasks};
+      delete from office.notifications where record_type = 'task' and record_id in ${tasks};
+      delete from office.tasks where project_id in ${mine};
+      delete from office.project_members where project_id in ${mine};
+      delete from office.projects where id in ${mine};
+      delete from office.project_members where user_id = '${RIGHT_HOLDER}';
       delete from office.memberships where user_id = '${RIGHT_HOLDER}';
-      alter table office.memberships enable trigger require_step_up;
+      delete from office.audit_log where id > ${auditMark};
+      update office.agent_definitions set current_version_id = null where code = 'KOR-1';
     `);
     await workerPool.end();
     await besidePool.end();
@@ -121,6 +149,7 @@ describe.skipIf(noDatabase)('the reading sections of a project', () => {
     });
     expect(res.statusCode, res.body).toBe(201);
     const made = projectDetailSchema.parse(res.json());
+    projects.push(made.id);
     await adminQuery('update office.projects set ai_allowed = true where id = $1', [made.id]);
     return made;
   }

@@ -17,7 +17,8 @@ export type StepUpPurpose =
   | 'passkey_reset'
   | 'access_grant'
   | 'project_ai_permission'
-  | 'customer_ai_permission';
+  | 'customer_ai_permission'
+  | 'project_ai_spending_limit';
 
 export interface TestSession {
   id: string;
@@ -34,6 +35,7 @@ const COMPANY_PURPOSES: StepUpPurpose[] = [
   'access_grant',
   'project_ai_permission',
   'customer_ai_permission',
+  'project_ai_spending_limit',
 ];
 
 function first<T>(rows: T[], what: string): T {

@@ -25,7 +25,8 @@ const approverA: ContextInput = { companyId: ids.arma, userId: ids.approverA };
 const sharedA: ContextInput = { companyId: ids.arma, userId: ids.sharedEmployee };
 
 // The event names of the Projects section (migrations 20261008101900_project_audit,
-// 20261008102100_project_owner_and_managers and 20261008102700_project_budget_and_milestones).
+// 20261008102100_project_owner_and_managers, 20261008102700_project_budget_and_milestones and
+// 20261008102900_project_ai_spending_limit).
 const EVENTS = [
   'project_created',
   'project_name_changed',
@@ -42,6 +43,10 @@ const EVENTS = [
   'project_changed',
   'project_budget_changed',
   'project_milestones_changed',
+  'project_ai_spending_limit_set',
+  'project_ai_spending_limit_raised',
+  'project_ai_spending_limit_lowered',
+  'project_ai_spending_limit_removed',
   'project_ai_permission_opened',
   'project_ai_permission_closed',
   'project_member_added',
