@@ -335,7 +335,8 @@ describe.skipIf(noDatabase)('who sets the AI spending limit of a project', () =>
       await stepUp(tx, founderA, 'project_ai_spending_limit', P);
       await setLimit(tx, null);
       const rows = await tx.rows<{ event: string; row: string }>(
-        `select event, to_jsonb(a)::text as row from office.audit_log a
+        // Without the row's own id and time: their digits can spell an amount by chance.
+        `select event, (to_jsonb(a) - 'id' - 'created_at')::text as row from office.audit_log a
          where id > $1 and event ~ '^project_' order by id`,
         [from?.id],
       );
