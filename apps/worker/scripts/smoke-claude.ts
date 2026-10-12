@@ -1,7 +1,13 @@
 import { parseCards, readCardFiles, readModels } from '@agent-office/db/cards';
 import { COORDINATOR_AGENT_CODE, costOf } from '@agent-office/shared';
 import { loadWorkerEnv } from '../src/env.ts';
-import { ModelCallError, type ModelRequest, type ModelTurn } from '../src/model/client.ts';
+import {
+  ModelCallError,
+  type ModelAnswer,
+  type ModelRequest,
+  type ModelTool,
+  type ModelTurn,
+} from '../src/model/client.ts';
 
 /**
  * One real call per model, by hand and only when the key is there (KALAN-ISLER 0.6: "tek bir
@@ -10,6 +16,13 @@ import { ModelCallError, type ModelRequest, type ModelTurn } from '../src/model/
  * thinking and effort as agents/models.yaml states them, the cache mark), and what a call costs.
  *
  *   pnpm --filter @agent-office/worker smoke:claude
+ *
+ * A third check, for the coordinator's model only and only where its profile sends no thinking
+ * (the runner's own condition for forcing a tool): one call with two strict tools and the tool
+ * choice "any". While the coordinator may ask the requester, the runner forces it among its
+ * closing tool and the asking tool in exactly this way (12 October decision 4); a model that
+ * refused the choice would fail every new request at its first run. Whether the model accepts it
+ * is nothing a type can say, so it is asked here, before the probe of when agents ask.
  *
  * It sends no company data: the prompt is a fixed sentence. It has no company and no request, so
  * it writes no run record; the first recorded call is the first run of a real request. It prints
@@ -36,8 +49,36 @@ const named = new Set(
     .filter((version) => FIRST_AGENTS.includes(version.card.code))
     .map((version) => version.card.model),
 );
+// The model the coordinator's card names: the one whose tool choice the runner forces.
+const coordinatorModel = cards.versions.find(
+  (version) => version.card.code === COORDINATOR_AGENT_CODE,
+)?.card.model;
 const { createAnthropicModel } = await import('../src/model/anthropic.ts');
 const callModel = createAnthropicModel(env.ANTHROPIC_API_KEY);
+
+const NOTE_TOOL: ModelTool = {
+  name: 'note',
+  description: 'Verilen kelimeyi kaydeder.',
+  strict: true,
+  input_schema: {
+    type: 'object',
+    properties: { word: { type: 'string' } },
+    required: ['word'],
+    additionalProperties: false,
+  },
+};
+// The second tool of the forced choice: one string field, like the runner's asking tool.
+const ASK_TOOL: ModelTool = {
+  name: 'ask',
+  description: 'Tek bir soru sorar.',
+  strict: true,
+  input_schema: {
+    type: 'object',
+    properties: { question: { type: 'string' } },
+    required: ['question'],
+    additionalProperties: false,
+  },
+};
 
 let failed = false;
 for (const id of named) {
@@ -63,19 +104,7 @@ for (const id of named) {
         cache_control: { type: 'ephemeral' },
       },
     ],
-    tools: [
-      {
-        name: 'note',
-        description: 'Verilen kelimeyi kaydeder.',
-        strict: true,
-        input_schema: {
-          type: 'object',
-          properties: { word: { type: 'string' } },
-          required: ['word'],
-          additionalProperties: false,
-        },
-      },
-    ],
+    tools: [NOTE_TOOL],
     tool_choice: { type: 'auto', disable_parallel_tool_use: true },
     messages,
     ...(profile.thinking === 'adaptive' ? { thinking: { type: 'adaptive' as const } } : {}),
@@ -94,7 +123,8 @@ for (const id of named) {
       content: [{ type: 'tool_result', tool_use_id: call.id, content: '{"ok":true}' }],
     });
     const second = await callModel(request(), options);
-    for (const [step, answer] of [first, second].entries()) {
+    /** One line per call: the stop reason, the usage, the computed cost and the request id. */
+    const report = (step: number, answer: ModelAnswer): void => {
       const usage = answer.message.usage;
       const cost = costOf(
         {
@@ -107,13 +137,42 @@ for (const id of named) {
         profile.prices,
       );
       console.log(
-        `${id} call ${String(step + 1)}: stop=${String(answer.message.stop_reason)} input=${String(usage.input_tokens)} output=${String(usage.output_tokens)} cache_write=${String(usage.cache_creation_input_tokens ?? 0)} cache_read=${String(usage.cache_read_input_tokens ?? 0)} cost_usd=${cost} request=${answer.requestId ?? '-'}`,
+        `${id} call ${String(step)}: stop=${String(answer.message.stop_reason)} input=${String(usage.input_tokens)} output=${String(usage.output_tokens)} cache_write=${String(usage.cache_creation_input_tokens ?? 0)} cache_read=${String(usage.cache_read_input_tokens ?? 0)} cost_usd=${cost} request=${answer.requestId ?? '-'}`,
       );
-    }
+    };
+    report(1, first);
+    report(2, second);
     if (second.message.stop_reason !== 'end_turn') {
       throw new Error(`expected the turn to end, got ${String(second.message.stop_reason)}`);
     }
     console.log(`${id}: ok`);
+    if (id === coordinatorModel && profile.thinking !== 'adaptive') {
+      // The forced choice among two tools, as the runner sends it for a coordinator that may
+      // ask: the model must answer with exactly one tool call, whichever of the two.
+      const forced = await callModel(
+        {
+          ...request(),
+          tools: [NOTE_TOOL, ASK_TOOL],
+          tool_choice: { type: 'any', disable_parallel_tool_use: true },
+          messages: [
+            {
+              role: 'user',
+              content:
+                'Deneme: "tamam" kelimesini note aracıyla kaydet ya da ask aracıyla tek bir soru sor.',
+            },
+          ],
+        },
+        options,
+      );
+      report(3, forced);
+      const calls = forced.message.content.filter((block) => block.type === 'tool_use');
+      if (forced.message.stop_reason !== 'tool_use' || calls.length !== 1) {
+        throw new Error(
+          `expected exactly one forced tool call, got stop reason ${String(forced.message.stop_reason)} with ${String(calls.length)} tool calls`,
+        );
+      }
+      console.log(`${id} forced choice among tools: ok`);
+    }
   } catch (error) {
     failed = true;
     // The codes and the request id only: a provider's error text can quote the prompt. The
