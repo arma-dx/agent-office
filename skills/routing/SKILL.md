@@ -5,7 +5,7 @@ description: Panelden gelen bir talebin hangi birime ve o birimin hangi ajanına
 
 # Talep yönlendirme
 
-Sürüm v0: yalnızca yöntem. KOR-1 kartından ve 7 Ekim kararlarından yazıldı. Gerçek talep örnekleri ve birimler arasındaki ince sınırlar kurucudan gelince eklenecek.
+Sürüm v0: yalnızca yöntem. KOR-1 kartından ve 7 Ekim kararlarından yazıldı. Bu dosya yalnızca yöntemi tutar: bir şirkete ait talep örnekleri buraya yazılmaz; ileride şirketin kendi kaydından verilecek.
 
 ## Ne zaman kullanılır
 

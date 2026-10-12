@@ -21,13 +21,13 @@ triggers:
 
 inputs:
   - Talep metni ve ekleri
-  - Talep sahibinin rolü ve üyesi olduğu şirketler
+  - Talep sahibinin rolü
   - Ajan listesi ve görev kartı özetleri
   - Açık görevler
 
 outputs:
   - Sınıflandırma: şirket, birim, öncelik
-  - Görev ya da alt görevler ve atamaları; birden çok şirketi kapsayan talepte açıldığı şirkette yürütür, diğer şirketler için kurucuya görev önerisi bırakır
+  - Görev ya da alt görevler ve atamaları; birden çok şirketi kapsayan talepte işi yalnızca talebin açıldığı şirkette yürütür; öteki şirket için öneriyi sistem talep sahibine ayrıca sunar
   - Talep sahibine kısa durum mesajı
   - Alt görevler bitince birleşik sonuç
 

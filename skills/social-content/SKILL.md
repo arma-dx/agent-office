@@ -5,7 +5,7 @@ description: Verilen kaynak bilgiden sosyal medya gönderi metni seçenekleri ha
 
 # Sosyal içerik yazımı
 
-Sürüm v0: yalnızca yöntem. SOS-2 kartından ve kararlardan yazıldı. Kanal kuralları, uzunluk alışkanlıkları ve onaylanmış örnek gönderiler kurucudan gelince eklenecek.
+Sürüm v0: yalnızca yöntem. SOS-2 kartından ve kararlardan yazıldı. Bu dosya yalnızca yöntemi tutar: bir şirkete ait kanal alışkanlıkları ve onaylanmış örnek gönderiler buraya yazılmaz; ileride şirketin kendi kaydından verilecek.
 
 ## Ne zaman kullanılır
 
