@@ -466,6 +466,55 @@ describe('settings, connections: connecting', () => {
   });
 });
 
+describe('settings, connections: a confirmation that closed by itself', () => {
+  it('does not open again when the page reads the same installation later; only the button opens it', async () => {
+    const api = founderApi(connection.installed(), {
+      'POST /step-up/options': stepUpIssuer().handler,
+      // GitHub could not be asked while connecting: the API refuses, and tells the page so too.
+      [CONNECT]: () => {
+        api.handle(CONNECTION, () => json({ state: 'unavailable', reason: 'github_down' }));
+        return apiError(
+          503,
+          'github_unavailable',
+          "GitHub'a ulaşılamadı. Biraz sonra yeniden deneyin.",
+        );
+      },
+    });
+    renderApp(PAGE);
+    const region = await section();
+    await userEvent.click(await within(region).findByRole('button', { name: "GitHub'ı bağla" }));
+    const dialog = await screen.findByRole('alertdialog');
+    await waitFor(() => {
+      expect(api.callsTo('POST /step-up/options')).toHaveLength(1);
+    });
+    await userEvent.click(within(dialog).getByRole('button', { name: "GitHub'ı bağla" }));
+    // The state the confirmation was opened for is gone, and the confirmation with it.
+    await waitFor(() => {
+      expect(screen.queryByRole('alertdialog')).toBeNull();
+    });
+    expect(await within(region).findByText(CONNECTION_UNAVAILABLE.github_down)).toBeVisible();
+    // (The confirmation asked for a new challenge after the refusal, before it closed.)
+    const issued = api.callsTo('POST /step-up/options').length;
+
+    // GitHub answers again, with the same installation: "Yeniden dene" reads, and asks nobody
+    // for a passkey.
+    api.handle(CONNECTION, () => json(connection.installed()));
+    await userEvent.click(within(region).getByRole('button', { name: 'Yeniden dene' }));
+    const connect = await within(region).findByRole('button', { name: "GitHub'ı bağla" });
+    // Long enough for a confirmation that opened by itself to be on screen.
+    await expect(screen.findByRole('alertdialog', {}, { timeout: 300 })).rejects.toThrow();
+    expect(api.callsTo('POST /step-up/options')).toHaveLength(issued);
+    expect(startAuthentication).toHaveBeenCalledTimes(1);
+
+    // The founder's own press opens it, with a new challenge.
+    await userEvent.click(connect);
+    await screen.findByRole('alertdialog');
+    await waitFor(() => {
+      expect(api.callsTo('POST /step-up/options').length).toBeGreaterThan(issued);
+    });
+  });
+});
+
 describe('settings, connections: connected', () => {
   it('says to whom, by whom and when, what the app reaches and how many projects hang on it', async () => {
     founderApi(connection.connected());

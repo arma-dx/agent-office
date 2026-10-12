@@ -321,6 +321,12 @@ export function GithubConnectionSection({ company }: { company: MembershipSummar
   const view = query.data;
   const installed = view?.state === 'installed' ? view : null;
   const confirming = installed?.installationId === connectingTo ? installed : null;
+  if (connectingTo !== null && confirming === null) {
+    // The state the confirmation was opened for is gone (GitHub could not be asked, or the
+    // installation changed), and the confirmation closed with it. It is forgotten here: if the
+    // page reads the same installation again later, only the founder's own press opens it.
+    setConnectingTo(null);
+  }
   const label = companyLabel(company);
 
   let body: ReactNode;
