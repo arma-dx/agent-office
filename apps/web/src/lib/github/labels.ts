@@ -231,7 +231,7 @@ export const TAB_TEXT = {
   link: 'Depo bağla',
   archived: '(arşivlenmiş)',
   lastRead: 'Son okuma:',
-  newTab: '(yeni sekmede açılır)',
+  newTab: 'yeni sekmede açılır',
   notConnected: "Şirketin GitHub'ı bağlı değil. Kurucu, Ayarlar > Bağlantılar'dan bağlar.",
   disconnected: 'GitHub bağlantısı kapatıldı.',
   openConnections: "Bağlantılar'ı aç",

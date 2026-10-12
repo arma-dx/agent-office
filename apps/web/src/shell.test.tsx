@@ -144,10 +144,12 @@ describe('top bar: location', () => {
     ['/c/armadx/office', 'Ofis görünümü'],
     ['/c/armadx/agents', 'Ajanlar'],
     ['/c/armadx/settings/users', 'Kullanıcılar'],
+    ['/c/armadx/settings/connections', 'Bağlantılar'],
     ['/c/armadx/settings/security', 'Güvenlik'],
   ])('gives %s one h1, the name in the top bar', async (path, name) => {
     mockApi({
       'GET /session': sessionHandler(),
+      'GET /github/connection': () => json({ state: 'not_configured' }),
       'GET /passkeys': () => json({ passkeys: [] }),
       'GET /members': () => json({ members: [] }),
       'GET /invitations': () => json({ invitations: [] }),
@@ -199,6 +201,7 @@ describe('top bar: location', () => {
         '/_authed/c/$company/office',
         '/_authed/c/$company/agents',
         '/_authed/c/$company/settings/users',
+        '/_authed/c/$company/settings/connections',
         '/_authed/c/$company/settings/security',
       ]),
     );

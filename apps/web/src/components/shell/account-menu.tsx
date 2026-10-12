@@ -43,8 +43,8 @@ function useSignOut() {
 }
 
 /**
- * The person's menu: name, settings (users for the founder, security for everyone), theme, sign
- * out. At the bottom of the sidebar it is a menu row with a 24 px avatar and opens upward; in the
+ * The person's menu: name, settings (users and connections for the founder, security for
+ * everyone), theme, sign out. At the bottom of the sidebar it is a menu row with a 24 px avatar and opens upward; in the
  * header of a page outside a company it opens downward.
  */
 export function AccountMenu({
@@ -58,7 +58,8 @@ export function AccountMenu({
   const signOutMutation = useSignOut();
   const themeChoice = useThemeChoice();
   const name = session.user.name;
-  // Users are managed by the founder, inside a company (nobody is invited to the private space).
+  // Users and connections are managed by the founder, inside a company (nobody is invited to the
+  // private space, and GitHub is connected to a company).
   const usersCompany =
     company?.role === 'founder' && company.kind === 'company' ? company : undefined;
   return (
@@ -102,11 +103,22 @@ export function AccountMenu({
             <DropdownMenuSeparator />
             <DropdownMenuLabel>Ayarlar</DropdownMenuLabel>
             {usersCompany ? (
-              <DropdownMenuItem asChild>
-                <Link to="/c/$company/settings/users" params={{ company: usersCompany.code }}>
-                  Kullanıcılar
-                </Link>
-              </DropdownMenuItem>
+              <>
+                <DropdownMenuItem asChild>
+                  <Link to="/c/$company/settings/users" params={{ company: usersCompany.code }}>
+                    Kullanıcılar
+                  </Link>
+                </DropdownMenuItem>
+                {/* What the company is connected to outside the panel (GitHub): the founder's too. */}
+                <DropdownMenuItem asChild>
+                  <Link
+                    to="/c/$company/settings/connections"
+                    params={{ company: usersCompany.code }}
+                  >
+                    Bağlantılar
+                  </Link>
+                </DropdownMenuItem>
+              </>
             ) : null}
             {/* Passkeys belong to the person; the page opens under the company in the URL. */}
             <DropdownMenuItem asChild>

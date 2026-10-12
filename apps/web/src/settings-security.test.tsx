@@ -93,7 +93,7 @@ describe('settings, security: the page', () => {
       within(menu)
         .getAllByRole('menuitem')
         .map((item) => item.textContent),
-    ).toEqual(['Kullanıcılar', 'Güvenlik', 'Çıkış yap', 'Bütün oturumları kapat']);
+    ).toEqual(['Kullanıcılar', 'Bağlantılar', 'Güvenlik', 'Çıkış yap', 'Bütün oturumları kapat']);
     await userEvent.click(within(menu).getByRole('menuitem', { name: 'Güvenlik' }));
     expect(await screen.findByRole('heading', { level: 1, name: 'Güvenlik' })).toBeVisible();
     expect(currentLocation(router).pathname).toBe(SECURITY_PAGE);

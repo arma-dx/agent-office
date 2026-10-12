@@ -14,6 +14,7 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as AuthedIndexRouteImport } from './routes/_authed/index'
 import { Route as AuthedCompaniesRouteImport } from './routes/_authed/companies'
 import { Route as AuthedCCompanyRouteImport } from './routes/_authed/c/$company'
+import { Route as AuthedGithubSetupRouteImport } from './routes/_authed/github.setup'
 import { Route as AuthedCCompanyIndexRouteImport } from './routes/_authed/c/$company/index'
 import { Route as AuthedCCompanyAgentsRouteImport } from './routes/_authed/c/$company/agents'
 import { Route as AuthedCCompanyApprovalsRouteImport } from './routes/_authed/c/$company/approvals'
@@ -24,6 +25,7 @@ import { Route as AuthedCCompanyRequestsRouteImport } from './routes/_authed/c/$
 import { Route as AuthedCCompanyTasksRouteImport } from './routes/_authed/c/$company/tasks'
 import { Route as AuthedCCompanyProjectsProjectIdRouteImport } from './routes/_authed/c/$company/projects_.$projectId'
 import { Route as AuthedCCompanyRequestsRequestIdRouteImport } from './routes/_authed/c/$company/requests_.$requestId'
+import { Route as AuthedCCompanySettingsConnectionsRouteImport } from './routes/_authed/c/$company/settings/connections'
 import { Route as AuthedCCompanySettingsSecurityRouteImport } from './routes/_authed/c/$company/settings/security'
 import { Route as AuthedCCompanySettingsUsersRouteImport } from './routes/_authed/c/$company/settings/users'
 
@@ -49,6 +51,11 @@ const AuthedCompaniesRoute = AuthedCompaniesRouteImport.update({
 const AuthedCCompanyRoute = AuthedCCompanyRouteImport.update({
   id: '/c/$company',
   path: '/c/$company',
+  getParentRoute: () => AuthedRoute,
+} as any)
+const AuthedGithubSetupRoute = AuthedGithubSetupRouteImport.update({
+  id: '/github/setup',
+  path: '/github/setup',
   getParentRoute: () => AuthedRoute,
 } as any)
 const AuthedCCompanyIndexRoute = AuthedCCompanyIndexRouteImport.update({
@@ -103,6 +110,12 @@ const AuthedCCompanyRequestsRequestIdRoute =
     path: '/requests/$requestId',
     getParentRoute: () => AuthedCCompanyRoute,
   } as any)
+const AuthedCCompanySettingsConnectionsRoute =
+  AuthedCCompanySettingsConnectionsRouteImport.update({
+    id: '/settings/connections',
+    path: '/settings/connections',
+    getParentRoute: () => AuthedCCompanyRoute,
+  } as any)
 const AuthedCCompanySettingsSecurityRoute =
   AuthedCCompanySettingsSecurityRouteImport.update({
     id: '/settings/security',
@@ -121,6 +134,7 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/companies': typeof AuthedCompaniesRoute
   '/c/$company': typeof AuthedCCompanyRouteWithChildren
+  '/github/setup': typeof AuthedGithubSetupRoute
   '/c/$company/agents': typeof AuthedCCompanyAgentsRoute
   '/c/$company/approvals': typeof AuthedCCompanyApprovalsRoute
   '/c/$company/notes': typeof AuthedCCompanyNotesRoute
@@ -131,6 +145,7 @@ export interface FileRoutesByFullPath {
   '/c/$company/': typeof AuthedCCompanyIndexRoute
   '/c/$company/projects/$projectId': typeof AuthedCCompanyProjectsProjectIdRoute
   '/c/$company/requests/$requestId': typeof AuthedCCompanyRequestsRequestIdRoute
+  '/c/$company/settings/connections': typeof AuthedCCompanySettingsConnectionsRoute
   '/c/$company/settings/security': typeof AuthedCCompanySettingsSecurityRoute
   '/c/$company/settings/users': typeof AuthedCCompanySettingsUsersRoute
 }
@@ -138,6 +153,7 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/companies': typeof AuthedCompaniesRoute
   '/': typeof AuthedIndexRoute
+  '/github/setup': typeof AuthedGithubSetupRoute
   '/c/$company/agents': typeof AuthedCCompanyAgentsRoute
   '/c/$company/approvals': typeof AuthedCCompanyApprovalsRoute
   '/c/$company/notes': typeof AuthedCCompanyNotesRoute
@@ -148,6 +164,7 @@ export interface FileRoutesByTo {
   '/c/$company': typeof AuthedCCompanyIndexRoute
   '/c/$company/projects/$projectId': typeof AuthedCCompanyProjectsProjectIdRoute
   '/c/$company/requests/$requestId': typeof AuthedCCompanyRequestsRequestIdRoute
+  '/c/$company/settings/connections': typeof AuthedCCompanySettingsConnectionsRoute
   '/c/$company/settings/security': typeof AuthedCCompanySettingsSecurityRoute
   '/c/$company/settings/users': typeof AuthedCCompanySettingsUsersRoute
 }
@@ -158,6 +175,7 @@ export interface FileRoutesById {
   '/_authed/companies': typeof AuthedCompaniesRoute
   '/_authed/': typeof AuthedIndexRoute
   '/_authed/c/$company': typeof AuthedCCompanyRouteWithChildren
+  '/_authed/github/setup': typeof AuthedGithubSetupRoute
   '/_authed/c/$company/agents': typeof AuthedCCompanyAgentsRoute
   '/_authed/c/$company/approvals': typeof AuthedCCompanyApprovalsRoute
   '/_authed/c/$company/notes': typeof AuthedCCompanyNotesRoute
@@ -168,6 +186,7 @@ export interface FileRoutesById {
   '/_authed/c/$company/': typeof AuthedCCompanyIndexRoute
   '/_authed/c/$company/projects_/$projectId': typeof AuthedCCompanyProjectsProjectIdRoute
   '/_authed/c/$company/requests_/$requestId': typeof AuthedCCompanyRequestsRequestIdRoute
+  '/_authed/c/$company/settings/connections': typeof AuthedCCompanySettingsConnectionsRoute
   '/_authed/c/$company/settings/security': typeof AuthedCCompanySettingsSecurityRoute
   '/_authed/c/$company/settings/users': typeof AuthedCCompanySettingsUsersRoute
 }
@@ -178,6 +197,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/companies'
     | '/c/$company'
+    | '/github/setup'
     | '/c/$company/agents'
     | '/c/$company/approvals'
     | '/c/$company/notes'
@@ -188,6 +208,7 @@ export interface FileRouteTypes {
     | '/c/$company/'
     | '/c/$company/projects/$projectId'
     | '/c/$company/requests/$requestId'
+    | '/c/$company/settings/connections'
     | '/c/$company/settings/security'
     | '/c/$company/settings/users'
   fileRoutesByTo: FileRoutesByTo
@@ -195,6 +216,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/companies'
     | '/'
+    | '/github/setup'
     | '/c/$company/agents'
     | '/c/$company/approvals'
     | '/c/$company/notes'
@@ -205,6 +227,7 @@ export interface FileRouteTypes {
     | '/c/$company'
     | '/c/$company/projects/$projectId'
     | '/c/$company/requests/$requestId'
+    | '/c/$company/settings/connections'
     | '/c/$company/settings/security'
     | '/c/$company/settings/users'
   id:
@@ -214,6 +237,7 @@ export interface FileRouteTypes {
     | '/_authed/companies'
     | '/_authed/'
     | '/_authed/c/$company'
+    | '/_authed/github/setup'
     | '/_authed/c/$company/agents'
     | '/_authed/c/$company/approvals'
     | '/_authed/c/$company/notes'
@@ -224,6 +248,7 @@ export interface FileRouteTypes {
     | '/_authed/c/$company/'
     | '/_authed/c/$company/projects_/$projectId'
     | '/_authed/c/$company/requests_/$requestId'
+    | '/_authed/c/$company/settings/connections'
     | '/_authed/c/$company/settings/security'
     | '/_authed/c/$company/settings/users'
   fileRoutesById: FileRoutesById
@@ -268,6 +293,13 @@ declare module '@tanstack/react-router' {
       path: '/c/$company'
       fullPath: '/c/$company'
       preLoaderRoute: typeof AuthedCCompanyRouteImport
+      parentRoute: typeof AuthedRoute
+    }
+    '/_authed/github/setup': {
+      id: '/_authed/github/setup'
+      path: '/github/setup'
+      fullPath: '/github/setup'
+      preLoaderRoute: typeof AuthedGithubSetupRouteImport
       parentRoute: typeof AuthedRoute
     }
     '/_authed/c/$company/': {
@@ -340,6 +372,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthedCCompanyRequestsRequestIdRouteImport
       parentRoute: typeof AuthedCCompanyRoute
     }
+    '/_authed/c/$company/settings/connections': {
+      id: '/_authed/c/$company/settings/connections'
+      path: '/settings/connections'
+      fullPath: '/c/$company/settings/connections'
+      preLoaderRoute: typeof AuthedCCompanySettingsConnectionsRouteImport
+      parentRoute: typeof AuthedCCompanyRoute
+    }
     '/_authed/c/$company/settings/security': {
       id: '/_authed/c/$company/settings/security'
       path: '/settings/security'
@@ -368,6 +407,7 @@ interface AuthedCCompanyRouteChildren {
   AuthedCCompanyIndexRoute: typeof AuthedCCompanyIndexRoute
   AuthedCCompanyProjectsProjectIdRoute: typeof AuthedCCompanyProjectsProjectIdRoute
   AuthedCCompanyRequestsRequestIdRoute: typeof AuthedCCompanyRequestsRequestIdRoute
+  AuthedCCompanySettingsConnectionsRoute: typeof AuthedCCompanySettingsConnectionsRoute
   AuthedCCompanySettingsSecurityRoute: typeof AuthedCCompanySettingsSecurityRoute
   AuthedCCompanySettingsUsersRoute: typeof AuthedCCompanySettingsUsersRoute
 }
@@ -383,6 +423,8 @@ const AuthedCCompanyRouteChildren: AuthedCCompanyRouteChildren = {
   AuthedCCompanyIndexRoute: AuthedCCompanyIndexRoute,
   AuthedCCompanyProjectsProjectIdRoute: AuthedCCompanyProjectsProjectIdRoute,
   AuthedCCompanyRequestsRequestIdRoute: AuthedCCompanyRequestsRequestIdRoute,
+  AuthedCCompanySettingsConnectionsRoute:
+    AuthedCCompanySettingsConnectionsRoute,
   AuthedCCompanySettingsSecurityRoute: AuthedCCompanySettingsSecurityRoute,
   AuthedCCompanySettingsUsersRoute: AuthedCCompanySettingsUsersRoute,
 }
@@ -395,12 +437,14 @@ interface AuthedRouteChildren {
   AuthedCompaniesRoute: typeof AuthedCompaniesRoute
   AuthedIndexRoute: typeof AuthedIndexRoute
   AuthedCCompanyRoute: typeof AuthedCCompanyRouteWithChildren
+  AuthedGithubSetupRoute: typeof AuthedGithubSetupRoute
 }
 
 const AuthedRouteChildren: AuthedRouteChildren = {
   AuthedCompaniesRoute: AuthedCompaniesRoute,
   AuthedIndexRoute: AuthedIndexRoute,
   AuthedCCompanyRoute: AuthedCCompanyRouteWithChildren,
+  AuthedGithubSetupRoute: AuthedGithubSetupRoute,
 }
 
 const AuthedRouteWithChildren =
