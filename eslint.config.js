@@ -175,9 +175,10 @@ export default defineConfig([
   },
 
   {
-    // Rule 9: the file storage (and the key it holds) is reached only from the file module itself;
-    // every route goes through ProjectFileStore (files/store.ts), which reads the record under the
-    // caller's row policies first. main.ts builds the storage once, from the environment.
+    // Rule 9: the API's file storage (and the key it holds) is reached only from the API's file
+    // module itself; every route goes through ProjectFileStore (files/store.ts), which reads the
+    // record under the caller's row policies first. main.ts builds the storage once, from the
+    // environment. The worker has a reading module of its own (the next block).
     name: 'agent-office/api-file-storage',
     files: ['apps/api/src/**/*.ts'],
     ignores: ['apps/api/src/files/**', 'apps/api/src/main.ts'],
@@ -190,6 +191,30 @@ export default defineConfig([
               regex: '(^|/)files/storage(\\.ts)?$',
               message:
                 'Only apps/api/src/files and main.ts import the file storage (CLAUDE.md rule 9). Use ProjectFileStore from files/store.ts.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+
+  {
+    // Rule 9 in the worker: the file reader (and the read token it holds) is reached only from the
+    // worker's file module; the runner is given a RunProjectFiles (files/project-files.ts), which
+    // reads the record under the run's row policy first. worker.ts builds the reader once.
+    // files/read-token.ts holds no reader and may be imported from anywhere in the worker.
+    name: 'agent-office/worker-file-reader',
+    files: ['apps/worker/src/**/*.ts'],
+    ignores: ['apps/worker/src/files/**', 'apps/worker/src/worker.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              regex: '(^|/)files/reader(\\.ts)?$',
+              message:
+                'Only apps/worker/src/files and worker.ts import the file reader (CLAUDE.md rule 9). Use RunProjectFiles from files/project-files.ts.',
             },
           ],
         },

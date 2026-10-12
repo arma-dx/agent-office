@@ -6,9 +6,9 @@ import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
  * Where the bytes of a file lie (6 October decision 9: Supabase is used for the database and for
  * file storage; the storage stays behind this one narrow interface, docs/SONRA.md). A key is
  * written by the database on the file's record (office.files.storage_path) and starts with the
- * company's id. Nothing outside apps/api/src/files calls a storage: the routes go through
- * ProjectFileStore (store.ts), which reads the record under the caller's row policies first
- * (CLAUDE.md rule 9).
+ * company's id. Nothing else of the API calls a storage: the routes go through ProjectFileStore
+ * (store.ts), which reads the record under the caller's row policies first (CLAUDE.md rule 9).
+ * The worker has a reading module of its own, apps/worker/src/files.
  */
 export interface FileStorage {
   /** Writes the object; an object that lies under the key already is replaced. */
