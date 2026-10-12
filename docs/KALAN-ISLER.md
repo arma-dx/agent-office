@@ -666,6 +666,7 @@ Not (8 Ekim): ince dilim (0.4) bu bölümün bir kısmını kurdu: tek dosyada C
 
 Kart ve skill yükleme:
 
+- [ ] Ham içeriği süresi dolunca silen günlük iş: `office.purge_raw_content()` yazılı ama onu çağıran hiçbir iş yok; 90 günlük saklama süresi bu yüzden bugün yalnızca kâğıt üzerinde. İlk kayıtların süresi 5 Ocak 2027 dolaylarında dolar (12 Ekim incelemesinde görüldü; `docs/taslaklar/saas-hazirlik-incelemesi.md`, EYI-09)
 - [ ] Görev kartı için şema ve doğrulama
 - [ ] Katalogda olmayan aracı kullanan kartın reddi
 - [ ] Kartın `companies` alanına göre açılabileceği şirketlerin sınırlanması
