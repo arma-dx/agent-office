@@ -451,7 +451,7 @@ Adım 4: proje dosyaları (karar 20)
 - [ ] (Senden) Supabase'te dosya deposu (test ve canlı ortam için): `office-files` adlı özel kova ve bir gizli anahtar; adımları `docs/supabase-kurulum.md` bölüm 8. Yerelde ve testlerde gerekmez; test ortamı dosya sunmadan önce gerekir. Kurulunca `pnpm files:check` bir kez çalıştırılır (Supabase'e giden üç çağrı gerçek hizmetle henüz denenmedi)
 - [x] Dosya modülü: yükleme, liste, indirme, silme; tür ve 25 MB sınırı; görünürlük proje üyeliğiyle (proje sayfasında "Dosyalar" sekmesi; on iki uzantı, tür ada ve içeriğe bakılarak belirlenir, SONRA P4-a; ekleyen kişi, projenin sahibi, yöneticileri ve kurucu siler, 11 Ekim karar 2; projede en çok 200 dosya ve 1 GB, SONRA P4-d; dosya önce yükleme izni alınarak gönderilir, SONRA P4-k; ekleme ve silme iz kaydında; pencere kişisel veri cümlesini ve ajanların okuyacağını söyler, karar 21 ve 11 Ekim karar 3; ajanlar henüz okumaz, adım 6)
 - [ ] `20261008103100_project_files.sql` göçünün yerel veritabanına ve test ortamına uygulanması (uygulanana kadar "Dosyalar" sekmesi sunucu hatası verir); yerelde dosya eklemek için `.env` içinde `FILE_STORAGE_DIR`
-- [ ] (Senden) "Dosyalar" sekmesine tarayıcıda bir kez bakmak: bir dosya eklemek, indirmek, silmek; 25 MB'lık ve biraz daha büyük bir dosya; yükleme sürerken ve "Kaydediliyor" yazarken "Yüklemeyi durdur" (SONRA P4-i, P4-w)
+- [ ] (Senden) "Dosyalar" sekmesine tarayıcıda bir kez bakmak: bir dosya eklemek, indirmek, silmek; 25 MB'lık ve biraz daha büyük bir dosya; çubuk ilerlerken "Yüklemeyi durdur" (yüklemeyi durdurur); "Kaydediliyor" yazarken aynı düğme basılamaz, dosya eklenir ve listeden silinir (SONRA P4-i, P4-w)
 
 Adım 5: GitHub bağlantısı (karar 19 ve 22)
 

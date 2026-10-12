@@ -903,6 +903,32 @@ describe('adding a file', () => {
     expect(within(box).getByText('Yükleniyor: %0')).toBeVisible();
   });
 
+  it('offers no stop once the whole file has left: the server is already storing it', async () => {
+    const { box, uploads, onStored, onChanged } = await open();
+    await userEvent.upload(field(box), pdf());
+    await userEvent.click(button(box, 'Yükle'));
+    const put = await sent(uploads);
+    put.progress(4, 4);
+    await waitFor(() => {
+      expect(within(box).getByRole('status')).toHaveTextContent('Dosya gönderildi, kaydediliyor.');
+    });
+    // The button keeps its place and the focus can stay on it, but it stops nothing: a send that
+    // is cut here would leave the file in the project without the dialog saying so.
+    const stop = button(box, 'Yüklemeyi durdur');
+    expect(stop).toHaveAttribute('aria-disabled', 'true');
+    await userEvent.click(stop);
+    expect(put.aborted).toBe(false);
+    expect(onChanged).not.toHaveBeenCalled();
+    expect(button(box, 'Kaydediliyor')).toBeVisible();
+    expect(within(box).getByRole('status')).toHaveTextContent('Dosya gönderildi, kaydediliyor.');
+    // The answer arrives: the file is shown as added, and the person deletes it from the list.
+    const stored = projectFile({ id: idOf(put.path), name: 'Şartname.pdf', sizeBytes: 3 });
+    put.respond(201, stored);
+    await gone();
+    expect(onStored).toHaveBeenCalledWith(stored);
+    expect(onChanged).not.toHaveBeenCalled();
+  });
+
   it('stops while the ticket is asked for, and sends nothing', async () => {
     // The ticket request never answers.
     const { box, uploads, api } = await open(

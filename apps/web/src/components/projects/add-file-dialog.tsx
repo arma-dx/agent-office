@@ -48,8 +48,12 @@ function chosenFacts(file: File): string | null {
  * already stored with the first record. Another choice is another id.
  *
  * While the bytes are on their way the dialog does not close (Escape, a click outside); "Yüklemeyi
- * durdur" stops the send and leaves the dialog open with the file still chosen. Leaving the page
- * stops it too. After a stop and after a refusal the list is read again: bytes that had all left
+ * durdur" stops the send and leaves the dialog open with the file still chosen. It stops only while
+ * bytes are leaving: once the whole file has left ("Kaydediliyor") the server is storing it, a cut
+ * connection would not undo that, and the dialog would say nothing of a file that is in the
+ * project. The button is inert then; the answer comes, the file is shown as added, and the person
+ * deletes it from the list (docs/SONRA.md P4-w). Leaving the page still ends the request. After a
+ * stop and after a refusal the list is read again: a send that failed after its bytes had all left
  * may have been stored.
  *
  * Two sentences are rules: no file with personal data until the lawyer has answered (decision 21),
@@ -150,7 +154,8 @@ export function AddFileDialog({
         // Stopped by the person: no sentence. Anything else is said, and the file stays chosen.
         const stopped = reason instanceof DOMException && reason.name === 'AbortError';
         if (!stopped) setError(reason);
-        // Bytes that were all sent may have been stored; a closed session shows itself there.
+        // A send that failed after its bytes had all left may have been stored; a closed session
+        // shows itself there.
         onChanged();
       },
     );
@@ -256,9 +261,11 @@ export function AddFileDialog({
             <Button
               type="button"
               variant="ghost"
+              // Stays in its place and focusable; while the server stores the file it stops nothing.
+              {...busyProps(phase === 'storing')}
               onClick={() => {
                 if (phase === 'idle') onClose();
-                else upload.current?.abort();
+                else if (phase === 'sending') upload.current?.abort();
               }}
             >
               {phase === 'idle' ? 'Vazgeç' : 'Yüklemeyi durdur'}
