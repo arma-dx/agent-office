@@ -268,7 +268,7 @@ export const ASK_TOOL: ModelTool = {
 export const ASK_TOOL_COORDINATOR: ModelTool = {
   ...ASK_TOOL,
   description:
-    'Talep sahibine tek bir soru yazar ve çalışmayı bitirir: talep "Yanıt bekliyor" olur, talep sahibi yanıtlayınca aynı talep için yeniden çalıştırılırsın ve yanıt sana veri olarak verilir. Soru onaydan geçmez; talep sahibi onu yazdığın gibi okur. Yalnızca tek bir durumda kullan: talepte ne istendiği ya da çıktının nerede kullanılacağı yazmadığı için işin hangi birimin işi olduğu anlaşılmıyor ve talep sahibinin kısa bir yanıtı bunu belirleyecek. İşin birimi belliyse kullanma, `route_task` aracını çağır: işin yapılması için eksik, belirsiz ya da koşullu ("varsa ekle") bilgiyi sen sormazsın, işi alan ajan sorar. Bir çalışmada bir kez çağrılır.',
+    'Talep sahibine tek bir soru yazar ve çalışmayı bitirir: talep "Yanıt bekliyor" olur, talep sahibi yanıtlayınca aynı talep için yeniden çalıştırılırsın ve yanıt sana veri olarak verilir. Soru onaydan geçmez; talep sahibi onu yazdığın gibi okur. Yalnızca tek bir durumda kullan: talepte ne istendiği ya da çıktının nerede kullanılacağı yazmadığı için işin hangi birimin işi olduğu anlaşılmıyor ve talep sahibinin kısa bir yanıtı bunu belirleyecek. Talepte çıktının türü yazıyorsa (bir gönderi, bir tasarım, bir teklif, bir rapor gibi) birim bellidir: konusu, amacı ya da içeriği yazmasa da, sonra söyleneceği yazsa da kullanma. İşin birimi belliyse kullanma, `route_task` aracını çağır: işin yapılması için eksik, belirsiz ya da koşullu ("varsa ekle") bilgiyi sen sormazsın, işi alan ajan sorar. Bir çalışmada bir kez çağrılır.',
 };
 
 /** The names of the tools the runner has a handler for. */
