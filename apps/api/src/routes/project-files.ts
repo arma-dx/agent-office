@@ -398,6 +398,12 @@ export function registerProjectFileRoutes(app: FastifyInstance, deps: RouteDeps)
         }
         return found;
       });
+      // The connection may have ended while the transaction ran (a closed tab). Its 'close' has
+      // then already been emitted and no answer will ever finish, so nothing would give the bytes
+      // back: none are counted. Nothing is awaited between this line and the listener below.
+      if (reply.raw.destroyed) {
+        return reply;
+      }
       // The file is read whole and checked before it is sent: its size is counted first, so the
       // downloads under way never hold more than their budget.
       if (!downloads.reserve(row.size_bytes)) {

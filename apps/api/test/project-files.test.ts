@@ -1106,6 +1106,33 @@ describe.skipIf(noDatabase)('project files', () => {
       await live.close();
     }
   });
+
+  it('a download whose connection is gone before its record was read counts no bytes', async () => {
+    const live = createTestServer({ downloadBufferBytes: SAMPLES.pdf.length });
+    await live.app.listen({ port: 0, host: '127.0.0.1' });
+    try {
+      const session = await sessionOf(live, accounts.employee);
+      const sent = await upload(session, 'a.pdf', SAMPLES.pdf, { server: live });
+      const file = projectFileSchema.parse(sent.json());
+      const url = `/api/projects/${project}/files/${file.id}/content`;
+      // The person closes the tab at once: the request is still in its transaction when the
+      // connection ends. Three of them, so that one that was cut before it was read does not hide
+      // the others.
+      for (let index = 0; index < 3; index += 1) {
+        const gone = await rawRequest(
+          live,
+          rawHead('GET', url, [`cookie: ${SESSION_COOKIE}=${session}`]),
+        );
+        gone.end();
+      }
+      await new Promise((r) => setTimeout(r, 400));
+      const next = await send(live, session, 'GET', url, { company: ids.arma });
+      expect(next.statusCode, next.body).toBe(200);
+      expect(next.rawPayload.equals(SAMPLES.pdf)).toBe(true);
+    } finally {
+      await live.close();
+    }
+  });
 });
 
 /** A storage in memory whose calls can be made to wait, as a storage that hangs would. */
