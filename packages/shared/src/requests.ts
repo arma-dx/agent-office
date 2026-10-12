@@ -12,7 +12,9 @@ import { taskPersonSchema, taskStatusSchema, type TaskStatus } from './tasks.ts'
  * validates every answer. There is no field here that sets a status or an approver: the only
  * things a person sends are the request text, a decision, a close and, for the founder and the
  * approver of the request, a correction of the routing (7 October decision 7). A comment (8 October
- * decision 13) is the one more thing a person sends; it changes nothing of the request.
+ * decision 13) changes nothing of the request. The answer to an agent's question (7 October
+ * decision 7) is the one more thing the requester sends; it sets no status and names no agent: the
+ * database puts the request back in progress and says which agent runs again.
  */
 
 /** The agent every new request goes to first (its card: "Panelden gelen her talebi karşılar"). */
@@ -101,6 +103,9 @@ export const requestStageSchema = z.enum([
   'revising',
   'unit_approval',
   'requester_approval',
+  // The agent whose turn it was stopped with a question to the requester; nothing runs until
+  // it is answered (or closed by a new routing, a cancel or a stop).
+  'awaiting_reply',
   // Nothing runs and nothing waits for a decision: a person must look at it.
   'fell_to_person',
   'done',
@@ -203,12 +208,15 @@ export interface RequestFacts {
   pendingApproval: boolean;
   // The approved result waits for the requester.
   pendingAcceptance: boolean;
+  // A question of an agent waits for the requester's answer.
+  openQuestion: boolean;
   // The last decision on a result of the active step.
   lastResult: { status: 'approved' | 'changes_requested' | 'rejected'; attempt: number } | null;
   // Did the approver or the requester ask for changes on the active step.
   changesRequested: boolean;
   // The latest moment a run was called for: the routing of the active step, the last change
-  // request, or a restart after an agent or an AI permission was opened again (8 October
+  // request, the answer to a question of the agent whose turn it is (12 October decision 3), or
+  // a restart after an agent, an AI permission or a spending limit was opened again (8 October
   // decision 49). Null when the only call is the opening of the request itself.
   awaitedSince: Date | null;
   // The latest time a run was called for and not started, for the agent whose turn it is: the
@@ -319,6 +327,13 @@ export function deriveStage(facts: RequestFacts, now: Date): DerivedStage {
   }
   if (facts.pendingApproval) {
     return at('unit_approval', 'approver');
+  }
+  if (facts.openQuestion) {
+    // The agent whose turn it was asked the requester and ended its run. Only the requester
+    // answers; while the requester cannot read the request the founder does (decision 45).
+    // Said before a closed AI permission and a reached spending limit: the answer can still be
+    // given, and the block is what the request reads once it is.
+    return at('awaiting_reply', facts.requesterReads ? 'requester' : 'founder');
   }
   if (!facts.agentsMayWork) {
     // Rule 12: nothing runs in this project now, whatever the records say was called for. A
@@ -592,6 +607,31 @@ export const createRequestCommentSchema = z.strictObject({
 });
 export type CreateRequestComment = z.input<typeof createRequestCommentSchema>;
 
+// Questions ----------------------------------------------------------------------------------------
+
+/** An agent's question to the requester: what the model may write (the runner refuses more). */
+export const REQUEST_QUESTION_MAX = 2000;
+/** The requester's answer. The database holds the same two numbers (office.task_questions). */
+export const REQUEST_ANSWER_MAX = 10_000;
+
+export const requestAnswerTextSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(REQUEST_ANSWER_MAX)
+  .refine(withoutNul, NO_NUL);
+
+/**
+ * POST /api/requests/:requestId/questions/:questionId/answer. The requester, or the founder
+ * while the requester cannot read the request (the database decides; 403 answer_not_allowed for
+ * anybody else who may read the question). Plain text; an answer is stored once and never
+ * changed (409 question_closed for a second one). There is no field that sets a status, names
+ * an agent or approves anything: an answer is data for the agent that asked.
+ * A send that is repeated with the same text by the same person answers the page as it is.
+ */
+export const answerQuestionSchema = z.strictObject({ answer: requestAnswerTextSchema });
+export type AnswerQuestion = z.input<typeof answerQuestionSchema>;
+
 const stepSchema = z.object({
   // The catalog name of the tool; the panel has a fixed verb for each.
   tool: z.string(),
@@ -606,6 +646,9 @@ const stepSchema = z.object({
  * tool or the coordinator's reason for routing nothing (`agentText`) and, inside the approval
  * card, the agent's summary, reasoning and risk note.
  * Nobody else reads a model's text before the approver has approved it (7 October decision 4).
+ * A question an agent asked and its answer are given only to the requester, the approver of the
+ * request and the founder (docs/SONRA.md W-k); for everybody else the run's own sentence says that
+ * a question was asked.
  */
 export const journeyItemSchema = z.discriminatedUnion('kind', [
   z.object({
@@ -660,6 +703,23 @@ export const journeyItemSchema = z.discriminatedUnion('kind', [
     reason: rejectionReasonSchema.nullable(),
     note: z.string().nullable(),
   }),
+  z.object({
+    kind: z.literal('question'),
+    id: z.uuid(),
+    // When it was asked.
+    at: instantSchema,
+    agent: agentRefSchema,
+    status: z.enum(['open', 'answered', 'closed']),
+    // The agent's words, shown under a label that says so.
+    text: z.string(),
+    answer: z.string().nullable(),
+    answeredAt: instantSchema.nullable(),
+    // Who answered: the requester, or the founder in the requester's place.
+    answeredBy: taskPersonSchema.nullable(),
+    // True when somebody else than the requester answered.
+    answeredInPlace: z.boolean(),
+    closedAt: instantSchema.nullable(),
+  }),
 ]);
 export type JourneyItem = z.output<typeof journeyItemSchema>;
 
@@ -707,6 +767,21 @@ export const requestDetailSchema = requestSummarySchema.extend({
     .object({
       round: z.number().int().min(1),
       returnsToAgent: returnsToAgentSchema,
+      inPlaceOfRequester: z.boolean(),
+    })
+    .nullable(),
+  // The question that waits for an answer, for a reader who may read it (the requester, the
+  // approver of the request, the founder). Null when none is open or the reader may not read
+  // it: the stage still says that the request waits for an answer. `mayAnswer`: the reader is
+  // the one who answers, the requester or, while the requester cannot read the request, the
+  // founder (`inPlaceOfRequester`). The server refuses everybody else anyway.
+  question: z
+    .object({
+      id: z.uuid(),
+      agent: agentRefSchema,
+      askedAt: instantSchema,
+      text: z.string(),
+      mayAnswer: z.boolean(),
       inPlaceOfRequester: z.boolean(),
     })
     .nullable(),

@@ -41,6 +41,7 @@ const base: RequestFacts = {
   step: null,
   pendingApproval: false,
   pendingAcceptance: false,
+  openQuestion: false,
   lastResult: null,
   changesRequested: false,
   awaitedSince: null,
@@ -210,9 +211,36 @@ describe('the desk an open request stands on', () => {
     }
   });
 
+  it('a request that waits for an answer stands on no desk', () => {
+    // The agent asked the requester and ended its run: it waits for a person (docs/SONRA.md W-d).
+    const asked: RequestFacts = {
+      ...routed,
+      status: 'awaiting_reply',
+      openQuestion: true,
+      lastRun: run('SOS-2', 'completed'),
+    };
+    expect(deriveStage(asked, now).stage).toBe('awaiting_reply');
+    expect(desk(asked)).toBe('-');
+    // The coordinator's question, before any routing.
+    expect(
+      desk({
+        ...base,
+        status: 'awaiting_reply',
+        openQuestion: true,
+        lastRun: run('KOR-1', 'completed'),
+      }),
+    ).toBe('-');
+    // The same run without the question is the agent's failure: the question is what clears
+    // the desk, and an agent with only such a request is idle.
+    expect(desk({ ...asked, openQuestion: false })).toBe('SOS-2 failed');
+    expect(officeAgentState('enabled', { running: 0, awaitingApproval: 0, failed: 0 })).toBe(
+      'idle',
+    );
+  });
+
   it('answers for every stage', () => {
     // A stage that is added later must be given a desk or none here, not fall through.
-    expect(requestStageSchema.options).toHaveLength(8);
+    expect(requestStageSchema.options).toHaveLength(9);
   });
 });
 

@@ -19,6 +19,7 @@ import {
   RESULT_HELD,
   RESULT_HELD_FOR_FOUNDER,
   RESULT_HELD_FOR_OTHERS,
+  STAGE_LABEL,
   WAITING_WORK_IF_ANY,
   acceptInPlace,
   answeredInPlace,
@@ -96,6 +97,38 @@ describe('the due day of a request in words', () => {
     for (const overdue of [true, false]) {
       expect(dueText({ dueDate: '2026-10-05', overdue }, NOW)).not.toMatch(/gecik/i);
     }
+  });
+
+  // 12 October decisions 3 and 4.
+  it('a request that waits for an answer says so, and in the second person to the one who answers', () => {
+    const waiting = requestDetail({
+      status: 'awaiting_reply',
+      stage: 'awaiting_reply',
+      turn: { kind: 'person', userId: '00000000-0000-4000-8000-000000000012', name: 'Çalışan A' },
+      waitingForMe: false,
+      approval: null,
+    });
+    expect(STAGE_LABEL.awaiting_reply).toBe('Yanıt bekliyor');
+    // Everybody who reads the request: whose answer is awaited.
+    expect(stageText(summaryOf(waiting))).toBe('Yanıt bekliyor');
+    expect(rowSentence(summaryOf(waiting), false, NOW)).toBe(
+      'LinkedIn için gönderi yaz, Yanıt bekliyor, sıra Çalışan A',
+    );
+    // The one who answers: the requester, or the founder in the requester's place.
+    const mine = summaryOf({ ...waiting, waitingForMe: true });
+    expect(stageText(mine)).toBe('Yanıtınız bekleniyor');
+    expect(rowSentence(mine, false, NOW)).toBe(
+      'LinkedIn için gönderi yaz, Yanıtınız bekleniyor, sıra sizde',
+    );
+    expect(
+      rowSentence(
+        summaryOf({ ...waiting, turn: { kind: 'founder' }, waitingForMe: true }),
+        false,
+        NOW,
+      ),
+    ).toBe('LinkedIn için gönderi yaz, Yanıtınız bekleniyor, sıra sizde');
+    // Nothing a clock calls late: a person is waited for.
+    expect(stageText(mine)).not.toMatch(/gecik/);
   });
 
   it('the row’s sentence names the project after the title, only where the row shows it', () => {

@@ -125,6 +125,7 @@ export function requestDetail(overrides: Partial<RequestDetail> = {}): RequestDe
     approval: APPROVAL_CARD,
     result: null,
     acceptance: null,
+    question: null,
     actions: { cancel: false, stop: true, reroute: true },
     comments: { items: [], truncated: false, mayWrite: false },
     serverTime: AT,

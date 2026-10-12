@@ -30,6 +30,7 @@ export const STAGE_LABEL: Record<RequestStage, string> = {
   revising: 'Ajan düzeltiyor',
   unit_approval: 'Birim onayında',
   requester_approval: 'Talep sahibinin onayında',
+  awaiting_reply: 'Yanıt bekliyor',
   fell_to_person: 'İnsana düştü',
   done: 'Tamamlandı',
   cancelled: 'İptal edildi',
@@ -39,6 +40,7 @@ export const STAGE_LABEL: Record<RequestStage, string> = {
 const STAGE_FOR_ME: Partial<Record<RequestStage, string>> = {
   unit_approval: 'Onayınız bekleniyor',
   requester_approval: 'Sonucu onaylamanız bekleniyor',
+  awaiting_reply: 'Yanıtınız bekleniyor',
   fell_to_person: 'Sizden bekleniyor',
 };
 

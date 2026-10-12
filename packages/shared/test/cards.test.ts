@@ -1,9 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { apiErrorCodeSchema, companyAgentStatusSchema, officeResponseSchema } from '../src/api.ts';
 import {
+  RUNNER_PATH_TOOLS,
   agentCodeSchema,
   cardDefinitionSchema,
+  cardSchema,
+  catalogToolSchema,
   companyCodeSchema,
+  storedCardSchema,
+  toolNameSchema,
+  toolsFileSchema,
   unitCodeSchema,
   unitsFileSchema,
 } from '../src/cards.ts';
@@ -150,5 +156,91 @@ describe('office contract', () => {
 
   it('has an error code for a screen that is closed to external persons', () => {
     expect(apiErrorCodeSchema.safeParse('insiders_only').success).toBe(true);
+  });
+});
+
+describe('the names the runner keeps for its own paths', () => {
+  // CLAUDE.md "İnsana sor": the asking tool is the runner's own. It is never a row of the catalog
+  // and never on a card, so no card can send it through the gate of catalog tools (where a Y1
+  // card's question would fall to the approval desk) and no card can open the path by naming it.
+  const RESERVED = 'This name is reserved for the runner and cannot be a catalog tool';
+  const card = {
+    code: 'SOS-2',
+    name: 'Sosyal İçerik Yazım Ajanı',
+    unit: 'SOS',
+    companies: ['armadx'],
+    version: '1',
+    status: 'active',
+    owner: 'Kurucu',
+    purpose: 'Sosyal medya gönderisi yazar',
+    triggers: [{ type: 'handoff', description: 'Koordinasyon merkezinden gelen iş' }],
+    inputs: [],
+    outputs: ['Gönderi taslağı'],
+    skills: [],
+    tools: ['submit_for_approval'],
+    knowledge_sources: [],
+    authority: { level: 'Y1', target: 'Y1' },
+    approval_points: [],
+    escalation: [],
+    prohibitions: [],
+    model: 'some-model',
+    limits: { tool_calls: 20, duration_minutes: 10 },
+    metrics: [],
+  };
+  const row = { name: 'submit_for_approval', kind: 'draft', description: 'Sonucu onaya sunar' };
+  const stored = {
+    card,
+    tools: [row],
+    model: {
+      id: 'some-model',
+      max_tokens: 4096,
+      thinking: 'none',
+      effort: null,
+      prices: { input: 1, output: 5, cache_write_5m: 1.25, cache_write_1h: 2, cache_read: 0.1 },
+    },
+    rules: { sha256: 'a'.repeat(64), body: 'Ortak kurallar' },
+    skills: [],
+  };
+  const messages = (result: { error?: { issues: { message: string }[] } }): string[] =>
+    (result.error?.issues ?? []).map((issue) => issue.message);
+
+  it('the runner’s own tool name is refused on a card, in the catalog and in a stored version', () => {
+    expect(RUNNER_PATH_TOOLS).toEqual(['ask_requester']);
+    expect(messages(toolNameSchema.safeParse('ask_requester'))).toEqual([RESERVED]);
+
+    // The samples are valid as they stand: only the name makes the difference below.
+    expect(cardSchema.safeParse(card).success).toBe(true);
+    expect(toolsFileSchema.safeParse({ tools: [row] }).success).toBe(true);
+    expect(storedCardSchema.safeParse(stored).success).toBe(true);
+
+    // On a card.
+    const named = cardSchema.safeParse({
+      ...card,
+      tools: ['submit_for_approval', 'ask_requester'],
+    });
+    expect(messages(named)).toEqual([RESERVED]);
+    expect(named.error?.issues[0]?.path).toEqual(['tools', 1]);
+    // In the catalog.
+    const asked = { ...row, name: 'ask_requester' };
+    expect(messages(catalogToolSchema.safeParse(asked))).toEqual([RESERVED]);
+    expect(messages(toolsFileSchema.safeParse({ tools: [row, asked] }))).toEqual([RESERVED]);
+    // In a stored version, by its card or by its catalog rows: the runner parses with this schema.
+    expect(
+      messages(
+        storedCardSchema.safeParse({ ...stored, card: { ...card, tools: ['ask_requester'] } }),
+      ),
+    ).toEqual([RESERVED]);
+    expect(messages(storedCardSchema.safeParse({ ...stored, tools: [row, asked] }))).toEqual([
+      RESERVED,
+    ]);
+  });
+
+  it('every other tool name is read as before', () => {
+    for (const name of ['route_task', 'submit_for_approval', 'ask_owner', 'ask_requester_again']) {
+      expect(toolNameSchema.safeParse(name).success, name).toBe(true);
+    }
+    for (const name of ['Ask_requester', 'ask-requester', 'ask requester', '1tool', '']) {
+      expect(toolNameSchema.safeParse(name).success, name).toBe(false);
+    }
   });
 });

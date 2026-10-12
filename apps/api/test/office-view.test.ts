@@ -27,6 +27,8 @@ function row(n: number, overrides: Partial<RequestRow> = {}): RequestRow {
     spending_limit_reached: false,
     requester_reads: true,
     restarted_at: null,
+    open_question: false,
+    answered_at: null,
     closed_by_user_id: null,
     close_reason: null,
     closed_after_delivery: false,
@@ -117,6 +119,43 @@ describe('the desk a request row stands on', () => {
       ),
     ).toBeNull();
     expect(workOfRequest(row(7, { ...routed('SOS-2'), status: 'cancelled' }), NOW)).toBeNull();
+  });
+
+  // 12 October decisions 3 and 4; docs/SONRA.md W-d.
+  it('a request that waits for an answer counts for no desk', () => {
+    // The agent asked and ended its run: without the question that run would be its failure.
+    const asked = { ...routed('SOS-2'), ...ran('SOS-2', 'completed') };
+    expect(workOfRequest(row(40, asked), NOW)).toMatchObject({
+      agentCode: 'SOS-2',
+      kind: 'failed',
+    });
+    expect(
+      workOfRequest(row(41, { ...asked, status: 'awaiting_reply', open_question: true }), NOW),
+    ).toBeNull();
+    // The coordinator's question, before any routing.
+    expect(
+      workOfRequest(
+        row(42, { ...ran('KOR-1', 'completed'), status: 'awaiting_reply', open_question: true }),
+        NOW,
+      ),
+    ).toBeNull();
+    // After the answer the work is the agent's again.
+    expect(workOfRequest(row(43, { ...asked, answered_at: ago(1_000) }), NOW)).toEqual({
+      agentCode: 'SOS-2',
+      kind: 'running',
+      requestId: id(43),
+    });
+    // The counts of the office answer carry none of the waiting ones.
+    expect(
+      officeWork(
+        [
+          row(44, { ...asked, status: 'awaiting_reply', open_question: true }),
+          row(45, { ...ran('KOR-1', 'completed'), status: 'awaiting_reply', open_question: true }),
+        ],
+        ['KOR-1', 'SOS-2'],
+        NOW,
+      ),
+    ).toEqual([]);
   });
 
   // 8 October decision 17: a request held by its project's AI spending limit stands on no desk

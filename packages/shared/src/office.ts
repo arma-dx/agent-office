@@ -38,6 +38,7 @@ export const AGENT_FAILURE_CAUSES: readonly RequestCause[] = [
  *   unit_approval                  the agent of the active step: its result waits for a decision;
  *   fell_to_person with a cause    the agent of the last run: that run is the one the cause is
  *   of AGENT_FAILURE_CAUSES        read from (deriveStage reads it from no other run).
+ *   awaiting_reply                 no desk (the agent waits for a person; W-d).
  */
 export function agentWorkOf(
   facts: RequestFacts,
@@ -60,6 +61,8 @@ export function agentWorkOf(
         AGENT_FAILURE_CAUSES.includes(derived.cause)
         ? { agentCode: facts.lastRun.agentCode, kind: 'failed' }
         : null;
+    // The agent asked and waits for the requester: its desk shows no work (docs/SONRA.md W-d).
+    case 'awaiting_reply':
     case 'requester_approval':
     case 'done':
     case 'cancelled':

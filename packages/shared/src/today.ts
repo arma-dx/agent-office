@@ -9,7 +9,8 @@ import { requestSummarySchema } from './requests.ts';
  *
  * An expected item is a request summary and nothing more: the stage says what is expected
  * (unit_approval: the reader may decide the result; requester_approval: the reader is the
- * requester; fell_to_person: it is the reader's turn). A notification carries a template code and
+ * requester; awaiting_reply: the reader is the one who answers the agent's question;
+ * fell_to_person: it is the reader's turn). A notification carries a template code and
  * ids; its sentence is the panel's, never a text from the database.
  */
 

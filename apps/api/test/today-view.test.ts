@@ -54,7 +54,7 @@ function note(overrides: Partial<NotificationRow>): NotificationRow {
 }
 
 describe('what a request expects of the reader', () => {
-  it('a request expects a decision, an acceptance or a look, or nothing', () => {
+  it('a request expects a decision, an acceptance, an answer or a look, or nothing', () => {
     const cases: [RequestStage, boolean, boolean, ReturnType<typeof expectedKind>][] = [
       // A result the reader may decide: the appointed approver, whose turn it is, and the founder,
       // who may decide while somebody else is appointed.
@@ -68,6 +68,12 @@ describe('what a request expects of the reader', () => {
       ['requester_approval', true, true, 'acceptance'],
       ['requester_approval', false, true, null],
       ['requester_approval', false, false, null],
+      // An agent's question: the one who answers (the requester, or the founder while the
+      // requester cannot read the request), and nobody else, whatever they may decide.
+      ['awaiting_reply', true, false, 'answer'],
+      ['awaiting_reply', true, true, 'answer'],
+      ['awaiting_reply', false, true, null],
+      ['awaiting_reply', false, false, null],
       // A request that fell to a person: the one whose turn it is.
       ['fell_to_person', true, true, 'fallen'],
       ['fell_to_person', true, false, 'fallen'],
@@ -82,7 +88,10 @@ describe('what a request expects of the reader', () => {
     }
     // Every other stage expects nothing of anybody, whatever the reader may do.
     const others = requestStageSchema.options.filter(
-      (stage) => !['unit_approval', 'requester_approval', 'fell_to_person'].includes(stage),
+      (stage) =>
+        !['unit_approval', 'requester_approval', 'awaiting_reply', 'fell_to_person'].includes(
+          stage,
+        ),
     );
     expect(others).toEqual(expect.arrayContaining(['routing', 'working', 'revising', 'done']));
     expect(others).toContain('cancelled');

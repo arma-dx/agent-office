@@ -5,7 +5,7 @@ import type { RequestSummary, TodayNotification } from '@agent-office/shared';
  * What the Bugün screen is made of, from rows the person could read. Pure functions.
  */
 
-export type ExpectedKind = 'approval' | 'acceptance' | 'fallen';
+export type ExpectedKind = 'approval' | 'acceptance' | 'answer' | 'fallen';
 
 /**
  * What a request expects of the reader, or null when it expects nothing of them.
@@ -14,8 +14,8 @@ export type ExpectedKind = 'approval' | 'acceptance' | 'fallen';
  *               /api/approvals; `reader_may_decide` is that rule asked of the active step, whose
  *               approver the pending result carries);
  *   acceptance  the approved result waits for its requester, and the reader is the requester;
+ *   answer      an agent's question waits for the reader's answer;
  *   fallen      the request fell to a person and it is the reader's turn.
- * Nothing else is expected of anybody in this step (an agent's question comes later).
  */
 export function expectedKind(row: RequestRow, summary: RequestSummary): ExpectedKind | null {
   switch (summary.stage) {
@@ -23,6 +23,10 @@ export function expectedKind(row: RequestRow, summary: RequestSummary): Expected
       return row.reader_may_decide ? 'approval' : null;
     case 'requester_approval':
       return summary.waitingForMe ? 'acceptance' : null;
+    case 'awaiting_reply':
+      // The agent's question waits for the reader: the requester, or the founder while the
+      // requester cannot read the request.
+      return summary.waitingForMe ? 'answer' : null;
     case 'fell_to_person':
       return summary.waitingForMe ? 'fallen' : null;
     default:

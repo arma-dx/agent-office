@@ -1298,6 +1298,10 @@ export function Journey({ request }: { request: RequestDetail }) {
                   ) : null}
                 </JourneyRow>
               );
+            case 'question':
+              // An agent's question and its answer have no line of their own yet: the run that
+              // asked says so in its own sentence, and the stage says that the request waits.
+              return null;
           }
         })}
       </ol>

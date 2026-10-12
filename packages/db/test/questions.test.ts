@@ -1,6 +1,7 @@
 import { COORDINATOR_AGENT_CODE } from '@agent-office/shared';
 import { afterAll, describe, expect, it } from 'vitest';
 import type { ContextInput } from '../src/context.ts';
+import { listRequestQuestions, readRequest } from '../src/requests.ts';
 import { ids } from './fixtures.ts';
 import { asRole, closePools, inAdminTransaction, noDatabase, type Tx } from './helpers.ts';
 import { stepUp } from './step-up.ts';
@@ -1403,6 +1404,97 @@ describe.skipIf(noDatabase)('an agent asks the requester a question', () => {
       for (const text of ['Hangi kanal', 'LinkedIn', 'Hangi ürün', 'şarj istasyonu']) {
         expect(everything).not.toContain(text);
       }
+    });
+  });
+
+  it('the questions of a request as a statement', async () => {
+    await inAdminTransaction(async (tx) => {
+      await appointForHaf(tx);
+      await enableHaf(tx);
+      const task = await requestOf(tx);
+      const first = await askFrom(tx, task, 'KOR-1', 'Hangi kanal için yazayım?');
+      const listed = async (person: ContextInput) => {
+        await asPerson(tx, person);
+        return listRequestQuestions(tx.client, task);
+      };
+      const page = async (person: ContextInput) => {
+        await asPerson(tx, person);
+        const row = await readRequest(tx.client, COORDINATOR_AGENT_CODE, task);
+        return row && [row.status, row.open_question, row.answered_at];
+      };
+
+      // The requester and the founder read the row; the request says that a question waits.
+      expect(await listed(employeeA)).toEqual([
+        {
+          id: first.question,
+          agent_code: 'KOR-1',
+          agent_name: 'Ofis Koordinatörü',
+          status: 'open',
+          question: 'Hangi kanal için yazayım?',
+          answer: null,
+          created_at: expect.any(Date) as Date,
+          answered_at: null,
+          answered_by_user_id: null,
+          requester_user_id: ids.employeeA,
+          closed_at: null,
+        },
+      ]);
+      expect(await listed(founderA)).toHaveLength(1);
+      expect(await page(employeeA)).toEqual(['awaiting_reply', true, null]);
+      // Another employee reads the request and the yes or no, and no row of the question.
+      expect(await page(colleagueA)).toEqual(['awaiting_reply', true, null]);
+      expect(await listed(colleagueA)).toEqual([]);
+      // Nobody who cannot read the request, in no company and without a context.
+      for (const other of [
+        externalA,
+        founderP,
+        { companyId: ids.pillika, userId: ids.employeeA },
+      ]) {
+        expect(await page(other)).toBeNull();
+        expect(await listed(other)).toEqual([]);
+      }
+      expect(await listed({})).toEqual([]);
+      // A question of another request is not listed under this one.
+      await asPerson(tx, employeeA);
+      expect(await listRequestQuestions(tx.client, ids.taskA)).toEqual([]);
+      await asPerson(tx, founderA);
+      expect((await listRequestQuestions(tx.client, ids.requestA)).map((row) => row.id)).toEqual([
+        ids.requestQuestionA,
+      ]);
+
+      // Answered: the time of the answer is the latest call for the coordinator's work.
+      await answerAs(tx, employeeA, first.question, 'LinkedIn için.');
+      const [answered] = await listed(employeeA);
+      expect(answered).toMatchObject({
+        status: 'answered',
+        answer: 'LinkedIn için.',
+        answered_by_user_id: ids.employeeA,
+        closed_at: null,
+      });
+      expect(answered?.answered_at).toBeInstanceOf(Date);
+      expect(await page(colleagueA)).toEqual(['in_progress', false, answered?.answered_at]);
+
+      // Routed: the approver of the step reads both questions, oldest first.
+      await routeToHaf(tx, task);
+      const second = await askFrom(tx, task, 'HAF-1', 'Hangi ürün için?');
+      await pastTriggers(
+        tx,
+        `update office.task_questions set created_at = created_at - interval '1 minute'
+         where id = $1`,
+        [first.question],
+      );
+      expect((await listed(approverA)).map((row) => [row.id, row.agent_code, row.status])).toEqual([
+        [first.question, 'KOR-1', 'answered'],
+        [second.question, 'HAF-1', 'open'],
+      ]);
+      expect(await page(approverA)).toEqual(['awaiting_reply', true, null]);
+      expect(await listed(colleagueA)).toEqual([]);
+
+      // No agent run reads through this statement: the worker's role has no privilege.
+      await asWorker(tx, agentRun('HAF-1'));
+      await tx.client.query('savepoint as_worker');
+      await expect(listRequestQuestions(tx.client, task)).rejects.toMatchObject({ code: '42501' });
+      await tx.client.query('rollback to savepoint as_worker');
     });
   });
 

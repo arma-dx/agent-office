@@ -58,7 +58,19 @@ export type AuthorityLevel = z.output<typeof authorityLevelSchema>;
 export const cardStatusSchema = z.enum(['draft', 'trial', 'active']);
 export type CardStatus = z.output<typeof cardStatusSchema>;
 
-export const toolNameSchema = z.string().regex(/^[a-z][a-z_]*$/);
+/**
+ * Names the runner keeps for its own paths (CLAUDE.md "İnsana sor"): never a row of the catalog
+ * and never on a card. `ask_requester` is the runner's tool for a question to the requester of
+ * a request; the runner offers it by itself and it never passes the gate of catalog tools.
+ */
+export const RUNNER_PATH_TOOLS: readonly string[] = ['ask_requester'];
+
+export const toolNameSchema = z
+  .string()
+  .regex(/^[a-z][a-z_]*$/)
+  .refine((name) => !RUNNER_PATH_TOOLS.includes(name), {
+    message: 'This name is reserved for the runner and cannot be a catalog tool',
+  });
 export const skillNameSchema = z.string().regex(/^[a-z][a-z0-9-]*$/);
 export const toolKindSchema = z.enum(['read', 'draft', 'internal_write', 'external_effect']);
 export type ToolKind = z.output<typeof toolKindSchema>;

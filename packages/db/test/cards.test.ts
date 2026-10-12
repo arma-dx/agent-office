@@ -98,6 +98,35 @@ describe('the card files of the repository', () => {
       problem: 'skills/routing/SKILL.md: empty body',
     });
   });
+  it('a catalog or a card that names the runner’s tool stops the sync', async () => {
+    // CLAUDE.md "İnsana sor": the asking tool is the runner's own and passes no gate of a catalog
+    // tool, so neither a card nor the catalog can name it.
+    const RESERVED = 'This name is reserved for the runner and cannot be a catalog tool';
+    const onCard = await files();
+    card(onCard, 'SOS-2').tools = ['submit_for_approval', 'ask_requester'];
+    expect(refusal(() => parseCards(onCard))).toEqual([`SOS-2.yaml: tools.1: ${RESERVED}`]);
+
+    const inCatalog = await files();
+    const catalog = (inCatalog.tools as { tools: unknown[] }).tools;
+    catalog.push({
+      name: 'ask_requester',
+      kind: 'internal_write',
+      description: 'Talep sahibine soru sorar',
+    });
+    // A catalog that cannot be read gives no row: every card's tools are reported after it. The
+    // first problem names the file and the field.
+    expect(refusal(() => parseCards(inCatalog))[0]).toBe(
+      `tools.yaml: tools.${String(catalog.length - 1)}.name: ${RESERVED}`,
+    );
+
+    // The repository's own files name it nowhere and still give their versions.
+    const set = parseCards(await files());
+    expect(set.tools.map((tool) => tool.name)).not.toContain('ask_requester');
+    for (const version of set.versions) {
+      expect(version.card.tools, version.card.code).not.toContain('ask_requester');
+    }
+    expect(set.versions.length).toBeGreaterThan(0);
+  });
 });
 
 describe.skipIf(noDatabase)('the card sync', () => {

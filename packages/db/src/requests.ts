@@ -82,6 +82,10 @@ export interface RequestRow {
   requester_reads: boolean;
   // The latest time waiting work of this request was called for again (decision 49).
   restarted_at: Date | null;
+  // A question of an agent waits for the requester's answer (a yes or no, for every reader).
+  open_question: boolean;
+  // The latest answer to a question of whoever has the turn now; null when there is none.
+  answered_at: Date | null;
   closed_by_user_id: string | null;
   close_reason: string | null;
   closed_after_delivery: boolean;
@@ -188,6 +192,7 @@ const requestSql = (chosen: string): string => `
          coalesce(f.pending_result, false) as pending_result,
          f.last_result_status, f.last_result_attempt, f.last_change_request_at,
          f.not_started_at, f.restarted_at,
+         coalesce(f.open_question, false) as open_question, f.answered_at,
          lr.agent_code as run_agent_code, lr.status as run_status,
          lr.error_code as run_error_code, lr.started_at as run_started_at,
          lr.limit_minutes as run_limit_minutes
@@ -600,6 +605,47 @@ export async function mayCommentOnRequest(client: Queryable, requestId: string):
     [requestId],
   );
   return rows[0]?.may === true;
+}
+
+// Questions ----------------------------------------------------------------------------------------
+
+export interface RequestQuestionRow {
+  id: string;
+  agent_code: string;
+  agent_name: string;
+  status: string;
+  question: string;
+  answer: string | null;
+  created_at: Date;
+  answered_at: Date | null;
+  answered_by_user_id: string | null;
+  requester_user_id: string;
+  closed_at: Date | null;
+}
+
+/**
+ * The questions agents asked on a request, oldest first. Who reads them is decided by the row
+ * policy: the requester, the approver of the request and the founder, as people through the
+ * API's role; everybody else gets no row. An agent run never calls this: the worker's role has
+ * no privilege on the table (a run is given its questions by office.run_questions). The limit
+ * is far above what a request can hold (one per agent, two for the coordinator).
+ */
+export async function listRequestQuestions(
+  client: Queryable,
+  requestId: string,
+): Promise<RequestQuestionRow[]> {
+  const { rows } = await client.query<RequestQuestionRow>(
+    `select q.id, q.agent_code, a.name as agent_name, q.status, q.question, q.answer,
+            q.created_at, q.answered_at, q.answered_by_user_id, q.requester_user_id, q.closed_at
+     from office.task_questions q
+     join office.tasks t on t.id = q.task_id and t.kind = 'request'
+     join office.agent_definitions a on a.code = q.agent_code
+     where q.task_id = $1 and q.company_id = office.ctx_company_id()
+     order by q.created_at, q.id
+     limit 50`,
+    [requestId],
+  );
+  return rows;
 }
 
 export interface ResultApprovalRow {

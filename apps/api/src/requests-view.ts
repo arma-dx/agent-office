@@ -1,6 +1,7 @@
 import type {
   AcceptanceRow,
   RequestCommentRow,
+  RequestQuestionRow,
   RequestRow,
   ResultApprovalRow,
   RoutingRow,
@@ -75,14 +76,19 @@ export function factsOf(row: RequestRow): RequestFacts {
         : null,
     pendingApproval: row.pending_result,
     pendingAcceptance: row.pending_acceptance,
+    openQuestion: row.open_question,
     lastResult:
       lastResult !== null && row.last_result_attempt !== null
         ? { status: lastResult, attempt: row.last_result_attempt }
         : null,
     changesRequested: row.last_change_request_at !== null,
     // A restart after an agent or an AI permission was opened again calls for the work anew
-    // (8 October decision 49).
-    awaitedSince: latest(latest(row.step_created_at, row.last_change_request_at), row.restarted_at),
+    // (8 October decision 49), and so does the answer to a question of the agent whose turn it
+    // is (12 October decision 3).
+    awaitedSince: latest(
+      latest(latest(row.step_created_at, row.last_change_request_at), row.restarted_at),
+      row.answered_at,
+    ),
     notStartedAt: row.not_started_at,
     lastRun:
       row.run_agent_code !== null && row.run_status !== null && row.run_started_at !== null
@@ -293,6 +299,8 @@ export interface JourneyRows {
   steps: StepRow[];
   approvals: ResultApprovalRow[];
   acceptances: AcceptanceRow[];
+  // The questions the reader may read (the statement gave none to anybody else).
+  questions: RequestQuestionRow[];
 }
 
 /** The ids of the people the journey names. */
@@ -302,6 +310,8 @@ export function peopleOfJourney(rows: JourneyRows): string[] {
     ...rows.approvals.flatMap((row) => [row.decided_by_user_id, row.requester_user_id]),
     // Who answered in the requester's place (8 October decision 45).
     ...rows.acceptances.map((row) => row.decided_by_user_id),
+    // Who answered an agent's question.
+    ...rows.questions.map((row) => row.answered_by_user_id),
   ].filter((id): id is string => id !== null);
 }
 
@@ -380,8 +390,26 @@ export function toJourney(rows: JourneyRows, names: Names): JourneyItem[] {
       note: row.decision_reason,
     });
   }
-  // Stable: items of the same instant keep the order above (run, routing, approval, acceptance):
-  // a routing written in the instant a run started is that run's own decision.
+  for (const row of rows.questions) {
+    items.push({
+      kind: 'question',
+      id: row.id,
+      at: row.created_at.toISOString(),
+      agent: { code: row.agent_code, name: row.agent_name },
+      status: questionStatus(row.status),
+      text: row.question,
+      answer: row.answer,
+      answeredAt: row.answered_at?.toISOString() ?? null,
+      answeredBy: optionalPerson(names, row.answered_by_user_id),
+      answeredInPlace:
+        row.answered_by_user_id !== null && row.answered_by_user_id !== row.requester_user_id,
+      closedAt: row.closed_at?.toISOString() ?? null,
+    });
+  }
+  // Stable: items of the same instant keep the order above (run, routing, approval, acceptance,
+  // question): a routing written in the instant a run started is that run's own decision, and a
+  // question sorts after the run that asked it (it is written in a later transaction than the
+  // one that opened the run).
   return items
     .map((item, index) => ({ item, index }))
     .sort((a, b) => a.item.at.localeCompare(b.item.at) || a.index - b.index)
@@ -415,6 +443,32 @@ function approvalStatus(status: string): 'pending' | 'approved' | 'changes_reque
 
 function acceptanceStatus(status: string): 'pending' | 'approved' | 'changes_requested' {
   return status === 'approved' || status === 'changes_requested' ? status : 'pending';
+}
+
+function questionStatus(status: string): 'open' | 'answered' | 'closed' {
+  return status === 'answered' || status === 'closed' ? status : 'open';
+}
+
+/**
+ * The question that waits for an answer, as the page shows it to a reader who may read it;
+ * null when the statement gave no open one (none is open, or the reader may not read it).
+ */
+export function toOpenQuestion(
+  rows: RequestQuestionRow[],
+  mayAnswer: boolean,
+  inPlaceOfRequester: boolean,
+): RequestDetail['question'] {
+  const open = rows.find((row) => row.status === 'open');
+  return open
+    ? {
+        id: open.id,
+        agent: { code: open.agent_code, name: open.agent_name },
+        askedAt: open.created_at.toISOString(),
+        text: open.question,
+        mayAnswer,
+        inPlaceOfRequester,
+      }
+    : null;
 }
 
 /**

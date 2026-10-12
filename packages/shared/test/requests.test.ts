@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
   QUEUE_GRACE_MS,
+  REQUEST_ANSWER_MAX,
   REQUEST_COMMENT_MAX,
+  REQUEST_QUESTION_MAX,
   REQUEST_TITLE_MAX,
   acceptanceCardSchema,
   acceptanceDecisionSchema,
+  answerQuestionSchema,
   approvalCardSchema,
   approvalDecisionSchema,
   closeRequestSchema,
@@ -17,6 +20,7 @@ import {
   requestCauseSchema,
   requestCommentSchema,
   requestDetailSchema,
+  requestStageSchema,
   requestSummarySchema,
   runGraceMs,
   type RequestFacts,
@@ -157,6 +161,35 @@ describe('the bodies a person sends', () => {
     }
   });
 
+  it('the answer contract', () => {
+    // The answer to an agent's question: a text and nothing that moves the request.
+    const parse = (body: unknown): boolean => answerQuestionSchema.safeParse(body).success;
+    expect(answerQuestionSchema.parse({ answer: ' LinkedIn için. \n' })).toEqual({
+      answer: 'LinkedIn için.',
+    });
+    expect(REQUEST_ANSWER_MAX).toBe(10_000);
+    expect(REQUEST_QUESTION_MAX).toBe(2000);
+    expect(parse({ answer: 'x'.repeat(REQUEST_ANSWER_MAX) })).toBe(true);
+    // The limit counts what is stored: the blanks around the text are not part of it.
+    expect(parse({ answer: `  ${'x'.repeat(REQUEST_ANSWER_MAX)}  ` })).toBe(true);
+    expect(parse({ answer: 'x'.repeat(REQUEST_ANSWER_MAX + 1) })).toBe(false);
+    for (const answer of ['', '   ', ' \n\t ', 'a\u0000b', null, 12, undefined, ['Evet']]) {
+      expect(parse({ answer }), JSON.stringify(answer)).toBe(false);
+    }
+    expect(parse({})).toBe(false);
+    // No key that sets a status, names an agent, approves anything or says who answers.
+    for (const extra of [
+      { status: 'in_progress' },
+      { agentCode: 'SOS-2' },
+      { approved: true },
+      { decision: 'approved' },
+      { answeredBy: id },
+      { questionId: id },
+    ]) {
+      expect(parse({ answer: 'Evet.', ...extra }), JSON.stringify(extra)).toBe(false);
+    }
+  });
+
   it('a change request or a rejection names a reason; "other" needs a note', () => {
     const parse = (body: unknown): boolean => approvalDecisionSchema.safeParse(body).success;
     expect(parse({ decision: 'approved', selectedOption: 'A' })).toBe(true);
@@ -267,6 +300,7 @@ describe('the due day and the comments in an answer', () => {
       approval: null,
       result: null,
       acceptance: null,
+      question: null,
       actions: { cancel: true, stop: false, reroute: false },
       comments: { items: [comment], truncated: false, mayWrite: true },
       serverTime: '2026-10-08T10:00:00+03:00',
@@ -323,6 +357,7 @@ describe('where a request is and whose turn it is', () => {
     step: null,
     pendingApproval: false,
     pendingAcceptance: false,
+    openQuestion: false,
     lastResult: null,
     changesRequested: false,
     awaitedSince: null,
@@ -655,6 +690,164 @@ describe('where a request is and whose turn it is', () => {
     expect(of({ requesterReads: false })).toBe('routing - coordinator on time');
   });
 
+  // 12 October decisions 3 and 4.
+  it('a request that waits for an answer: awaiting_reply, the requester’s turn', () => {
+    // The agent of the step asked and ended its run: without the question that run would read
+    // as a run that left nothing.
+    const asked = { openQuestion: true, lastRun: run('SOS-2', 'completed') };
+    expect(of({ lastRun: asked.lastRun }, routed)).toBe(
+      'fell_to_person no_submission approver on time',
+    );
+    expect(deriveStage({ ...routed, ...asked, status: 'awaiting_reply' }, now)).toEqual({
+      stage: 'awaiting_reply',
+      cause: null,
+      turn: 'requester',
+      delayed: false,
+    });
+    // The coordinator asked, before any routing.
+    expect(of({ openQuestion: true, lastRun: run('KOR-1', 'completed') })).toBe(
+      'awaiting_reply - requester on time',
+    );
+    // A person is waited for: no clock calls that late, however long it takes.
+    expect(
+      of({ ...asked, awaitedSince: ago(60 * MINUTE), createdAt: ago(90 * MINUTE) }, routed),
+    ).toBe('awaiting_reply - requester on time');
+    // A stopped agent or coordinator changes nothing while the answer is still to come.
+    expect(of({ ...asked, step: { agentCode: 'SOS-2', agentEnabled: false } }, routed)).toBe(
+      'awaiting_reply - requester on time',
+    );
+    expect(
+      of({ openQuestion: true, coordinatorEnabled: false, lastRun: run('KOR-1', 'completed') }),
+    ).toBe('awaiting_reply - requester on time');
+    expect(requestStageSchema.options).toContain('awaiting_reply');
+  });
+
+  it('the founder has the turn while the requester cannot read the request', () => {
+    // 8 October decision 45, derived: the founder answers in the requester's place.
+    expect(
+      of({ openQuestion: true, requesterReads: false, lastRun: run('SOS-2', 'completed') }, routed),
+    ).toBe('awaiting_reply - founder on time');
+    expect(
+      of({ openQuestion: true, requesterReads: false, lastRun: run('KOR-1', 'completed') }),
+    ).toBe('awaiting_reply - founder on time');
+  });
+
+  it('an open question is said before a closed AI permission and a reached spending limit', () => {
+    const asked = { openQuestion: true, lastRun: run('SOS-2', 'completed') };
+    // The answer can still be given; what holds the work is said once it is.
+    expect(of({ ...asked, agentsMayWork: false }, routed)).toBe(
+      'awaiting_reply - requester on time',
+    );
+    expect(of({ ...asked, spendingLimitReached: true }, routed)).toBe(
+      'awaiting_reply - requester on time',
+    );
+    expect(of({ ...asked, agentsMayWork: false, spendingLimitReached: true }, routed)).toBe(
+      'awaiting_reply - requester on time',
+    );
+    const coordinator = { openQuestion: true, lastRun: run('KOR-1', 'completed') };
+    expect(of({ ...coordinator, agentsMayWork: false })).toBe('awaiting_reply - requester on time');
+    expect(of({ ...coordinator, spendingLimitReached: true })).toBe(
+      'awaiting_reply - requester on time',
+    );
+    // A result that waits for a decision and a closed request keep their own stage: neither can
+    // exist beside an open question, and neither is hidden by one.
+    expect(of({ ...asked, pendingApproval: true }, routed)).toBe(
+      'unit_approval - approver on time',
+    );
+    expect(of({ ...asked, pendingAcceptance: true }, routed)).toBe(
+      'requester_approval - requester on time',
+    );
+    expect(of({ ...asked, status: 'cancelled', closedBy: 'requester' }, routed)).toBe(
+      'cancelled cancelled_by_requester none on time',
+    );
+  });
+
+  it('after the answer the run that asked is not the run that was called for', () => {
+    // The run that asked started 3 s ago; the answer came 1 s ago and called for the work.
+    const answered = { lastRun: run('SOS-2', 'completed'), awaitedSince: ago(1_000) };
+    expect(of(answered, routed)).toBe('working - agent on time');
+    expect(of({ ...answered, changesRequested: true }, routed)).toBe('revising - agent on time');
+    // The coordinator's question: the request is still not routed.
+    const coordinator = { lastRun: run('KOR-1', 'completed'), awaitedSince: ago(1_000) };
+    expect(of(coordinator)).toBe('routing - coordinator on time');
+    // "Gecikti" is counted from the answer, not from the run that asked or from the request.
+    const longAgo = run('SOS-2', 'completed', null, 30 * MINUTE);
+    expect(of({ lastRun: longAgo, awaitedSince: ago(QUEUE_GRACE_MS) }, routed)).toBe(
+      'working - agent on time',
+    );
+    expect(of({ lastRun: longAgo, awaitedSince: ago(QUEUE_GRACE_MS + 1) }, routed)).toBe(
+      'working - agent delayed',
+    );
+    expect(
+      of({
+        lastRun: run('KOR-1', 'completed', null, 30 * MINUTE),
+        createdAt: ago(40 * MINUTE),
+        awaitedSince: ago(QUEUE_GRACE_MS + 1),
+      }),
+    ).toBe('routing - coordinator delayed');
+    // The run the answer started says more than everything before it.
+    expect(of({ awaitedSince: ago(4_000), lastRun: run('SOS-2', 'running') }, routed)).toBe(
+      'working - agent on time',
+    );
+  });
+
+  it('answered while the work is held says what holds it', () => {
+    const answered = { lastRun: run('SOS-2', 'completed'), awaitedSince: ago(1_000) };
+    const coordinator = { lastRun: run('KOR-1', 'completed'), awaitedSince: ago(1_000) };
+    // The agent that asked is stopped: the approver's turn; the coordinator: the founder's.
+    expect(of({ ...answered, step: { agentCode: 'SOS-2', agentEnabled: false } }, routed)).toBe(
+      'fell_to_person agent_stopped approver on time',
+    );
+    expect(of({ ...coordinator, coordinatorEnabled: false })).toBe(
+      'fell_to_person coordinator_closed founder on time',
+    );
+    // The AI permission is closed, or the spending limit reached: the founder's turn.
+    expect(of({ ...answered, agentsMayWork: false }, routed)).toBe(
+      'fell_to_person ai_permission_closed founder on time',
+    );
+    expect(of({ ...coordinator, agentsMayWork: false })).toBe(
+      'fell_to_person ai_permission_closed founder on time',
+    );
+    expect(of({ ...answered, spendingLimitReached: true }, routed)).toBe(
+      'fell_to_person spending_limit_reached founder on time',
+    );
+    expect(of({ ...coordinator, spendingLimitReached: true })).toBe(
+      'fell_to_person spending_limit_reached founder on time',
+    );
+  });
+
+  it('answered, refused and not restarted: çalışma başlamadı', () => {
+    // The job of the answer was refused at the runner's gate at or after the answer, the agent
+    // is open and no restart has called for the work since.
+    const answered = { lastRun: run('SOS-2', 'completed'), awaitedSince: ago(1_000) };
+    expect(of({ ...answered, notStartedAt: ago(1_000) }, routed)).toBe(
+      'fell_to_person not_started approver on time',
+    );
+    expect(of({ ...answered, notStartedAt: ago(500) }, routed)).toBe(
+      'fell_to_person not_started approver on time',
+    );
+    expect(
+      of({
+        lastRun: run('KOR-1', 'completed'),
+        awaitedSince: ago(1_000),
+        notStartedAt: ago(500),
+      }),
+    ).toBe('fell_to_person not_started founder on time');
+    // A missed start from before the answer was answered by it.
+    expect(of({ ...answered, notStartedAt: ago(2_000) }, routed)).toBe('working - agent on time');
+  });
+
+  it('a run that ends without a result after the answer falls to the approver as before', () => {
+    // Answered 4 s ago; the run the answer started ended 3 s ago with neither a result nor a
+    // second question.
+    expect(of({ awaitedSince: ago(4_000), lastRun: run('SOS-2', 'completed') }, routed)).toBe(
+      'fell_to_person no_submission approver on time',
+    );
+    expect(of({ awaitedSince: ago(4_000), lastRun: run('KOR-1', 'completed') })).toBe(
+      'fell_to_person no_routing founder on time',
+    );
+  });
+
   // 8 October decision 49.
   it('a restart moves the moment the work was called for', () => {
     // The switch stopped the run of the step's agent 3 s ago; the agent is open again.
@@ -980,6 +1173,7 @@ describe('the project of a request and who stands in, in an answer', () => {
     approval: card,
     result: null,
     acceptance: { round: 1, returnsToAgent: true, inPlaceOfRequester: true },
+    question: null,
     actions: { cancel: false, stop: true, reroute: false },
     comments: { items: [], truncated: false, mayWrite: true },
     serverTime: at,
@@ -1010,6 +1204,76 @@ describe('the project of a request and who stands in, in an answer', () => {
     expect(acceptanceCardSchema.safeParse(without(acceptance, 'agentsMayWork')).success).toBe(
       false,
     );
+  });
+
+  // 12 October decisions 3 and 4.
+  it('the detail carries the open question or null, and the journey a question item', () => {
+    const question = {
+      id,
+      agent,
+      askedAt: at,
+      text: 'Hangi kanal için yazayım?',
+      mayAnswer: true,
+      inPlaceOfRequester: false,
+    };
+    const waiting = { ...detail, status: 'awaiting_reply', stage: 'awaiting_reply', question };
+    expect(requestDetailSchema.parse(waiting)).toEqual(waiting);
+    // Never left to a guess: no open question for this reader is null, not a missing field.
+    expect(requestDetailSchema.parse(detail).question).toBeNull();
+    expect(requestDetailSchema.safeParse(without(detail, 'question')).success).toBe(false);
+    for (const field of ['id', 'agent', 'askedAt', 'text', 'mayAnswer', 'inPlaceOfRequester']) {
+      expect(
+        requestDetailSchema.safeParse({ ...waiting, question: without(question, field) }).success,
+        field,
+      ).toBe(false);
+    }
+    // A person is never the one who asked.
+    expect(
+      requestDetailSchema.safeParse({ ...waiting, question: { ...question, agent: person } })
+        .success,
+    ).toBe(false);
+    // The stage of a summary.
+    expect(
+      requestSummarySchema.safeParse({
+        ...summary,
+        status: 'awaiting_reply',
+        stage: 'awaiting_reply',
+      }).success,
+    ).toBe(true);
+
+    const item = {
+      kind: 'question',
+      id,
+      at,
+      agent,
+      status: 'answered',
+      text: 'Hangi kanal için yazayım?',
+      answer: 'LinkedIn için.',
+      answeredAt: at,
+      answeredBy: person,
+      answeredInPlace: false,
+      closedAt: null,
+    };
+    expect(journeyItemSchema.parse(item)).toEqual(item);
+    const open = { ...item, status: 'open', answer: null, answeredAt: null, answeredBy: null };
+    expect(journeyItemSchema.parse(open)).toEqual(open);
+    const closed = { ...open, status: 'closed', closedAt: at };
+    expect(journeyItemSchema.parse(closed)).toEqual(closed);
+    // Answered in the requester's place, by somebody whose name is no longer known.
+    expect(
+      journeyItemSchema.safeParse({
+        ...item,
+        answeredInPlace: true,
+        answeredBy: { userId: id, name: null },
+      }).success,
+    ).toBe(true);
+    for (const status of ['pending', 'approved', 'cancelled', null]) {
+      expect(journeyItemSchema.safeParse({ ...item, status }).success, String(status)).toBe(false);
+    }
+    for (const field of ['agent', 'text', 'answer', 'answeredBy', 'answeredInPlace', 'closedAt']) {
+      expect(journeyItemSchema.safeParse(without(item, field)).success, field).toBe(false);
+    }
+    expect(requestDetailSchema.safeParse({ ...waiting, journey: [item, open] }).success).toBe(true);
   });
 
   // 8 October decision 17.

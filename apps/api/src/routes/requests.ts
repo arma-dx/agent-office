@@ -10,6 +10,7 @@ import {
   listPendingAcceptances,
   listPendingApprovals,
   listRequestComments,
+  listRequestQuestions,
   listRequests,
   listResultApprovals,
   listRoutingOptions,
@@ -72,6 +73,7 @@ import {
   toApprovalCard,
   toComments,
   toJourney,
+  toOpenQuestion,
   toResult,
   toSummary,
   type Reader,
@@ -342,7 +344,10 @@ async function detailOf(context: CompanyContext, row: RequestRow): Promise<Reque
     client,
     runs.map((run) => run.id),
   );
-  const journeyRows = { routings, runs, steps, approvals, acceptances };
+  // The questions agents asked, for a reader who may read them (the row policy gives the others
+  // none: the stage alone tells them that the request waits for an answer).
+  const questionRows = await listRequestQuestions(client, row.id);
+  const journeyRows = { routings, runs, steps, approvals, acceptances, questions: questionRows };
   // One more than the page carries: that is how it knows that older comments exist.
   const commentRows = await listRequestComments(client, row.id, REQUEST_COMMENT_LIMIT + 1);
   const mayComment = await mayCommentOnRequest(client, row.id);
@@ -391,6 +396,10 @@ async function detailOf(context: CompanyContext, row: RequestRow): Promise<Reque
             inPlaceOfRequester: standsIn,
           }
         : null,
+    // The reader answers: the requester, or the founder in the place of a requester who cannot
+    // read the request. The database decides (office.answer_question); this says what the page
+    // offers.
+    question: toOpenQuestion(questionRows, open && (isRequester || standsIn), standsIn),
     actions: {
       // The same rules as office.close_request and office.correct_routing, which are the ones
       // that decide: the requester cancels; the founder and the approver of the active step stop

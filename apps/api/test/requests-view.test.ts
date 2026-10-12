@@ -1,8 +1,10 @@
 import type {
   AcceptanceRow,
   RequestCommentRow,
+  RequestQuestionRow,
   RequestRow,
   ResultApprovalRow,
+  RunRow,
 } from '@agent-office/db';
 import {
   REQUEST_COMMENT_LIMIT,
@@ -18,6 +20,7 @@ import {
   toApprovalCard,
   toComments,
   toJourney,
+  toOpenQuestion,
   toSummary,
   type Reader,
 } from '../src/requests-view.ts';
@@ -46,6 +49,8 @@ function row(overrides: Partial<RequestRow> = {}): RequestRow {
     spending_limit_reached: false,
     requester_reads: true,
     restarted_at: null,
+    open_question: false,
+    answered_at: null,
     closed_by_user_id: null,
     close_reason: null,
     closed_after_delivery: false,
@@ -349,6 +354,71 @@ describe('the project, the permission and the stand-in of a request as the panel
     // Before any routing the restart is the only call beside the opening.
     expect(factsOf(row({ restarted_at: ago(1_000) })).awaitedSince).toEqual(ago(1_000));
     expect(factsOf(row({})).awaitedSince).toBeNull();
+    // The answer to a question of the agent whose turn it is is a call too (12 October
+    // decision 3): the latest of the four.
+    expect(factsOf(row({ ...restarted, answered_at: ago(500) })).awaitedSince).toEqual(ago(500));
+    expect(factsOf(row({ ...restarted, answered_at: ago(20_000) })).awaitedSince).toEqual(
+      ago(1_000),
+    );
+  });
+
+  // 12 October decisions 3 and 4.
+  it('the facts: an open question, and an answer calls for the work', () => {
+    const asked: Partial<RequestRow> = {
+      status: 'awaiting_reply',
+      routed: true,
+      step_agent_code: 'SOS-2',
+      step_agent_name: 'Sosyal İçerik Yazım Ajanı',
+      step_agent_enabled: true,
+      step_created_at: ago(60_000),
+      run_agent_code: 'SOS-2',
+      run_status: 'completed',
+      run_started_at: ago(30_000),
+      open_question: true,
+    };
+    expect(factsOf(row({})).openQuestion).toBe(false);
+    expect(factsOf(row(asked)).openQuestion).toBe(true);
+    // The requester's turn, and the reader's own when the reader is the requester.
+    expect(summaryOf(asked)).toMatchObject({
+      status: 'awaiting_reply',
+      stage: 'awaiting_reply',
+      cause: null,
+      turn: { kind: 'person', userId: id(900), name: 'Çalışan' },
+      waitingForMe: true,
+    });
+    expect(summaryOf(asked, FOUNDER).waitingForMe).toBe(false);
+    // A requester who cannot read the request: the founder answers in their place.
+    expect(summaryOf({ ...asked, requester_reads: false }, FOUNDER)).toMatchObject({
+      stage: 'awaiting_reply',
+      turn: { kind: 'founder' },
+      waitingForMe: true,
+    });
+    // Answered: the answer is the latest call, and the run that asked is from before it.
+    const answered = {
+      ...asked,
+      status: 'in_progress',
+      open_question: false,
+      answered_at: ago(1_000),
+    };
+    expect(factsOf(row(answered)).awaitedSince).toEqual(ago(1_000));
+    expect(summaryOf(answered)).toMatchObject({
+      stage: 'working',
+      cause: null,
+      turn: { kind: 'agent', code: 'SOS-2' },
+      waitingForMe: false,
+    });
+    // Without the time of the answer the same row would read as a run that left nothing.
+    expect(summaryOf({ ...answered, answered_at: null }).cause).toBe('no_submission');
+    // The coordinator's question: no step, the answer is the only call beside the opening.
+    const coordinator: Partial<RequestRow> = {
+      status: 'in_progress',
+      run_agent_code: 'KOR-1',
+      run_status: 'completed',
+      run_started_at: ago(30_000),
+      answered_at: ago(1_000),
+    };
+    expect(factsOf(row(coordinator)).awaitedSince).toEqual(ago(1_000));
+    expect(summaryOf(coordinator)).toMatchObject({ stage: 'routing', cause: null });
   });
 
   it('a result that waits for a requester who cannot read the request waits for the founder', () => {
@@ -456,7 +526,14 @@ describe('the project, the permission and the stand-in of a request as the panel
     ...overrides,
   });
   const journeyOf = (row: AcceptanceRow) => {
-    const rows = { routings: [], runs: [], steps: [], approvals: [], acceptances: [row] };
+    const rows = {
+      routings: [],
+      runs: [],
+      steps: [],
+      approvals: [],
+      acceptances: [row],
+      questions: [],
+    };
     return {
       items: toJourney(rows, PEOPLE).map((item) => journeyItemSchema.parse(item)),
       people: peopleOfJourney(rows),
@@ -487,5 +564,131 @@ describe('the project, the permission and the stand-in of a request as the panel
       journeyOf(acceptance({ status: 'pending', decided_at: null, decided_by_user_id: null }))
         .items,
     ).toEqual([expect.objectContaining({ status: 'pending', decidedBy: null })]);
+  });
+  // 12 October decisions 3 and 4.
+  const question = (overrides: Partial<RequestQuestionRow> = {}): RequestQuestionRow => ({
+    id: id(4),
+    agent_code: 'SOS-2',
+    agent_name: 'Sosyal İçerik Yazım Ajanı',
+    status: 'answered',
+    question: 'Hangi kanal için yazayım?',
+    answer: 'LinkedIn için.',
+    created_at: ago(20_000),
+    answered_at: ago(10_000),
+    answered_by_user_id: id(900),
+    requester_user_id: id(900),
+    closed_at: null,
+    ...overrides,
+  });
+  const askingRun: RunRow = {
+    id: id(5),
+    agent_code: 'SOS-2',
+    agent_name: 'Sosyal İçerik Yazım Ajanı',
+    status: 'completed',
+    started_at: ago(20_000),
+    finished_at: ago(20_000),
+    duration_ms: '0',
+    error_code: null,
+    summary: 'Ajan talep sahibine bir soru sordu ve çalışmasını bitirdi.',
+    agent_text: null,
+  };
+  const withQuestions = (questions: RequestQuestionRow[], runs: RunRow[] = []) => ({
+    routings: [],
+    runs,
+    steps: [],
+    approvals: [],
+    acceptances: [],
+    questions,
+  });
+
+  it('the journey places a question after the run that asked and says who answered', () => {
+    // The run and its question carry the same instant here: the run still comes first.
+    const rows = withQuestions([question()], [askingRun]);
+    const items = toJourney(rows, PEOPLE).map((item) => journeyItemSchema.parse(item));
+    expect(items.map((item) => item.kind)).toEqual(['run', 'question']);
+    expect(items[1]).toEqual({
+      kind: 'question',
+      id: id(4),
+      at: ago(20_000).toISOString(),
+      agent: { code: 'SOS-2', name: 'Sosyal İçerik Yazım Ajanı' },
+      status: 'answered',
+      text: 'Hangi kanal için yazayım?',
+      answer: 'LinkedIn için.',
+      answeredAt: ago(10_000).toISOString(),
+      answeredBy: { userId: id(900), name: 'Çalışan' },
+      answeredInPlace: false,
+      closedAt: null,
+    });
+    expect(peopleOfJourney(rows)).toContain(id(900));
+
+    // The founder answered in the requester's place: named, and said so.
+    const inPlace = withQuestions([question({ answered_by_user_id: id(901) })]);
+    expect(toJourney(inPlace, PEOPLE)).toEqual([
+      expect.objectContaining({
+        answeredBy: { userId: id(901), name: 'Kurucu' },
+        answeredInPlace: true,
+      }),
+    ]);
+    expect(peopleOfJourney(inPlace)).toContain(id(901));
+    // Open, and closed without an answer: nobody answered.
+    const open = question({
+      status: 'open',
+      answer: null,
+      answered_at: null,
+      answered_by_user_id: null,
+    });
+    const closed = { ...open, id: id(6), status: 'closed', closed_at: ago(5_000) };
+    const unanswered = toJourney(withQuestions([open, closed]), PEOPLE).map((item) =>
+      journeyItemSchema.parse(item),
+    );
+    expect(unanswered).toEqual([
+      expect.objectContaining({
+        status: 'open',
+        answer: null,
+        answeredAt: null,
+        answeredBy: null,
+        answeredInPlace: false,
+        closedAt: null,
+      }),
+      expect.objectContaining({
+        status: 'closed',
+        answer: null,
+        answeredBy: null,
+        closedAt: ago(5_000).toISOString(),
+      }),
+    ]);
+    expect(peopleOfJourney(withQuestions([open, closed]))).toEqual([]);
+    // A reader who may not read the questions was given no row: the journey has no item.
+    expect(toJourney(withQuestions([], [askingRun]), PEOPLE).map((item) => item.kind)).toEqual([
+      'run',
+    ]);
+  });
+
+  it('the open question of the page', () => {
+    const open = question({
+      id: id(7),
+      status: 'open',
+      answer: null,
+      answered_at: null,
+      answered_by_user_id: null,
+    });
+    // The one who answers, a reader who only reads, and the founder in the requester's place.
+    expect(toOpenQuestion([question(), open], true, false)).toEqual({
+      id: id(7),
+      agent: { code: 'SOS-2', name: 'Sosyal İçerik Yazım Ajanı' },
+      askedAt: ago(20_000).toISOString(),
+      text: 'Hangi kanal için yazayım?',
+      mayAnswer: true,
+      inPlaceOfRequester: false,
+    });
+    expect(toOpenQuestion([open], false, false)).toMatchObject({ mayAnswer: false });
+    expect(toOpenQuestion([open], true, true)).toMatchObject({
+      mayAnswer: true,
+      inPlaceOfRequester: true,
+    });
+    // None is open, or the statement gave the reader no row.
+    expect(toOpenQuestion([question()], true, false)).toBeNull();
+    expect(toOpenQuestion([question({ status: 'closed', answer: null })], true, false)).toBeNull();
+    expect(toOpenQuestion([], true, false)).toBeNull();
   });
 });

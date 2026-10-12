@@ -76,6 +76,10 @@ export const apiErrorCodeSchema = z.enum([
   'due_date_past',
   // A comment on a request by somebody who is not its requester, its approver or the founder.
   'comment_not_allowed',
+  // An answer to an agent's question by somebody who is not the one who answers it.
+  'answer_not_allowed',
+  // The question was answered or closed meanwhile; the page is read again.
+  'question_closed',
   // Projects and customers (8 October decisions 14 to 22).
   'customer_exists',
   'customer_not_found',
