@@ -18,6 +18,7 @@ import {
   listPendingApprovals,
   listRequestComments,
   listRequests,
+  listSteps,
   mayCommentOnRequest,
   ownRequestCommentExists,
   readAgentSwitch,
@@ -4675,6 +4676,130 @@ describe.skipIf(noDatabase)('a request inside a project', () => {
              as flow`,
         ),
       ).toEqual({ flow: false });
+    });
+  });
+});
+
+describe.skipIf(noDatabase)('the steps of a run, as the journey of a request reads them', () => {
+  afterAll(closePools);
+
+  const READ_TOOL = 'read_project_file';
+  const CALL = `insert into office.tool_calls
+      (company_id, run_id, seq, tool_name, status, error_code, input, result)
+    values (office.ctx_company_id(), $1, $2, $3, $4, $5, $6, $7)`;
+  const inProjectA = (agent: string): ContextInput => ({
+    ...agentRun(ids.employeeA, agent),
+    projectId: ids.projectA,
+  });
+
+  /** A project request of the employee with one run of the coordinator; the catalogue has the tool. */
+  async function runInProject(tx: Tx): Promise<string> {
+    await asRole(tx, null);
+    await tx.setContext({});
+    await tx.exec(
+      `insert into office.tools (name, kind, description) values ($1, 'read', 'Reads a file')`,
+      [READ_TOOL],
+    );
+    await asRole(tx, 'app');
+    await tx.setContext(employeeA);
+    const task = await openRequest(tx, ids.projectA);
+    await tx.setContext(inProjectA('KOR-1'));
+    return openRun(tx, task, 'KOR-1');
+  }
+
+  it('the steps of a run name the file a read named, to a reader who may read it', async () => {
+    await inAdminTransaction(async (tx) => {
+      const run = await runInProject(tx);
+      const calls: [string, string, string | null, unknown][] = [
+        // A read that gave the file, and one that was refused: both name the file.
+        [READ_TOOL, 'succeeded', null, { file_id: ids.projectFileA }],
+        [READ_TOOL, 'blocked', 'file_too_large', { file_id: ids.projectFileA }],
+        // A read without an input (refused before an id was known), with an input that is no
+        // id, and with the id of a file of another company's project: no name.
+        [READ_TOOL, 'failed', 'invalid_input', null],
+        [READ_TOOL, 'failed', 'file_not_listed', { file_id: 'not-an-id' }],
+        [READ_TOOL, 'failed', 'file_not_listed', { file_id: ids.projectFileP }],
+        // Another tool whose input happens to hold a file id names nothing.
+        ['read_task', 'succeeded', null, { file_id: ids.projectFileA }],
+      ];
+      for (const [index, [tool, status, code, input]] of calls.entries()) {
+        await tx.exec(CALL, [
+          run,
+          index + 1,
+          tool,
+          status,
+          code,
+          input === null ? null : JSON.stringify(input),
+          null,
+        ]);
+      }
+      const names = async (reader: ContextInput): Promise<(string | null)[]> => {
+        await tx.setContext(reader);
+        return (await listSteps(tx.client, [run])).map((step) => step.file_name);
+      };
+      const NAMED = ['Şartname.pdf', 'Şartname.pdf', null, null, null, null];
+      // A member of the project and the founder read the file, so they read its name.
+      expect(await names(employeeA)).toEqual(NAMED);
+      expect(await names(founderA)).toEqual(NAMED);
+      // Somebody who reads neither the project nor the run is given no step at all.
+      expect(await names(approverA)).toEqual([]);
+      expect(await names(externalA)).toEqual([]);
+      expect(await names(founderP)).toEqual([]);
+      // In order, with the tool and the status as before.
+      await tx.setContext(employeeA);
+      expect(
+        (await listSteps(tx.client, [run])).map((step) => [step.tool_name, step.status]),
+      ).toEqual(calls.map(([tool, status]) => [tool, status]));
+
+      // The raw content of a call is purged after 90 days: the id is gone, and with it the name.
+      await asRole(tx, null);
+      await tx.setContext({});
+      await tx.exec('update office.tool_calls set input = null where run_id = $1 and seq = 2', [
+        run,
+      ]);
+      await asRole(tx, 'app');
+      expect(await names(employeeA)).toEqual(['Şartname.pdf', null, null, null, null, null]);
+
+      // The file is deleted: nothing keeps its name (docs/SONRA.md P4-g).
+      await tx.setContext(employeeA);
+      expect(await tx.exec('delete from office.files where id = $1', [ids.projectFileA])).toBe(1);
+      expect(await names(employeeA)).toEqual([null, null, null, null, null, null]);
+      expect(await names(founderA)).toEqual([null, null, null, null, null, null]);
+    });
+  });
+
+  it('a step carries the code of a call that did not take effect', async () => {
+    await inAdminTransaction(async (tx) => {
+      const run = await runInProject(tx);
+      await tx.exec(CALL, [run, 1, 'read_task', 'succeeded', null, null, null]);
+      await tx.exec(CALL, [run, 2, 'read_task', 'failed', 'invalid_input', null, null]);
+      await tx.exec(CALL, [run, 3, READ_TOOL, 'blocked', 'spending_limit_reached', null, null]);
+      await tx.setContext(founderA);
+      expect(await listSteps(tx.client, [run])).toEqual([
+        {
+          run_id: run,
+          tool_name: 'read_task',
+          status: 'succeeded',
+          error_code: null,
+          file_name: null,
+        },
+        {
+          run_id: run,
+          tool_name: 'read_task',
+          status: 'failed',
+          error_code: 'invalid_input',
+          file_name: null,
+        },
+        {
+          run_id: run,
+          tool_name: READ_TOOL,
+          status: 'blocked',
+          error_code: 'spending_limit_reached',
+          file_name: null,
+        },
+      ]);
+      // Never an input or a result: the row has these five fields and no other.
+      expect(await listSteps(tx.client, [])).toEqual([]);
     });
   });
 });

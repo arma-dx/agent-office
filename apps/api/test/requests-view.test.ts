@@ -601,6 +601,62 @@ describe('the project, the permission and the stand-in of a request as the panel
     questions,
   });
 
+  it("the journey gives each step its code and, for a read of a project file, the file's name", () => {
+    const rows = {
+      ...withQuestions([], [askingRun]),
+      steps: [
+        {
+          run_id: askingRun.id,
+          tool_name: 'read_project_file',
+          status: 'succeeded',
+          error_code: null,
+          file_name: 'Etkinlik programı.pdf',
+        },
+        {
+          run_id: askingRun.id,
+          tool_name: 'read_project_file',
+          status: 'blocked',
+          error_code: 'file_kind_not_read',
+          file_name: 'Teklif.docx',
+        },
+        {
+          run_id: askingRun.id,
+          tool_name: 'submit_for_approval',
+          status: 'succeeded',
+          error_code: null,
+          file_name: null,
+        },
+        // A step of another run is not this run's.
+        {
+          run_id: id(77),
+          tool_name: 'read_project_file',
+          status: 'succeeded',
+          error_code: null,
+          file_name: 'Başka.pdf',
+        },
+      ],
+    };
+    const [run] = toJourney(rows, PEOPLE).map((item) => journeyItemSchema.parse(item));
+    expect(run).toMatchObject({
+      kind: 'run',
+      steps: [
+        {
+          tool: 'read_project_file',
+          status: 'succeeded',
+          code: null,
+          fileName: 'Etkinlik programı.pdf',
+        },
+        {
+          tool: 'read_project_file',
+          status: 'blocked',
+          code: 'file_kind_not_read',
+          fileName: 'Teklif.docx',
+        },
+        { tool: 'submit_for_approval', status: 'succeeded', code: null, fileName: null },
+      ],
+    });
+  });
+
   it('the journey places a question after the run that asked and says who answered', () => {
     // The run and its question carry the same instant here: the run still comes first.
     const rows = withQuestions([question()], [askingRun]);

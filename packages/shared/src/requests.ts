@@ -636,6 +636,12 @@ const stepSchema = z.object({
   // The catalog name of the tool; the panel has a fixed verb for each.
   tool: z.string(),
   status: z.enum(['started', 'succeeded', 'failed', 'sent_for_approval', 'blocked']),
+  // The code of a call that did not take effect; null otherwise. A code, never a text.
+  code: z.string().nullable().optional(),
+  // For a read of a project file: the file's name, when the reader may read the file and its
+  // record still names it; null for every other tool, for a file that was deleted, and once
+  // the raw content of the call was purged (the id of the file is raw content).
+  fileName: z.string().nullable().optional(),
 });
 
 /**

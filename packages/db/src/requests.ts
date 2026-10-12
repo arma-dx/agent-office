@@ -513,15 +513,30 @@ export interface StepRow {
   run_id: string;
   tool_name: string;
   status: string;
+  error_code: string | null;
+  file_name: string | null;
 }
 
-/** The tool calls of the runs, by name and status only: never their input or their result. */
+/**
+ * The tool calls of the runs, by name, status and code: never their input or their result. One
+ * thing is read out of an input: the id of the project file a read named, and only to look up
+ * that file's name under the READER's own row policies (a reader who may not read the file, a
+ * deleted file and a call whose raw content was purged all give no name).
+ */
 export async function listSteps(client: Queryable, runIds: string[]): Promise<StepRow[]> {
   if (runIds.length === 0) {
     return [];
   }
   const { rows } = await client.query<StepRow>(
-    `select c.run_id, c.tool_name, c.status from office.tool_calls c
+    `select c.run_id, c.tool_name, c.status, c.error_code, f.name as file_name
+     from office.tool_calls c
+     left join office.files f
+       on c.tool_name = 'read_project_file' and f.kind = 'project_file'
+      and f.project_id = c.project_id
+      and f.id = case
+            when c.input ->> 'file_id' ~ '^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$'
+            then (c.input ->> 'file_id')::uuid
+          end
      where c.run_id = any ($1::uuid[])
      order by c.run_id, c.seq`,
     [runIds],

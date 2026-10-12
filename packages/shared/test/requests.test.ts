@@ -1339,6 +1339,40 @@ describe('the project of a request and who stands in, in an answer', () => {
     expect(journeyItemSchema.safeParse(without(item, 'decidedBy')).success).toBe(false);
   });
 
+  it('a step parses with and without a code and a file name', () => {
+    const run = {
+      kind: 'run',
+      id,
+      at,
+      agent,
+      status: 'completed',
+      finishedAt: at,
+      durationMs: 1200,
+      errorCode: null,
+      summary: null,
+      agentText: null,
+    };
+    const steps = (list: unknown[]) => journeyItemSchema.safeParse({ ...run, steps: list });
+    // As an older answer and the panel's fixtures have it: the tool and the status alone.
+    const plain = { tool: 'submit_for_approval', status: 'succeeded' };
+    expect(steps([plain]).data).toEqual({ ...run, steps: [plain] });
+    // As the API answers: both fields, null when there is nothing to say.
+    const empty = { ...plain, code: null, fileName: null };
+    expect(steps([empty]).data).toEqual({ ...run, steps: [empty] });
+    const read = { tool: 'read_project_file', status: 'succeeded', code: null, fileName: 'a.pdf' };
+    const refused = {
+      tool: 'read_project_file',
+      status: 'blocked',
+      code: 'file_too_large',
+      fileName: 'Şartname.pdf',
+    };
+    expect(steps([read, refused]).data).toEqual({ ...run, steps: [read, refused] });
+    // A code and a name are texts or nothing.
+    for (const bad of [{ code: 7 }, { fileName: 7 }, { fileName: ['a.pdf'] }, { code: {} }]) {
+      expect(steps([{ ...plain, ...bad }]).success, JSON.stringify(bad)).toBe(false);
+    }
+  });
+
   it('the two causes of a closed permission are causes of a request', () => {
     const causes: readonly string[] = requestCauseSchema.options;
     expect(causes).toContain('ai_permission_closed');

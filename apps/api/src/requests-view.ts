@@ -340,6 +340,8 @@ export function toJourney(rows: JourneyRows, names: Names): JourneyItem[] {
         .map((step) => ({
           tool: step.tool_name,
           status: stepStatus(step.status),
+          code: step.error_code,
+          fileName: step.file_name,
         })),
     });
   }
