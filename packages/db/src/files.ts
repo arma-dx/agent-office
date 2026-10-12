@@ -8,8 +8,9 @@ import type { Queryable } from './queryable.ts';
  * the project and the founder delete it (11 October decision 2).
  *
  * storage_path is the key of the file's bytes in the file store. It is written by the database
- * and leaves this module only towards the file module of the API (apps/api/src/files), which
- * reaches the store with it after the row was read here.
+ * and leaves this module only towards the two file modules, which reach the store with it after
+ * the row was read here: the API's (apps/api/src/files) and the worker's reading one
+ * (apps/worker/src/files).
  */
 
 export interface ProjectFileRow {
@@ -110,4 +111,50 @@ export async function deleteProjectFile(
     [projectId, fileId],
   );
   return rows[0]?.storage_path ?? null;
+}
+
+// An agent run (step 6) ----------------------------------------------------------------------------
+
+export interface RunProjectFileRow {
+  id: string;
+  // The row's own company and project, so that the worker's file module can hold the key against
+  // them before it asks the storage.
+  company_id: string;
+  project_id: string;
+  name: string;
+  mime_type: string;
+  size_bytes: number;
+  sha256: string;
+  storage_path: string;
+  created_at: Date;
+}
+
+// The project is the context's, never a parameter: a run reads the files of its own project.
+const RUN_FILE_SQL = `
+  select f.id, f.company_id, f.project_id, f.name, f.mime_type, f.size_bytes::int as size_bytes,
+         f.sha256, f.storage_path, f.created_at
+  from office.files f
+  where f.kind = 'project_file' and f.company_id = office.ctx_company_id()
+    and f.project_id = office.ctx_project_id()`;
+
+/**
+ * The files of the run's project, newest first (at most 200: the project's limit). Which rows
+ * come back is the row policy's answer (project_file_run_reads): none without a project in the
+ * context, none while agents may not work in the project, none for an agent whose card does not
+ * name the reading tool.
+ */
+export async function listRunProjectFiles(client: Queryable): Promise<RunProjectFileRow[]> {
+  const { rows } = await client.query<RunProjectFileRow>(
+    `${RUN_FILE_SQL} order by f.created_at desc, f.id`,
+  );
+  return rows;
+}
+
+/** One file of the run's project; null when the run is not shown it (also: deleted). */
+export async function readRunProjectFile(
+  client: Queryable,
+  fileId: string,
+): Promise<RunProjectFileRow | null> {
+  const { rows } = await client.query<RunProjectFileRow>(`${RUN_FILE_SQL} and f.id = $1`, [fileId]);
+  return rows[0] ?? null;
 }

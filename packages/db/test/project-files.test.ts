@@ -1,11 +1,14 @@
 import { randomUUID } from 'node:crypto';
+import { AGENT_READ_TOOL } from '@agent-office/shared';
 import { afterAll, describe, expect, it } from 'vitest';
 import type { ContextInput } from '../src/context.ts';
 import {
   deleteProjectFile,
   insertProjectFile,
   listProjectFiles,
+  listRunProjectFiles,
   readProjectFile,
+  readRunProjectFile,
   type NewProjectFile,
 } from '../src/files.ts';
 import { addProjectMember, setProjectMemberRole } from '../src/projects.ts';
@@ -552,5 +555,295 @@ describe.skipIf(noDatabase)('project files', () => {
       await second.rollback();
       await third.rollback();
     }
+  });
+});
+
+// Agents read (8 October decision 21; step 6) ------------------------------------------------------
+//
+// An agent run reads the RECORDS of the files of its own project, and only when the agent's
+// current card version names the reading tool. The fixtures' card versions name no tool, so every
+// case writes its own. One privileged transaction goes on as the worker's role (asRole) and is
+// rolled back.
+
+/** The context of an agent run of the worker. */
+function runOf(
+  agentCode: string,
+  userId: string,
+  projectId: string | null = ids.projectA,
+  companyId: string = ids.arma,
+): ContextInput {
+  return { companyId, userId, agentCode, projectId };
+}
+
+async function asAdministrator(tx: Tx): Promise<void> {
+  await asRole(tx, null);
+  await tx.setContext({});
+}
+
+async function asWorkerRun(tx: Tx, context: ContextInput): Promise<void> {
+  await asRole(tx, 'worker');
+  await tx.setContext(context);
+}
+
+/**
+ * Writes a card version whose card names the given tools and makes it the agent's current one, as
+ * the definitions sync would (the privileged role, no person in the context).
+ */
+async function cardNames(tx: Tx, agentCode: string, tools: string[]): Promise<void> {
+  await asAdministrator(tx);
+  const id = randomUUID();
+  await tx.exec(
+    `insert into office.card_versions (id, agent_code, git_commit, content, authority_level, model)
+     values ($1, $2, $3, $4, 'Y1', 'test-model')`,
+    // One version per commit and agent: a commit id of this version's own.
+    [id, agentCode, id.replaceAll('-', '').slice(0, 12), JSON.stringify({ card: { tools } })],
+  );
+  await tx.exec('update office.agent_definitions set current_version_id = $1 where code = $2', [
+    id,
+    agentCode,
+  ]);
+}
+
+/** One more project file, written as an administrator would (no person, the key named). */
+async function adminFile(tx: Tx, companyId: string, projectId: string): Promise<string> {
+  await asAdministrator(tx);
+  const fileId = randomUUID();
+  await tx.exec(
+    `insert into office.files
+       (id, company_id, project_id, kind, name, mime_type, size_bytes, sha256, storage_path)
+     values ($1, $2, $3, 'project_file', 'b.pdf', 'application/pdf', 5, $4, $5)`,
+    [fileId, companyId, projectId, SHA, `${companyId}/projects/${projectId}/${fileId}`],
+  );
+  return fileId;
+}
+
+describe.skipIf(noDatabase)('agents read project files', () => {
+  afterAll(closePools);
+
+  it('a run of an agent whose card names the tool reads the files of its project', async () => {
+    await inAdminTransaction(async (tx) => {
+      await cardNames(tx, 'KOR-1', ['route_task', AGENT_READ_TOOL]);
+      for (const userId of [ids.founder, ids.employeeA]) {
+        await asWorkerRun(tx, runOf('KOR-1', userId));
+        const listed = await listRunProjectFiles(tx.client);
+        expect(listed, userId).toHaveLength(1);
+        expect(listed[0]).toMatchObject({
+          id: ids.projectFileA,
+          company_id: ids.arma,
+          project_id: ids.projectA,
+          name: 'Şartname.pdf',
+          mime_type: 'application/pdf',
+          size_bytes: 1200,
+          sha256: SHA,
+          storage_path: `${ids.arma}/projects/${ids.projectA}/${ids.projectFileA}`,
+        });
+        expect(listed[0]?.created_at).toBeInstanceOf(Date);
+        expect(await readRunProjectFile(tx.client, ids.projectFileA)).toEqual(listed[0]);
+        expect(await readRunProjectFile(tx.client, randomUUID())).toBeNull();
+      }
+      // Newest first.
+      const newer = await adminFile(tx, ids.arma, ids.projectA);
+      await asWorkerRun(tx, runOf('KOR-1', ids.founder));
+      expect((await listRunProjectFiles(tx.client)).map((row) => row.id)).toEqual([
+        newer,
+        ids.projectFileA,
+      ]);
+    });
+  });
+
+  it('a run reads no file outside its project', async () => {
+    await inAdminTransaction(async (tx) => {
+      await cardNames(tx, 'KOR-1', [AGENT_READ_TOOL]);
+      // Another project of the same company that has a file and an open AI permission.
+      await asAdministrator(tx);
+      const [other] = await tx.rows<{ id: string }>(
+        `insert into office.projects (company_id, customer_id, name, ai_allowed)
+         values ($1, null, 'Another project', true) returning id`,
+        [ids.arma],
+      );
+      const otherProject = other?.id ?? '';
+      const otherFile = await adminFile(tx, ids.arma, otherProject);
+
+      // No project in the context: none, also not by id.
+      await asWorkerRun(tx, runOf('KOR-1', ids.founder, null));
+      expect(await listRunProjectFiles(tx.client)).toEqual([]);
+      expect(await readRunProjectFile(tx.client, ids.projectFileA)).toBeNull();
+      expect(await projectFiles(tx)).toBe(0);
+
+      // In one project: nothing of the other, in either direction.
+      await asWorkerRun(tx, runOf('KOR-1', ids.founder, ids.projectA));
+      expect(await readRunProjectFile(tx.client, otherFile)).toBeNull();
+      expect(
+        await tx.rows('select 1 from office.files where id = $1', [otherFile]),
+        'not by a plain statement either',
+      ).toEqual([]);
+      await asWorkerRun(tx, runOf('KOR-1', ids.founder, otherProject));
+      expect((await listRunProjectFiles(tx.client)).map((row) => row.id)).toEqual([otherFile]);
+      expect(await readRunProjectFile(tx.client, ids.projectFileA)).toBeNull();
+
+      // Rule 2: each company's run reads its own project's file and nothing of the other's.
+      await asWorkerRun(tx, runOf('KOR-1', ids.founder, ids.projectP, ids.pillika));
+      expect((await listRunProjectFiles(tx.client)).map((row) => row.id)).toEqual([
+        ids.projectFileP,
+      ]);
+      for (const context of [
+        runOf('KOR-1', ids.founder, ids.projectP, ids.arma),
+        runOf('KOR-1', ids.founder, ids.projectA, ids.pillika),
+      ]) {
+        await asWorkerRun(tx, context);
+        expect(await listRunProjectFiles(tx.client), JSON.stringify(context)).toEqual([]);
+        expect(await projectFiles(tx), JSON.stringify(context)).toBe(0);
+        expect(await readRunProjectFile(tx.client, ids.projectFileA)).toBeNull();
+        expect(await readRunProjectFile(tx.client, ids.projectFileP)).toBeNull();
+      }
+    });
+  });
+
+  it('rule 12: no AI permission, no file', async () => {
+    await inAdminTransaction(async (tx) => {
+      await cardNames(tx, 'KOR-1', [AGENT_READ_TOOL]);
+      const noAi = await adminFile(tx, ids.arma, ids.projectANoAi);
+      const customerNoAi = await adminFile(tx, ids.arma, ids.projectACustomerNoAi);
+      // The project's own permission is off; the customer's is.
+      for (const [projectId, fileId] of [
+        [ids.projectANoAi, noAi],
+        [ids.projectACustomerNoAi, customerNoAi],
+      ] as const) {
+        await asWorkerRun(tx, runOf('KOR-1', ids.founder, projectId));
+        expect(await listRunProjectFiles(tx.client), projectId).toEqual([]);
+        expect(await readRunProjectFile(tx.client, fileId), projectId).toBeNull();
+      }
+      // Closed after a first read: the next statement of the same run gives none.
+      const run = runOf('KOR-1', ids.employeeA);
+      await asWorkerRun(tx, run);
+      expect(await listRunProjectFiles(tx.client)).toHaveLength(1);
+      await asAdministrator(tx);
+      await tx.exec('update office.projects set ai_allowed = false where id = $1', [ids.projectA]);
+      await asWorkerRun(tx, run);
+      expect(await listRunProjectFiles(tx.client)).toEqual([]);
+      expect(await readRunProjectFile(tx.client, ids.projectFileA)).toBeNull();
+      // Open again, and the customer's closed: the same.
+      await asAdministrator(tx);
+      await tx.exec('update office.projects set ai_allowed = true where id = $1', [ids.projectA]);
+      await asWorkerRun(tx, run);
+      expect(await listRunProjectFiles(tx.client)).toHaveLength(1);
+      await asAdministrator(tx);
+      await tx.exec('update office.customers set ai_allowed = false where id = $1', [
+        ids.customerA,
+      ]);
+      await asWorkerRun(tx, run);
+      expect(await listRunProjectFiles(tx.client)).toEqual([]);
+    });
+  });
+
+  it('a run in the name of somebody who may not read the project reads no file', async () => {
+    await inAdminTransaction(async (tx) => {
+      await cardNames(tx, 'KOR-1', [AGENT_READ_TOOL]);
+      // An employee who is no member of the project, an external person, a person of the other
+      // company, and nobody.
+      for (const userId of [ids.approverA, ids.externalA, ids.employeeP]) {
+        await asWorkerRun(tx, runOf('KOR-1', userId));
+        expect(await listRunProjectFiles(tx.client), userId).toEqual([]);
+        expect(await readRunProjectFile(tx.client, ids.projectFileA), userId).toBeNull();
+      }
+      await asWorkerRun(tx, { companyId: ids.arma, agentCode: 'KOR-1', projectId: ids.projectA });
+      expect(await listRunProjectFiles(tx.client)).toEqual([]);
+      // The member reads (so the answers above are not an empty table's).
+      await asWorkerRun(tx, runOf('KOR-1', ids.employeeA));
+      expect(await listRunProjectFiles(tx.client)).toHaveLength(1);
+    });
+  });
+
+  it('an agent whose card does not name the tool reads no file', async () => {
+    await inAdminTransaction(async (tx) => {
+      // A card with other tools, one whose tool list is missing, and a name that only looks like it.
+      await cardNames(tx, 'KOR-1', [AGENT_READ_TOOL]);
+      await cardNames(tx, 'HAF-1', ['read_project', 'read_project_files', 'submit_for_approval']);
+      for (const agent of ['HAF-1', 'P-IST-1', 'NO-SUCH-1']) {
+        await asWorkerRun(tx, runOf(agent, ids.founder));
+        expect(await listRunProjectFiles(tx.client), agent).toEqual([]);
+        expect(await readRunProjectFile(tx.client, ids.projectFileA), agent).toBeNull();
+        expect(await tx.rows('select office.run_reads_project_files() as reads'), agent).toEqual([
+          { reads: false },
+        ]);
+      }
+      await asWorkerRun(tx, runOf('KOR-1', ids.founder));
+      expect(await tx.rows('select office.run_reads_project_files() as reads')).toEqual([
+        { reads: true },
+      ]);
+      expect(await listRunProjectFiles(tx.client)).toHaveLength(1);
+      // The tool is taken off the card: hidden from the agent's next statement.
+      await cardNames(tx, 'KOR-1', ['route_task']);
+      await asWorkerRun(tx, runOf('KOR-1', ids.founder));
+      expect(await listRunProjectFiles(tx.client)).toEqual([]);
+
+      // The name in the database's function is the contract's.
+      await asAdministrator(tx);
+      const [definition] = await tx.rows<{ source: string }>(
+        `select pg_get_functiondef('office.run_reads_project_files'::regproc) as source`,
+      );
+      expect(definition?.source).toContain(`? '${AGENT_READ_TOOL}'`);
+    });
+  });
+
+  it('a run changes nothing', async () => {
+    await inAdminTransaction(async (tx) => {
+      await cardNames(tx, 'KOR-1', [AGENT_READ_TOOL]);
+      for (const role of ['worker', 'app'] as const) {
+        await asRole(tx, role);
+        await tx.setContext(runOf('KOR-1', ids.founder));
+        // It sees the file ...
+        expect(await readRunProjectFile(tx.client, ids.projectFileA), role).not.toBeNull();
+        // ... and deletes, adds and changes none.
+        expect(
+          await tx.exec('delete from office.files where id = $1', [ids.projectFileA]),
+          role,
+        ).toBe(0);
+        expect(await deleteProjectFile(tx.client, ids.projectA, ids.projectFileA)).toBeNull();
+        expect((await raw(tx)).code, role).toBe('42501');
+        expect(
+          (
+            await tx.expectError(`update office.files set name = 'y.pdf' where id = $1`, [
+              ids.projectFileA,
+            ])
+          ).code,
+          role,
+        ).toBe('42501');
+        expect(await readRunProjectFile(tx.client, ids.projectFileA)).toMatchObject({
+          name: 'Şartname.pdf',
+        });
+      }
+    });
+  });
+
+  it("nothing reads without a context, and a person through the worker's role reads none", async () => {
+    await inAdminTransaction(async (tx) => {
+      await cardNames(tx, 'KOR-1', [AGENT_READ_TOOL]);
+      await asRole(tx, 'worker');
+      for (const context of [
+        ...NOBODY,
+        // A person, with and without a project in the context: the worker's role reads for runs.
+        founderA,
+        employeeA,
+        { ...founderA, projectId: ids.projectA },
+        { ...employeeA, projectId: ids.projectA },
+        // An agent without a company.
+        { agentCode: 'KOR-1', userId: ids.founder, projectId: ids.projectA },
+      ] satisfies ContextInput[]) {
+        await tx.setContext(context);
+        expect(await listRunProjectFiles(tx.client), JSON.stringify(context)).toEqual([]);
+        expect(
+          await readRunProjectFile(tx.client, ids.projectFileA),
+          JSON.stringify(context),
+        ).toBeNull();
+        expect(await projectFiles(tx), JSON.stringify(context)).toBe(0);
+      }
+      // A person through the API's role reads as before, by the people's policy, and the run's
+      // statements give them nothing without a project in the context.
+      await asRole(tx, 'app');
+      await tx.setContext(employeeA);
+      expect(await projectFiles(tx)).toBe(1);
+      expect(await listRunProjectFiles(tx.client)).toEqual([]);
+    });
   });
 });
