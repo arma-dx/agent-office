@@ -14,6 +14,7 @@ import {
   ASK_TOOL,
   ASK_TOOL_COORDINATOR,
   HANDLED_TOOLS,
+  READ_PROJECT_FILE,
   ROUTE_TASK,
   SUBMIT_FOR_APPROVAL,
   modelTool,
@@ -485,7 +486,9 @@ export function unitsForProbe(
 /**
  * The request of one case: what the runner sends for that run (run.ts), put together from the
  * same functions. The tools are the card's handled tools and, when the run may ask and the
- * rules carry the section that says when not to, the asking tool as that agent is given it.
+ * rules carry the section that says when not to, the asking tool as that agent is given it. No
+ * request of this probe is inside a project, so the tool that reads project files is not among
+ * them, as in the runner (the probe of the file reading is probe-files.ts).
  */
 export function probeRequest(
   stored: StoredCard,
@@ -495,7 +498,7 @@ export function probeRequest(
 ): ModelRequest {
   const coordinator = entry.agent === COORDINATOR_AGENT_CODE;
   const offered: ModelTool[] = stored.card.tools
-    .filter((name) => HANDLED_TOOLS.includes(name))
+    .filter((name) => HANDLED_TOOLS.includes(name) && name !== READ_PROJECT_FILE)
     .flatMap((name) => {
       const tool = modelTool(name);
       return tool ? [tool] : [];

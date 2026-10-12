@@ -1,4 +1,4 @@
-import type { StoredCard } from '@agent-office/shared';
+import type { ProjectFileKind, StoredCard } from '@agent-office/shared';
 import { ASK_REQUESTER, ASK_RULES_HEADING } from './tools.ts';
 
 /**
@@ -13,8 +13,10 @@ import { ASK_REQUESTER, ASK_RULES_HEADING } from './tools.ts';
  *            is also what lets the provider cache it.
  *   tools    the runner's own definitions (tools.ts).
  *   user     DATA only, in marked blocks: what was asked, the facts of the run, what the
- *            requester answered to an agent's question on this request, and for the coordinator
- *            the units and agents of the company.
+ *            requester answered to an agent's question on this request, for the coordinator
+ *            the units and agents of the company, and for a run that may read them the list of
+ *            its project's files (names and facts; a file's content is never here: it comes as
+ *            the provider's own block in a tool's result).
  *
  * The request text is data although a colleague typed it: it can hold pasted outside text, and
  * the requester orders work but does not set the agent's rules.
@@ -39,7 +41,8 @@ function list(title: string, items: readonly string[]): string {
  * working that need them (opening a sub-task, leaving a task suggestion, sending a message).
  * Without this caveat the prompt would promise abilities the run does not have. Built from the
  * tools that are offered; the sentence about the three ways must be shortened when a handler for
- * one of them arrives.
+ * one of them arrives. A tool of the card can also be missing in one run only (the tool that
+ * reads project files, in a run without a project), so the sentence says "in this run".
  *
  * A question to the requester is the runner's own tool and is named here when the run is given
  * it; a run that is not given it is told that it cannot ask, because the card still speaks of
@@ -61,7 +64,7 @@ function offeredCaveat(
   const lack =
     missing.length === 0
       ? ''
-      : ` Kartında adı geçen öteki araçlar (${code(missing)}) henüz açık değil.`;
+      : ` Kartında adı geçen öteki araçlar (${code(missing)}) bu çalışmada açık değil.`;
   // The heading as the common rules print it, without its marks.
   const heading = ASK_RULES_HEADING.replace(/^#+\s*/, '');
   const asking = mayAsk
@@ -153,6 +156,19 @@ export interface AskedAndAnswered {
   answeredBy: 'requester' | 'founder_for_requester';
 }
 
+/** One file of the run's project, as the run is told of it. Never who added it (no name of a person). */
+export interface ListedFile {
+  id: string;
+  name: string;
+  kind: ProjectFileKind;
+  sizeBytes: number;
+  // The office's day the file was added (YYYY-MM-DD).
+  addedOn: string;
+  // false: the tool refuses it. why: 'kind' the type is not read, 'size' it is too large.
+  readable: boolean;
+  why?: 'kind' | 'size';
+}
+
 export interface PromptData {
   facts: RunFacts;
   request: { title: string; text: string };
@@ -160,6 +176,9 @@ export interface PromptData {
   // asked on the same request (today: the coordinator's). Data like the request text: an answer
   // sets no rule and approves nothing.
   questions?: AskedAndAnswered[];
+  // The files of the request's project, newest first; only for a run that is given the tool that
+  // reads them, also when the project has none. Data like the rest: a file's name orders nothing.
+  files?: ListedFile[];
   // The coordinator only.
   units?: UnitForRouting[];
   // A unit agent only, when a person corrected the routing to it: that person's note, as data.
@@ -173,6 +192,9 @@ export function dataText(data: PromptData): string {
   const blocks = [dataBlock('run_facts', data.facts), dataBlock('request', data.request)];
   if (data.questions && data.questions.length > 0) {
     blocks.push(dataBlock('questions_and_answers', data.questions));
+  }
+  if (data.files) {
+    blocks.push(dataBlock('project_files', data.files));
   }
   if (data.units) {
     blocks.push(dataBlock('units_and_agents', data.units));

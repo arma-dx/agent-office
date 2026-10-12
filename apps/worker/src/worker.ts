@@ -10,8 +10,11 @@ import {
   sendAgentRunLookAgain,
 } from '@agent-office/db';
 import { storedCardSchema } from '@agent-office/shared';
-import type { WorkerEnv } from './env.ts';
-import type { CallModel } from './model/client.ts';
+import { fileReaderSettings, type WorkerEnv } from './env.ts';
+import { RunProjectFiles } from './files/project-files.ts';
+import { readTokenDaysLeft, readTokenProblem } from './files/read-token.ts';
+import { createFileReader } from './files/reader.ts';
+import type { CallModel, CountFileTokens } from './model/client.ts';
 import { closeLostRun, runAgentJob, type RunnerDeps } from './runner/run.ts';
 
 /**
@@ -188,6 +191,40 @@ function logLine(event: string, fields: Record<string, string | number | null>):
   console.log(JSON.stringify({ time: new Date().toISOString(), event, ...fields }));
 }
 
+/**
+ * The worker's reading file module (rule 9), from its environment; null: agents read no file and
+ * no run is given the reading tool. Says in the log which of the three it is, once, where the
+ * operator reads: nothing set, a read token that has ended, or a reader (with the days the token
+ * has left). Never a key, a token, an address or a folder.
+ */
+export function projectFilesOf(
+  env: Parameters<typeof fileReaderSettings>[0],
+  now: number,
+  log: RunnerDeps['log'],
+): RunProjectFiles | null {
+  const settings = fileReaderSettings(env);
+  if (settings === null) {
+    log('file_reader_not_configured', {});
+    return null;
+  }
+  // The shape and the role of the token were held when the environment was read (env.ts).
+  if (settings.kind === 'supabase' && readTokenProblem(settings.readToken, now) !== null) {
+    log('file_read_token_expired', {});
+    return null;
+  }
+  const reader = createFileReader(settings);
+  if (reader === null) {
+    log('file_reader_not_configured', {});
+    return null;
+  }
+  log('file_reader_configured', {
+    kind: settings.kind,
+    token_days_left:
+      settings.kind === 'supabase' ? readTokenDaysLeft(settings.readToken, now) : null,
+  });
+  return new RunProjectFiles(reader);
+}
+
 export async function startWorker(env: WorkerEnv): Promise<RunningWorker> {
   const pool = createPool(env.WORKER_DATABASE_URL, 'agent-office-worker', (error) => {
     logLine('pool_error', { type: error.name });
@@ -198,19 +235,31 @@ export async function startWorker(env: WorkerEnv): Promise<RunningWorker> {
     logLine('card_version_invalid', { agent });
   }
   let callModel: CallModel | null = null;
+  // The provider's token count of a file, asked before the file is given to the model.
+  let countFileTokens: CountFileTokens | null = null;
   if (env.ANTHROPIC_API_KEY !== undefined) {
     // The SDK is loaded only when a key is configured, and only here.
-    const { createAnthropicModel } = await import('./model/anthropic.ts');
+    const { createAnthropicModel, createAnthropicTokenCounter } =
+      await import('./model/anthropic.ts');
     callModel = createAnthropicModel(env.ANTHROPIC_API_KEY);
+    countFileTokens = createAnthropicTokenCounter(env.ANTHROPIC_API_KEY);
   } else {
     logLine('model_not_configured', {});
   }
+  const files = projectFilesOf(env, Date.now(), logLine);
   const queue = createQueue(env.WORKER_DATABASE_URL, (error) => {
     logLine('queue_error', { type: error.name });
   });
   await queue.start();
   await ensureAgentRunQueues(queue);
-  const deps: RunnerDeps = { pool, callModel, jobs: agentRunSender(queue), log: logLine };
+  const deps: RunnerDeps = {
+    pool,
+    callModel,
+    countFileTokens,
+    files,
+    jobs: agentRunSender(queue),
+    log: logLine,
+  };
 
   await consumeAgentRuns(queue, deps, env.WORKER_CONCURRENCY);
   logLine('worker_started', { mode: describeWorker(env) });

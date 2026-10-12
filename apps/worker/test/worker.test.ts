@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { fileReaderSettings, loadWorkerEnv } from '../src/env.ts';
-import { describeWorker, handleDeadLetterJob } from '../src/worker.ts';
+import { RunProjectFiles } from '../src/files/project-files.ts';
+import { describeWorker, handleDeadLetterJob, projectFilesOf } from '../src/worker.ts';
 
 const DATABASE = 'postgresql://office_worker@127.0.0.1:5432/postgres';
 const KEY = `sk-ant-${'x'.repeat(40)}`;
@@ -222,6 +223,73 @@ describe('the worker’s file storage settings', () => {
         expect(message).not.toContain(value);
       }
     }
+  });
+});
+
+// The reading file module the worker starts with, and what its log says of it once.
+describe('the worker’s file reader at its start', () => {
+  const DAY = 86_400_000;
+  const NOW = Date.UTC(2026, 9, 12, 9);
+  /** A token of the reader role that ends at the given moment; built here, never written out. */
+  const tokenUntil = (endsAt: number): string =>
+    [
+      { alg: 'HS256', typ: 'JWT' },
+      { role: 'office_file_reader', exp: Math.floor(endsAt / 1000) },
+      'signature-of-the-test',
+    ]
+      .map((part) =>
+        Buffer.from(typeof part === 'string' ? part : JSON.stringify(part)).toString('base64url'),
+      )
+      .join('.');
+  const supabase = (token: string) =>
+    loadWorkerEnv({
+      WORKER_DATABASE_URL: DATABASE,
+      SUPABASE_URL: 'https://abcdefgh.supabase.co',
+      SUPABASE_STORAGE_BUCKET: 'office-files',
+      SUPABASE_PUBLISHABLE_KEY: ['sb', 'publishable', 'p'.repeat(24)].join('_'),
+      SUPABASE_STORAGE_READ_TOKEN: token,
+    });
+  const start = (env: Parameters<typeof projectFilesOf>[0]) => {
+    const log: { event: string; fields: Record<string, string | number | null> }[] = [];
+    const files = projectFilesOf(env, NOW, (event, fields) => log.push({ event, fields }));
+    return { files, log };
+  };
+
+  it('nothing set: no reader, and the log says so', () => {
+    expect(start(loadWorkerEnv({ WORKER_DATABASE_URL: DATABASE }))).toEqual({
+      files: null,
+      log: [{ event: 'file_reader_not_configured', fields: {} }],
+    });
+  });
+
+  it('a folder or a read token gives a reader; the log names the kind and the days the token has left', () => {
+    const local = start(
+      loadWorkerEnv({ WORKER_DATABASE_URL: DATABASE, FILE_STORAGE_DIR: '/tmp/agent-office-files' }),
+    );
+    expect(local.files).toBeInstanceOf(RunProjectFiles);
+    expect(local.log).toEqual([
+      { event: 'file_reader_configured', fields: { kind: 'disk', token_days_left: null } },
+    ]);
+    const token = tokenUntil(NOW + 30 * DAY + 3_600_000);
+    const remote = start(supabase(token));
+    expect(remote.files).toBeInstanceOf(RunProjectFiles);
+    expect(remote.log).toEqual([
+      { event: 'file_reader_configured', fields: { kind: 'supabase', token_days_left: 30 } },
+    ]);
+    // Never the token, the key, the address or the folder.
+    const said = JSON.stringify([local.log, remote.log]);
+    for (const secret of [token, 'sb_publishable', 'supabase.co', 'agent-office-files']) {
+      expect(said).not.toContain(secret);
+    }
+  });
+
+  it('a read token that has ended: the worker starts, reads no file and says why', () => {
+    // The environment takes the token (its shape and its role are right): an ended token does
+    // not keep the worker down.
+    expect(start(supabase(tokenUntil(NOW - 1000)))).toEqual({
+      files: null,
+      log: [{ event: 'file_read_token_expired', fields: {} }],
+    });
   });
 });
 

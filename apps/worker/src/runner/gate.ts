@@ -3,7 +3,8 @@ import type { AuthorityLevel, ToolKind } from '@agent-office/shared';
 /**
  * The gate every tool call passes before anything is executed (rule 4; CLAUDE.md, "Y1 kapısı kodla
  * uygulanır"). Pure: the card's authority level and tool list, the catalog's row for the tool, and
- * nothing the model wrote but the tool's name. No handler is reachable around it.
+ * nothing the model wrote but the tool's name. The runner's own question is handled before it
+ * (run.ts); every catalogue tool passes it.
  *
  *   refuse        the tool is not in the catalog or not on the card;
  *   to_approval   the call may not take effect by itself: every external effect; every call of a

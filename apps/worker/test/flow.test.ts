@@ -7,6 +7,9 @@ import {
   ensureAgentRunQueues,
 } from '@agent-office/db';
 import {
+  COMPANY_HEADER,
+  FILE_NAME_HEADER,
+  UPLOAD_TICKET_HEADER,
   agentOpenResponseSchema,
   approvalDecisionDetails,
   approvalDeskSchema,
@@ -14,9 +17,11 @@ import {
   projectAiPermissionDetails,
   projectAiSpendingLimitAnswerSchema,
   projectAiSpendingLimitDetails,
+  projectFileSchema,
   requestDetailSchema,
   requestListSchema,
   todaySchema,
+  uploadTicketSchema,
   type ApprovalDesk,
   type RequestDetail,
 } from '@agent-office/shared';
@@ -25,12 +30,16 @@ import { SoftwareAuthenticator } from '../../api/test/authenticator.ts';
 import { accounts } from '../../api/test/fixtures.ts';
 import {
   PANEL_ORIGIN,
+  SAME_ORIGIN,
+  SESSION_COOKIE,
   closeAdminPool,
   createTestServer,
   sessionOf,
   type TestServer,
 } from '../../api/test/helpers.ts';
 import { errorCode, freshPasskey, send, signStepUp } from '../../api/test/passkey-helpers.ts';
+import { RunProjectFiles } from '../src/files/project-files.ts';
+import { MemoryFileReader } from '../src/files/reader.ts';
 import { runAgentJob, type RunOutcome, type RunnerDeps } from '../src/runner/run.ts';
 import { consumeAgentRuns, handleAgentRunJob } from '../src/worker.ts';
 import {
@@ -112,8 +121,14 @@ describe.skipIf(noDatabase)('a request from the first line to "done"', () => {
   const journeyOf = (read: RequestDetail): string[] =>
     read.journey.map((item) => `${item.kind}:${'status' in item ? item.status : ''}`);
 
-  /** The worker's part: takes the next job from the queue and runs it with the scripted model. */
-  async function work(model: ScriptedModel): Promise<{ outcome: RunOutcome; agent: string }> {
+  /**
+   * The worker's part: takes the next job from the queue and runs it with the scripted model
+   * (and, where a case gives them, with a file reader and a token counter).
+   */
+  async function work(
+    model: ScriptedModel,
+    reading: Pick<RunnerDeps, 'files' | 'countFileTokens'> = {},
+  ): Promise<{ outcome: RunOutcome; agent: string }> {
     const [next] = await workerQueue.fetch(AGENT_RUN_QUEUE);
     if (!next) throw new Error('No job on the queue');
     const result = await runAgentJob(
@@ -122,6 +137,7 @@ describe.skipIf(noDatabase)('a request from the first line to "done"', () => {
         callModel: model.call,
         jobs: agentRunSender(workerQueue),
         log: () => undefined,
+        ...reading,
       },
       next.data,
     );
@@ -1186,6 +1202,85 @@ describe.skipIf(noDatabase)('a request from the first line to "done"', () => {
       );
       expect(list.requests.map((request) => request.id)).toEqual([id]);
     }
+    expect(await workerQueue.fetch(AGENT_RUN_QUEUE)).toEqual([]);
+    expect(errors).toEqual([]);
+  });
+
+  it('an agent reads a file of the project: the journey of the request names it', async () => {
+    const projectId = await projectWithAgents('Dosyalı proje');
+    // The employee adds a file as the panel does: the ticket, then the bytes.
+    const fileId = randomUUID();
+    const bytes = Buffer.from('%PDF-1.7\n1 0 obj\n<<>>\nendobj\n', 'latin1');
+    const ticket = await post(employee, `/api/projects/${projectId}/files/${fileId}/ticket`, {
+      sizeBytes: bytes.length,
+    });
+    expect(ticket.statusCode, ticket.body).toBe(200);
+    const added = await server.app.inject({
+      method: 'PUT',
+      url: `/api/projects/${projectId}/files/${fileId}`,
+      cookies: { [SESSION_COOKIE]: employee },
+      headers: {
+        ...SAME_ORIGIN,
+        [COMPANY_HEADER]: ids.arma,
+        'content-type': 'application/octet-stream',
+        [FILE_NAME_HEADER]: encodeURIComponent('Etkinlik programı.pdf'),
+        [UPLOAD_TICKET_HEADER]: uploadTicketSchema.parse(ticket.json()).ticket,
+      },
+      payload: bytes,
+    });
+    expect(added.statusCode, added.body).toBe(201);
+    expect(projectFileSchema.parse(added.json())).toMatchObject({ id: fileId, kind: 'pdf' });
+
+    const id = randomUUID();
+    const created = await post(employee, '/api/requests', {
+      id,
+      text: 'Etkinlik için LinkedIn gönderisi yaz; tarih programdaki gibi',
+      projectId,
+    });
+    expect(created.statusCode, created.body).toBe(201);
+    expect(await work(new ScriptedModel([toolUse('route_task', ROUTE_TO_SOS)]))).toEqual({
+      outcome: 'routed',
+      agent: 'KOR-1',
+    });
+
+    // The worker reads what the API stored: the same bytes under the same key, handed to the
+    // worker's own reading module (the two processes share the storage, not a module).
+    const reader = new MemoryFileReader();
+    for (const [key, object] of server.storage.objects) reader.objects.set(key, object.content);
+    const sos = new ScriptedModel([
+      toolUse('read_project_file', { file_id: fileId }),
+      toolUse('submit_for_approval', RESULT),
+    ]);
+    expect(
+      await work(sos, {
+        files: new RunProjectFiles(reader),
+        countFileTokens: () => Promise.resolve(640),
+      }),
+    ).toEqual({ outcome: 'submitted', agent: 'SOS-2' });
+    // The run was told of the file the employee added, and was given its bytes.
+    expect(dataOf(sos)).toContain('Etkinlik programı.pdf');
+    expect(JSON.stringify(sos.requests[1])).toContain(bytes.toString('base64'));
+    expect(reader.calls).toEqual([`${ids.arma}/projects/${projectId}/${fileId}`]);
+
+    // The journey the API answers: the run's steps, and the file's name on the read. Both readers
+    // of this request may read the file.
+    for (const session of [employee, founder]) {
+      const read = await detail(session, id);
+      const run = read.journey.find((item) => item.kind === 'run' && item.agent.code === 'SOS-2');
+      if (run?.kind !== 'run') throw new Error('No run of the unit agent in the journey');
+      // Nothing of the file but its name: a step has no field for content, a size or tokens.
+      expect(run.steps).toEqual([
+        {
+          tool: 'read_project_file',
+          status: 'succeeded',
+          code: null,
+          fileName: 'Etkinlik programı.pdf',
+        },
+        { tool: 'submit_for_approval', status: 'succeeded', code: null, fileName: null },
+      ]);
+      expect(JSON.stringify(read)).not.toContain(bytes.toString('base64'));
+    }
+    // The request waits for the approver: the next cases meet no job of this one.
     expect(await workerQueue.fetch(AGENT_RUN_QUEUE)).toEqual([]);
     expect(errors).toEqual([]);
   });

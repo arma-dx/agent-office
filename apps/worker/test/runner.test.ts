@@ -329,7 +329,7 @@ describe.skipIf(noDatabase)('the coordinator’s run', () => {
       /^Bu çalışmada elinde yalnızca şu araçlar var: `route_task`, `ask_requester`\. /,
     );
     expect(caveat).toContain(
-      'Kartında adı geçen öteki araçlar (`search_tasks`, `read_task`, `create_task`, `suggest_task`, `update_task`, `list_agents`, `list_users`, `search_notes`, `send_notification`) henüz açık değil.',
+      'Kartında adı geçen öteki araçlar (`search_tasks`, `read_task`, `create_task`, `suggest_task`, `update_task`, `list_agents`, `list_users`, `search_notes`, `send_notification`) bu çalışmada açık değil.',
     );
     // The question is a way the run has: the caveat names the tool and where the rules for it
     // are, and then what no run can do yet.
@@ -979,7 +979,7 @@ describe.skipIf(noDatabase)('the unit agent’s run', () => {
     );
     expect(system).toContain('görev önerisi olarak');
     expect(system).toContain(
-      `Bu çalışmada elinde yalnızca şu araçlar var: \`submit_for_approval\`, \`ask_requester\`. Kartında adı geçen öteki araçlar (\`search_notes\`, \`read_note\`, \`write_note\`, \`read_project_file\`, \`suggest_task\`) henüz açık değil. ${MAY_ASK} ${NOT_YET}`,
+      `Bu çalışmada elinde yalnızca şu araçlar var: \`submit_for_approval\`, \`ask_requester\`. Kartında adı geçen öteki araçlar (\`search_notes\`, \`read_note\`, \`write_note\`, \`read_project_file\`, \`suggest_task\`) bu çalışmada açık değil. ${MAY_ASK} ${NOT_YET}`,
     );
     const [approval] = await admin(
       `select id, status, attempt, tool_name, title, summary, agent_rationale, risk_note, payload,
