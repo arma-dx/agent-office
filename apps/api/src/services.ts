@@ -3,6 +3,7 @@ import type { AuthProvider } from './auth/provider.ts';
 import type { Pool, RequestRunner } from './db.ts';
 import type { ServerConfig } from './env.ts';
 import type { ProjectFileStore } from './files/store.ts';
+import type { GithubService } from './github/index.ts';
 import type { RateLimits } from './security.ts';
 
 /** What the signed-in routes need. Without it the server answers only /api/health. */
@@ -17,6 +18,9 @@ export interface ServerServices {
   jobs: AgentRunSender;
   // The one way to the file storage (rule 9); its `available` is false where none is set up.
   files: ProjectFileStore;
+  // Hands a route the GitHub client of its company; with no app configured every company is
+  // "not configured". The apps' keys live inside it and nowhere else (rule 6).
+  github: GithubService;
   // How many bytes of uploads are held in memory at once; the default is UPLOAD_BUFFER_BYTES.
   uploadBufferBytes?: number;
   // The same for downloads; the default is DOWNLOAD_BUFFER_BYTES.

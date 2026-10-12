@@ -16,6 +16,9 @@ import type { Pool } from '../src/db.ts';
 import { loadApiEnv, serverConfig, type ServerConfig } from '../src/env.ts';
 import { MemoryFileStorage } from '../src/files/storage.ts';
 import { ProjectFileStore } from '../src/files/store.ts';
+import type { GithubApi, GithubLog } from '../src/github/api.ts';
+import { CompanyGithub } from '../src/github/company.ts';
+import { GithubService } from '../src/github/service.ts';
 import type { RateLimits } from '../src/security.ts';
 import { buildServer } from '../src/server.ts';
 import type { Account } from './fixtures.ts';
@@ -144,6 +147,12 @@ export function createTestServer(
     downloadDeadlineMs?: (sizeBytes: number) => number;
     // The storage of this server; the default is a new one in memory.
     storage?: MemoryFileStorage;
+    // The GitHub App each company's slot holds: the company code, the organisation the slot
+    // names and the fake that stands for the app. Without it no company has an app configured.
+    github?: Record<string, { organization: string; api: GithubApi }>;
+    // The clock of the GitHub clients (their caches), which a test moves.
+    githubNow?: () => number;
+    githubLog?: GithubLog;
   } = {},
 ): TestServer {
   const pool: Pool = createPool(connectionString('app'), 'agent-office-api-test', () => {});
@@ -160,6 +169,18 @@ export function createTestServer(
       rateLimits: options.rateLimits ?? RELAXED_LIMITS,
       jobs: options.jobs ?? jobs,
       files: new ProjectFileStore(options.fileStorage === false ? null : storage),
+      // The real service and the real company clients, over the fakes.
+      github: new GithubService(
+        Object.entries(options.github ?? {}).map(
+          ([companyCode, slot]) =>
+            new CompanyGithub(
+              { companyCode, organization: slot.organization },
+              slot.api,
+              options.githubNow,
+              options.githubLog,
+            ),
+        ),
+      ),
       ...(options.uploadBufferBytes !== undefined
         ? { uploadBufferBytes: options.uploadBufferBytes }
         : {}),

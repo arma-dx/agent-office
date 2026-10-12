@@ -16,6 +16,7 @@ export * from './requests.ts';
 export * from './notifications.ts';
 export * from './projects.ts';
 export * from './files.ts';
+export * from './github.ts';
 export {
   AGENT_RUN_DEAD_QUEUE,
   AGENT_RUN_QUEUE,

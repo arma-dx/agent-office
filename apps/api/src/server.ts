@@ -6,6 +6,7 @@ import { errorBody, errorHandler } from './errors.ts';
 import { REDACTED, REDACT_PATHS, redact, stripQuery } from './log.ts';
 import { registerAgentRoutes } from './routes/agents.ts';
 import { registerAuthRoutes } from './routes/auth.ts';
+import { registerGithubRoutes } from './routes/github.ts';
 import { registerInvitationRoutes } from './routes/invitations.ts';
 import { registerMemberRoutes } from './routes/members.ts';
 import { registerOfficeRoutes } from './routes/office.ts';
@@ -98,6 +99,7 @@ export function buildServer(opts: BuildServerOptions = {}): FastifyInstance {
       registerAgentRoutes(api, deps);
       registerProjectRoutes(api, deps);
       registerProjectFileRoutes(api, deps);
+      registerGithubRoutes(api, deps);
       done();
     });
   }

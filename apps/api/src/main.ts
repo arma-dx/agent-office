@@ -1,10 +1,11 @@
 import { agentRunSender, createPool, createQueue, ensureAgentRunQueues } from '@agent-office/db';
 import { GoogleAuthProvider } from './auth/google.ts';
 import { assertRestrictedRole } from './db.ts';
-import { fileStorageSettings, loadApiEnv, serverConfig } from './env.ts';
+import { fileStorageSettings, githubAppConfigs, loadApiEnv, serverConfig } from './env.ts';
 import { loggableError } from './errors.ts';
 import { createFileStorage } from './files/storage.ts';
 import { ProjectFileStore } from './files/store.ts';
+import { createGithubService } from './github/index.ts';
 import { buildServer } from './server.ts';
 
 const env = loadApiEnv(process.env);
@@ -29,6 +30,17 @@ const queue = createQueue(
 // else (not into the config the routes get).
 const fileStorage = createFileStorage(fileStorageSettings(env));
 
+// Built here, once, from the environment: each app's key goes to the GitHub client of its own
+// company and nowhere else (not into the config the routes get). Nothing is asked of GitHub here.
+const github = createGithubService(githubAppConfigs(env), {
+  warn: (details, message) => {
+    app.log.warn(details, message);
+  },
+  error: (details, message) => {
+    app.log.error(details, message);
+  },
+});
+
 const app = buildServer({
   logLevel: env.LOG_LEVEL,
   services: {
@@ -37,6 +49,7 @@ const app = buildServer({
     authProvider: google,
     jobs: agentRunSender(queue),
     files: new ProjectFileStore(fileStorage),
+    github,
   },
 });
 
@@ -47,6 +60,14 @@ if (google) {
   });
 } else {
   app.log.warn('Google sign-in is not configured');
+}
+// What the environment holds, not which companies lack an app: the start of the process reads no
+// company (rule 9). A code that is no company's code shows on that company's Bağlantılar page,
+// which stays "not configured".
+if (github.companyCodes.length > 0) {
+  app.log.info({ companies: github.companyCodes }, 'GitHub apps are configured');
+} else {
+  app.log.warn('No GitHub app is configured; GitHub cannot be connected');
 }
 if (fileStorage === null) {
   app.log.warn('File storage is not set up; project files cannot be added or opened');
