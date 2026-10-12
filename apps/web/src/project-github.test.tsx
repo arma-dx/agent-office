@@ -650,7 +650,7 @@ describe('the GitHub tab: the repository of the project', () => {
 
   it('a refusal of the API stays in the dialog; when it says the repository is gone the list is read again and the choice is taken back', async () => {
     const gone =
-      'Bu depo, bağlantının gördüğü depolar arasında değil. Sayfayı yenileyip başka bir depo seçin.';
+      'Bu depo, bağlantının gördüğü depolar arasında değil. Listeden başka bir depo seçin.';
     const fake = api(tab.noRepository({ canLink: true }), {
       [REPOSITORIES]: () => json(repositories()),
       [SET]: () => {

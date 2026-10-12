@@ -3837,7 +3837,7 @@ describe('projects: a new project', () => {
 
   it('new project: a repository that is gone is taken back: the list is read again and the select shows Depo yok', async () => {
     const gone =
-      'Bu depo, bağlantının gördüğü depolar arasında değil. Sayfayı yenileyip başka bir depo seçin.';
+      'Bu depo, bağlantının gördüğü depolar arasında değil. Listeden başka bir depo seçin.';
     const api = creatingApi({
       [REPOSITORIES]: () => json(repositories()),
       'POST /projects': () => {

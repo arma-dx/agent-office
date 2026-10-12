@@ -302,6 +302,14 @@ describe.skipIf(noDatabase)('the repository of a project and its GitHub tab', ()
         const res = await create(employee, { id, repositoryId });
         expect(res.statusCode, String(repositoryId)).toBe(409);
         expect(errorCode(res)).toBe('github_repository_not_available');
+        // The sentence names the step the person can take in the form that shows it; it does not
+        // send them to reload the page, which would lose the form.
+        expect(res.json()).toMatchObject({
+          error: {
+            message:
+              'Bu depo, bağlantının gördüğü depolar arasında değil. Listeden başka bir depo seçin.',
+          },
+        });
         expect(await adminQuery('select 1 from office.projects where id = $1', [id])).toEqual([]);
       }
       // The name is GitHub's, never the request's.

@@ -40,7 +40,7 @@ const repositoryNotAvailable = (): ApiError =>
   new ApiError(
     409,
     'github_repository_not_available',
-    'Bu depo, bağlantının gördüğü depolar arasında değil. Sayfayı yenileyip başka bir depo seçin.',
+    'Bu depo, bağlantının gördüğü depolar arasında değil. Listeden başka bir depo seçin.',
   );
 
 /** Rule 12, for a project that is being opened with a repository: nothing is opened. */
