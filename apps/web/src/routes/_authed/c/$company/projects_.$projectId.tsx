@@ -1,8 +1,8 @@
 // Parts adapted from Paperclip (MIT License, Copyright (c) 2025 Paperclip AI).
 // Source: ui/src/pages/ProjectDetail.tsx (the header: tile, name, status) at commit
 // dd868ed125cd709506dd9b29fca640a44d580501. License text: THIRD_PARTY_NOTICES.md.
-// Changes: tabs of our own (the requests of the project, its milestones, its agent runs, its
-// approvals, its settings) in the address; no inline editing, no star, no plugin slots; the
+// Changes: tabs of our own (the requests of the project, its files, its milestones, its agent
+// runs, its approvals, its settings) in the address; no inline editing, no star, no plugin slots; the
 // budget is in the properties panel; the AI spending limit is in the "Çalışmalar" tab; the
 // properties go to the shell's panel; members and the AI permission are ours; Turkish texts.
 import type { MembershipSummary, ProjectDetail } from '@agent-office/shared';
@@ -12,6 +12,7 @@ import { useState } from 'react';
 import { z } from 'zod';
 import { EditProjectDialog } from '@/components/projects/edit-project-dialog';
 import { ProjectApprovals } from '@/components/projects/project-approvals';
+import { ProjectFiles } from '@/components/projects/project-files';
 import { ProjectMembers } from '@/components/projects/project-members';
 import { ProjectMilestones } from '@/components/projects/project-milestones';
 import { ProjectProperties } from '@/components/projects/project-properties';
@@ -36,21 +37,22 @@ import { useCompany } from '@/lib/session';
 /**
  * One project (8 October 2026, decision 17): its name and status and whether agents may work in
  * it, then its tabs. "Talepler" (shown first) lists the requests of the project and opens a new
- * one in it; "Kilometre taşları" keeps its milestones; "Çalışmalar" lists its agent runs;
+ * one in it; "Dosyalar" holds the files people added to it (decision 20; the base tabs keep the
+ * order decision 17 names them in); "Kilometre taşları" keeps its milestones; "Çalışmalar" lists its agent runs;
  * "Onaylar" lists the results of its requests as the unit's approver decided them; "Ayarlar"
  * holds its description and its members. The properties are in the shell's panel on all of them. The project comes from one
  * answer of the API, already cut to what the reader may read: a project the reader cannot see is
  * the same screen as one that does not exist.
  *
  * The tab is in the address: "Talepler" has no search parameter, so every link to a project opens
- * it; `?tab=milestones`, `?tab=runs`, `?tab=approvals` and `?tab=settings` open the others and
- * survive a reload.
+ * it; `?tab=files`, `?tab=milestones`, `?tab=runs`, `?tab=approvals` and `?tab=settings` open the
+ * others and survive a reload.
  * A value the page does not know opens "Talepler".
  *
  * The notes of a project (decision 17 names them) come with the Notes work: until then the page
  * has no tab, no link and no empty section for them.
  */
-const tabSchema = z.enum(['requests', 'milestones', 'runs', 'approvals', 'settings']);
+const tabSchema = z.enum(['requests', 'files', 'milestones', 'runs', 'approvals', 'settings']);
 const searchSchema = z.object({ tab: tabSchema.optional().catch(undefined) });
 
 export const Route = createFileRoute('/_authed/c/$company/projects_/$projectId')({
@@ -177,6 +179,7 @@ function ProjectPage({ project }: { project: ProjectDetail }) {
           label="Proje bölümleri"
           items={[
             { value: 'requests', label: 'Talepler' },
+            { value: 'files', label: 'Dosyalar' },
             { value: 'milestones', label: 'Kilometre taşları' },
             { value: 'runs', label: 'Çalışmalar' },
             { value: 'approvals', label: 'Onaylar' },
@@ -185,6 +188,9 @@ function ProjectPage({ project }: { project: ProjectDetail }) {
         />
         <TabsContent value="requests">
           <ProjectRequests project={project} />
+        </TabsContent>
+        <TabsContent value="files">
+          <ProjectFiles project={project} />
         </TabsContent>
         <TabsContent value="milestones">
           <ProjectMilestones project={project} />

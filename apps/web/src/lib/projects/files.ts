@@ -234,6 +234,21 @@ export const FILE_DIALOG_TEXT = {
   sendingForScreenReader: 'Dosya yükleniyor.',
 } as const;
 
+/**
+ * The sentences of the "Dosyalar" tab. Who sees and adds is docs/SONRA.md P-k; who deletes is 11
+ * October decision 2 (the person who added the file, the owner and the managers of the project,
+ * the founder). noStorage is the API's own sentence for the same state.
+ */
+export const FILES_TEXT = {
+  emptyTitle: 'Bu projede dosya yok',
+  emptyDescription:
+    'Belge, tablo, sunum, PDF, resim ve metin dosyaları ekleyebilirsiniz. Dosyaları proje üyeleri ve kurucu görür.',
+  whoDoesWhat:
+    'Dosyaları proje üyeleri ve kurucu görür ve ekler. Bir dosyayı ekleyen kişi, projenin sahibi, yöneticileri ya da kurucu siler.',
+  noStorage: 'Dosya deposu bu ortamda kurulu değil. Dosya eklenemez, indirilemez ve silinemez.',
+  deleteDescription: 'Dosya projeden ve dosya deposundan silinir. Bu işlem geri alınamaz.',
+} as const;
+
 const oneDecimal = new Intl.NumberFormat('tr-TR', { maximumFractionDigits: 1 });
 
 /** A size as a person reads it: "850 B", "12,4 KB", "3,2 MB" (1 KB is 1024 B, as the limit counts). */

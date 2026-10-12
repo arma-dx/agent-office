@@ -4,6 +4,7 @@ import {
   projectFileProblem,
   projectFileTypeOf,
   type ProjectDetail,
+  type ProjectFile,
 } from '@agent-office/shared';
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
@@ -59,12 +60,15 @@ function chosenFacts(file: File): string | null {
 export function AddFileDialog({
   project,
   onClose,
+  onStored,
   onChanged,
   onCloseAutoFocus,
 }: {
   project: Pick<ProjectDetail, 'id' | 'name'>;
   onClose: () => void;
-  /** The list must be read again: a file was stored, or may have been. */
+  /** The API has stored the file; called before the dialog closes. */
+  onStored: (file: ProjectFile) => void;
+  /** The list must be read again: a send was stopped or refused, and a file may have been stored. */
   onChanged: () => void;
   onCloseAutoFocus: (event: Event) => void;
 }): ReactNode {
@@ -136,7 +140,7 @@ export function AddFileDialog({
         if (upload.current !== sent) return;
         upload.current = null;
         toast.success(`${stored.name} eklendi.`);
-        onChanged();
+        onStored(stored);
         onClose();
       },
       (reason: unknown) => {
@@ -229,7 +233,9 @@ export function AddFileDialog({
                 value={percent}
                 aria-label="Yükleme"
               />
-              <p className="text-sm text-ink-secondary tabular-nums">
+              {/* For the eye. A screen reader has the bar's value and the live sentence below, so
+                  this line is not read a second time. */}
+              <p aria-hidden="true" className="text-sm text-ink-secondary tabular-nums">
                 {phase === 'storing' ? FILE_DIALOG_TEXT.stored : `Yükleniyor: %${String(percent)}`}
               </p>
               {/* The percent is not in the live region: a screen reader hears two sentences,

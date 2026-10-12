@@ -64,6 +64,7 @@ const listOf =
 /** The tabs of the page in their order, each with its value in the address. */
 const TABS: [name: string, value: string | undefined][] = [
   ['Talepler', undefined],
+  ['Dosyalar', 'files'],
   ['Kilometre taşları', 'milestones'],
   ['Çalışmalar', 'runs'],
   ['Onaylar', 'approvals'],
@@ -156,9 +157,10 @@ describe('projects: the tabs of a project', () => {
     expect(within(tabPanel('Ayarlar')).getByRole('heading', { name: 'Açıklama' })).toBeVisible();
     cleanup();
 
-    // A tab the page does not know opens "Talepler".
+    // A tab the page does not know opens "Talepler". ("files" stood here until the page got its
+    // "Dosyalar" tab.)
     mockApi(projectHandlers());
-    renderApp(`${PATH}?tab=files`);
+    renderApp(`${PATH}?tab=no-such-tab`);
     await tabs();
     expect(tab('Talepler')).toHaveAttribute('aria-selected', 'true');
   });

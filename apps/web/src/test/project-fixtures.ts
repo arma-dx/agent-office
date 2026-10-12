@@ -453,8 +453,8 @@ export function ticketHandlers(
 
 /**
  * The read routes of the section, answering the fixtures; a test replaces what it is about. The
- * project has no request, no agent run and no result unless a test gives some, and no request waits for an
- * opening.
+ * project has no request, no file, no agent run and no result unless a test gives some, and no
+ * request waits for an opening.
  */
 export function projectHandlers(
   detail: ProjectDetail = projectDetail(),
@@ -465,6 +465,7 @@ export function projectHandlers(
     'GET /projects': () => json({ projects: [project()], truncated: false }),
     [`GET /projects/${detail.id}`]: () => json(detail),
     [projectRequestsRoute(detail.id)]: () => json({ requests: [], truncated: false }),
+    [projectFilesRoute(detail.id)]: filesHandler([]),
     [projectRunsRoute(detail.id)]: () => json(projectRuns()),
     [projectApprovalsRoute(detail.id)]: () => json(projectApprovals()),
     // The confirmation of an opening asks how many waiting requests it would start: none.
