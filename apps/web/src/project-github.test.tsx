@@ -56,6 +56,24 @@ const rowsOf = (name: string) => within(listOf(name)).getAllByRole('listitem');
 const button = (region: HTMLElement, name: string) =>
   within(region).queryByRole('button', { name });
 
+/**
+ * A read of the tab that takes its time, as the real one does (the API asks GitHub for three
+ * lists): the request stays open until the test answers it.
+ */
+function slowRead() {
+  const waiting: ((response: Response) => void)[] = [];
+  return {
+    handler: (): Promise<Response> =>
+      new Promise<Response>((resolve) => {
+        waiting.push(resolve);
+      }),
+    asked: () => waiting.length,
+    answer(body: ProjectGithub) {
+      for (const resolve of waiting.splice(0)) resolve(json(body));
+    },
+  };
+}
+
 describe('the GitHub tab: where it is', () => {
   it('stands after Dosyalar, opens from the address and asks nothing before it is opened', async () => {
     const fake = api(tab.ok());
@@ -487,10 +505,11 @@ describe('the GitHub tab: the repository of the project', () => {
 
   it("Depo bağla: lists the repositories by name, sends GitHub's number alone, then the tab reads the lists", async () => {
     const linked = projectDetail({ repository: { id: 102, fullName: `${ARMA_ORG}/panel` } });
+    const reread = slowRead();
     const fake = api(tab.noRepository({ canLink: true }), {
       [REPOSITORIES]: () => json(repositories()),
       [SET]: () => {
-        fake.handle(GITHUB, () => json(tab.ok({ canLink: true })));
+        fake.handle(GITHUB, reread.handler);
         return json(linked);
       },
     });
@@ -524,14 +543,23 @@ describe('the GitHub tab: the repository of the project', () => {
     expect(call?.body).toEqual({ repositoryId: 102 });
     expect(call?.headers.get(COMPANY_HEADER)).toBe(ARMADX.companyId);
     expect(await screen.findByText('Depo bağlandı.')).toBeVisible();
+    // The tab is reading again and still shows the button that opened the dialog. That button
+    // goes when the lists come: the heading takes the focus now, so that it never falls to the
+    // page.
+    await waitFor(() => {
+      expect(reread.asked()).toBeGreaterThan(0);
+    });
+    expect(within(region).getByRole('button', { name: 'Depo bağla' })).toBeVisible();
+    await waitFor(() => {
+      expect(heading()).toHaveFocus();
+    });
+    reread.answer(tab.ok({ canLink: true }));
     // The tab read again and shows the lists of the repository.
     expect(
       await within(region).findByRole('heading', { level: 4, name: 'Son kod değişiklikleri' }),
     ).toBeVisible();
-    // The button that opened the dialog is gone: the heading takes the focus.
-    await waitFor(() => {
-      expect(heading()).toHaveFocus();
-    });
+    expect(button(region, 'Depo bağla')).toBeNull();
+    expect(heading()).toHaveFocus();
     expect(fake.unexpected).toEqual([]);
   });
 
@@ -704,9 +732,10 @@ describe('the GitHub tab: the repository of the project', () => {
   });
 
   it('Depoyu kaldır asks plainly, Vazgeç first, and touches nothing on GitHub', async () => {
+    const reread = slowRead();
     const fake = api(tab.ok({ canLink: true }), {
       [REMOVE]: () => {
-        fake.handle(GITHUB, () => json(tab.noRepository({ canLink: true })));
+        fake.handle(GITHUB, reread.handler);
         return json(projectDetail());
       },
     });
@@ -729,15 +758,27 @@ describe('the GitHub tab: the repository of the project', () => {
     await userEvent.click(remove);
     dialog = await screen.findByRole('alertdialog');
     await userEvent.click(within(dialog).getByRole('button', { name: 'Depoyu kaldır' }));
+    await waitFor(() => {
+      expect(screen.queryByRole('alertdialog')).toBeNull();
+    });
+    // The tab is reading again and still shows the button that opened the dialog; it goes with
+    // the repository. The heading takes the focus now, so that it never falls to the page.
+    await waitFor(() => {
+      expect(reread.asked()).toBeGreaterThan(0);
+    });
+    expect(remove).toBeVisible();
+    await waitFor(() => {
+      expect(heading()).toHaveFocus();
+    });
+    reread.answer(tab.noRepository({ canLink: true }));
     expect(await within(region).findByText('Bu projeye GitHub deposu bağlı değil.')).toBeVisible();
+    expect(button(region, 'Depoyu kaldır')).toBeNull();
+    expect(heading()).toHaveFocus();
     expect(fake.callsTo(REMOVE)).toHaveLength(1);
     expect(fake.callsTo(REMOVE)[0]?.body).toBeUndefined();
     expect(await screen.findByText('Depo projeden kaldırıldı.')).toBeVisible();
     // No passkey for either act of the tab.
     expect(fake.callsTo('POST /step-up/options')).toEqual([]);
-    await waitFor(() => {
-      expect(heading()).toHaveFocus();
-    });
   });
 
   it("shows the API's refusal of a removal in the dialog and keeps the lists", async () => {

@@ -345,13 +345,27 @@ export function ProjectGithub({ project }: { project: ProjectDetail }): ReactNod
     paused: () => choosing || removing,
   });
 
+  // The dialog that is closing gave the project a repository or took it away: the button that
+  // opened it ("Depo bağla", "Depoyu kaldır") is still on screen, and goes when the tab has read
+  // again. The focus must not be on it then, or it would fall to the page.
+  const openerGoes = useRef(false);
+
   /** The project's repository changed: the page shows the answer, and the tab reads again. */
-  function changed(updated: ProjectDetail) {
+  function changed(updated: ProjectDetail, linkedBefore: boolean) {
+    openerGoes.current = linkedBefore !== (updated.repository !== null);
     store(updated);
     void queryClient.invalidateQueries({ queryKey: key });
   }
-  /** The button that opened a dialog is gone with the state it stood in. */
-  function focusHeadingUnlessReturned(event: Event) {
+  /**
+   * Where the focus goes when a dialog of the tab has closed: back to the button that opened it,
+   * or to the heading when that button is gone or about to go with the state it stood in.
+   */
+  function focusAfter(dialog: { onCloseAutoFocus: (event: Event) => void }, event: Event) {
+    if (openerGoes.current) {
+      openerGoes.current = false;
+    } else {
+      dialog.onCloseAutoFocus(event);
+    }
     if (!event.defaultPrevented) {
       event.preventDefault();
       heading.current?.focus();
@@ -492,10 +506,11 @@ export function ProjectGithub({ project }: { project: ProjectDetail }): ReactNod
           onClose={() => {
             setChoosing(false);
           }}
-          onSaved={changed}
+          onSaved={(updated) => {
+            changed(updated, repository !== null);
+          }}
           onCloseAutoFocus={(event) => {
-            chooseFocus.onCloseAutoFocus(event);
-            focusHeadingUnlessReturned(event);
+            focusAfter(chooseFocus, event);
           }}
         />
       ) : null}
@@ -505,10 +520,11 @@ export function ProjectGithub({ project }: { project: ProjectDetail }): ReactNod
           onClose={() => {
             setRemoving(false);
           }}
-          onRemoved={changed}
+          onRemoved={(updated) => {
+            changed(updated, true);
+          }}
           onCloseAutoFocus={(event) => {
-            removeFocus.onCloseAutoFocus(event);
-            focusHeadingUnlessReturned(event);
+            focusAfter(removeFocus, event);
           }}
         />
       ) : null}
