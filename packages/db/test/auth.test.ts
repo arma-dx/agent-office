@@ -9,6 +9,7 @@ import {
   inTransaction,
   inWorkerTransaction,
   noDatabase,
+  openTransaction,
   type Tx,
 } from './helpers.ts';
 import { stepUp } from './step-up.ts';
@@ -1262,6 +1263,54 @@ describe.skipIf(noDatabase)('sessions', () => {
           .code,
       ).toBe('22023');
     });
+  });
+
+  it('a check does not wait for another request of the same person that writes the activity', async () => {
+    // Two requests of one person, each in its own transaction: the session must be a committed
+    // row both of them see.
+    const key = keyHash();
+    const [row] = await adminQuery<{ id: string }>(
+      `insert into office.sessions
+         (key_hash, user_id, created_at, last_seen_at, absolute_expires_at)
+       values ($1, $2, now() - interval '1 hour', now() - interval '2 minutes',
+               now() + interval '8 hours')
+       returning id`,
+      [key, ids.founder],
+    );
+    const sessionId = row?.id ?? '';
+    const valid = [{ session_id: sessionId, user_id: ids.founder, last_company_id: null }];
+    const check = 'select * from office.verify_session($1, 1800, true)';
+    const first = await openTransaction('app', founderA);
+    const second = await openTransaction('app', founderA);
+    try {
+      // The first request refreshes the activity and stays open (it waits for something else).
+      expect(await first.tx.rows(check, [key])).toEqual(valid);
+      // The second is answered at once: it neither waits for the row nor fails on it.
+      await second.tx.exec(`set local lock_timeout = '500ms'`);
+      expect(await second.tx.rows(check, [key])).toEqual(valid);
+      await second.commit();
+      // Nothing was written by the second: the row is still as old as it was for everybody else.
+      expect(
+        await adminQuery(
+          `select last_seen_at < now() - interval '90 seconds' as stale
+           from office.sessions where id = $1`,
+          [sessionId],
+        ),
+      ).toEqual([{ stale: true }]);
+      await first.commit();
+      // The refresh of the first request is what stays.
+      expect(
+        await adminQuery(
+          `select last_seen_at > now() - interval '30 seconds' as fresh
+           from office.sessions where id = $1`,
+          [sessionId],
+        ),
+      ).toEqual([{ fresh: true }]);
+    } finally {
+      await first.rollback();
+      await second.rollback();
+      await adminQuery('delete from office.sessions where id = $1', [sessionId]);
+    }
   });
 
   it('my sessions and the default company skip a session that is already dead', async () => {

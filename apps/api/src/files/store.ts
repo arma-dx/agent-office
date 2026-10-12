@@ -33,6 +33,9 @@ export { FileStorageError };
  * add and remove call the storage while the caller's transaction, and so a database connection,
  * is open. A storage that hangs must not take every connection of the pool with it: only
  * STORAGE_CALLS_IN_TRANSACTIONS of them run at once, and one more is refused at once ('busy').
+ * Such a transaction may also hold the row of the person's session (it wrote their last
+ * activity); office.verify_session does not wait for that row, so the person's other requests
+ * are answered meanwhile.
  */
 export class ProjectFileStore {
   readonly #storage: FileStorage | null;

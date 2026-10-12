@@ -1086,6 +1086,63 @@ describe.skipIf(noDatabase)('project files', () => {
     }
   });
 
+  it('a storage that hangs does not make the requests of the same person wait', async () => {
+    const storage = new GatedStorage();
+    const live = createTestServer({ storage });
+    try {
+      const session = await sessionOf(live, accounts.employee);
+      const other = await sessionOf(live, accounts.holder);
+      const kept = await upload(session, 'kalan.txt', SAMPLES.text, { server: live });
+      expect(kept.statusCode, kept.body).toBe(201);
+      const listUrl = `/api/projects/${project}/files`;
+      const keyHash = hashSessionKey(session);
+      // The person looked at the list for two minutes: the next thing they do is the request
+      // that writes the session's last activity, in its own transaction.
+      await adminQuery(
+        `update office.sessions set last_seen_at = now() - interval '2 minutes' where key_hash = $1`,
+        [keyHash],
+      );
+      storage.hold('remove');
+      const removal = send(
+        live,
+        session,
+        'DELETE',
+        `${listUrl}/${projectFileSchema.parse(kept.json()).id}`,
+        { company: ids.arma },
+      );
+      await until(() => storage.waiting === 1);
+      expect(storage.waiting).toBe(1);
+      // The deletion waits for the storage with its transaction open. Whatever else the person
+      // does meanwhile is answered, and so is everybody else.
+      const within = async (pending: Promise<LightMyRequestResponse>): Promise<number> => {
+        let timer: NodeJS.Timeout | undefined;
+        const late = new Promise<number>((resolve) => {
+          timer = setTimeout(() => {
+            resolve(0);
+          }, 2000);
+        });
+        const status = await Promise.race([pending.then((res) => res.statusCode), late]);
+        clearTimeout(timer);
+        return status;
+      };
+      expect(await within(send(live, session, 'GET', listUrl, { company: ids.arma }))).toBe(200);
+      expect(await within(send(live, other, 'GET', listUrl, { company: ids.arma }))).toBe(200);
+      storage.release();
+      expect((await removal).statusCode).toBe(204);
+      // The deletion itself counted as activity.
+      expect(
+        await adminQuery(
+          `select last_seen_at > now() - interval '30 seconds' as fresh
+           from office.sessions where key_hash = $1`,
+          [keyHash],
+        ),
+      ).toEqual([{ fresh: true }]);
+    } finally {
+      storage.release();
+      await live.close();
+    }
+  });
+
   it('holds only so many bytes of downloads at once, and gives them back', async () => {
     const storage = new GatedStorage();
     const live = createTestServer({ storage, downloadBufferBytes: SAMPLES.pdf.length });
