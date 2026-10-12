@@ -231,7 +231,7 @@ const COORDINATOR_REMINDER_START =
 const NO_PROSE = 'Düz metinle yanıt verme.';
 // Which of the four is sent depends on the run: a coordinator or a unit agent, and whether the
 // run may still ask the requester (a text that held a question reached nobody either).
-const REMINDER = {
+export const REMINDER = {
   coordinator: notice(`${COORDINATOR_REMINDER_START} ${NO_PROSE}`),
   // Reached only where the coordinator's profile thinks and nothing is forced.
   coordinatorMayAsk: notice(
@@ -252,7 +252,7 @@ const REMINDER = {
  * (12 October decision 3: "yanıt yetmezse yeniden sormaz"). Fixed sentences, like every refusal;
  * they name no reason, because "you may not ask in this run" is true of every case.
  */
-const QUESTION_LIMIT = {
+export const QUESTION_LIMIT = {
   agent:
     'Bu çalışmada talep sahibine soru soramazsın. Elindeki bilgiyle çalış ve sonucu bitiş aracınla sun; iş bu bilgiyle yapılamıyorsa hiçbir aracı çağırma, nedenini bir iki cümleyle yaz',
   coordinator:
@@ -307,12 +307,59 @@ const REFUSAL_PROBLEMS: Readonly<Record<string, string>> = {
 };
 
 /**
+ * A refused tool call as the model is told of it: the code and what to do instead (the fixed
+ * sentence of the code, or the sentences a refused input was given). Nothing of the input.
+ */
+export function refusalResult(
+  toolUseId: string,
+  code: string,
+  problems: readonly string[] = [],
+): ToolResult {
+  const fixed = REFUSAL_PROBLEMS[code];
+  const told = problems.length > 0 ? problems : fixed === undefined ? [] : [fixed];
+  return {
+    type: 'tool_result',
+    tool_use_id: toolUseId,
+    content: JSON.stringify({
+      ok: false,
+      error_code: code,
+      ...(told.length > 0 ? { problems: told } : {}),
+    }),
+    is_error: true,
+  };
+}
+
+/**
+ * One file of a run's project as the run is told of it (the `project_files` block): what its
+ * record says, and whether an agent can read it as far as the record can tell.
+ */
+export function listedFile(row: {
+  id: string;
+  name: string;
+  mime_type: string;
+  size_bytes: number;
+  created_at: Date;
+}): ListedFile {
+  const reads = agentReads(row.mime_type, row.size_bytes);
+  return {
+    id: row.id,
+    name: row.name,
+    kind: projectFileKindOf(row.mime_type) ?? 'document',
+    sizeBytes: row.size_bytes,
+    // The office's day, like `today`.
+    addedOn: officeDay(row.created_at.getTime()),
+    readable: reads === 'yes',
+    ...(reads === 'yes' ? {} : { why: reads }),
+  };
+}
+
+/**
  * The result of a read as the model gets it: the runner's own words first (ids, codes, numbers,
  * one fixed sentence; nothing a person wrote), then the file as the provider's own block. The
  * file's content is never joined to a text, and the result carries no cache mark of its own: the
  * request's top level mark covers every result.
  */
-function fileResult(
+export function fileResult(
   toolUseId: string,
   facts: { fileId: string; kind: string; tokens: number; encoding: TextEncoding | null },
   file: FileBlock,
@@ -1069,19 +1116,7 @@ export async function runAgentJob(
     let files: Map<string, ListedFile> | null = null;
     if (withFiles && deps.files) {
       files = new Map();
-      for (const row of await deps.files.list(client)) {
-        const reads = agentReads(row.mime_type, row.size_bytes);
-        files.set(row.id, {
-          id: row.id,
-          name: row.name,
-          kind: projectFileKindOf(row.mime_type) ?? 'document',
-          sizeBytes: row.size_bytes,
-          // The office's day, like `today`.
-          addedOn: officeDay(row.created_at.getTime()),
-          readable: reads === 'yes',
-          ...(reads === 'yes' ? {} : { why: reads }),
-        });
-      }
+      for (const row of await deps.files.list(client)) files.set(row.id, listedFile(row));
       // How many files the run was told of: a number with the run, never a name (rule 5).
       await client.query('update office.runs set input = input || $2::jsonb where id = $1', [
         runId,
@@ -1338,8 +1373,6 @@ export async function runAgentJob(
     result: Record<string, unknown> | null = null,
   ): Promise<ToolResult> => {
     const known = catalog.has(block.name);
-    const fixed = REFUSAL_PROBLEMS[code];
-    const told = problems.length > 0 ? problems : fixed === undefined ? [] : [fixed];
     await agentStep(deps.pool, context, async (client) => {
       if (known) {
         await client.query(
@@ -1363,16 +1396,7 @@ export async function runAgentJob(
       );
       await audit(client, 'tool_refused', { runId, tool: known ? block.name : null });
     });
-    return {
-      type: 'tool_result',
-      tool_use_id: block.id,
-      content: JSON.stringify({
-        ok: false,
-        error_code: code,
-        ...(told.length > 0 ? { problems: told } : {}),
-      }),
-      is_error: true,
-    };
+    return refusalResult(block.id, code, problems);
   };
 
   type Executed = { result: ToolResult; end: null } | { result: null; end: RunResult };
