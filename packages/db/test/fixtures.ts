@@ -115,6 +115,12 @@ export const GITHUB = {
   pillika: { account: 'pillika-org', accountId: 2001, installationId: 6001, appId: 9101 },
 } as const satisfies Record<string, GithubFixture>;
 
+/** The repository the fixtures give one project of each company: GitHub's number and its name. */
+export const REPOSITORY = {
+  arma: { id: 777, fullName: 'arma-org/panel' },
+  pillika: { id: 900, fullName: 'pillika-org/shop' },
+} as const;
+
 function githubRowSql(id: string, company: string, facts: GithubFixture): string {
   const settings = JSON.stringify({
     installation_id: facts.installationId,
@@ -517,6 +523,14 @@ export async function loadFixtures(client: pg.Client): Promise<void> {
       values
         ${githubRowSql(ids.githubA, ids.arma, GITHUB.arma)},
         ${githubRowSql(ids.githubP, ids.pillika, GITHUB.pillika)};
+    -- One project of each company has a repository of its company's organisation.
+    insert into office.project_repositories
+        (company_id, project_id, integration_id, repository_id, full_name)
+      values
+        ('${ids.arma}', '${ids.projectA}', '${ids.githubA}', ${String(REPOSITORY.arma.id)},
+          '${REPOSITORY.arma.fullName}'),
+        ('${ids.pillika}', '${ids.projectP}', '${ids.githubP}', ${String(REPOSITORY.pillika.id)},
+          '${REPOSITORY.pillika.fullName}');
   `;
   await client.query(sql);
 }

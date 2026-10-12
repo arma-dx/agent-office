@@ -68,6 +68,7 @@ async function asAdministrator(tx: Tx): Promise<void> {
 /** Takes the fixtures' connections away: both companies are as if GitHub was never connected. */
 async function neverConnected(tx: Tx): Promise<void> {
   await asAdministrator(tx);
+  await tx.exec('delete from office.project_repositories');
   await tx.exec(`delete from office.integrations where provider = 'github'`);
 }
 
