@@ -329,14 +329,21 @@ export function answerHelp(held: boolean): readonly [string, string, string] {
 }
 
 /**
- * What is said after an answer was stored, from the page the API answered with: the agent has the
- * turn, the work is held (the reason is on the page: the fallen notice), or anything else.
+ * What is said after an answer was stored. The notice follows the page for as long as it stands:
+ * the agent has the turn, or anything else. That the work did not start is said only of the hold
+ * the API itself answered the answer with (`heldCause`: the cause of a request that had fallen to
+ * a person in that answer, null otherwise; the reason is on the page: the fallen notice), and only
+ * while the page still shows that hold. A request that falls to a person later did start: the
+ * agent ran with the answer and ended without a result.
  */
-export function answerSentAs(request: Pick<RequestDetail, 'stage'>): string {
+export function answerSentAs(
+  request: Pick<RequestDetail, 'stage' | 'cause'>,
+  heldCause: RequestCause | null,
+): string {
   if (machineHasTurn(request)) {
     return 'Yanıtınız gönderildi. Ajan işine kendiliğinden devam ediyor.';
   }
-  if (request.stage === 'fell_to_person') {
+  if (request.stage === 'fell_to_person' && heldCause !== null && request.cause === heldCause) {
     return 'Yanıtınız kaydedildi. İş şu an başlamadı; nedeni bu sayfada yazıyor.';
   }
   return 'Yanıtınız gönderildi.';

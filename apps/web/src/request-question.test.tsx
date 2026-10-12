@@ -275,6 +275,75 @@ describe('an agent’s question on the page of its request', () => {
     expect(notice.closest('[tabindex="-1"]')).toHaveFocus();
   });
 
+  it('a request that falls to a person after the agent ran with the answer is not said to have not started', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      const { api } = await openPage(waiting());
+      api.handle(POST, () => json(answered()));
+      await user.type(box(), 'İzmir.');
+      await user.click(within(card()).getByRole('button', { name: 'Yanıtı gönder' }));
+      expect(await screen.findByText(SENT_AGENT)).toBeVisible();
+
+      // The agent ran with the answer and ended without a result: the request fell to a person.
+      // The work did start; the notice, a live region, must not say otherwise.
+      api.handle(GET, () =>
+        json(
+          answered({ stage: 'fell_to_person', cause: 'no_submission', turn: { kind: 'founder' } }),
+        ),
+      );
+      await vi.advanceTimersByTimeAsync(5_100);
+      await waitFor(() => {
+        expect(screen.queryByText(SENT_AGENT)).toBeNull();
+      });
+      expect(screen.getByText('Yanıtınız gönderildi.')).toBeVisible();
+      expect(document.body).not.toHaveTextContent('İş şu an başlamadı');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('the notice of a held answer follows the page: it says that the work did not start only while the same hold stands', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      const held = answered({
+        stage: 'fell_to_person',
+        cause: 'agent_stopped',
+        turn: { kind: 'founder' },
+      });
+      const NOT_STARTED = 'Yanıtınız kaydedildi. İş şu an başlamadı; nedeni bu sayfada yazıyor.';
+      const { api } = await openPage(waiting());
+      api.handle(POST, () => json(held));
+      api.handle(GET, () => json(held));
+      await user.type(box(), 'İzmir.');
+      await user.click(within(card()).getByRole('button', { name: 'Yanıtı gönder' }));
+      expect(await screen.findByText(NOT_STARTED)).toBeVisible();
+      // A refresh that brings the same hold changes nothing.
+      const before = api.callsTo(GET).length;
+      await vi.advanceTimersByTimeAsync(30_100);
+      await waitFor(() => {
+        expect(api.callsTo(GET).length).toBeGreaterThan(before);
+      });
+      expect(screen.getByText(NOT_STARTED)).toBeVisible();
+
+      // The agent was opened again, ran with the answer and ended without a result: another
+      // cause, and the work did start.
+      api.handle(GET, () =>
+        json(
+          answered({ stage: 'fell_to_person', cause: 'no_submission', turn: { kind: 'founder' } }),
+        ),
+      );
+      await vi.advanceTimersByTimeAsync(30_100);
+      await waitFor(() => {
+        expect(screen.queryByText(NOT_STARTED)).toBeNull();
+      });
+      expect(screen.getByText('Yanıtınız gönderildi.')).toBeVisible();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('an empty and a too long answer are said and not sent', async () => {
     const { api } = await openPage(waiting());
     api.handle(POST, () => json(answered()));

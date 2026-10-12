@@ -1,4 +1,4 @@
-import { REQUEST_ANSWER_MAX, type RequestDetail } from '@agent-office/shared';
+import { REQUEST_ANSWER_MAX, type RequestCause, type RequestDetail } from '@agent-office/shared';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useId, useRef, useState, type SyntheticEvent } from 'react';
 import { z } from 'zod';
@@ -78,6 +78,9 @@ export function RequestQuestion({ request }: { request: RequestDetail }) {
   // Kept per question, not per mount: one open page can carry three questions in a row, and the
   // notice of the first must neither stand under the next nor keep the next from being said.
   const [sentFor, setSentFor] = useState<string | null>(null);
+  // The hold the API answered the answer with (the cause of a request that had fallen to a person
+  // in that very answer): only of that hold does the notice say that the work did not start.
+  const [heldCause, setHeldCause] = useState<RequestCause | null>(null);
   const [discardedFor, setDiscardedFor] = useState<string | null>(null);
   // Said once to a screen reader when a question arrives after the page was first read.
   const [seenId, setSeenId] = useState(questionId);
@@ -109,6 +112,7 @@ export function RequestQuestion({ request }: { request: RequestDetail }) {
       setHeld((now) => (now?.questionId === sent.questionId ? null : now));
       setTouched(false);
       setSentFor(sent.questionId);
+      setHeldCause(detail.stage === 'fell_to_person' ? detail.cause : null);
       // The page, the lists, the desk, the Bugün list and the two numbers of the sidebar: the
       // Bugün row and its count go away with the answer.
       settle(detail);
@@ -364,7 +368,7 @@ export function RequestQuestion({ request }: { request: RequestDetail }) {
       ) : showSent ? (
         <div ref={sentNotice} tabIndex={-1}>
           <InlineBanner tone="info" compact role="status">
-            {answerSentAs(request)}
+            {answerSentAs(request, heldCause)}
           </InlineBanner>
         </div>
       ) : discarded ? (
