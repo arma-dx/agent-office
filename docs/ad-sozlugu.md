@@ -578,6 +578,27 @@ Sınır yükseltilince bekleyen işlerin başlaması (11 Ekim karar 1):
 - Panel adresi: `/c/$company/projects/$projectId?tab=files`. Sekmenin etiketi "Dosyalar".
 - Panelde (`apps/web`): `ProjectFiles` (sekmenin içeriği), `AddFileDialog` ("Dosya ekle" penceresi); `lib/projects/files.ts` içinde `projectFilesQueryOptions`, `projectFilesKey`, `uploadProjectFile` (önce yükleme izni, sonra dosya; ilerlemeyi bildirir), `downloadProjectFile`, `deleteProjectFile`, `formatBytes`, `fileFactsLine` ("PDF, 1,2 MB"), `fileAddedBy` ve `fileAddedLine` ("Ayşe Yılmaz ekledi, 3 gün önce"), `FILE_KIND` (tür adları), `FILE_PROBLEM` (seçilen dosyanın gönderilmeme nedenleri), `FILE_DIALOG_TEXT` (pencerenin kural cümleleri: `personalData`, `agentsWillRead`), `FILES_TEXT` (sekmenin cümleleri).
 
+## 0.4a adım 4 ile eklenen adlar: ajanın soru sorması (karşılığı olan eski Türkçe ad yok)
+
+- "Soru" (ajanın talep sahibine sorusu) → tablo `task_questions`; alanlar `routing_id` (soran ajanın adımı; koordinasyon merkezinin sorusunda boş), `agent_code`, `run_id`, `requester_user_id` (sorunun muhatabı), `question`, `status`, `answer`, `answered_by_user_id`, `answered_at`, `closed_at`
+- Soru durumları: `open` (yanıt bekliyor), `answered` (yanıtlandı), `closed` (yanıtlanmadan kapandı: talep yeniden yönlendirildi, iptal edildi, durduruldu ya da reddedildi)
+- "Yanıt bekliyor" → görev durumu `awaiting_reply` (2 Ekim'den beri vardı; ilk kez yazılıyor); talep aşaması `awaiting_reply`; yanıtlayacak kişi için "Yanıtınız bekleniyor"
+- İşlevler: `question_limit` (bir ajanın bir talepte kaç kez sorabileceği: 1, koordinasyon merkezi 2), `questions_left` (bağlamdaki ajanın bu talepte kalan soru hakkı), `ask_question` (ajan kendi çalışmasından sorar), `run_questions` (çalışmaya, kendi talebinin yanıtlanmış soruları verilir), `answer_question` (talep sahibi ya da yerine kurucu yanıtlar), `may_read_request_questions` (soruyu ve yanıtı kim okur: talep sahibi, kurucu, talebin onaylayıcısı)
+- Tetikleyiciler: `keep_question_settled` (yanıtlanan ya da kapanan soru değişmez), `question_holds` (yanıt bekleyen talepte çalışma açılmaz; işlevi `hold_run_while_question_open`)
+- Politikalar: `people_read` (soruyu yalnızca talep sahibi, kurucu ve onaylayıcı, API rolüyle okur; worker rolünün tabloda hiçbir yetkisi yoktur), `reserved_question_events`
+- Kısıtlar: `runner_path_names` (`ask_requester` adı araç kataloğuna girilemez), `answer_complete` (yanıtlanan sorunun yanıtı, yanıtlayanı ve zamanı; kapanan sorunun kapanma zamanı birlikte durur); indeksler `task_questions_single_open` (bir talepte aynı anda tek açık soru), `task_questions_task`
+- İz kaydı olayları: `request_question_asked` (çalışmanın kimliğiyle), `request_question_answered`, `request_question_closed`; kayıt türü `task_question`; metin yazılmaz
+- Akış bilgisi (`request_flow_facts`): `open_question` (yanıt bekleyen soru var mı), `answered_at` (sırası gelen ajanın sorusuna verilen son yanıtın zamanı)
+- Göçler: `20261008103300_request_questions.sql` (tablo ve işlevler), `20261008103400_answer_calls_for_work.sql` (yanıt, işin yeniden başlaması için çağrı sayılır)
+- Çalıştırıcının kendi aracı: `ask_requester` ("insana sor" yolu; katalogda ve kartta yer almaz; `RUNNER_PATH_TOOLS`, `ASK_REQUESTER`, `ASK_TOOL`, koordinasyon merkezine verilen dar açıklamalı hâli `ASK_TOOL_COORDINATOR`, `askRequesterInput`); `ASK_RULES_HEADING` (ortak kurallardaki "Talep sahibine soru" başlığı: araç yalnızca bu bölümü taşıyan kart sürümüne verilir); çalışma sonucu `asked`; araç yanıtı kodu `question_limit_reached`; `runs.input` içinde `answers` (çalışmaya verilen yanıt sayısı), `runs.output` içinde `question_id`
+- Veri bloğu: `questions_and_answers` (ajana verilen sorular ve yanıtlar; `askedBy`, `own`, `question`, `answer`, `answeredBy`: `requester` ya da `founder_for_requester`)
+- Uç nokta: `POST /api/requests/:requestId/questions/:questionId/answer`
+- API hata kodları: `answer_not_allowed` (soruyu yalnızca talep sahibi ya da yerine kurucu yanıtlar), `question_closed` (soru yanıtlanmış ya da kapanmış)
+- Şemalar ve sabitler: `answerQuestionSchema`, `requestAnswerTextSchema`, `REQUEST_QUESTION_MAX` (2.000), `REQUEST_ANSWER_MAX` (10.000); talep yanıtında `question` (`id`, `agent`, `askedAt`, `text`, `mayAnswer`, `inPlaceOfRequester`); yolculukta `question` türü (`text`, `answer`, `answeredAt`, `answeredBy`, `answeredInPlace`, `closedAt`)
+- Veritabanı ifadeleri: `listRequestQuestions`, `answerRequestQuestion`; `RequestRow` içinde `open_question`, `answered_at`; API'de `toOpenQuestion`, `callForRun`; Bugün'de beklenen iş türü `answer`
+- Panel: `components/requests/request-question.tsx` (`RequestQuestion`: soru kartı); taslak anahtarı `answer.<talep kimliği>` (taslak, sorunun kimliğini de taşır); `answerQuestion` (yanıt gönderme isteği); `AgentText` (ajanın yazdığı metnin gösterimi; artık dışa açık) ve `SEND_KEY` (`lib/utils.ts`); test yardımcıları `openQuestion`, `AWAITING_REPLY`, `QUESTION_ID`, `QUESTION_TEXT`
+- Betikler: `probe:questions` (`apps/worker/scripts/probe-questions.ts` ve talep metinlerini tutan `probe-questions-cases.ts`: ajanların ne zaman sorduğunu gerçek modelle ölçer; yalnızca elle; `--no-ask`, `--case`, `--runs`); `smoke:claude` betiğinin üçüncü denetimi (koordinasyon merkezinin modeli iki araç arasında zorlanmayı kabul ediyor mu)
+
 ## Notlar
 
 - Hata metinleri (veritabanı tetikleyicilerinin `raise exception` metinleri, geliştiriciye dönük iletiler) İngilizcedir. Kullanıcıya gösterilecek Türkçe metni API üretir; API hata metnine göre değil SQLSTATE koduna göre dallanır.

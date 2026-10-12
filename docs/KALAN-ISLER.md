@@ -57,6 +57,8 @@ Henüz olmayanlar: veritabanı (göç dosyası yok), giriş, işlevli ekran (yal
 
 12 Ekim 2026 (devam): Projeler'in dördüncü adımı kuruldu (0.4c adım 4): proje dosyaları (8 Ekim, karar 11 ve 20). Proje sayfasında "Talepler"den hemen sonra "Dosyalar" sekmesi var: projenin üyeleri ve kurucu dosyaları görür, ekler ve indirir; dosyayı ekleyen kişi, projenin sahibi, yöneticileri ve kurucu siler (11 Ekim, karar 2). On iki uzantı eklenebilir (PDF, DOCX, XLSX, CSV, PPTX, PNG, JPG, JPEG, GIF, WEBP, TXT, MD), dosya başına 25 MB; tür dosyanın adına ve içeriğine birlikte bakılarak belirlenir. Dosya panelde gösterilmez, her zaman indirilir. Tarayıcı dosyayı API'ye gönderir ve API'den alır (kural 1): önce küçük bir istekle yükleme izni alınır, sonra dosya bu izinle gönderilir. Sunucuda beş uç ve dosya deposuna ulaşan tek modül var (`apps/api/src/files`); depo test ve canlı ortamda Supabase Storage, yerelde bir klasör (`FILE_STORAGE_DIR`), testlerde bellektir. Ekleme penceresi iki cümleyi söyler: avukatın görüşü gelene kadar kişisel veri içeren dosya eklenmez (karar 21); yapay zekâ izni açık projede ajanlar bu dosyaları okuyacak (11 Ekim, karar 3). Ajanların okuması kurulmadı (adım 6): bugün hiçbir ajan ve çalıştırıcı bir dosya kaydını göremez. Dosyalar şimdilik taranmadan eklenir; tarayıcı sunucu kurulunca kurulur (11 Ekim, karar 4; 0.7). Türetilen seçimler `docs/SONRA.md` içinde P4-a ila P4-w; P4-b, P4-m, P4-t ve P4-u karara bağlandı, ötekiler kurucu onayı bekliyor. Supabase'e giden üç çağrı gerçek hizmetle denenmedi; kova kurulunca `pnpm files:check` bir kez çalıştırılır. Ekranlar tarayıcıda görülmeden yazıldı; kurucunun "Dosyalar" sekmesine bir kez bakması gerekir (P4-i, P4-w). Yeni göç (`20261008103100_project_files.sql`) yerel veritabanına uygulanana kadar yerelde "Dosyalar" sekmesi sunucu hatası verir; yerelde dosya eklemek için `.env` dosyasında `FILE_STORAGE_DIR` bir klasörü göstermelidir (boşsa sekme deponun kurulu olmadığını yazar). Sıradaki adım GitHub bağlantısı (adım 5).
 
+12 Ekim 2026 (devam): 0.4a adım 4 kuruldu: ajan, iş onsuz yapılamayacak bir bilgi eksikse talep sahibine sorar; talep "Yanıt bekliyor" olur, soru Bugün'de ve talep sayfasında görünür, yanıt gelince aynı ajan kendiliğinden yeniden çalışır. Soru Onaylar'a düşmez. Bir ajan bir talepte bir kez, koordinasyon merkezi şimdilik en çok iki kez sorar (12 Ekim, karar 3 ve 4). Adım tasarlanırken ve yapılırken türetilen seçimler `docs/SONRA.md` içinde S-a ila S-z olarak duruyor; "teknik not" yazanlar dışında hepsi kurucu onayı bekliyor. Ekranlar tarayıcıda görülmeden yazıldı; kurucunun bir soru kartına bir kez bakması gerekir (S-l, S-x). İki yeni göç yerel veritabanına uygulanana kadar (`supabase migration up`) yerelde talep listeleri sunucu hatası verir ve çalıştırıcı ajan işlerini başlatamaz. Ajanların soru sorması bir veritabanında `pnpm db:sync-definitions` çalıştırılınca açılır; bu komut gerçek modelle ölçüm (yaklaşık 30 talep metni) eşikleri tuttuktan sonra çalıştırılır, o zamana kadar ajanlar soru sormaz (S-u). Gerçek modelle denetim ve ölçüm henüz yapılmadı; kalan işler sırasıyla 0.4a adım 4'ün altında yazıyor. Sıradaki adım haber ajanı STR-6 (adım 5'in ilk parçası).
+
 ## Sprint 0
 
 ### 0.1 Arayüz temeli
@@ -368,7 +370,7 @@ Testler:
 
 ### 0.4a Talep akışının kalanı
 
-Dilimde bilerek olmayanlar. Dilimden hemen sonra yapılır (8 Ekim, karar 6). Sıra ve içerik kurucunun 8 Ekim yanıtlarıyla belirlendi (karar 7-13); sormadan yapılan varsayımlar `docs/SONRA.md` içinde W-a ila W-m; adım 3'te türetilenler D-a ila D-k.
+Dilimde bilerek olmayanlar. Dilimden hemen sonra yapılır (8 Ekim, karar 6). Sıra ve içerik kurucunun 8 Ekim yanıtlarıyla belirlendi (karar 7-13); sormadan yapılan varsayımlar `docs/SONRA.md` içinde W-a ila W-m; adım 3'te türetilenler D-a ila D-k; adım 4'te türetilenler S-a ila S-z.
 
 Adım 1: Bugün listesi ve bildirimler (karar 7 ve 8)
 
@@ -391,9 +393,26 @@ Adım 3: Son tarih ve yorum (karar 13); proje alanı Projeler ile (0.4c adım 2)
 - [x] Talebe yorum yazma: talep sahibi, birimin onaylayıcısı ve kurucu; ajan görmez
 - [x] Talep formunda proje alanı; çalışmanın proje bağlamı; kural 12 denetiminin kodla yapılması (0.4c adım 2 ile)
 
-Adım 4: Ajanın soru sorması (ilk gerçek çalışmalardan sonra; sorusu kurucuya o zaman sorulur)
+Adım 4: Ajanın soru sorması (12 Ekim, karar 3 ve 4)
 
-- [ ] Ajanın insana soru sorması ve "Yanıt bekliyor" durumu (7 Ekim, karar 7: talep sahibi ajanın sorusunu yanıtlar)
+- [x] Ajanın talep sahibine soru sorması ve "Yanıt bekliyor" durumu (7 Ekim, karar 7): işi yapan ajan bir talepte bir kez sorar; koordinasyon merkezi şimdilik en çok iki kez (karar 4; sayı kurucu onayı bekliyor, SONRA S-a)
+- [x] Soru kartı ve yanıt: talep sayfasında; yalnızca talep sahibi yanıtlar, talebi göremiyorsa yerine kurucu
+- [x] Yanıt gelince aynı ajanın kendiliğinden yeniden çalışması; soru ve yanıtın ajana veri olarak verilmesi
+- [x] Bugün'de "Sizden beklenenler" listesinde yanıt bekleyen soru
+- [x] Ajan durdurulmuşken, izin kapalıyken ya da harcama sınırı dolmuşken gelen yanıtın kaydedilmesi; engel kalkınca işin kendiliğinden başlaması
+
+Kod yazıldı; ajanlar hiçbir veritabanında henüz soru sormuyor. Kalanlar yukarıdan aşağıya, bu sırayla yapılır. Sıra değişmez: ölçüm senkronizasyondan önce gelir, çünkü bir veritabanında soru sormayı açan şey senkronizasyondur (SONRA S-u).
+
+- [ ] Yerelde `supabase migration up`: iki yeni göç (`20261008103300_request_questions.sql`, `20261008103400_answer_calls_for_work.sql`). O zamana kadar yerelde talep listeleri sunucu hatası verir ve çalıştırıcı hiçbir ajan işini başlatamaz
+- [ ] (Senden) Ölçüm için `.env` dosyasında API anahtarı; ölçümün tahmini maliyeti iki üç dolar
+- [ ] Gerçek modelle ilk denetim: `pnpm --filter @agent-office/worker smoke:claude`. Koordinasyon merkezinin modeli iki araç arasında zorlanmayı kabul ediyor mu (çıktıda `forced choice among tools: ok`). Kabul etmezse koordinasyon merkezine soru aracı verilmez (tek satırlık değişiklik ve testi), SOS-2'ninki kalır, karar 4 yürürlüğe girmez ve kurucuya bildirilir (SONRA S-p)
+- [ ] Gerçek modelle ölçüm: `pnpm --filter @agent-office/worker probe:questions`, ardından karşılaştırma için `probe:questions --no-ask` (koordinasyon merkezi soru aracı olmadan). Yaklaşık 30 uydurma talep metniyle ajanların ne zaman sorduğu ve koordinasyon merkezinin nereye yönlendirdiği sayılır; sorulan her soru okunur. Eşik tutmazsa yalnızca talimat metinleri daraltılır: en çok iki tur, her tur ayrı commit, turlar arasında senkronizasyon yok. İki turdan sonra da tutmazsa kurucuya sayılarla bildirilir. Yanıttaki talimata uyan tek bir çalışma olursa adım yayına alınmaz. Son turun sayıları bu satıra yazılır
+- [ ] Eşikler tutunca `pnpm db:sync-definitions`: ajanların soru sorması o veritabanında bu komutla açılır
+- [ ] Panelde iki gerçek talep: sorulan, yanıtlanan ve sonucu sunulan bir soru; yönlendirme düzeltilince kapanan bir soru
+- [ ] (Senden) Soru kartına tarayıcıda bir kez bakma: kartın sayfadaki yeri, cümleleri, Bugün satırı (SONRA S-l, S-x)
+- [ ] (Senden) Koordinasyon merkezi kaç kez sorsun: bir mi, iki mi (SONRA S-a). Ölçümün sayılarına göre: koordinasyon merkezi sorması gereken yerde neredeyse hiç sormuyorsa ya da SOS-2 sormak yerine eksiği belirtip yazıyorsa soru sormak kolaylaştırılsın mı
+- [ ] (Senden) Öteki S maddeleri, `docs/SONRA.md` gözden geçirilirken (8 Ekim, karar 34): önce S-b, S-d, S-e, S-i ve S-j; sonra S-o ile S-h, S-v ve S-w
+- [ ] `CLAUDE.md` içinde bu adımla eskiyen ya da eksik kalan cümlelerin güncellenmesi ("İnsana sor", araç kataloğu, talepte elle yapılabilenler, Y1 kapısı, komutlar)
 
 Adım 5: Birden çok ajanın sırayla çalışması (ilk gerçek çalışmalardan sonra; soruları kurucuya o zaman sorulur)
 
@@ -672,9 +691,9 @@ Yetki kapıları:
 - [ ] Y1 kapısı: yalnızca taslaklara ve kendi görevinin durumuna yazma
 - [ ] Y1 ajanın paylaşılan kayda yazmasının onaya düşmesi
 - [ ] Görev açmanın öneri olarak gelmesi
-- [ ] "İnsana sor" yolu: soru ve eskalasyonun sorumluya ya da talep sahibine gitmesi
-- [ ] "İnsana sor" için soru kartı; seçenekli soru kaydı (Karar: X1-6, U9)
-- [ ] Yanıt gelince ajanın yeniden başlaması (Karar: X1-6)
+- [ ] "İnsana sor" yolu: soru ve eskalasyonun sorumluya ya da talep sahibine gitmesi (talepte talep sahibine soru 0.4a adım 4 ile kuruldu; ajanın sorumlusuna soru ve eskalasyon kaldı, SONRA S-m)
+- [ ] "İnsana sor" için soru kartı; seçenekli soru kaydı (Karar: U9) (soru kartı talep sayfasında 0.4a adım 4 ile kuruldu; seçenekli soru kaldı, SONRA S-g)
+- [ ] Yanıt gelince ajanın yeniden başlaması (taleplerde 0.4a adım 4 ile kuruldu; X1-6 kapandı)
 - [ ] Y2 ve Y3 kapıları (Karar: M19)
 - [ ] Ajana bırakılmayan işler kuralı: katalogda işaret ve kodla denetim (kural 11; Karar: R9)
 
@@ -799,7 +818,7 @@ Testler:
 
 - [ ] Ajanın adımları ve araç çağrıları
 - [ ] Sohbet biçimli akış: çalışma özeti satırı ve açılan adımlar (5 Ekim, karar 11; kurucu onayı bekliyor)
-- [ ] Soru ve onay kartlarının yazma kutusunun üstünde durması (5 Ekim, karar 10; kurucu onayı bekliyor; soru kartı Karar: U9, X1-6)
+- [ ] Soru ve onay kartlarının yazma kutusunun üstünde durması (5 Ekim, karar 10; kurucu onayı bekliyor; soru kartı Karar: U9) (talep sayfasında soru kartı sayfanın üstünde, onay kartlarının yerinde durur; 0.4a adım 4, SONRA S-l)
 - [ ] Çıktılar ve bağlı onaylar
 - [ ] Çalışmanın maliyeti ve süresi
 - [ ] İşi ajandan devralma düğmesi
