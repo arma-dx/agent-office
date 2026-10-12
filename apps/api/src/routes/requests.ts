@@ -1,5 +1,6 @@
 import {
   agentToRunAgain,
+  answerRequestQuestion,
   closeRequest,
   correctRouting,
   decideAcceptance,
@@ -29,6 +30,7 @@ import {
   readResultApprovals,
   writeAudit,
   type AgentRunSender,
+  type AnsweredQuestion,
   type Queryable,
   type RequestRow,
 } from '@agent-office/db';
@@ -37,6 +39,7 @@ import {
   REQUEST_COMMENT_LIMIT,
   REQUEST_LIST_LIMIT,
   acceptanceDecisionSchema,
+  answerQuestionSchema,
   approvalDecisionDetails,
   approvalDecisionSchema,
   approvalDeskSchema,
@@ -93,6 +96,9 @@ import type { RouteDeps } from '../services.ts';
  *   GET  /api/requests/:requestId            one answer for the whole page
  *   POST /api/requests/:requestId/close      the requester cancels; the approver or founder stops
  *   POST /api/requests/:requestId/comments   a comment of the requester, the approver or the founder
+ *   POST /api/requests/:requestId/questions/:questionId/answer   the requester answers an agent's
+ *                                            question; the run of the agent that asked is put on
+ *                                            the queue in the same transaction
  *   GET  /api/requests/:requestId/routing-options  where it can be routed to now
  *   POST /api/requests/:requestId/routing    the founder or the approver corrects the routing; the
  *                                            agent's run is put on the queue in the same transaction
@@ -109,6 +115,9 @@ import type { RouteDeps } from '../services.ts';
  * and closed (8 October decision 2), with no act left for anybody.
  * A comment (8 October decision 13) changes nothing of a request; it is people's text for people
  * and no statement of the runner reads it.
+ * An answer to an agent's question (7 October decision 7; 12 October decisions 3 and 4) is data
+ * for the agent that asked and nothing else: it sets no status and approves nothing (rule 4). The
+ * database decides who answers, stores the answer once and puts the request back in progress.
  * What a person reads is decided by the row policies; a record the person cannot see answers 404
  * exactly like one that does not exist, and so does the id of a task between people.
  *
@@ -124,6 +133,7 @@ const INSIDERS = { founderOnly: false, insidersOnly: true } as const;
 const DEADLOCK = '40P01';
 
 const requestParams = z.object({ requestId: z.uuid() });
+const questionParams = z.object({ requestId: z.uuid(), questionId: z.uuid() });
 const approvalParams = z.object({ approvalId: z.uuid() });
 const listQuery = z.object({
   mine: z.enum(['true', 'false']).optional(),
@@ -184,6 +194,16 @@ const commentNotAllowed = (): ApiError =>
     'comment_not_allowed',
     'Bu talebe yalnızca talep sahibi, birimin onaylayıcısı ve kurucu yorum yazabilir.',
   );
+
+const answerNotAllowed = (): ApiError =>
+  new ApiError(
+    403,
+    'answer_not_allowed',
+    'Bu soruyu yalnızca talep sahibi yanıtlayabilir; talep sahibi talebi göremiyorsa kurucu yanıtlar.',
+  );
+
+const questionClosed = (): ApiError =>
+  new ApiError(409, 'question_closed', 'Bu soru yanıtlanmış ya da kapanmış. Sayfayı yenileyin.');
 
 const routingNotPossible = (): ApiError =>
   new ApiError(
@@ -288,13 +308,40 @@ async function intakeOf(client: Queryable, role: Role): Promise<RequestIntake> {
 }
 
 /**
+ * Calls for a run of this agent on this request: the job, in the requester's name (in whose
+ * name the run goes is the database's answer when the run opens, decision 45). A stopped agent
+ * takes no new work, so nothing is put on the queue for it; the trace run_not_started is written
+ * instead (ids only): the request page reads from it that the work stays with a person, and the
+ * restart reads it when the agent is opened again (8 October decision 49). An AI permission that
+ * is closed and a spending limit that is reached are not asked here: the job is sent, the runner
+ * refuses it and leaves its own trace behind the lock a restart takes.
+ * For an answer, `enabled` was read by office.answer_question behind that same lock, in this
+ * transaction: an agent that is opened in this instant is either read as open, or its restart
+ * waits for this transaction and finds the trace. (A change request reads the switch without
+ * the lock, as before this step: docs/SONRA.md S-t.)
+ */
+async function callForRun(
+  client: Queryable,
+  jobs: AgentRunSender,
+  companyId: string,
+  work: { requestId: string; agentCode: string; requesterUserId: string; enabled: boolean },
+): Promise<void> {
+  if (!work.enabled) {
+    await writeAudit(client, 'run_not_started', 'task', work.requestId);
+    return;
+  }
+  await jobs.send(client, {
+    companyId,
+    userId: work.requesterUserId,
+    taskId: work.requestId,
+    agentCode: work.agentCode,
+  });
+}
+
+/**
  * Calls for the agent's run after a change request: the job of the agent of the active step, in
- * the requester's name. A stopped agent takes no new work, so nothing is put on the queue for it;
- * the trace run_not_started is written instead (ids only), and the request page reads from it that
- * the work stays with a person; the trace is what the restart reads when the agent is opened again
- * (8 October decision 49). The job names the requester, whoever asked for the change; in whose
- * name the run goes is the database's answer when the run opens (decision 45). No active step:
- * nothing is called for.
+ * the requester's name, whoever asked for the change (callForRun). No active step: nothing is
+ * called for.
  */
 async function runAgain(
   client: Queryable,
@@ -303,19 +350,9 @@ async function runAgain(
   requestId: string,
 ): Promise<void> {
   const again = await agentToRunAgain(client, requestId);
-  if (!again) {
-    return;
+  if (again) {
+    await callForRun(client, jobs, companyId, { requestId, ...again });
   }
-  if (!again.enabled) {
-    await writeAudit(client, 'run_not_started', 'task', requestId);
-    return;
-  }
-  await jobs.send(client, {
-    companyId,
-    userId: again.requesterUserId,
-    taskId: requestId,
-    agentCode: again.agentCode,
-  });
 }
 
 function requestIdOf(request: FastifyRequest): string {
@@ -628,6 +665,83 @@ export function registerRequestRoutes(
       reply.code(added ? 201 : 200);
       return detailOf(context, row);
     }),
+  );
+
+  /**
+   * The answer to an agent's question (7 October decision 7). The database decides who answers
+   * (the requester; the founder while the requester cannot read the request), stores the answer
+   * once and puts the request back in progress; the run of the agent that asked is called for in
+   * the same transaction, both or neither. The answer is stored also when that agent cannot
+   * work now (stopped, AI permission closed, spending limit reached): the work then starts by
+   * itself when the block lifts (8 October decision 49; 11 October decision 1). A send that is
+   * repeated with the same text by the same person changes nothing and starts nothing twice.
+   */
+  app.post(
+    '/api/requests/:requestId/questions/:questionId/answer',
+    async (request, reply): Promise<RequestDetail> =>
+      runner.withCompany(request, reply, INSIDERS, async (context) => {
+        const params = questionParams.safeParse(request.params);
+        if (!params.success) {
+          throw notFound();
+        }
+        const body = answerQuestionSchema.safeParse(request.body);
+        if (!body.success) {
+          throw invalidRequest();
+        }
+        const { client, companyId, session } = context;
+        const { requestId, questionId } = params.data;
+        // Hidden and missing are the same answer; the database's own check comes after.
+        if (!(await readRequest(client, COORDINATOR_AGENT_CODE, requestId))) {
+          throw notFound();
+        }
+        // The request first, as every act of a person: two answers, and an answer and a close
+        // or a correction of the routing, wait for each other here.
+        await lockRequest(client, requestId);
+        // Read behind the lock, with the person's own rights: a question the person may not
+        // read, and a question of another request, do not exist.
+        const question = (await listRequestQuestions(client, requestId)).find(
+          (row) => row.id === questionId,
+        );
+        if (!question) {
+          throw notFound();
+        }
+        const repeated =
+          question.status === 'answered' &&
+          question.answered_by_user_id === session.userId &&
+          question.answer === body.data.answer;
+        if (!repeated) {
+          let answered: AnsweredQuestion | null;
+          await client.query('savepoint answer_question');
+          try {
+            answered = await answerRequestQuestion(client, questionId, body.data.answer);
+          } catch (error) {
+            await client.query('rollback to savepoint answer_question');
+            const code = databaseErrorCode(error);
+            if (code === '42501') throw answerNotAllowed();
+            // check_violation: answered or closed meanwhile, or the request is closed.
+            if (code === '23514') throw questionClosed();
+            if (code === 'P0002') throw notFound();
+            if (code === '22023') throw invalidRequest();
+            if (code === DEADLOCK) throw requestChanged();
+            throw error;
+          }
+          if (!answered) {
+            throw notFound();
+          }
+          // The same agent runs again (12 October decision 3). Ids only (rule 10).
+          await callForRun(client, jobs, companyId, {
+            requestId,
+            agentCode: answered.agent_code,
+            requesterUserId: answered.requester_user_id,
+            enabled: answered.agent_enabled,
+          });
+        }
+        const row = await readRequest(client, COORDINATOR_AGENT_CODE, requestId);
+        if (!row) {
+          throw notFound();
+        }
+        return detailOf(context, row);
+      }),
   );
 
   app.get(

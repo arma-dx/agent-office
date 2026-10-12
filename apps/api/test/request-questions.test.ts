@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { agentStep, createPool, withContext } from '@agent-office/db';
 import {
+  REQUEST_ANSWER_MAX,
+  agentOpenResponseSchema,
   projectDetailSchema,
   requestDetailSchema,
   requestListSchema,
@@ -25,8 +27,8 @@ import {
 import { errorCode, send, type Method } from './passkey-helpers.ts';
 
 // An agent's question to the requester, through the API (7 October decision 7; 12 October
-// decisions 3 and 4): what each reader of the request is given of it, and where it stands on
-// Bugün. Requests are opened and acted on through the API; the agent's part (the routing, the
+// decisions 3 and 4): what each reader of the request is given of it, where it stands on Bugün,
+// and the answer, which calls for the run of the agent that asked. Requests are opened and acted on through the API; the agent's part (the routing, the
 // question) is played with the worker's own restricted role and an agent context, exactly as the
 // runner writes it. The runner itself is tested in apps/worker, the rules of the database in
 // packages/db.
@@ -51,6 +53,8 @@ const approverAccount = {
 const QUESTION = 'Gönderi hangi kanal için yazılsın: LinkedIn mi, Instagram mı?';
 // The fixed sentence of a run that asked (the runner's; never the question itself).
 const ASKED_SUMMARY = 'Ajan talep sahibine bir soru sordu ve çalışmasını bitirdi.';
+// What the requester answers: a person's text, read by the same three as the question.
+const ANSWER = 'LinkedIn için; kısa ve sade olsun.';
 
 describe.skipIf(noDatabase)('an agent’s question on the request page and on Bugün', () => {
   let server: TestServer;
@@ -470,6 +474,411 @@ describe.skipIf(noDatabase)('an agent’s question on the request page and on Bu
       question: null,
     });
     expect((await close(employee, rerouted.id)).statusCode).toBe(200);
+  });
+
+  describe('the answer', () => {
+    const answerUrl = (id: string, questionId: string): string =>
+      `/api/requests/${id}/questions/${questionId}/answer`;
+    const answer = (
+      session: string,
+      id: string,
+      questionId: string,
+      text: string = ANSWER,
+      company: string = ids.arma,
+    ) => call(session, 'POST', answerUrl(id, questionId), { answer: text }, company);
+
+    const questionRows = (id: string) =>
+      adminQuery(
+        `select status, answer, answered_by_user_id from office.task_questions
+         where task_id = $1 order by created_at, id`,
+        [id],
+      );
+    const traces = (id: string, event: string) =>
+      adminQuery(
+        `select user_id, agent_code from office.audit_log
+         where record_type = 'task' and record_id = $1 and event = $2 order by id`,
+        [id, event],
+      );
+    const setSwitch = async (status: 'enabled' | 'stopped') => {
+      const res = await call(founder, 'PUT', '/api/agents/HAF-2/switch', { status });
+      expect(res.statusCode, res.body).toBe(200);
+      return res;
+    };
+
+    /** A request of the employee inside a project of the founder, with a question of HAF-2. */
+    async function askedIn(name: string): Promise<{
+      id: string;
+      questionId: string;
+      projectId: string;
+    }> {
+      const projectId = await project(name);
+      const id = await open(employee, projectId);
+      await route(id, projectId);
+      return { id, questionId: await ask(id, 'HAF-2', { projectId }), projectId };
+    }
+
+    it('the requester answers an agent’s question: the answer is stored and the agent’s job is sent once, with ids only', async () => {
+      const { id, questionId } = await asked();
+      const before = server.jobs.sent.length;
+      const res = await answer(employee, id, questionId, `  ${ANSWER}\n`);
+      expect(res.statusCode, res.body).toBe(200);
+      const after = requestDetailSchema.parse(res.json());
+      // The request is the agent's again: nothing is asked of anybody.
+      expect(after).toMatchObject({
+        id,
+        status: 'in_progress',
+        stage: 'working',
+        cause: null,
+        turn: { kind: 'agent', code: 'HAF-2' },
+        waitingForMe: false,
+        question: null,
+        approval: null,
+        acceptance: null,
+      });
+      expect(questionsOf(after)).toEqual([
+        expect.objectContaining({
+          id: questionId,
+          status: 'answered',
+          text: QUESTION,
+          answer: ANSWER,
+          answeredBy: { userId: ids.employee, name: 'Çalışan' },
+          answeredInPlace: false,
+          closedAt: null,
+        }),
+      ]);
+      expect(questionsOf(after)[0]?.answeredAt).not.toBeNull();
+      expect(await questionRows(id)).toEqual([
+        { status: 'answered', answer: ANSWER, answered_by_user_id: ids.employee },
+      ]);
+      // One job, for the agent that asked: four ids and nothing of the question or the answer
+      // (rule 10).
+      expect(server.jobs.sent.slice(before)).toEqual([
+        { companyId: ids.arma, userId: ids.employee, taskId: id, agentCode: 'HAF-2' },
+      ]);
+      expect(await traces(id, 'run_not_started')).toEqual([]);
+
+      // The founder and the approver read both texts; another employee reads neither.
+      for (const reader of [founder, approver]) {
+        expect(questionsOf(await read(reader, id))).toMatchObject([
+          { status: 'answered', text: QUESTION, answer: ANSWER },
+        ]);
+      }
+      const others = await read(colleague, id);
+      expect(others).toMatchObject({ stage: 'working', question: null });
+      expect(questionsOf(others)).toEqual([]);
+      expect(JSON.stringify(others)).not.toContain('kısa ve sade');
+      expect((await close(employee, id)).statusCode).toBe(200);
+    });
+
+    it('the coordinator’s question is answered the same way: the coordinator runs again', async () => {
+      const id = await open();
+      const questionId = await ask(id, 'KOR-1');
+      const before = server.jobs.sent.length;
+      const res = await answer(employee, id, questionId);
+      expect(res.statusCode, res.body).toBe(200);
+      expect(requestDetailSchema.parse(res.json())).toMatchObject({
+        status: 'in_progress',
+        stage: 'routing',
+        turn: { kind: 'agent', code: 'KOR-1' },
+        question: null,
+      });
+      expect(server.jobs.sent.slice(before)).toEqual([
+        { companyId: ids.arma, userId: ids.employee, taskId: id, agentCode: 'KOR-1' },
+      ]);
+      expect((await close(employee, id)).statusCode).toBe(200);
+    });
+
+    it('a repeated send with the same text changes nothing and sends no second job; another text is refused', async () => {
+      const { id, questionId } = await asked();
+      const before = server.jobs.sent.length;
+      expect((await answer(employee, id, questionId)).statusCode).toBe(200);
+      // The same text again by the same person (a retry of a send whose answer was lost): the
+      // page as it is, also with blanks around the text.
+      for (const text of [ANSWER, ` ${ANSWER} `]) {
+        const again = await answer(employee, id, questionId, text);
+        expect(again.statusCode, again.body).toBe(200);
+        expect(requestDetailSchema.parse(again.json())).toMatchObject({
+          stage: 'working',
+          question: null,
+        });
+      }
+      expect(server.jobs.sent).toHaveLength(before + 1);
+      // Another text after the answer: an answer is stored once and never changed.
+      const changed = await answer(employee, id, questionId, 'Instagram olsun.');
+      expect([changed.statusCode, errorCode(changed)]).toEqual([409, 'question_closed']);
+      expect(await questionRows(id)).toEqual([
+        { status: 'answered', answer: ANSWER, answered_by_user_id: ids.employee },
+      ]);
+      expect(server.jobs.sent).toHaveLength(before + 1);
+      expect(
+        await adminQuery(
+          `select count(*)::int as n from office.audit_log
+           where record_type = 'task_question' and event = 'request_question_answered'
+             and record_id = $1`,
+          [questionId],
+        ),
+      ).toEqual([{ n: 1 }]);
+
+      // A question a cancel closed is as closed as an answered one.
+      const cancelled = await asked();
+      expect((await close(employee, cancelled.id)).statusCode).toBe(200);
+      const sentSoFar = server.jobs.sent.length;
+      const late = await answer(employee, cancelled.id, cancelled.questionId);
+      expect([late.statusCode, errorCode(late)]).toEqual([409, 'question_closed']);
+      expect(server.jobs.sent).toHaveLength(sentSoFar);
+      expect((await close(employee, id)).statusCode).toBe(200);
+    });
+
+    it('who may not answer', async () => {
+      const { id, questionId } = await asked();
+      const before = server.jobs.sent.length;
+      // The founder and the appointed approver read the question; while the requester reads the
+      // request neither answers it.
+      for (const reader of [founder, approver]) {
+        const res = await answer(reader, id, questionId);
+        expect([res.statusCode, errorCode(res)]).toEqual([403, 'answer_not_allowed']);
+      }
+      // Another employee reads the request and not the question: it does not exist for them.
+      const other = await answer(colleague, id, questionId);
+      expect([other.statusCode, errorCode(other)]).toEqual([404, 'not_found']);
+      // A session in another company, and an external person.
+      const elsewhere = await answer(founder, id, questionId, ANSWER, ids.pillika);
+      expect([elsewhere.statusCode, errorCode(elsewhere)]).toEqual([404, 'not_found']);
+      const outside = await answer(external, id, questionId);
+      expect([outside.statusCode, errorCode(outside)]).toEqual([403, 'insiders_only']);
+
+      // Nothing was stored and nothing was called for.
+      expect(await questionRows(id)).toEqual([
+        { status: 'open', answer: null, answered_by_user_id: null },
+      ]);
+      expect(await read(employee, id)).toMatchObject({
+        status: 'awaiting_reply',
+        question: { id: questionId, mayAnswer: true },
+      });
+      expect(server.jobs.sent).toHaveLength(before);
+      expect((await close(employee, id)).statusCode).toBe(200);
+    });
+
+    it('the body', async () => {
+      const { id, questionId } = await asked();
+      const elsewhere = await asked();
+      const before = server.jobs.sent.length;
+      const sendBody = (payload: object) =>
+        call(employee, 'POST', answerUrl(id, questionId), payload);
+      for (const payload of [
+        { answer: '' },
+        { answer: '   \n\t ' },
+        { answer: 'x'.repeat(REQUEST_ANSWER_MAX + 1) },
+        { answer: 'a\u0000b' },
+        { answer: 12 },
+        { text: ANSWER },
+        // No field sets a status, names an agent or approves anything.
+        { answer: ANSWER, status: 'done' },
+        { answer: ANSWER, agentCode: 'KOR-1' },
+        { answer: ANSWER, approved: true },
+      ]) {
+        const res = await sendBody(payload);
+        expect([res.statusCode, errorCode(res)], JSON.stringify(payload).slice(0, 60)).toEqual([
+          400,
+          'invalid_request',
+        ]);
+      }
+      // An id that is none, and a question of another request under this request's path.
+      for (const url of [
+        answerUrl('not-an-id', questionId),
+        answerUrl(id, 'not-an-id'),
+        answerUrl(id, randomUUID()),
+        answerUrl(randomUUID(), questionId),
+        answerUrl(id, elsewhere.questionId),
+        answerUrl(elsewhere.id, questionId),
+      ]) {
+        const res = await call(employee, 'POST', url, { answer: ANSWER });
+        expect([res.statusCode, errorCode(res)], url).toEqual([404, 'not_found']);
+      }
+      for (const request of [id, elsewhere.id]) {
+        expect(await questionRows(request)).toEqual([
+          { status: 'open', answer: null, answered_by_user_id: null },
+        ]);
+      }
+      expect(server.jobs.sent).toHaveLength(before);
+      // The longest answer the contract takes is stored.
+      const longest = await sendBody({ answer: 'x'.repeat(REQUEST_ANSWER_MAX) });
+      expect(longest.statusCode, longest.body.slice(0, 200)).toBe(200);
+      expect((await close(employee, id)).statusCode).toBe(200);
+      expect((await close(employee, elsewhere.id)).statusCode).toBe(200);
+    });
+
+    it('the founder answers in the requester’s place, and the job still names the requester', async () => {
+      const { id, questionId } = await askedAndLost('Yerine yanıtlanan soru projesi');
+      const before = server.jobs.sent.length;
+      // The requester's own try: the request does not exist for them any more.
+      const lost = await answer(employee, id, questionId);
+      expect([lost.statusCode, errorCode(lost)]).toEqual([404, 'not_found']);
+      // An employee who is no member of the project cannot stand in either.
+      const other = await answer(colleague, id, questionId);
+      expect([other.statusCode, errorCode(other)]).toEqual([404, 'not_found']);
+
+      const res = await answer(founder, id, questionId, 'Kurucunun yanıtı.');
+      expect(res.statusCode, res.body).toBe(200);
+      const after = requestDetailSchema.parse(res.json());
+      expect(after).toMatchObject({
+        status: 'in_progress',
+        stage: 'routing',
+        question: null,
+        requesterReads: false,
+        requester: { userId: ids.employee },
+      });
+      // The journey says who answered, and that it was in the requester's place.
+      expect(questionsOf(after)).toMatchObject([
+        {
+          status: 'answered',
+          answer: 'Kurucunun yanıtı.',
+          answeredBy: { userId: ids.founder, name: 'Kurucu' },
+          answeredInPlace: true,
+        },
+      ]);
+      // In whose name the run goes is the database's answer when the run opens (decision 45).
+      expect(server.jobs.sent.slice(before)).toEqual([
+        { companyId: ids.arma, userId: ids.employee, taskId: id, agentCode: 'KOR-1' },
+      ]);
+      expect((await close(founder, id, 'Deneme bitti.')).statusCode).toBe(200);
+    });
+
+    it('the answer while the agent is stopped is stored: no job, the trace run_not_started, the stage says ajan durduruldu', async () => {
+      const { id, questionId } = await asked();
+      await setSwitch('stopped');
+      try {
+        // Stopped while the question waits: the request still waits for its answer.
+        expect(await read(employee, id)).toMatchObject({ stage: 'awaiting_reply' });
+        const before = server.jobs.sent.length;
+        const res = await answer(employee, id, questionId);
+        expect(res.statusCode, res.body).toBe(200);
+        expect(requestDetailSchema.parse(res.json())).toMatchObject({
+          status: 'in_progress',
+          stage: 'fell_to_person',
+          cause: 'agent_stopped',
+          turn: { kind: 'person', userId: APPROVER },
+          question: null,
+        });
+        expect(await questionRows(id)).toEqual([
+          { status: 'answered', answer: ANSWER, answered_by_user_id: ids.employee },
+        ]);
+        // No job for a stopped agent; the trace is left in the name of the person who answered.
+        expect(server.jobs.sent).toHaveLength(before);
+        expect(await traces(id, 'run_not_started')).toEqual([
+          { user_id: ids.employee, agent_code: null },
+        ]);
+        // A repeated send writes no second trace.
+        expect((await answer(employee, id, questionId)).statusCode).toBe(200);
+        expect(await traces(id, 'run_not_started')).toHaveLength(1);
+
+        // The opening starts the work by itself, with the answer (8 October decision 49).
+        const opened = await setSwitch('enabled');
+        expect(agentOpenResponseSchema.parse(opened.json()).restarted).toBe(1);
+        expect(server.jobs.sent.slice(before)).toEqual([
+          { companyId: ids.arma, userId: ids.employee, taskId: id, agentCode: 'HAF-2' },
+        ]);
+        expect(await read(employee, id)).toMatchObject({ stage: 'working', cause: null });
+      } finally {
+        await setSwitch('enabled');
+      }
+      expect((await close(employee, id)).statusCode).toBe(200);
+    });
+
+    it('the answer while the AI permission is closed, and while the spending limit is reached, is stored and its job is sent; the stage says what holds the work', async () => {
+      // The AI permission of the project is closed while the question waits (as an
+      // administrator would close it; the routes are tested with the project).
+      const closed = await askedIn('İzni kapanan soru projesi');
+      await adminQuery('update office.projects set ai_allowed = false where id = $1', [
+        closed.projectId,
+      ]);
+      // The request still waits for its answer, and the requester can give it.
+      expect(await read(employee, closed.id)).toMatchObject({
+        stage: 'awaiting_reply',
+        agentsMayWork: false,
+        waitingForMe: true,
+        question: { mayAnswer: true },
+      });
+      let before = server.jobs.sent.length;
+      const held = await answer(employee, closed.id, closed.questionId);
+      expect(held.statusCode, held.body).toBe(200);
+      expect(requestDetailSchema.parse(held.json())).toMatchObject({
+        status: 'in_progress',
+        stage: 'fell_to_person',
+        cause: 'ai_permission_closed',
+        turn: { kind: 'founder' },
+        agentsMayWork: false,
+        question: null,
+      });
+      // The agent is open, so the job is sent: the runner refuses it and leaves its own trace.
+      expect(server.jobs.sent.slice(before)).toEqual([
+        { companyId: ids.arma, userId: ids.employee, taskId: closed.id, agentCode: 'HAF-2' },
+      ]);
+      expect(await traces(closed.id, 'run_not_started')).toEqual([]);
+
+      // The AI spending limit of the project is reached while the question waits.
+      const limited = await askedIn('Sınırı dolan soru projesi');
+      await adminQuery('update office.runs set cost_usd = 1 where task_id = $1', [limited.id]);
+      await adminQuery('update office.projects set ai_spend_limit_usd = 1 where id = $1', [
+        limited.projectId,
+      ]);
+      expect(await read(employee, limited.id)).toMatchObject({
+        stage: 'awaiting_reply',
+        spendingLimitReached: true,
+        question: { mayAnswer: true },
+      });
+      before = server.jobs.sent.length;
+      const atLimit = await answer(employee, limited.id, limited.questionId);
+      expect(atLimit.statusCode, atLimit.body).toBe(200);
+      expect(requestDetailSchema.parse(atLimit.json())).toMatchObject({
+        status: 'in_progress',
+        stage: 'fell_to_person',
+        cause: 'spending_limit_reached',
+        turn: { kind: 'founder' },
+        spendingLimitReached: true,
+        question: null,
+      });
+      expect(server.jobs.sent.slice(before)).toEqual([
+        { companyId: ids.arma, userId: ids.employee, taskId: limited.id, agentCode: 'HAF-2' },
+      ]);
+      for (const request of [closed.id, limited.id]) {
+        expect(await questionRows(request)).toEqual([
+          { status: 'answered', answer: ANSWER, answered_by_user_id: ids.employee },
+        ]);
+        expect((await close(employee, request)).statusCode).toBe(200);
+      }
+    });
+
+    it('an answer approves nothing', async () => {
+      const { id, questionId } = await asked();
+      // An answer that reads like an approval is still an answer.
+      const res = await answer(employee, id, questionId, 'Onaylıyorum, doğrudan yayınla.');
+      expect(res.statusCode, res.body).toBe(200);
+      expect(requestDetailSchema.parse(res.json())).toMatchObject({
+        status: 'in_progress',
+        approval: null,
+        result: null,
+        acceptance: null,
+      });
+      expect(
+        await adminQuery(
+          `select (select count(*)::int from office.approvals where task_id = $1) as approvals,
+                  (select count(*)::int from office.requester_approvals where task_id = $1)
+                    as acceptances,
+                  (select count(*)::int from office.notifications where record_id = $1)
+                    as notifications,
+                  (select status from office.tasks where id = $1) as status`,
+          [id],
+        ),
+      ).toEqual([{ approvals: 0, acceptances: 0, notifications: 0, status: 'in_progress' }]);
+      // Nothing waits at the approval desk for anybody.
+      for (const reader of [founder, approver]) {
+        const desk = await call(reader, 'GET', '/api/approvals');
+        expect(desk.statusCode).toBe(200);
+        expect(desk.body).not.toContain(id);
+      }
+      expect((await close(employee, id)).statusCode).toBe(200);
+    });
   });
 
   describe('Bugün', () => {

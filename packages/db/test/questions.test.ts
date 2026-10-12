@@ -1,7 +1,7 @@
 import { COORDINATOR_AGENT_CODE } from '@agent-office/shared';
 import { afterAll, describe, expect, it } from 'vitest';
 import type { ContextInput } from '../src/context.ts';
-import { listRequestQuestions, readRequest } from '../src/requests.ts';
+import { answerRequestQuestion, listRequestQuestions, readRequest } from '../src/requests.ts';
 import { ids } from './fixtures.ts';
 import { asRole, closePools, inAdminTransaction, noDatabase, type Tx } from './helpers.ts';
 import { stepUp } from './step-up.ts';
@@ -1462,8 +1462,15 @@ describe.skipIf(noDatabase)('an agent asks the requester a question', () => {
         ids.requestQuestionA,
       ]);
 
-      // Answered: the time of the answer is the latest call for the coordinator's work.
-      await answerAs(tx, employeeA, first.question, 'LinkedIn için.');
+      // Answered through the statement the API uses: it gives back what is put on the queue.
+      await asPerson(tx, employeeA);
+      expect(await answerRequestQuestion(tx.client, first.question, 'LinkedIn için.')).toEqual({
+        task_id: task,
+        agent_code: 'KOR-1',
+        requester_user_id: ids.employeeA,
+        agent_enabled: true,
+      });
+      // The time of the answer is the latest call for the coordinator's work.
       const [answered] = await listed(employeeA);
       expect(answered).toMatchObject({
         status: 'answered',

@@ -648,6 +648,35 @@ export async function listRequestQuestions(
   return rows;
 }
 
+export interface AnsweredQuestion {
+  task_id: string;
+  // The agent that asked: the same agent runs again.
+  agent_code: string;
+  requester_user_id: string;
+  // Is that agent open in the company now; a stopped agent takes no job.
+  agent_enabled: boolean;
+}
+
+/**
+ * Stores the answer to an open question in the name of the context person (the database decides
+ * who may: the requester, or the founder while the requester cannot read the request) and puts
+ * the request back in progress. Returns what the caller puts on the queue in this transaction.
+ * SQLSTATE 42501: not the one who answers; 23514: the question is not open; P0002: no such
+ * question for this person; 22023: the text is empty or too long.
+ */
+export async function answerRequestQuestion(
+  client: Queryable,
+  questionId: string,
+  answer: string,
+): Promise<AnsweredQuestion | null> {
+  const { rows } = await client.query<AnsweredQuestion>(
+    `select task_id, agent_code, requester_user_id, agent_enabled
+     from office.answer_question($1, $2)`,
+    [questionId, answer],
+  );
+  return rows[0] ?? null;
+}
+
 export interface ResultApprovalRow {
   id: string;
   task_id: string;
