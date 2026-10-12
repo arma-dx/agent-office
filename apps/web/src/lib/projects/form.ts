@@ -33,6 +33,8 @@ import { amountInputText, parseAmountInput } from './money.ts';
 /** The values of the customer select that are not a customer's id. */
 export const NO_CUSTOMER = '';
 export const NEW_CUSTOMER = 'new';
+/** The value of the repository select that is no repository. */
+export const NO_REPOSITORY = '';
 
 export const projectFormSchema = z
   .object({
@@ -68,6 +70,9 @@ export const projectFormSchema = z
     targetDate: z.string().refine((day) => day === '' || projectDaySchema.safeParse(day).success, {
       message: 'Geçerli bir tarih seçin.',
     }),
+    // NO_REPOSITORY, or GitHub's number of a repository of the company's organisation as the
+    // select holds it ("Yeni proje" only, and only while the company is connected).
+    repositoryId: z.string().regex(/^\d*$/),
   })
   .superRefine((values, context) => {
     if (values.customerChoice !== NEW_CUSTOMER) return;
@@ -99,6 +104,7 @@ export function newProjectValues(): ProjectFormValues {
     color: DEFAULT_PROJECT_COLOR,
     icon: DEFAULT_PROJECT_ICON,
     targetDate: '',
+    repositoryId: NO_REPOSITORY,
   };
 }
 
@@ -120,7 +126,8 @@ export function projectValues(project: ProjectDetail): ProjectFormValues {
  * The body of POST /api/projects. The two ids are made once when the dialog opens, so a send that
  * is repeated carries the same ones. The description goes as typed (the API reads an empty one as
  * none). The contract permissions are sent only for a new customer; an employee's form never has
- * them on.
+ * them on. A repository goes by GitHub's number alone (8 October 2026, decision 19); its name is
+ * the API's to read.
  */
 export function createProjectBody(
   values: ProjectFormValues,
@@ -147,6 +154,8 @@ export function createProjectBody(
     color: values.color,
     icon: values.icon,
     targetDate: values.targetDate === '' ? null : values.targetDate,
+    // Left out when no repository was chosen: the project then opens without one.
+    ...(values.repositoryId === NO_REPOSITORY ? {} : { repositoryId: Number(values.repositoryId) }),
   };
 }
 

@@ -32,11 +32,13 @@ export function apiError(status: number, code: ApiErrorCode, message: string): R
  * What the shell itself asks for: on every page of a company the two counts of the sidebar (the
  * "Bugün" and "Onaylar" rows), and when the "Yeni talep" form opens whether a request can be sent
  * now and which projects it can be opened in. The Bugün screen, which many tests open, asks for
- * its list, and the Onaylar screen for its desk. A test that is not about them gets nothing
- * waiting, an open door and no project.
+ * its list, and the Onaylar screen for its desk. The "Yeni proje" form asks whether the company's
+ * GitHub offers repositories. A test that is not about them gets nothing waiting, an open door,
+ * no project and a company that is not connected to GitHub.
  */
 const SHELL_HANDLERS: Record<string, Handler> = {
   'GET /approvals': () => json({ approvals: [], acceptances: [] }),
+  'GET /github/repositories': () => json({ state: 'not_connected' }),
   'GET /projects': () => json({ projects: [], truncated: false }),
   'GET /requests/intake': () => json({ open: true, reason: null }),
   'GET /today': () =>

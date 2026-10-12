@@ -20,6 +20,14 @@ import {
   PROJECT_ICON,
 } from './lib/projects/labels.ts';
 import { WIDE_WINDOW_QUERY } from './lib/office/use-wide-window.ts';
+import {
+  ARMA_ORG,
+  ARMA_REPOSITORIES,
+  NO_REPOSITORIES,
+  repositories,
+  REPOSITORIES,
+  REPOSITORIES_UNAVAILABLE,
+} from './test/github-fixtures.ts';
 import { stubMatchMedia } from './test/match-media.ts';
 import {
   apiError,
@@ -3684,6 +3692,197 @@ describe('projects: a new project', () => {
     // No new passkey prompt was prepared behind the form.
     expect(api.callsTo('POST /projects')).toHaveLength(1);
     expect(stepUp.issued).toHaveLength(1);
+  });
+
+  // The repository of a new project (8 October decision 19; 12 October decision 15).
+  const repositoryOf = (dialog: HTMLElement) =>
+    within(dialog).queryByRole('combobox', { name: 'GitHub deposu (isteğe bağlı)' });
+
+  it('new project: the repository field is there only while the company is connected and the list could be read', async () => {
+    for (const answer of [NO_REPOSITORIES, REPOSITORIES_UNAVAILABLE]) {
+      const api = creatingApi({ [REPOSITORIES]: () => json(answer) });
+      renderApp(LIST);
+      const dialog = await openNew();
+      await waitFor(() => {
+        expect(api.callsTo(REPOSITORIES)).toHaveLength(1);
+      });
+      // The people list arrives with the same turn; the field would be there by now.
+      await within(dialog).findByRole('checkbox', { name: 'Çağan Ünal' });
+      expect(repositoryOf(dialog)).toBeNull();
+      expect(dialog).not.toHaveTextContent('GitHub');
+      cleanup();
+    }
+    // A list that could not be asked for at all leaves the form as it is, too.
+    creatingApi({
+      [REPOSITORIES]: () => apiError(409, 'private_space', 'GitHub bir şirkete bağlanır.'),
+    });
+    renderApp(LIST);
+    const dialog = await openNew();
+    await within(dialog).findByRole('checkbox', { name: 'Çağan Ünal' });
+    expect(repositoryOf(dialog)).toBeNull();
+  });
+
+  it('new project: lists every repository by its name and by nothing else, for a founder and for an employee', async () => {
+    for (const session of [undefined, sessionAs(EMPLOYEE_AT_ARMADX)]) {
+      creatingApi({
+        [REPOSITORIES]: () => json(repositories()),
+        ...(session
+          ? { 'GET /session': session, 'GET /customers': () => json({ customers: CUSTOMER_NAMES }) }
+          : {}),
+      });
+      renderApp(LIST);
+      const dialog = await openNew();
+      const field = await within(dialog).findByRole('combobox', {
+        name: 'GitHub deposu (isteğe bağlı)',
+      });
+      // No repository is chosen for the person.
+      expect(field).toHaveValue('');
+      expect(
+        within(field)
+          .getAllByRole('option')
+          .map((option) => option.textContent),
+      ).toEqual(['Depo yok', ...ARMA_REPOSITORIES.map((repository) => repository.fullName)]);
+      expect(field).toHaveAccessibleDescription(
+        'Proje üyeleri bu deponun son değişikliklerini, açık değişiklik isteklerini ve iş kayıtlarını görür.',
+      );
+      // Which repository is private or archived is not said (SONRA P5-w), and nothing is long.
+      expect(dialog).not.toHaveTextContent(/özel|arşiv/i);
+      expect(dialog).not.toHaveTextContent('Liste çok uzun');
+      // The field stands after the members and before the status.
+      const order = within(dialog)
+        .getAllByRole('combobox')
+        .map((box) => box.getAttribute('name'));
+      expect(order).toEqual(['customerChoice', 'repositoryId', 'status']);
+      cleanup();
+    }
+  });
+
+  it('new project: says so when the organisation has more repositories than the list shows', async () => {
+    creatingApi({
+      [REPOSITORIES]: () => json(repositories(ARMA_REPOSITORIES, { truncated: true })),
+    });
+    renderApp(LIST);
+    const dialog = await openNew();
+    const field = await within(dialog).findByRole('combobox', {
+      name: 'GitHub deposu (isteğe bağlı)',
+    });
+    expect(field).toHaveAccessibleDescription(
+      'Proje üyeleri bu deponun son değişikliklerini, açık değişiklik isteklerini ve iş kayıtlarını görür. Liste çok uzun; ilk 1000 depo gösteriliyor.',
+    );
+  });
+
+  it("new project: the request carries the chosen repository by GitHub's number, and none when Depo yok stays", async () => {
+    const api = creatingApi({ [REPOSITORIES]: () => json(repositories()) });
+    const { router } = renderApp(LIST);
+    let dialog = await openNew();
+    await userEvent.type(nameOf(dialog), 'Panel');
+    await userEvent.selectOptions(
+      await within(dialog).findByRole('combobox', { name: 'GitHub deposu (isteğe bağlı)' }),
+      `${ARMA_ORG}/panel`,
+    );
+    await userEvent.click(create(dialog));
+    await screen.findByRole('heading', { level: 2, name: 'Panel' });
+    const [withRepository] = api.callsTo('POST /projects');
+    // The number alone: the name is the API's to read from GitHub, never the browser's to send.
+    expect(sentBody(withRepository).repositoryId).toBe(102);
+    expect(JSON.stringify(withRepository?.body)).not.toContain(ARMA_ORG);
+
+    await router.navigate({ to: '/c/$company/projects', params: { company: 'armadx' } });
+    dialog = await openNew();
+    await userEvent.type(nameOf(dialog), 'Deposuz');
+    await within(dialog).findByRole('combobox', { name: 'GitHub deposu (isteğe bağlı)' });
+    await userEvent.click(create(dialog));
+    await screen.findByRole('heading', { level: 2, name: 'Deposuz' });
+    const second = api.callsTo('POST /projects')[1];
+    expect(second?.body).not.toHaveProperty('repositoryId');
+    expect(api.unexpected).toEqual([]);
+  });
+
+  it("new project: the API's refusal of the repository opens nothing: the dialog says the sentence and keeps the form", async () => {
+    const closed =
+      'Bu müşterinin sözleşme izinleri kapalı olduğu için depo bağlanamaz. Projeyi depo seçmeden açın; kurucu izinlerden birini açınca depo bağlanabilir.';
+    const api = creatingApi({
+      [REPOSITORIES]: () => json(repositories()),
+      'POST /projects': () => apiError(409, 'github_not_allowed', closed),
+    });
+    const { router } = renderApp(LIST);
+    const dialog = await openNew();
+    await userEvent.type(nameOf(dialog), 'Beta deposu');
+    await userEvent.selectOptions(customerOf(dialog), 'Beta Lojistik');
+    const field = await within(dialog).findByRole('combobox', {
+      name: 'GitHub deposu (isteğe bağlı)',
+    });
+    await userEvent.selectOptions(field, `${ARMA_ORG}/depo-otomasyonu`);
+    await userEvent.click(create(dialog));
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(closed);
+    // Nothing is lost and nothing was opened.
+    expect(nameOf(dialog)).toHaveValue('Beta deposu');
+    expect(customerOf(dialog)).toHaveValue(CUSTOMER_ID);
+    expect(field).toHaveValue('101');
+    expect(currentLocation(router).pathname).toBe(LIST);
+    // The person follows the sentence: without the repository the project opens.
+    api.handle('POST /projects', (call) => {
+      expect(call.body).not.toHaveProperty('repositoryId');
+      const created = projectDetail({ id: sentBody(call).id, name: 'Beta deposu' });
+      api.handle(`GET /projects/${created.id}`, () => json(created));
+      api.handle(`GET /requests?project=${created.id}`, () =>
+        json({ requests: [], truncated: false }),
+      );
+      return json(created, 201);
+    });
+    await userEvent.selectOptions(field, 'Depo yok');
+    await userEvent.click(create(dialog));
+    expect(await screen.findByRole('heading', { level: 2, name: 'Beta deposu' })).toBeVisible();
+  });
+
+  it('new project: a repository that is gone is taken back: the list is read again and the select shows Depo yok', async () => {
+    const gone =
+      'Bu depo, bağlantının gördüğü depolar arasında değil. Sayfayı yenileyip başka bir depo seçin.';
+    const api = creatingApi({
+      [REPOSITORIES]: () => json(repositories()),
+      'POST /projects': () => {
+        // The repository left the installation between the list and the send.
+        api.handle(REPOSITORIES, () =>
+          json(repositories(ARMA_REPOSITORIES.filter((repository) => repository.id !== 103))),
+        );
+        return apiError(409, 'github_repository_not_available', gone);
+      },
+    });
+    renderApp(LIST);
+    const dialog = await openNew();
+    await userEvent.type(nameOf(dialog), 'Web');
+    const field = await within(dialog).findByRole('combobox', {
+      name: 'GitHub deposu (isteğe bağlı)',
+    });
+    await userEvent.selectOptions(field, `${ARMA_ORG}/web-sitesi`);
+    await userEvent.click(create(dialog));
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(gone);
+    await waitFor(() => {
+      expect(within(field).queryByRole('option', { name: `${ARMA_ORG}/web-sitesi` })).toBeNull();
+    });
+    expect(field).toHaveValue('');
+    expect(nameOf(dialog)).toHaveValue('Web');
+    // What is sent next is what the select shows: no repository.
+    api.handle('POST /projects', (call) => {
+      expect(call.body).not.toHaveProperty('repositoryId');
+      return apiError(409, 'invalid_request', 'Sınama bitti.');
+    });
+    await userEvent.click(create(dialog));
+    await waitFor(() => {
+      expect(api.callsTo('POST /projects')).toHaveLength(2);
+    });
+  });
+
+  it('new project: asks for the repositories of the selected company only', async () => {
+    const api = creatingApi({ [REPOSITORIES]: () => json(repositories()) });
+    renderApp(LIST);
+    const dialog = await openNew();
+    await within(dialog).findByRole('combobox', { name: 'GitHub deposu (isteğe bağlı)' });
+    const calls = api.callsTo(REPOSITORIES);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.headers.get('x-company-id')).toBe(ARMADX.companyId);
+    // The opener never asks GitHub to be read again: that is the founder's button in Ayarlar.
+    expect(api.calls.some((call) => call.path.includes('refresh'))).toBe(false);
   });
 
   it('new project: there is no AI permission control, and the dialog says who opens it and how', async () => {

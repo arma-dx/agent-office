@@ -1,3 +1,4 @@
+import { createProjectSchema } from '@agent-office/shared';
 import { describe, expect, it } from 'vitest';
 import { projectDetail, CUSTOMER_ID, OTHER_CUSTOMER_ID } from '../../test/project-fixtures.ts';
 import {
@@ -30,7 +31,7 @@ function problems(values: unknown): Record<string, string> {
 }
 
 describe('project form', () => {
-  it('starts a new project planned, gray, with the folder, without customer, members or date', () => {
+  it('starts a new project planned, gray, with the folder, without customer, members, date or repository', () => {
     expect(newProjectValues()).toEqual({
       name: '',
       description: '',
@@ -43,6 +44,7 @@ describe('project form', () => {
       color: 'gray',
       icon: 'folder',
       targetDate: '',
+      repositoryId: '',
     });
   });
 
@@ -133,6 +135,20 @@ describe('project form', () => {
     });
     // There is no value for the AI permission of the project itself.
     expect(Object.keys(createProjectBody(values, IDS))).not.toContain('aiAllowed');
+  });
+
+  it("names the repository of a new project by GitHub's number, and leaves it out when none is chosen", () => {
+    const values = { ...newProjectValues(), name: 'Depo' };
+    // Not null and not 0: the key is not there, so the project opens without a repository.
+    expect(Object.keys(createProjectBody(values, IDS))).not.toContain('repositoryId');
+    const body = createProjectBody({ ...values, repositoryId: '1296269' }, IDS);
+    expect(body.repositoryId).toBe(1296269);
+    expect(createProjectSchema.safeParse(body).success).toBe(true);
+    // The select holds a number as text and nothing else.
+    expect(projectFormSchema.safeParse({ ...values, repositoryId: 'arma-org/panel' }).success).toBe(
+      false,
+    );
+    expect(projectFormSchema.safeParse({ ...values, repositoryId: '' }).success).toBe(true);
   });
 
   it('sends only the fields of an edit that differ, and no customer while the AI permission is open', () => {

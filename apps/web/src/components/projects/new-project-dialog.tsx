@@ -8,8 +8,8 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
 import { useCallback, useEffect, useEffectEvent, useId, useRef, useState } from 'react';
-import { Controller, useForm, type UseFormReturn } from 'react-hook-form';
-import { ContractSwitch, ProjectFields } from '@/components/projects/project-form';
+import { Controller, useForm, useWatch, type UseFormReturn } from 'react-hook-form';
+import { ContractSwitch, ProjectFields, RepositoryField } from '@/components/projects/project-form';
 import { NoticeView } from '@/components/step-up';
 import { Button } from '@/components/ui/button';
 import {
@@ -20,11 +20,13 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { ApiError, userMessage } from '@/lib/api';
+import { githubRepositoriesQueryOptions } from '@/lib/github/query';
 import { STEP_UP_TEXT } from '@/lib/passkeys';
 import {
   createProjectBody,
   newProjectValues,
   NO_CUSTOMER,
+  NO_REPOSITORY,
   projectFormSchema,
   type ProjectFormValues,
 } from '@/lib/projects/form';
@@ -42,8 +44,28 @@ import { busyProps } from '@/lib/utils';
 
 const HELP = 'text-sm text-ink-secondary';
 
-/** An answer of the API that the form itself deals with, instead of showing it as it is. */
-const FORM_REFUSALS = ['customer_exists', 'customer_not_found', 'member_not_allowed'] as const;
+/**
+ * A refusal that says the repository the person chose cannot be linked as things are now: the
+ * list they chose from is read again.
+ */
+const REPOSITORY_REFUSALS = [
+  'github_repository_not_available',
+  'github_not_connected',
+  'github_not_configured',
+] as const;
+/**
+ * An answer of the API that the form itself deals with, instead of showing it as it is. The
+ * refusals of a repository are among them, so that the form comes back from the passkey view and
+ * says them (rule 12, GitHub that cannot be asked): nothing was opened, and the form is kept.
+ */
+const FORM_REFUSALS = [
+  'customer_exists',
+  'customer_not_found',
+  'member_not_allowed',
+  ...REPOSITORY_REFUSALS,
+  'github_not_allowed',
+  'github_unavailable',
+] as const;
 function isFormRefusal(error: unknown): error is ApiError {
   return error instanceof ApiError && FORM_REFUSALS.some((code) => code === error.code);
 }
@@ -238,6 +260,11 @@ function PasskeyStep({
  * The AI permission of the project is in this dialog for nobody: a project starts without it, and
  * the founder opens it on the project page with a passkey.
  *
+ * While the company is connected to GitHub the opener can give the project one repository of the
+ * organisation (decision 19). A refusal of that (the customer's contract, a repository that is
+ * gone, GitHub that cannot be asked) opens nothing: the dialog says the sentence and keeps the
+ * form.
+ *
  * Nothing is shown as created before the API has stored it; the project page is the confirmation.
  * The ids of the project and of a new customer are made once when the dialog opens, so a send that
  * is repeated opens nothing a second time.
@@ -260,10 +287,25 @@ export function NewProjectDialog({
   // The form does not wait for the two lists.
   const customers = useQuery(customersQueryOptions(company.companyId));
   const candidates = useQuery(memberCandidatesQueryOptions(company.companyId));
+  // The repositories of the company's GitHub organisation; the field is there only while the
+  // company is connected and the list could be read.
+  const repositories = useQuery(githubRepositoriesQueryOptions(company.companyId));
+  const repositoryList = repositories.data?.state === 'ok' ? repositories.data : null;
   const form = useForm<ProjectFormValues>({
     resolver: zodResolver(projectFormSchema),
     defaultValues: newProjectValues(),
   });
+  // A choice the list no longer offers is taken back, so that the select and what is sent never
+  // differ: the person sees "Depo yok" before sending.
+  const chosenRepository = useWatch({ control: form.control, name: 'repositoryId' });
+  useEffect(() => {
+    if (chosenRepository === NO_REPOSITORY) return;
+    const stillOffered =
+      repositoryList?.repositories.some(
+        (repository) => String(repository.id) === chosenRepository,
+      ) ?? false;
+    if (!stillOffered) form.setValue('repositoryId', NO_REPOSITORY);
+  }, [chosenRepository, repositoryList, form]);
   // The body that waits for the founder's passkey; null while the form is on screen.
   const [confirming, setConfirming] = useState<CreateProject | null>(null);
   const submitButton = useRef<HTMLButtonElement>(null);
@@ -309,6 +351,9 @@ export function NewProjectDialog({
         'memberIds',
         form.getValues('memberIds').filter((userId) => offered.has(userId)),
       );
+    } else if (REPOSITORY_REFUSALS.some((code) => code === error.code)) {
+      // The choice that is gone is taken back by the effect above, once the list is here.
+      await repositories.refetch();
     }
   }
 
@@ -448,14 +493,17 @@ export function NewProjectDialog({
                   ) : null
                 }
                 afterCustomer={
-                  <MemberFields
-                    form={form}
-                    candidates={{
-                      people: candidates.data ?? [],
-                      loading: candidates.isPending,
-                      failed: candidates.isError,
-                    }}
-                  />
+                  <>
+                    <MemberFields
+                      form={form}
+                      candidates={{
+                        people: candidates.data ?? [],
+                        loading: candidates.isPending,
+                        failed: candidates.isError,
+                      }}
+                    />
+                    {repositoryList ? <RepositoryField form={form} list={repositoryList} /> : null}
+                  </>
                 }
               />
               <p className={HELP}>

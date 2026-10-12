@@ -4,6 +4,7 @@ import {
   PROJECT_STATUSES,
   isClosedProjectStatus,
   type CustomerOption,
+  type GithubRepositories,
 } from '@agent-office/shared';
 import { Check } from 'lucide-react';
 import { useId, type ReactNode } from 'react';
@@ -12,7 +13,13 @@ import { Input } from '@/components/ui/input';
 import { NativeSelect } from '@/components/ui/native-select';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
-import { NEW_CUSTOMER, NO_CUSTOMER, type ProjectFormValues } from '@/lib/projects/form';
+import { REPOSITORY_FIELD } from '@/lib/github/labels';
+import {
+  NEW_CUSTOMER,
+  NO_CUSTOMER,
+  NO_REPOSITORY,
+  type ProjectFormValues,
+} from '@/lib/projects/form';
 import { COLOR_NAME, ICON_NAME, PROJECT_FILL, PROJECT_ICON } from '@/lib/projects/labels';
 import { PROJECT_STATUS } from '@/lib/status';
 import { cn } from '@/lib/utils';
@@ -111,6 +118,49 @@ function CustomerFields({
       ) : null}
       {children?.({ isNew, existing })}
     </>
+  );
+}
+
+/**
+ * The GitHub repository of a new project (8 October 2026, decision 19): optional, one of the
+ * repositories of the organisation the company is connected to. Drawn only while the API offers
+ * the list. Every repository is listed by its name and by nothing beside it (12 October decision
+ * 15; docs/SONRA.md P5-w); a long organisation makes a long select (P5-u).
+ */
+export function RepositoryField({
+  form,
+  list,
+}: {
+  form: UseFormReturn<ProjectFormValues>;
+  list: Extract<GithubRepositories, { state: 'ok' }>;
+}) {
+  const id = useId();
+  return (
+    <div className={FIELD}>
+      <label htmlFor={`${id}-repository`} className={LABEL}>
+        {REPOSITORY_FIELD.label}
+      </label>
+      <NativeSelect
+        id={`${id}-repository`}
+        aria-describedby={describedBy(`${id}-help`, list.truncated && `${id}-truncated`)}
+        {...form.register('repositoryId')}
+      >
+        <option value={NO_REPOSITORY}>{REPOSITORY_FIELD.none}</option>
+        {list.repositories.map((repository) => (
+          <option key={repository.id} value={String(repository.id)}>
+            {repository.fullName}
+          </option>
+        ))}
+      </NativeSelect>
+      <p id={`${id}-help`} className={HELP}>
+        {REPOSITORY_FIELD.help}
+      </p>
+      {list.truncated ? (
+        <p id={`${id}-truncated`} className={HELP}>
+          {REPOSITORY_FIELD.truncated}
+        </p>
+      ) : null}
+    </div>
   );
 }
 
