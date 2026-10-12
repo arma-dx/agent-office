@@ -219,11 +219,22 @@ async function connectionAnswer(
     return { ...connected, problem: 'installation_gone' };
   }
   if (discovery.state === 'invalid') {
-    // An app that is no longer the organisation's own gives no access to the row's installation.
+    if (discovery.reason === 'suspended') {
+      return { ...connected, problem: 'suspended', manageUrl: discovery.manageUrl };
+    }
+    // The app would not be accepted for a first connection (it got more permissions on GitHub,
+    // or the organisation another name). That says nothing of the connection that exists: the
+    // row's installation may read as before, since every token is cut to the four reads. What it
+    // gives now decides (asked again, at most once in ten seconds, not answered from the list of
+    // the last five minutes): its list of repositories and no problem, or why nothing came back
+    // (an app that is no longer the row's gets no token: installation_gone).
+    const list = await github.repositories(connectionRef(row), { refresh: true });
     return {
       ...connected,
-      problem: discovery.reason === 'suspended' ? 'suspended' : 'installation_gone',
       manageUrl: discovery.manageUrl,
+      ...(list.state === 'ok'
+        ? { repositoryCount: list.repositories.length }
+        : { problem: list.reason }),
     };
   }
   const { installation } = discovery;

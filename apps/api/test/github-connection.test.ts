@@ -539,6 +539,56 @@ describe.skipIf(noDatabase)('the GitHub connection of a company', () => {
     expect((await rows())[0]?.settings).toMatchObject({ installation_id: 5002 });
   });
 
+  it('a connection that still reads names no problem when the app got more permissions or the organisation another name', async () => {
+    await connectCompany(scene, founder, founderKey, scene.armadx);
+    const working = { state: 'connected', problem: null, repositoryCount: 3 };
+    const widened = (permissions: Record<string, string>) => {
+      scene.armadx.api.installation = { ...scene.armadx.installation, permissions };
+      scene.clock.advance(SETTLE_MS);
+    };
+    const read = { metadata: 'read', contents: 'read', pull_requests: 'read', issues: 'read' };
+
+    // The app is given write permissions on GitHub, or a fifth one: a first connect would be
+    // refused, but the row's installation keeps reading (the tokens are cut to the four reads).
+    for (const permissions of [
+      { ...read, contents: 'write', pull_requests: 'write' },
+      { ...read, actions: 'read' },
+    ]) {
+      widened(permissions);
+      expect(await state(), JSON.stringify(permissions)).toMatchObject(working);
+      const list = await send(scene.server, founder, 'GET', '/api/github/repositories', {
+        company: ids.arma,
+      });
+      expect(list.json()).toMatchObject({ state: 'ok' });
+    }
+    // What GitHub's page of the installation is, is still told.
+    expect(await state()).toMatchObject({ manageUrl: scene.armadx.installation.htmlUrl });
+
+    // The organisation is renamed on GitHub: the slot's name no longer matches.
+    widened(read);
+    scene.armadx.api.appInfo = {
+      ...scene.armadx.api.appInfo,
+      owner: { id: 1001, login: 'arma-renamed', type: 'Organization' },
+    };
+    scene.clock.advance(SETTLE_MS);
+    expect(await state()).toMatchObject(working);
+
+    // An app that is no longer the row's (wider permissions AND another installation): no token
+    // comes back for the row's installation, and the page says the connection does not work.
+    scene.armadx.api.install(
+      fakeInstallation(9001, { id: 1001, login: 'arma-renamed', type: 'Organization' }, 5002, {
+        permissions: { ...read, contents: 'write' },
+      }),
+    );
+    scene.clock.advance(SETTLE_MS);
+    expect(await state()).toMatchObject({
+      state: 'connected',
+      problem: 'installation_gone',
+      repositoryCount: null,
+    });
+    expect((await rows())[0]?.status).toBe('enabled');
+  });
+
   it('a connected company whose GitHub does not answer keeps its row and names the problem', async () => {
     await connectCompany(scene, founder, founderKey, scene.armadx);
     scene.clock.advance(5 * 60_000);
