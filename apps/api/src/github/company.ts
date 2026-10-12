@@ -466,6 +466,16 @@ export class CompanyGithub {
       }
       return this.#listOf(held);
     } catch (error) {
+      if (
+        error instanceof GithubError &&
+        (error.kind === 'forbidden' || error.kind === 'not_found')
+      ) {
+        // GitHub answered, and refused the installation its own list (a token the client still
+        // holds, of an installation an owner has cut off since): access was taken away. That is
+        // not GitHub being down, so nothing that was read before is served.
+        this.#dropAll(connection.installationId);
+        return { state: 'unavailable', reason: 'installation_gone', retryAtMs: null };
+      }
       const failure = this.#failed(error);
       if (failure.reason === 'installation_gone' || failure.reason === 'key_refused') {
         this.#dropAll(connection.installationId);

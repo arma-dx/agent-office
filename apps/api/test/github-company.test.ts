@@ -630,6 +630,45 @@ describe('when access is taken away', () => {
     expect(errors).toHaveLength(1);
   });
 
+  it('a refusal on the list of repositories is access taken away, not GitHub being down', async () => {
+    // An owner cuts the app off in a way GitHub answers to a token the client still holds (an
+    // IP allow list, for example): GitHub did answer, and it said no.
+    for (const [kind, status] of [
+      ['forbidden', 403],
+      ['not_found', 404],
+    ] as const) {
+      const { github, company, connection, clock } = scene();
+      await github.repositories(connection);
+      // The lists are read while the list of repositories is still held.
+      clock.advance(REPOSITORY_LIST_CACHE_MS - LISTS_CACHE_MS);
+      lists(await github.view(connection, PANEL));
+      company.api.failWith(kind, null, status);
+      // The list of repositories has run out; the lists of the tab are a minute old.
+      clock.advance(LISTS_CACHE_MS);
+      company.api.clearCalls();
+      expect(unavailable(await github.view(connection, PANEL)), kind).toEqual({
+        state: 'unavailable',
+        repository: null,
+        reason: 'installation_gone',
+        retryAtMs: null,
+        last: null,
+      });
+      expect(company.api.calls.map((call) => call.method)).toEqual(['repositories']);
+      expect(company.api.forgotten).toEqual([5001]);
+      expect(await github.repositories(connection)).toEqual({
+        state: 'unavailable',
+        reason: 'installation_gone',
+        retryAtMs: null,
+      });
+      // GitHub answers again within the ten minutes: read from nothing, no row of before.
+      company.api.failWith(null);
+      company.api.clearCalls();
+      lists(await github.view(connection, PANEL));
+      expect(company.api.countOf('commits')).toBe(1);
+      expect(company.api.calls.some((call) => call.notModified)).toBe(false);
+    }
+  });
+
   it('switched off: everything this company held goes, and a reading under way is not kept', async () => {
     const { github, company, connection } = scene();
     lists(await github.view(connection, PANEL));
