@@ -348,7 +348,7 @@ Skill klasörü: `skills/<ad>/SKILL.md` ve yanında `templates/`, `examples/`, `
 - Alanlar: `runs.routing_id` (çalışmanın açıldığı yönlendirme adımı; veritabanı yazar, sonradan değişmez)
 - İşlevler: `lock_request` (bir kişinin işleminde talebin kilidini önce alır; yalnızca API çağırır)
 - İz kaydı olayları: `run_not_started` (düzeltme istendiğinde adımın ajanı durdurulmuştu, çalışma başlatılmadı; API yazar), `run_refused` (çalıştırıcı işi çalışma açmadan geri çevirdi). Talep sayfası "çalışma başlamadı" bilgisini bu iki olaydan okur.
-- Talep nedeni kodu: `not_started` (çalışma başlamadı; talep insana düşer, ajan yeniden açılsa da iş kendiliğinden başlamaz)
+- Talep nedeni kodu: `not_started` (çalışma başlamadı; talep insana düşer. Ajan durdurulduğu için başlamadıysa ajan yeniden açılınca kendiliğinden başlar: 8 Ekim, karar 49)
 - Talep nedeni kodu: `run_interrupted` (çalışma yarıda kesildi: talep çalışma sürerken değişti, çalışma `routing_changed` ya da `request_changed` ile durdu; `agent_stopped` yalnızca durdurma düğmesidir)
 - Kuyruk: `DEAD_LETTER_RETRY` (kayıp çalışmaları kapatan kuyruğun yeniden deneme ayarı); günlük olayı `dead_letter_failed`; kuyruğa giden hata kodu `dead_letter_error`
 - API hata kodu: `request_changed` (aynı talepte başka bir işlem bunu geçersiz kıldı; sayfa yenilenir)

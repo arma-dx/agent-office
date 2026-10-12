@@ -628,6 +628,11 @@ Projeler adım 4 (proje dosyaları) tasarlanırken ve yapılırken türetilenler
 - Ertelenen (teknik): araçların girdi şemaları ve modele verilen araç cümleleri kodda duruyor; kart sürümü bunları sabitlemiyor. Her çalışmaya worker'ın derleme commit'ini yazmak 0.7 (yayın hattı) işine bırakıldı.
 - Ertelenen (teknik): worker durdurulurken süren çalışma hemen kapatılmıyor; kendi süre sınırı dolunca ve bir worker ayaktayken kapanıyor. O zamana kadar sayfa önce "çalışıyor", sonra "gecikti" der. Worker'ın servis olarak kurulması (0.7) işinde ele alınır.
 
+Kurucunun 12 Ekim'de kararsız bıraktığı iki nokta (soru sorma ve sıralı çalışma ön planı; ikisi de kurucu onayı bekliyor, yazıldığı gibi kurulur):
+
+- S12-a (12 Ekim, karar 4): Koordinasyon merkezi bir talepte talep sahibine en çok iki kez soru sorar. Kurucu "sorabilsin" dedi, sayıya karar vermedi ("bir kez de az gibi geldi"). Sayı tek yerde durur. Öbür seçenek: bir kez.
+- S12-b (12 Ekim, karar 8): Çok ajanlı talepte talep sahibi "istediğim bu değil" derse iş son ajana döner; sorun önceki adımdaysa kurucu ya da onaylayıcı yönlendirmeyi düzeltir. Kurucu bununla öbür seçenek arasında karar vermedi. Öbür seçenek: açıklamayı koordinasyon merkezi okur ve işin hangi ajana döneceğine o karar verir (bir çalışma daha; yanlış seçerse o tur boşa gider).
+
 ## Ajanların kod yazması (8 Ekim, karar 23-30)
 
 Ön planda "sormadan böyle yapacağım" diye bildirilen varsayımlar (itiraz gelmedi, açık onay da verilmedi; hepsi **kurucu onayı bekliyor**):
