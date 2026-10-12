@@ -714,6 +714,11 @@ Kurucunun 12 Ekim'de kararsız bıraktığı iki nokta (soru sorma ve sıralı �
 - S12-a (12 Ekim, karar 4): Koordinasyon merkezinin bir talepte kaç kez soru sorabileceği. 0.4a adım 4 ile iki kez olarak kuruldu; madde iki kez yazılmasın diye metni ve öbür seçeneği yukarıda, S-a'da durur. Kurucu onayı bekliyor.
 - S12-b (12 Ekim, karar 8): Çok ajanlı talepte talep sahibi "istediğim bu değil" derse iş son ajana döner; sorun önceki adımdaysa kurucu ya da onaylayıcı yönlendirmeyi düzeltir. Kurucu bununla öbür seçenek arasında karar vermedi. Öbür seçenek: açıklamayı koordinasyon merkezi okur ve işin hangi ajana döneceğine o karar verir (bir çalışma daha; yanlış seçerse o tur boşa gider).
 
+Projeler adım 6 (ajanların proje dosyalarını okuması) yapılırken çalıştırıcı tarafında tasarımdan ayrılan ya da tasarımda olmayan teknik seçimler (karar gerekmez; adımın türetilen seçimleri P6-a ila P6-r olarak ayrıca yazılır):
+
+- P6-s (teknik not; P6-i'nin devamı): `pnpm files:check` okuma belirtecinin yazamadığını iki yoldan dener: var olan nesneyi değiştirmeyi (API'nin kendi yazdığı gibi, üzerine yazma isteğiyle) ve yeni bir nesne oluşturmayı. Tasarımdaki tek deneme (var olan nesneye düz yazma) her anahtar için reddedilir ve hiçbir şeyi kanıtlamazdı. "Yazamadı" ve "silemedi" sonucu yanıtın koduna değil nesnenin kendisine bakılarak verilir. Zayıf kalan: "başka kovayı okuyamaz" satırı var olmayan bir kova adını dener; hiçbir belirteç onu okuyamaz. Gerçek kanıt için projede ikinci bir kova gerekir; test ortamı kurulurken eklenebilir.
+- P6-t (teknik not): Gerçek modelle deneme (`probe:files`) çalıştırıcının döngüsünü kendi içinde yineler (veritabanına ve depoya dokunmaz); gönderdiği isteklerin çalıştırıcının gönderdiğiyle aynı olduğunu bir test tutar. Denemenin 9.2 durumu (model, araç sonucundaki dosyayı görüyor mu) çalıştırıcının göndermediği bir istek biçimidir: sonuçtan sonra bir soru cümlesi gelir, düşünme kapalıdır ve araç çağrısı yasaktır. Denemedeki okunamayan resim kodla bulanıklaştırılmış bir yazıdır; ne kadar okunamaz olduğu yalnızca gözle bakılarak ayarlandı. Sayım çağrısının sağlayıcıya kaç kez gönderildiği kayda yazılmaz (model çağrılarınınki yazılır).
+
 ## Ajanların kod yazması (8 Ekim, karar 23-30)
 
 Ön planda "sormadan böyle yapacağım" diye bildirilen varsayımlar (itiraz gelmedi, açık onay da verilmedi; hepsi **kurucu onayı bekliyor**):

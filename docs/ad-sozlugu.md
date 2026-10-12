@@ -628,6 +628,34 @@ Sınır yükseltilince bekleyen işlerin başlaması (11 Ekim karar 1):
 - Panelde, işlevler ve anahtarlar: `githubConnectionQueryOptions`, `connectGithub`, `disconnectGithub`, `fetchGithubRepositories`, `githubRepositoriesQueryOptions`, `fetchProjectGithub`, `projectGithubQueryOptions`, `setProjectRepository`, `removeProjectRepository`; sorgu anahtarları `githubKey`, `githubConnectionKey`, `githubRepositoriesKey` (`['company', id, 'github', ...]`), `projectGithubKey` (`['company', id, 'project', projectId, 'github']`); `newInstallState`, `installHref`, `startInstall`, `matchInstall`, `forgetInstall`; sekmenin tarayıcıda saklanan kaydı `github-install` (`state`, `company`, `at`; yalnızca oturum deposunda); sabitler `INSTALL_STATE_MAX_AGE_MS` (bir saat), `GITHUB_TAB_REFRESH_MS` (beş dakika); form alanı `repositoryId`, `NO_REPOSITORY`; `formatClock` (`lib/dates.ts`)
 - Panelin test verisi: `apps/web/src/test/github-fixtures.ts` (`connection`, `pillikaConnection`, `repositories`, `tab`, `lists`; `ARMA_ORG`, `PILLIKA_ORG`)
 
+## 0.4c adım 6 ile eklenen adlar: ajanların proje dosyalarını okuması (karşılığı olan eski Türkçe ad yok)
+
+| Ad | Nerede | Ne |
+| --- | --- | --- |
+| `read_project_file` | araç kataloğu, SOS-2 kartı | çalışmanın projesindeki bir dosyayı okuyan araç (`read`); kodda `AGENT_READ_TOOL` (ortak sözleşme) ve `READ_PROJECT_FILE` (çalıştırıcı) |
+| `project_file_run_reads` | `office.files` satır kuralı | ajan çalışması kendi projesinin dosya kayıtlarını okur |
+| `office.run_reads_project_files()` | işlev | bağlamdaki ajanın kartında okuma aracı var mı |
+| `20261008103700_agents_read_project_files.sql` | göç | yukarıdaki kural ve işlev |
+| `project_files` | istem veri bloğu | çalışmaya verilen dosya listesi; satırı `ListedFile` (`id`, `name`, `kind`, `sizeBytes`, `addedOn`, `readable`, `why`: `kind` ya da `size`) |
+| "Proje dosyaları" (`FILE_RULES_HEADING`) | ortak kurallar (`agents/common-rules.md`) | dosya içeriğinin veri olduğunu söyleyen bölüm; bu bölümü taşımayan kart sürümüne okuma aracı verilmez |
+| `apps/worker/src/files` | çalıştırıcı | yalnızca okuyan dosya modülü (`FileReader`, `RunProjectFiles`; `MemoryFileReader`, `DiskFileReader`, `SupabaseFileReader`, `createFileReader`, `FileReadError`, `fileBlock`, `decodeText`) |
+| `apps/worker/src/files/read-token.ts` | çalıştırıcı | okuma belirtecinin denetimi ve depo ayarlarının türleri (okuyucu içermez): `readTokenProblem`, `readTokenDaysLeft`, `FILE_READER_ROLE`, `FileReaderSettings` |
+| `office_file_reader` | Supabase'te veritabanı rolü | yalnızca `office-files` kovasını okur |
+| `SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_STORAGE_READ_TOKEN` | çalıştırıcının ortamı | dosya okuma anahtarları; `fileReaderSettings` (ortamdan ayar), `projectFilesOf` (çalıştırıcı açılırken okuyucu) |
+| `file_reader_not_configured`, `file_reader_configured`, `file_read_token_expired` | çalıştırıcının log olayları | okuyucu yok; var (`kind`, `token_days_left`); belirtecin süresi dolmuş |
+| `listRunProjectFiles`, `readRunProjectFile`, `RunProjectFileRow` | veritabanı ifadeleri (`packages/db`) | çalışmanın projesindeki dosya kayıtları; proje her zaman bağlamdan gelir |
+| `agentFileForm`, `agentReads` (`AgentFileForm`: `pdf`, `image`, `text`; `AgentReads`: `yes`, `kind`, `size`) | ortak sözleşme (`packages/shared`) | bir tür modele nasıl gider; kayda göre ajan dosyayı okuyabilir mi |
+| `AGENT_PDF_MAX_BYTES`, `AGENT_IMAGE_MAX_BYTES`, `AGENT_TEXT_MAX_BYTES`, `AGENT_FILE_MAX_TOKENS`, `AGENT_RUN_MAX_TOKENS`, `AGENT_RUN_MAX_BYTES`, `AGENT_RUN_MAX_IMAGES` | ortak sözleşme | ajanın okuyabileceği dosya sınırları (`docs/SONRA.md` P6-d) |
+| `CountFileTokens`, `FileBlock`, `createAnthropicTokenCounter` | çalıştırıcının model katmanı | dosyanın token sayısını sağlayıcıya sayan çağrı; dosyanın modele verildiği blok |
+| `file_kind_not_read`, `file_too_large`, `run_file_budget_reached`, `file_gone`, `file_content_missing`, `file_storage_failed`, `file_not_readable_by_model`, `file_check_failed`, `file_not_listed`, `file_already_read`, `file_tool_not_given`, `ask_after_file`, `spending_limit_reached` (okuma çağrısında) | araç çağrısı kodları | bir okumanın ya da okumadan sonraki sorunun reddi; talep sayfasının cümlesi olanlar `FILE_READ_PROBLEMS` |
+| `sent_to_counter` | reddedilen okuma çağrısının sonucu | dosya sayım için sağlayıcıya gitti, ajana verilmedi |
+| `runs.input.files` | çalışma kaydı | çalışmaya kaç dosyanın listelendiği |
+| `code`, `fileName` | talep sayfasındaki çalışma adımı (`stepSchema`) | etki etmeyen çağrının kodu; okunan dosyanın adı (okuyan kişi dosyayı görebiliyorsa) |
+| `fileResult`, `refusalResult`, `listedFile` | çalıştırıcı (`runner/run.ts`) | okumanın sonucu, reddin sonucu ve liste satırı; çalıştırıcı ile deneme betiği aynılarını kullanır |
+| `pnpm files:mint-read-token` | komut (`apps/api/scripts/mint-file-read-token.ts`; imza `file-read-token.ts` içinde `mintFileReadToken`) | çalıştırıcının okuma belirtecini üretir |
+| `checkReadToken`, `ReadTokenCheckError` | `apps/api/scripts/read-token-check.ts` (`pnpm files:check` çağırır) | okuma belirtecinin okuyabildiğini, yazamadığını ve silemediğini dener |
+| `pnpm --filter @agent-office/worker probe:files` | komut (`apps/worker/scripts/probe-files.ts`, `probe-files-cases.ts`, `probe-files-made.ts`) | dosya okumanın gerçek modelle denemesi; durumları 9.1 ila 9.13 |
+
 ## Notlar
 
 - Hata metinleri (veritabanı tetikleyicilerinin `raise exception` metinleri, geliştiriciye dönük iletiler) İngilizcedir. Kullanıcıya gösterilecek Türkçe metni API üretir; API hata metnine göre değil SQLSTATE koduna göre dallanır.
