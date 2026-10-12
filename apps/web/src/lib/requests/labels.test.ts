@@ -1,3 +1,4 @@
+import { AGENT_READ_TOOL, FILE_READ_PROBLEMS } from '@agent-office/shared';
 import { describe, expect, it } from 'vitest';
 import { PROJECT_REF, requestDetail, summaryOf } from '../../test/request-fixtures.ts';
 import { textWidth } from '../../test/text-width.ts';
@@ -10,6 +11,7 @@ import {
   CHANGES_HELD,
   CHANGES_HELD_BY_LIMIT,
   CHANGES_HELD_BY_LIMIT_FOR_REQUESTER,
+  FILE_READ_PROBLEM_TEXT,
   LIMIT_FOR_OTHERS,
   OPEN_PROJECT,
   OPEN_REQUESTS_GO_ON,
@@ -49,6 +51,105 @@ describe('the text of a step of a run', () => {
     expect(stepText({ tool: 'submit_for_approval', status: 'succeeded' })).toBe('Onaya sundu');
     expect(stepText({ tool: 'send_email', status: 'blocked' })).toBe(
       'Araç çağrısı: send_email (engellendi)',
+    );
+  });
+
+  it('words another tool as before, whatever code or file name its step carries', () => {
+    expect(
+      stepText({ tool: 'submit_for_approval', status: 'succeeded', code: null, fileName: null }),
+    ).toBe('Onaya sundu');
+    // Only the read of a project file is worded by its code and names a file.
+    expect(
+      stepText({
+        tool: 'search_notes',
+        status: 'failed',
+        code: 'file_gone',
+        fileName: 'Program.pdf',
+      }),
+    ).toBe('Notlarda aradı (olmadı)');
+  });
+});
+
+describe('the step of a run that read a project file', () => {
+  const read = (step: { status: string; code?: string | null; fileName?: string | null }) =>
+    stepText({ tool: AGENT_READ_TOOL, ...step });
+
+  it('names the file that was read, and says only that one was read when the reader gets no name', () => {
+    expect(read({ status: 'succeeded', code: null, fileName: 'Etkinlik programı.pdf' })).toBe(
+      'Proje dosyasını okudu: Etkinlik programı.pdf',
+    );
+    // A deleted file, a call whose raw content was purged, a reader who may not read the file.
+    expect(read({ status: 'succeeded', code: null, fileName: null })).toBe(
+      'Bir proje dosyasını okudu',
+    );
+    // An answer of an API that does not send the two fields yet.
+    expect(read({ status: 'succeeded' })).toBe('Bir proje dosyasını okudu');
+  });
+
+  it('says that a file was not read and why, with and without its name', () => {
+    expect(read({ status: 'blocked', code: 'file_kind_not_read', fileName: 'Teklif.docx' })).toBe(
+      'Proje dosyasını okuyamadı: Teklif.docx (ajanlar bu türü okuyamıyor)',
+    );
+    expect(read({ status: 'failed', code: 'file_gone', fileName: null })).toBe(
+      'Bir proje dosyasını okuyamadı (dosya silinmiş)',
+    );
+    // A second call for a file that had been read is not a fault of the file.
+    expect(read({ status: 'blocked', code: 'file_already_read', fileName: 'Program.pdf' })).toBe(
+      'Proje dosyasını okuyamadı: Program.pdf (bu çalışmada zaten okunmuştu)',
+    );
+  });
+
+  it('has words for every code the contract names', () => {
+    expect(Object.keys(FILE_READ_PROBLEM_TEXT).sort()).toEqual([...FILE_READ_PROBLEMS].sort());
+    const seen = new Set<string>();
+    for (const code of FILE_READ_PROBLEMS) {
+      const words = FILE_READ_PROBLEM_TEXT[code];
+      expect(words).not.toBe('');
+      // A few words inside brackets: no full stop, no capital, no long dash.
+      expect(words).toMatch(/^[a-zçğıöşü][^.\u2014()]*$/u);
+      expect(seen.has(words)).toBe(false);
+      seen.add(words);
+      expect(read({ status: 'blocked', code, fileName: 'Rapor.pdf' })).toBe(
+        `Proje dosyasını okuyamadı: Rapor.pdf (${words})`,
+      );
+    }
+    expect(FILE_READ_PROBLEM_TEXT.file_too_large).toBe('ajanın okuyabileceğinden büyük');
+    expect(FILE_READ_PROBLEM_TEXT.spending_limit_reached).toBe('projenin harcama sınırı doldu');
+    expect(FILE_READ_PROBLEM_TEXT.file_not_listed).toBe('çalışmaya verilen listede yoktu');
+  });
+
+  it('falls back to the word of the status for a code it has no words for', () => {
+    expect(read({ status: 'blocked', code: 'file_tool_not_given', fileName: null })).toBe(
+      'Bir proje dosyasını okuyamadı (engellendi)',
+    );
+    expect(read({ status: 'failed', code: 'invalid_input', fileName: 'Rapor.pdf' })).toBe(
+      'Proje dosyasını okuyamadı: Rapor.pdf (olmadı)',
+    );
+    expect(read({ status: 'failed', code: null, fileName: 'Rapor.pdf' })).toBe(
+      'Proje dosyasını okuyamadı: Rapor.pdf (olmadı)',
+    );
+    // A name of Object.prototype is not a code.
+    expect(read({ status: 'failed', code: 'toString', fileName: null })).toBe(
+      'Bir proje dosyasını okuyamadı (olmadı)',
+    );
+    // A status with no word of its own.
+    expect(read({ status: 'unknown', code: null, fileName: null })).toBe(
+      'Bir proje dosyasını okuyamadı',
+    );
+  });
+
+  it('does not say that a read still under way failed', () => {
+    expect(read({ status: 'started', code: null, fileName: 'Rapor.pdf' })).toBe(
+      'Proje dosyasını okuyor: Rapor.pdf',
+    );
+    expect(read({ status: 'started' })).toBe('Bir proje dosyasını okuyor');
+  });
+
+  it("gives a name with a long word unchanged: wrapping is the page's", () => {
+    const name = `${'a'.repeat(190)}.pdf`;
+    expect(read({ status: 'succeeded', fileName: name })).toBe(`Proje dosyasını okudu: ${name}`);
+    expect(read({ status: 'failed', code: 'file_gone', fileName: name })).toBe(
+      `Proje dosyasını okuyamadı: ${name} (dosya silinmiş)`,
     );
   });
 });

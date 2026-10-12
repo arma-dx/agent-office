@@ -847,6 +847,72 @@ describe('the page of a request inside a project', () => {
     expect(api.unexpected).toEqual([]);
   });
 
+  it('page: the steps of a run name the project files it read, and say why one was not read', async () => {
+    // 8 October decision 21. The names are the API's answer: a deleted file has none.
+    const [routed, routing, worked] = DEFAULT_JOURNEY;
+    if (worked?.kind !== 'run') throw new Error('the fixture has no agent run');
+    const longName = `${'ç'.repeat(180)}.pdf`;
+    const api = mockApi({
+      'GET /session': sessionHandler(),
+      [`GET /requests/${REQUEST_ID}`]: () =>
+        json(
+          requestDetail({
+            project: PROJECT_REF,
+            approval: { ...APPROVAL_CARD, project: PROJECT_REF },
+            journey: [
+              routed,
+              routing,
+              {
+                ...worked,
+                steps: [
+                  {
+                    tool: 'read_project_file',
+                    status: 'succeeded',
+                    code: null,
+                    fileName: 'Etkinlik programı.pdf',
+                  },
+                  {
+                    tool: 'read_project_file',
+                    status: 'blocked',
+                    code: 'file_kind_not_read',
+                    fileName: 'Teklif.docx',
+                  },
+                  { tool: 'read_project_file', status: 'succeeded', code: null, fileName: null },
+                  {
+                    tool: 'read_project_file',
+                    status: 'succeeded',
+                    code: null,
+                    fileName: longName,
+                  },
+                  { tool: 'submit_for_approval', status: 'succeeded', code: null, fileName: null },
+                ],
+              },
+            ] as typeof DEFAULT_JOURNEY,
+          }),
+        ),
+    });
+    renderApp(REQUEST_PAGE);
+    await screen.findByRole('region', { name: 'Yeni ofis için LinkedIn gönderisi' });
+    const journey = screen.getByRole('region', { name: 'Yolculuk' });
+    // Closed until the reader asks: the line counts the steps, the names are not on the page.
+    expect(journey).not.toHaveTextContent('Etkinlik programı.pdf');
+    const opener = within(journey).getByRole('button', { name: '38 sn. çalıştı, 5 adım' });
+    await userEvent.click(opener);
+    const list = document.getElementById(opener.getAttribute('aria-controls') ?? '');
+    if (!list) throw new Error('the steps are not on the page');
+    const steps = within(list).getAllByRole('listitem');
+    expect(steps.map((item) => item.textContent)).toEqual([
+      'Proje dosyasını okudu: Etkinlik programı.pdf',
+      'Proje dosyasını okuyamadı: Teklif.docx (ajanlar bu türü okuyamıyor)',
+      'Bir proje dosyasını okudu',
+      `Proje dosyasını okudu: ${longName}`,
+      'Onaya sundu',
+    ]);
+    // A name is one long word as often as not: the line wraps instead of widening the page.
+    for (const step of steps) expect(step).toHaveClass('break-words');
+    expect(api.unexpected).toEqual([]);
+  });
+
   it('page: a request without a project names none', async () => {
     mockApi({
       'GET /session': sessionHandler(),

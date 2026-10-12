@@ -1,12 +1,14 @@
-import type {
-  RejectionReason,
-  RequestCause,
-  RequestDetail,
-  RequestIntakeReason,
-  RequestStage,
-  RequestSummary,
-  RequestTurn,
-  TaskPerson,
+import {
+  AGENT_READ_TOOL,
+  type FileReadProblem,
+  type RejectionReason,
+  type RequestCause,
+  type RequestDetail,
+  type RequestIntakeReason,
+  type RequestStage,
+  type RequestSummary,
+  type RequestTurn,
+  type TaskPerson,
 } from '@agent-office/shared';
 import { formatDay } from '../dates.ts';
 
@@ -621,7 +623,63 @@ const STEP_RESULT: Record<string, string> = {
   sent_for_approval: 'onay bekliyor',
 };
 
-export function stepText(step: { tool: string; status: string }): string {
+/**
+ * Why an agent was not given a project file it asked for, in a few words, by the code of the
+ * call (docs/SONRA.md P6-g). A code without words here reads as the step's status does.
+ */
+export const FILE_READ_PROBLEM_TEXT: Record<FileReadProblem, string> = {
+  file_kind_not_read: 'ajanlar bu türü okuyamıyor',
+  file_too_large: 'ajanın okuyabileceğinden büyük',
+  run_file_budget_reached: 'bu çalışmanın dosya sınırı doldu',
+  file_gone: 'dosya silinmiş',
+  file_content_missing: 'içeriği depoda bulunamadı',
+  file_storage_failed: 'dosya deposuna ulaşılamadı',
+  file_not_readable_by_model: 'dosya açılamadı',
+  file_check_failed: 'dosya denetlenemedi',
+  spending_limit_reached: 'projenin harcama sınırı doldu',
+  file_already_read: 'bu çalışmada zaten okunmuştu',
+  file_not_listed: 'çalışmaya verilen listede yoktu',
+};
+
+function fileReadProblemText(code: string | null | undefined): string | undefined {
+  return code != null && Object.hasOwn(FILE_READ_PROBLEM_TEXT, code)
+    ? FILE_READ_PROBLEM_TEXT[code as FileReadProblem]
+    : undefined;
+}
+
+/**
+ * The step of a run that read a project file names the file (8 October decision 21). The name is
+ * the API's answer: it is there only for a reader who may read the file, while the file exists
+ * and while the call's raw content is kept; without it the line says that a file was read and
+ * not which. The line never shows content, a size or a token count.
+ */
+function fileStepText(step: {
+  status: string;
+  code?: string | null;
+  fileName?: string | null;
+}): string {
+  const name = step.fileName ?? null;
+  if (step.status === 'succeeded') {
+    return name === null ? 'Bir proje dosyasını okudu' : `Proje dosyasını okudu: ${name}`;
+  }
+  // The runner writes a read as succeeded, failed or blocked; a call still under way is not said
+  // to have failed.
+  if (step.status === 'started') {
+    return name === null ? 'Bir proje dosyasını okuyor' : `Proje dosyasını okuyor: ${name}`;
+  }
+  const why = fileReadProblemText(step.code) ?? STEP_RESULT[step.status] ?? '';
+  const head =
+    name === null ? 'Bir proje dosyasını okuyamadı' : `Proje dosyasını okuyamadı: ${name}`;
+  return why === '' ? head : `${head} (${why})`;
+}
+
+export function stepText(step: {
+  tool: string;
+  status: string;
+  code?: string | null;
+  fileName?: string | null;
+}): string {
+  if (step.tool === AGENT_READ_TOOL) return fileStepText(step);
   const verb = TOOL_VERB[step.tool] ?? `Araç çağrısı: ${step.tool}`;
   const result = STEP_RESULT[step.status] ?? '';
   return result === '' ? verb : `${verb} (${result})`;

@@ -1161,8 +1161,11 @@ function RunItem({
       {open ? (
         <ul id={stepsId} className="flex flex-col gap-0.5 text-xs text-ink-secondary">
           {item.steps.length === 0 ? <li>Araç çağrısı yok.</li> : null}
+          {/* A step that read a project file names the file: a long name wraps. */}
           {item.steps.map((step, index) => (
-            <li key={index}>{stepText(step)}</li>
+            <li key={index} className="break-words">
+              {stepText(step)}
+            </li>
           ))}
         </ul>
       ) : null}
