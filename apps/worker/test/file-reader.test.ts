@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { READ_TOKEN_ROLE, mintFileReadToken } from '../../api/scripts/file-read-token.ts';
 import { FILE_READER_ROLE, readTokenDaysLeft, readTokenProblem } from '../src/files/read-token.ts';
 import {
   DiskFileReader,
@@ -313,14 +314,13 @@ describe('the worker’s file reader', () => {
   });
 
   it('a token made as the mint script makes it is accepted', () => {
-    // apps/api/scripts/mint-file-read-token.ts: HS256, these four claims, 400 days.
+    // The script's own function (apps/api/scripts/file-read-token.ts): HS256, the reader role,
+    // 400 days. The role is written there and here; this holds the two together.
     const now = Date.parse('2026-10-12T09:00:00Z');
-    const iat = Math.floor(now / 1000);
-    const minted = token(
-      { role: 'office_file_reader', iss: 'agent-office', iat, exp: iat + 400 * 86_400 },
-      'the-jwt-secret-of-a-supabase-project',
-    );
+    const secret = ['the', 'jwt', 'secret', 'of', 'a', 'test', 'project'].join('-');
+    const { token: minted } = mintFileReadToken(secret, now);
     expect(minted.split('.')).toHaveLength(3);
+    expect(READ_TOKEN_ROLE).toBe(FILE_READER_ROLE);
     expect(readTokenProblem(minted)).toBeNull();
     expect(readTokenProblem(minted, now)).toBeNull();
     expect(readTokenDaysLeft(minted, now)).toBe(400);

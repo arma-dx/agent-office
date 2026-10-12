@@ -17,7 +17,8 @@
     "smoke": "pnpm -r --if-present run smoke",
     "db:local-role": "node --env-file=.env packages/db/scripts/local-login-role.ts",
     "db:sync-definitions": "node --env-file-if-exists=.env packages/db/scripts/sync-definitions.ts",
-    "files:check": "node --env-file-if-exists=.env apps/api/scripts/check-file-storage.ts"
+    "files:check": "node --env-file-if-exists=.env apps/api/scripts/check-file-storage.ts",
+    "files:mint-read-token": "node apps/api/scripts/mint-file-read-token.ts"
   },
   "devDependencies": {
     "@eslint/js": "catalog:",
