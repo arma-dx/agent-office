@@ -22,6 +22,7 @@ import {
   deleteProjectFile,
   downloadProjectFile,
   fileAddedBy,
+  fileAgentLine,
   fileFactsLine,
   FILES_TEXT,
   projectFilesKey,
@@ -34,7 +35,9 @@ import { busyProps } from '@/lib/utils';
  * One file: its name, what it is and how large, who added it and when; "İndir" and, where the API
  * says the reader may delete it, "Sil". Built like a member row: a group named after the file, so
  * a screen reader names the row before its buttons. The name is cut with an ellipsis and whole in
- * its title; the line of facts wraps.
+ * its title; the line of facts wraps. A file agents cannot read (its type, or its size) says so
+ * in a line of its own, whatever the project's AI permission: plain words, no icon and no colour
+ * of a status.
  */
 function FileRow({
   projectId,
@@ -53,6 +56,7 @@ function FileRow({
 }) {
   const company = useCompany();
   const nameId = useId();
+  const agentLine = fileAgentLine(file);
   // The browser shows its own download; nothing is said on success.
   const download = useMutation({
     mutationFn: () => downloadProjectFile(company.companyId, projectId, file),
@@ -83,6 +87,7 @@ function FileRow({
             </time>
             .
           </span>
+          {agentLine ? <span className="text-sm text-ink-secondary">{agentLine}.</span> : null}
         </div>
         {actions ? (
           <div className="flex shrink-0 items-center gap-2">
@@ -200,7 +205,9 @@ function DeleteFileDialog({
  * to it. The founder and the members of the project see them and add one; who may delete a file
  * is the API's answer (`deletable`: the person who added it, the owner and the managers of the
  * project, the founder; 11 October decision 2). A file is never shown by the panel: it is always
- * a download. No agent reads a file yet.
+ * a download. Under the list the tab says what agents do with the files of this project (8
+ * October decision 21): they read PDF, image and text files while they may work in it, and none
+ * otherwise.
  *
  * Nothing is shown as added or deleted before the API has answered. The list is not refreshed on
  * a timer (docs/SONRA.md P4-s): it is read again after every change the person makes, after a
@@ -275,6 +282,12 @@ export function ProjectFiles({ project }: { project: ProjectDetail }): ReactNode
               ))}
             </ul>
             <p className="text-sm text-ink-secondary">{FILES_TEXT.whoDoesWhat}</p>
+            {/* The two values the page already uses for "Ajanlar çalışamaz". */}
+            <p className="text-sm text-ink-secondary">
+              {project.agentsMayWork && !project.spendingLimitReached
+                ? FILES_TEXT.agentsRead
+                : FILES_TEXT.agentsDoNotRead}
+            </p>
           </>
         ) : null}
       </>

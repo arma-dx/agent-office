@@ -15,6 +15,7 @@ import {
   FILE_DIALOG_TEXT,
   FILE_PROBLEM,
   FILE_TYPES_SENTENCE,
+  FILES_TEXT,
   fileAddedLine,
   fileFactsLine,
 } from './lib/projects/files.ts';
@@ -160,6 +161,87 @@ describe('the Dosyalar tab', () => {
     expect(api.callsTo(LIST)).toHaveLength(1);
     expect(api.callsTo(LIST)[0]?.headers.get(COMPANY_HEADER)).toBe(ARMADX.companyId);
     expect(api.unexpected).toEqual([]);
+  });
+
+  // 8 October decision 21, step 6: agents read the files of a project in which they may work.
+  it('says under the list what agents read where they may work, and that they read none where they may not', async () => {
+    const reads =
+      'Bu projede çalışan ajanlar, işi için gerekirse PDF, resim ve metin dosyalarını (TXT, MD, CSV) okur; okunan dosya modele gönderilir. Word, Excel ve PowerPoint dosyalarını okuyamaz. Çok uzun bir dosyayı da okuyamayabilir; okuyamadığı dosyayı talep sayfası söyler.';
+    const readsNone = 'Bu projede ajanlar şu an çalışamaz; dosyaları da okumaz.';
+    expect(FILES_TEXT.agentsRead).toBe(reads);
+    expect(FILES_TEXT.agentsDoNotRead).toBe(readsNone);
+    const open = { aiAllowed: true, agentsMayWork: true };
+    const cases: [Parameters<typeof projectDetail>[0], string, string][] = [
+      [open, reads, readsNone],
+      // No AI permission (the fixture's own state), or one the customer's contract holds back.
+      [{}, readsNone, reads],
+      [{ aiAllowed: true, agentsMayWork: false }, readsNone, reads],
+      // A reached spending limit: no run starts, so no file is read.
+      [{ ...open, spendingLimitReached: true }, readsNone, reads],
+    ];
+    for (const [detail, shown, hidden] of cases) {
+      mockApi(projectHandlers(projectDetail(detail), { [LIST]: filesHandler() }));
+      renderApp(TAB);
+      const region = await section(3);
+      const sentence = within(region).getByText(shown);
+      expect(sentence).toBeVisible();
+      expect(within(region).queryByText(hidden)).toBeNull();
+      // Directly under the sentence that says who sees, adds and deletes.
+      expect(sentence.previousElementSibling).toHaveTextContent(FILES_TEXT.whoDoesWhat);
+      cleanup();
+    }
+  });
+
+  it('says nothing of agents where the project has no file', async () => {
+    mockApi(projectHandlers(projectDetail({ aiAllowed: true, agentsMayWork: true })));
+    renderApp(TAB);
+    const region = await section(0);
+    expect(within(region).getByRole('heading', { name: 'Bu projede dosya yok' })).toBeVisible();
+    expect(region).not.toHaveTextContent(/ajan/i);
+  });
+
+  it('marks a file agents cannot read by its type or its size, whatever the permission', async () => {
+    const files = [
+      projectFile({ ...NOTES }),
+      projectFile({ ...TABLE }),
+      projectFile({
+        id: 'f4444444-4444-4444-8444-444444444444',
+        name: 'Teklif.docx',
+        kind: 'document',
+        sizeBytes: 48_000,
+      }),
+      projectFile({
+        id: 'f5555555-5555-4555-8555-555555555555',
+        name: 'Büyük şartname.pdf',
+        kind: 'pdf',
+        sizeBytes: 22 * 1024 * 1024,
+      }),
+      projectFile({ ...SPEC }),
+    ];
+    for (const detail of [{}, { aiAllowed: true, agentsMayWork: true }]) {
+      mockApi(projectHandlers(projectDetail(detail), { [LIST]: filesHandler(files) }));
+      renderApp(TAB);
+      await section(5);
+      expect(row('Maliyet tablosu.xlsx')).toHaveTextContent('Ajanlar bu türü okuyamaz.');
+      expect(row('Büyük şartname.pdf')).toHaveTextContent('Ajanların okuyabileceğinden büyük.');
+      // A third short sentence in a line of its own, after who added the file and when; plain
+      // words in the row's own grey: no icon, no status.
+      const line = within(row('Teklif.docx')).getByText('Ajanlar bu türü okuyamaz.');
+      expect(line.tagName).toBe('SPAN');
+      expect(line).toHaveClass('text-ink-secondary');
+      expect(line.previousElementSibling).toHaveTextContent(
+        `Belge, 46,9 KB. ${fileAddedLine(files[2] as (typeof files)[number])}.`,
+      );
+      expect(line.nextElementSibling).toBeNull();
+      expect(row('Teklif.docx').querySelector('svg')).toBeNull();
+      expect(within(row('Teklif.docx')).queryByRole('img')).toBeNull();
+      // A file agents can read says nothing of them.
+      expect(row('Şartname.pdf')).not.toHaveTextContent(/ajan/i);
+      expect(row('notlar.txt')).not.toHaveTextContent(/ajan/i);
+      // The buttons of the row are what they were.
+      expect(within(row('Teklif.docx')).getByRole('button', { name: 'İndir' })).toBeVisible();
+      cleanup();
+    }
   });
 
   it('opens from the address and keeps the tab on a reload', async () => {
@@ -664,11 +746,15 @@ describe('adding a file', () => {
       `${FILE_DIALOG_TEXT.personalData} ${FILE_TYPES_SENTENCE} Dosya başına en çok 25 MB.`,
     );
     expect(field(box)).not.toBeInvalid();
-    // Who sees the file, and (11 October decision 3) that agents will read it.
+    // Who sees the file, and (11 October decision 3; 8 October decision 21) what agents read of
+    // the files: PDF, image and text, which go to the model; not Word, Excel and PowerPoint.
     expect(box).toHaveAccessibleDescription(
       'Depo otomasyonu projesine bir dosya ekleyin. Dosyayı proje üyeleri ve kurucu görür. ' +
-        'Yapay zekâ izni açık projede ajanlar da projedeki bütün dosyaları okuyacak.',
+        'Yapay zekâ izni açık projede ajanlar PDF, resim ve metin dosyalarını (TXT, MD, CSV) okur; okunan dosya modele gönderilir. ' +
+        'Word, Excel ve PowerPoint dosyalarını okuyamaz: ajanın okumasını istiyorsanız PDF olarak kaydedip ekleyin.',
     );
+    // Nothing is chosen: no hint about a file.
+    expect(within(box).queryByRole('status')).toBeNull();
     expect(field(box)).toHaveAttribute(
       'accept',
       '.pdf,.docx,.xlsx,.csv,.pptx,.png,.jpg,.jpeg,.gif,.webp,.txt,.md',
@@ -680,6 +766,58 @@ describe('adding a file', () => {
     // Nothing is asked of the API by opening the dialog.
     expect(api.calls).toHaveLength(0);
     expect(uploads).toHaveLength(0);
+  });
+
+  it('says under a chosen file that agents will not read it, and sends it all the same', async () => {
+    const { box, api, uploads, onStored } = await open();
+    const user = userEvent.setup({ applyAccept: false });
+    const xlsx = new File(['abc'], 'Maliyet tablosu.xlsx', {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    });
+    await user.upload(field(box), xlsx);
+    // Its facts as for every file, and under them the hint: not a refusal.
+    const facts = within(box).getByText('Tablo, 3 B');
+    const hint = within(box).getByRole('status');
+    expect(hint).toHaveTextContent('Bu dosya eklenir, ama ajanlar bu türü okuyamaz.');
+    expect(facts.nextElementSibling).toBe(hint);
+    expect(within(box).queryByRole('alert')).toBeNull();
+    expect(field(box)).not.toBeInvalid();
+    // A screen reader reads the hint with the field.
+    expect(field(box)).toHaveAccessibleDescription(
+      `${FILE_DIALOG_TEXT.personalData} ${FILE_TYPES_SENTENCE} Dosya başına en çok 25 MB. Bu dosya eklenir, ama ajanlar bu türü okuyamaz.`,
+    );
+
+    // A PDF over what an agent is given: another hint. One under the limit: none.
+    await user.upload(field(box), sized('uzun.pdf', 21 * 1024 * 1024));
+    expect(within(box).getByRole('status')).toHaveTextContent(
+      'Bu dosya eklenir, ama ajanların okuyabileceğinden büyük.',
+    );
+    await user.upload(field(box), pdf());
+    expect(within(box).queryByRole('status')).toBeNull();
+    expect(field(box)).toHaveAccessibleDescription(
+      `${FILE_DIALOG_TEXT.personalData} ${FILE_TYPES_SENTENCE} Dosya başına en çok 25 MB.`,
+    );
+    // A file that is refused says why and no more: it is not added at all.
+    await user.upload(field(box), pdf('rapor.exe'));
+    expect(within(box).getByRole('alert')).toHaveTextContent(FILE_PROBLEM.type);
+    expect(within(box).queryByRole('status')).toBeNull();
+    expect(api.calls).toHaveLength(0);
+
+    // The hint stops nothing: the spreadsheet is sent like any other file.
+    await user.upload(field(box), xlsx);
+    await user.click(button(box, 'Yükle'));
+    const upload = await sent(uploads);
+    expect(upload.body).toBe(xlsx);
+    const stored = projectFile({
+      id: idOf(upload.path),
+      name: 'Maliyet tablosu.xlsx',
+      kind: 'spreadsheet',
+      sizeBytes: 3,
+    });
+    upload.respond(201, stored);
+    await gone();
+    expect(onStored).toHaveBeenCalledWith(stored);
+    expect(api.unexpected).toEqual([]);
   });
 
   it('refuses a file by its name, its type and its size before anything is sent', async () => {

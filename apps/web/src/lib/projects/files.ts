@@ -3,10 +3,13 @@ import {
   FILE_NAME_HEADER,
   FILE_UPLOAD_CONTENT_TYPE,
   UPLOAD_TICKET_HEADER,
+  agentReads,
   projectFileListSchema,
   projectFileNameSchema,
   projectFileSchema,
+  projectFileTypeOf,
   uploadTicketSchema,
+  type AgentReads,
   type ProjectFile,
   type ProjectFileKind,
   type ProjectFileList,
@@ -220,14 +223,19 @@ export const FILE_PROBLEM: Record<ProjectFileProblem, string> = {
  * The sentences of the upload dialog that are rules, not labels.
  * - personalData: 8 October decision 21 (docs/SONRA.md P-g). The code cannot tell personal data;
  *   the rule is kept by this sentence and by the person who adds the file.
- * - agentsWillRead: 11 October decision 3. Said already now, although no agent reads a file yet
- *   (that is a later step): the files added today are still there when the reading opens. It is a
+ * - agentsRead: 11 October decision 3; since step 6 agents read (8 October decision 21). It is a
  *   sentence about every project, not about the state of this one: the permission can be opened
- *   after the file was added.
+ *   after the file was added. It names the three formats agents do not read and the way round
+ *   (docs/SONRA.md P6-b).
+ * - agentsCannotReadKind, agentsCannotReadSize: hints under a chosen file that agents will not
+ *   read. They stop nothing: every one of the twelve types can still be added.
  */
 export const FILE_DIALOG_TEXT = {
   personalData: 'Avukatın görüşü gelene kadar projeye kişisel veri içeren dosya eklenmez.',
-  agentsWillRead: 'Yapay zekâ izni açık projede ajanlar da projedeki bütün dosyaları okuyacak.',
+  agentsRead:
+    'Yapay zekâ izni açık projede ajanlar PDF, resim ve metin dosyalarını (TXT, MD, CSV) okur; okunan dosya modele gönderilir. Word, Excel ve PowerPoint dosyalarını okuyamaz: ajanın okumasını istiyorsanız PDF olarak kaydedip ekleyin.',
+  agentsCannotReadKind: 'Bu dosya eklenir, ama ajanlar bu türü okuyamaz.',
+  agentsCannotReadSize: 'Bu dosya eklenir, ama ajanların okuyabileceğinden büyük.',
   sizeLimit: 'Dosya başına en çok 25 MB.',
   chooseFirst: 'Önce bir dosya seçin.',
   stored: 'Dosya gönderildi, kaydediliyor.',
@@ -238,6 +246,12 @@ export const FILE_DIALOG_TEXT = {
  * The sentences of the "Dosyalar" tab. Who sees and adds is docs/SONRA.md P-k; who deletes is 11
  * October decision 2 (the person who added the file, the owner and the managers of the project,
  * the founder). noStorage is the API's own sentence for the same state.
+ * - agentsRead, agentsDoNotRead: what agents do with the files of THIS project (8 October decision
+ *   21; step 6). The first is shown while agents may work in the project, the second otherwise
+ *   (no AI permission, a customer that does not allow AI, a reached spending limit). Whether a
+ *   long file is too long for an agent is known only when the model's provider counts it, so no
+ *   row can say it beforehand: the sentence names the page where the person will read it
+ *   (docs/SONRA.md P6-d, P6-g).
  */
 export const FILES_TEXT = {
   emptyTitle: 'Bu projede dosya yok',
@@ -245,6 +259,9 @@ export const FILES_TEXT = {
     'Belge, tablo, sunum, PDF, resim ve metin dosyaları ekleyebilirsiniz. Dosyaları proje üyeleri ve kurucu görür.',
   whoDoesWhat:
     'Dosyaları proje üyeleri ve kurucu görür ve ekler. Bir dosyayı ekleyen kişi, projenin sahibi, yöneticileri ya da kurucu siler.',
+  agentsRead:
+    'Bu projede çalışan ajanlar, işi için gerekirse PDF, resim ve metin dosyalarını (TXT, MD, CSV) okur; okunan dosya modele gönderilir. Word, Excel ve PowerPoint dosyalarını okuyamaz. Çok uzun bir dosyayı da okuyamayabilir; okuyamadığı dosyayı talep sayfası söyler.',
+  agentsDoNotRead: 'Bu projede ajanlar şu an çalışamaz; dosyaları da okumaz.',
   noStorage: 'Dosya deposu bu ortamda kurulu değil. Dosya eklenemez, indirilemez ve silinemez.',
   deleteDescription: 'Dosya projeden ve dosya deposundan silinir. Bu işlem geri alınamaz.',
 } as const;
@@ -277,4 +294,27 @@ export function fileAddedLine(
   now: number = Date.now(),
 ): string {
   return `${fileAddedBy(file)}, ${formatWhen(file.createdAt, now)}`;
+}
+
+/**
+ * Can agents read a file, as far as its name and its size say (the contract's own answer:
+ * agentReads). A name whose extension is not in the list is a type agents do not read. 'yes' is
+ * not a promise: the model's provider counts the file when an agent asks for it.
+ */
+export function agentsReadFile(file: { name: string; sizeBytes: number }): AgentReads {
+  const type = projectFileTypeOf(file.name);
+  return type === null ? 'kind' : agentReads(type.mimeType, file.sizeBytes);
+}
+
+/**
+ * What agents cannot do with a file, in a few words; null when they can read it. A fact about the
+ * file, whatever the project's AI permission.
+ */
+export function fileAgentLine(file: { name: string; sizeBytes: number }): string | null {
+  const reads = agentsReadFile(file);
+  return reads === 'kind'
+    ? 'Ajanlar bu türü okuyamaz'
+    : reads === 'size'
+      ? 'Ajanların okuyabileceğinden büyük'
+      : null;
 }

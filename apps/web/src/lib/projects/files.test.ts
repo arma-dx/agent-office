@@ -1,7 +1,11 @@
 import {
+  AGENT_IMAGE_MAX_BYTES,
+  AGENT_PDF_MAX_BYTES,
+  AGENT_TEXT_MAX_BYTES,
   COMPANY_HEADER,
   FILE_NAME_HEADER,
   PROJECT_FILE_MAX_BYTES,
+  PROJECT_FILE_TYPES,
   UPLOAD_TICKET_HEADER,
   projectFileProblem,
 } from '@agent-office/shared';
@@ -9,9 +13,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mockUpload } from '../../test/mock-upload.ts';
 import { ApiError } from '../api.ts';
 import {
+  FILE_DIALOG_TEXT,
   FILE_PROBLEM,
+  FILES_TEXT,
+  agentsReadFile,
   downloadProjectFile,
   fileAddedLine,
+  fileAgentLine,
   fileFactsLine,
   formatBytes,
   uploadProjectFile,
@@ -278,5 +286,104 @@ describe('the words of a file', () => {
     expect(fileAddedLine({ createdBy: null, createdAt: '2026-09-28T09:00:00.000Z' }, now)).toBe(
       'Eklendi, 28 Eyl',
     );
+  });
+});
+
+// 8 October decision 21, step 6: agents read PDF, image and text files; Word, Excel and PowerPoint
+// files are not read (docs/SONRA.md P6-b).
+describe('what agents read of a file, in words', () => {
+  it('marks the three Office formats and no other of the twelve extensions', () => {
+    expect(PROJECT_FILE_TYPES).toHaveLength(12);
+    const unread = PROJECT_FILE_TYPES.filter(
+      (type) => fileAgentLine({ name: `dosya.${type.extension}`, sizeBytes: 1000 }) !== null,
+    ).map((type) => type.extension);
+    expect(unread).toEqual(['docx', 'xlsx', 'pptx']);
+    for (const extension of unread) {
+      expect(fileAgentLine({ name: `Teklif.${extension}`, sizeBytes: 1000 })).toBe(
+        'Ajanlar bu türü okuyamaz',
+      );
+      // The extension is read as the list reads it: whatever its case.
+      expect(agentsReadFile({ name: `Teklif.${extension.toUpperCase()}`, sizeBytes: 1000 })).toBe(
+        'kind',
+      );
+    }
+    // A name the list does not know is a type agents do not read.
+    expect(fileAgentLine({ name: 'arşiv.zip', sizeBytes: 1000 })).toBe('Ajanlar bu türü okuyamaz');
+    expect(fileAgentLine({ name: 'adsız', sizeBytes: 1000 })).toBe('Ajanlar bu türü okuyamaz');
+  });
+
+  it('marks a file over the bytes an agent is given of its form, and not one at the limit', () => {
+    const cases: [string, number][] = [
+      ['Şartname.pdf', AGENT_PDF_MAX_BYTES],
+      ['afiş.png', AGENT_IMAGE_MAX_BYTES],
+      ['afiş.jpeg', AGENT_IMAGE_MAX_BYTES],
+      ['liste.csv', AGENT_TEXT_MAX_BYTES],
+      ['notlar.md', AGENT_TEXT_MAX_BYTES],
+    ];
+    for (const [name, limit] of cases) {
+      expect(fileAgentLine({ name, sizeBytes: limit })).toBeNull();
+      expect(agentsReadFile({ name, sizeBytes: limit })).toBe('yes');
+      expect(fileAgentLine({ name, sizeBytes: limit + 1 })).toBe(
+        'Ajanların okuyabileceğinden büyük',
+      );
+    }
+    // A PDF of 25 MB can be added and is over the 20 MB an agent is given.
+    expect(AGENT_PDF_MAX_BYTES).toBeLessThan(PROJECT_FILE_MAX_BYTES);
+    expect(fileAgentLine({ name: 'Şartname.pdf', sizeBytes: PROJECT_FILE_MAX_BYTES })).toBe(
+      'Ajanların okuyabileceğinden büyük',
+    );
+    // The type is said before the size: an Office file is not read at any size.
+    expect(fileAgentLine({ name: 'Sunum.pptx', sizeBytes: PROJECT_FILE_MAX_BYTES })).toBe(
+      'Ajanlar bu türü okuyamaz',
+    );
+  });
+
+  it('says in the dialog what agents read, names the three formats they do not, and the way round', () => {
+    const sentence = FILE_DIALOG_TEXT.agentsRead;
+    expect(sentence).toBe(
+      'Yapay zekâ izni açık projede ajanlar PDF, resim ve metin dosyalarını (TXT, MD, CSV) okur; okunan dosya modele gönderilir. Word, Excel ve PowerPoint dosyalarını okuyamaz: ajanın okumasını istiyorsanız PDF olarak kaydedip ekleyin.',
+    );
+    for (const word of ['Word', 'Excel', 'PowerPoint', 'PDF olarak', 'modele gönderilir']) {
+      expect(sentence).toContain(word);
+    }
+    // The two hints say that the file is added all the same.
+    expect(FILE_DIALOG_TEXT.agentsCannotReadKind).toBe(
+      'Bu dosya eklenir, ama ajanlar bu türü okuyamaz.',
+    );
+    expect(FILE_DIALOG_TEXT.agentsCannotReadSize).toBe(
+      'Bu dosya eklenir, ama ajanların okuyabileceğinden büyük.',
+    );
+  });
+
+  it('has two different sentences for the tab, and the first names the page that says what was not read', () => {
+    expect(FILES_TEXT.agentsRead).not.toBe(FILES_TEXT.agentsDoNotRead);
+    expect(FILES_TEXT.agentsDoNotRead).toBe(
+      'Bu projede ajanlar şu an çalışamaz; dosyaları da okumaz.',
+    );
+    // Whether a long file is too long is known only when an agent asks for it.
+    expect(FILES_TEXT.agentsRead).toContain('okuyamadığı dosyayı talep sayfası söyler');
+    for (const word of ['PDF', 'TXT, MD, CSV', 'Word, Excel ve PowerPoint', 'modele gönderilir']) {
+      expect(FILES_TEXT.agentsRead).toContain(word);
+    }
+    // No number of pages is promised: none is measured.
+    expect(FILES_TEXT.agentsRead).not.toMatch(/\d/);
+  });
+
+  it('speaks of what agents do now, in whole sentences without a long dash', () => {
+    const sentences = [
+      FILE_DIALOG_TEXT.agentsRead,
+      FILE_DIALOG_TEXT.agentsCannotReadKind,
+      FILE_DIALOG_TEXT.agentsCannotReadSize,
+      FILES_TEXT.agentsRead,
+      FILES_TEXT.agentsDoNotRead,
+    ];
+    for (const sentence of sentences) {
+      // "okuyacak" was the promise of the step before (11 October decision 3): agents read now.
+      expect(sentence).not.toMatch(/okuyacak/);
+      expect(sentence).not.toMatch(/[\u2014\u00b7]/u);
+      expect(sentence.endsWith('.')).toBe(true);
+    }
+    // No sentence says "all the files" any more: three formats are not read.
+    expect(Object.values(FILE_DIALOG_TEXT).join(' ')).not.toMatch(/bütün dosyalar/);
   });
 });

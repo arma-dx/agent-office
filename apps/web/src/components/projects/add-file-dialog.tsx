@@ -19,6 +19,7 @@ import {
 } from '@/components/ui/dialog';
 import { userMessage } from '@/lib/api';
 import {
+  agentsReadFile,
   FILE_DIALOG_TEXT,
   FILE_PROBLEM,
   FILE_TYPES_SENTENCE,
@@ -29,11 +30,24 @@ import {
 import { useCompany } from '@/lib/session';
 import { busyProps } from '@/lib/utils';
 
-/** The kind and the size of a file that can be sent, as its row will write them. */
-function chosenFacts(file: File): string | null {
+/**
+ * The kind and the size of a file that can be sent, as its row will write them, and, when agents
+ * will not read it (its type, or its size), the sentence that says so.
+ */
+function chosenFacts(file: File): { facts: string; agentHint: string | null } | null {
   const name = projectFileNameSchema.safeParse(file.name);
   const type = name.success ? projectFileTypeOf(name.data) : null;
-  return type ? fileFactsLine({ kind: type.kind, sizeBytes: file.size }) : null;
+  if (!name.success || type === null) return null;
+  const reads = agentsReadFile({ name: name.data, sizeBytes: file.size });
+  return {
+    facts: fileFactsLine({ kind: type.kind, sizeBytes: file.size }),
+    agentHint:
+      reads === 'kind'
+        ? FILE_DIALOG_TEXT.agentsCannotReadKind
+        : reads === 'size'
+          ? FILE_DIALOG_TEXT.agentsCannotReadSize
+          : null,
+  };
 }
 
 /**
@@ -57,9 +71,14 @@ function chosenFacts(file: File): string | null {
  * may have been stored.
  *
  * Two sentences are rules: no file with personal data until the lawyer has answered (decision 21),
- * and that agents will read the files of a project whose AI permission is open (11 October
- * decision 3). The first is part of the file field's description, because the dialog opens with
- * the focus on that field and a screen reader reads a field's description with it.
+ * and what agents read of the files of a project whose AI permission is open (11 October decision
+ * 3; 8 October decision 21): PDF, image and text files, which go to the model, and not Word, Excel
+ * or PowerPoint files. The first is part of the file field's description, because the dialog opens
+ * with the focus on that field and a screen reader reads a field's description with it.
+ *
+ * A chosen file that agents will not read (its type, or a size over what an agent is given) gets a
+ * hint under its line. The hint stops nothing: the file is added like any other. It is part of the
+ * field's description and a status, so a screen reader hears it too.
  */
 export function AddFileDialog({
   project,
@@ -81,6 +100,7 @@ export function AddFileDialog({
   const inputId = `${id}-file`;
   const warningId = `${id}-warning`;
   const helpId = `${id}-help`;
+  const hintId = `${id}-hint`;
   const errorId = `${id}-error`;
   const [file, setFile] = useState<File | null>(null);
   // A new id with every choice, the same id for every retry of the same file.
@@ -102,7 +122,9 @@ export function AddFileDialog({
 
   const problem = file ? projectFileProblem(file) : null;
   const refused = problem !== null || (missing && file === null);
-  const facts = file && problem === null ? chosenFacts(file) : null;
+  const chosen = file && problem === null ? chosenFacts(file) : null;
+  const facts = chosen?.facts ?? null;
+  const agentHint = chosen?.agentHint ?? null;
   const percent = Math.min(100, Math.round(fraction * 100));
 
   function choose(next: File | null) {
@@ -182,7 +204,7 @@ export function AddFileDialog({
         <DialogTitle>Dosya ekle</DialogTitle>
         <DialogDescription>
           {project.name} projesine bir dosya ekleyin. Dosyayı proje üyeleri ve kurucu görür.{' '}
-          {FILE_DIALOG_TEXT.agentsWillRead}
+          {FILE_DIALOG_TEXT.agentsRead}
         </DialogDescription>
         {/* InlineBanner takes no id; the wrapper is what the file field is described by. */}
         <div id={warningId}>
@@ -210,9 +232,12 @@ export function AddFileDialog({
               // The one control that is disabled while busy: the focus is on a button then.
               disabled={phase !== 'idle'}
               aria-invalid={refused}
-              aria-describedby={
-                refused ? `${warningId} ${helpId} ${errorId}` : `${warningId} ${helpId}`
-              }
+              aria-describedby={[
+                warningId,
+                helpId,
+                ...(agentHint ? [hintId] : []),
+                ...(refused ? [errorId] : []),
+              ].join(' ')}
               className="text-sm"
               onChange={(event) => {
                 choose(event.target.files?.[0] ?? null);
@@ -222,6 +247,11 @@ export function AddFileDialog({
               {FILE_TYPES_SENTENCE} {FILE_DIALOG_TEXT.sizeLimit}
             </p>
             {facts ? <p className="text-sm text-ink-secondary tabular-nums">{facts}</p> : null}
+            {agentHint ? (
+              <p id={hintId} role="status" className="text-sm text-ink-secondary">
+                {agentHint}
+              </p>
+            ) : null}
             {refused ? (
               <p id={errorId} role="alert" className="text-sm text-destructive">
                 {problem !== null ? FILE_PROBLEM[problem] : FILE_DIALOG_TEXT.chooseFirst}
