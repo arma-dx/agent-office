@@ -1,8 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import {
+  AGENT_FILE_MAX_TOKENS,
+  AGENT_IMAGE_MAX_BYTES,
+  AGENT_PDF_MAX_BYTES,
+  AGENT_READ_TOOL,
+  AGENT_RUN_MAX_BYTES,
+  AGENT_RUN_MAX_IMAGES,
+  AGENT_RUN_MAX_TOKENS,
+  AGENT_TEXT_MAX_BYTES,
+  FILE_READ_PROBLEMS,
   PROJECT_FILE_ACCEPT,
   PROJECT_FILE_MAX_BYTES,
   PROJECT_FILE_TYPES,
+  agentFileForm,
+  agentReads,
   apiErrorCodeSchema,
   fileExtension,
   projectFileKindOf,
@@ -164,5 +175,78 @@ describe('the answers', () => {
     ]) {
       expect(apiErrorCodeSchema.safeParse(code).success, code).toBe(true);
     }
+  });
+});
+
+describe('what agents read of a file (8 October decision 21)', () => {
+  it('agents read nine of the twelve extensions', () => {
+    const forms = Object.fromEntries(
+      PROJECT_FILE_TYPES.map((type) => [type.extension, agentFileForm(type.mimeType)]),
+    );
+    expect(forms).toEqual({
+      pdf: 'pdf',
+      docx: null,
+      xlsx: null,
+      csv: 'text',
+      pptx: null,
+      png: 'image',
+      jpg: 'image',
+      jpeg: 'image',
+      gif: 'image',
+      webp: 'image',
+      txt: 'text',
+      md: 'text',
+    });
+    // A type the list does not have is not read either.
+    expect(agentFileForm('application/zip')).toBeNull();
+    expect(agentFileForm('')).toBeNull();
+    for (const type of PROJECT_FILE_TYPES) {
+      expect(agentReads(type.mimeType, 1), type.extension).toBe(
+        forms[type.extension] === null ? 'kind' : 'yes',
+      );
+    }
+  });
+
+  it('a file over the bytes of its form is not read', () => {
+    for (const [mimeType, limit] of [
+      ['application/pdf', AGENT_PDF_MAX_BYTES],
+      ['image/png', AGENT_IMAGE_MAX_BYTES],
+      ['image/jpeg', AGENT_IMAGE_MAX_BYTES],
+      ['text/csv', AGENT_TEXT_MAX_BYTES],
+      ['text/markdown', AGENT_TEXT_MAX_BYTES],
+    ] as const) {
+      expect(agentReads(mimeType, limit), mimeType).toBe('yes');
+      expect(agentReads(mimeType, limit + 1), mimeType).toBe('size');
+    }
+    // The kind is said before the size: a large Office file is not "too large", it is not read.
+    expect(
+      agentReads(
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        PROJECT_FILE_MAX_BYTES,
+      ),
+    ).toBe('kind');
+  });
+
+  it('the limits fit one request', () => {
+    // The provider takes 32 MB a request; base64 is four thirds, and the rest needs room.
+    expect((AGENT_RUN_MAX_BYTES * 4) / 3).toBeLessThan(32_000_000 - 2_000_000);
+    expect(AGENT_PDF_MAX_BYTES).toBeLessThanOrEqual(AGENT_RUN_MAX_BYTES);
+    // The provider takes 10 MB of base64 an image.
+    expect(Math.ceil(AGENT_IMAGE_MAX_BYTES / 3) * 4).toBeLessThan(10_000_000);
+    // Every limit of a form is under what a project file may be at all.
+    for (const limit of [AGENT_PDF_MAX_BYTES, AGENT_IMAGE_MAX_BYTES, AGENT_TEXT_MAX_BYTES]) {
+      expect(limit).toBeLessThan(PROJECT_FILE_MAX_BYTES);
+    }
+    expect(AGENT_FILE_MAX_TOKENS).toBeLessThan(AGENT_RUN_MAX_TOKENS);
+    expect(AGENT_RUN_MAX_IMAGES).toBe(20);
+  });
+
+  it('every refusal the journey words is a code', () => {
+    expect(FILE_READ_PROBLEMS).toHaveLength(11);
+    expect(new Set(FILE_READ_PROBLEMS).size).toBe(FILE_READ_PROBLEMS.length);
+    for (const code of FILE_READ_PROBLEMS) {
+      expect(code).toMatch(/^[a-z][a-z0-9_]*$/);
+    }
+    expect(AGENT_READ_TOOL).toBe('read_project_file');
   });
 });

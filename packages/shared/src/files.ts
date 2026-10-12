@@ -184,3 +184,90 @@ export const projectFileListSchema = z.object({
   storageAvailable: z.boolean(),
 });
 export type ProjectFileList = z.output<typeof projectFileListSchema>;
+
+// Agents read (8 October decision 21; step 6) ------------------------------------------------------
+
+/** The catalogue name of the tool an agent reads a project file with. */
+export const AGENT_READ_TOOL = 'read_project_file';
+
+/**
+ * What an agent run may be given of the files (docs/SONRA.md P6-d; none of the numbers rests on a
+ * measurement). Bytes are held before the storage is asked; tokens are counted by the model's
+ * provider before a file is given to the model.
+ */
+export const AGENT_PDF_MAX_BYTES = 20 * 1024 * 1024;
+/** The provider takes 10 MB of base64 per image; 7,000,000 bytes stay under it. */
+export const AGENT_IMAGE_MAX_BYTES = 7_000_000;
+export const AGENT_TEXT_MAX_BYTES = 1024 * 1024;
+export const AGENT_FILE_MAX_TOKENS = 80_000;
+/** Every file a run has read is resent with each of its later model calls. */
+export const AGENT_RUN_MAX_TOKENS = 150_000;
+export const AGENT_RUN_MAX_BYTES = 20 * 1024 * 1024;
+/**
+ * With more than 20 images in one request the provider refuses every image over 2000 px, and
+ * images in tool results of earlier turns count. The worker opens no image, so it cannot know a
+ * picture's size: a run is given at most this many.
+ */
+export const AGENT_RUN_MAX_IMAGES = 20;
+
+/** How a stored type reaches the model. */
+export type AgentFileForm = 'pdf' | 'image' | 'text';
+
+/**
+ * The form a stored type (files.mime_type) is given to the model in; null: agents do not read
+ * the type (the three Office formats, docs/SONRA.md P6-b).
+ */
+export function agentFileForm(mimeType: string): AgentFileForm | null {
+  switch (mimeType) {
+    case 'application/pdf':
+      return 'pdf';
+    case 'image/png':
+    case 'image/jpeg':
+    case 'image/gif':
+    case 'image/webp':
+      return 'image';
+    case 'text/plain':
+    case 'text/markdown':
+    case 'text/csv':
+      return 'text';
+    default:
+      return null;
+  }
+}
+
+const AGENT_MAX_BYTES: Record<AgentFileForm, number> = {
+  pdf: AGENT_PDF_MAX_BYTES,
+  image: AGENT_IMAGE_MAX_BYTES,
+  text: AGENT_TEXT_MAX_BYTES,
+};
+
+/**
+ * Can an agent read a file, as far as its record says: 'kind' the type is not read, 'size' it
+ * is over the bytes of its form. 'yes' is not a promise: the provider counts the tokens when the
+ * agent asks for the file, and may refuse a PDF it cannot open.
+ */
+export type AgentReads = 'yes' | 'kind' | 'size';
+export function agentReads(mimeType: string, sizeBytes: number): AgentReads {
+  const form = agentFileForm(mimeType);
+  if (form === null) return 'kind';
+  return sizeBytes > AGENT_MAX_BYTES[form] ? 'size' : 'yes';
+}
+
+/**
+ * Why a read did not give the agent a file: the error codes of a tool call of AGENT_READ_TOOL
+ * that the journey of a request has a sentence for. Any other code reads as a plain failure.
+ */
+export const FILE_READ_PROBLEMS = [
+  'file_kind_not_read',
+  'file_too_large',
+  'run_file_budget_reached',
+  'file_gone',
+  'file_content_missing',
+  'file_storage_failed',
+  'file_not_readable_by_model',
+  'file_check_failed',
+  'spending_limit_reached',
+  'file_already_read',
+  'file_not_listed',
+] as const;
+export type FileReadProblem = (typeof FILE_READ_PROBLEMS)[number];
