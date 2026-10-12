@@ -136,7 +136,19 @@ export interface RunnerDeps {
   // call gets the run's remaining time, so that a slow answer is waited for once, until the run's
   // own deadline, instead of being cut and sent again.
   perCallTimeoutMs?: number;
+  // Whether the coordinator is offered the asking tool. Not set by the worker: the switch below
+  // decides. The tests of the coordinator's question set it.
+  coordinatorAsks?: boolean;
 }
+
+/**
+ * Whether the coordinator may ask the requester (12 October decision 4). Built and switched off:
+ * measured on the real model on 12 October, the coordinator still asked where the unit was clear
+ * after two rounds of narrower texts (a request that only lacked its subject in every run, a
+ * "research, then write" request in about one run of three). The founder decides whether it is
+ * switched on (docs/SONRA.md, S-p). A unit agent's question does not depend on this.
+ */
+export const COORDINATOR_ASKS: boolean = false;
 
 // What a model wrote when it ended without its tool is kept with the run's raw content
 // (runs.output, under the retention period), up to this size.
@@ -825,7 +837,10 @@ export async function runAgentJob(
       'select office.questions_left($1) as left',
       [job.taskId],
     );
-    const mayAsk = (left.rows[0]?.left ?? 0) > 0 && rulesSayWhenToAsk;
+    const mayAsk =
+      (left.rows[0]?.left ?? 0) > 0 &&
+      rulesSayWhenToAsk &&
+      (!coordinator || (deps.coordinatorAsks ?? COORDINATOR_ASKS));
     // The coordinator's copy of the tool carries its own, narrower description.
     const given: ModelTool[] = mayAsk
       ? [...offered, coordinator ? ASK_TOOL_COORDINATOR : ASK_TOOL]

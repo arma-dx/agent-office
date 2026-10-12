@@ -10,7 +10,7 @@ import {
 } from '@agent-office/db';
 import { afterAll, describe, expect, it } from 'vitest';
 import type { ModelTool } from '../src/model/client.ts';
-import { closeLostRun, runAgentJob } from '../src/runner/run.ts';
+import { COORDINATOR_ASKS, closeLostRun, runAgentJob } from '../src/runner/run.ts';
 import { ASK_RULES_HEADING, ASK_TOOL, ASK_TOOL_COORDINATOR } from '../src/runner/tools.ts';
 import { handleAgentRunJob } from '../src/worker.ts';
 import {
@@ -2201,6 +2201,26 @@ describe.skipIf(noDatabase)('an agent asks the requester a question', () => {
     const last = new ScriptedModel([toolUse('submit_for_approval', RESULT)]);
     await runAgentJob((await runner(last)).deps, job(taskId, 'SOS-2', ids.founder));
     expect(last.requests[0]?.tool_choice).toEqual(AUTO);
+  });
+
+  it('the coordinator is not offered the asking tool while its asking is switched off', async () => {
+    // The worker's own setting: nobody passes the switch, so the constant decides.
+    expect(COORDINATOR_ASKS).toBe(false);
+    const taskId = await openRequest(ids.founder, UNCLEAR);
+    const model = new ScriptedModel([toolUse('route_task', ROUTE_TO_SOS)]);
+    const { deps } = await runner(model, { coordinatorAsks: undefined });
+    const routed = await runAgentJob(deps, job(taskId, 'KOR-1', ids.founder));
+    expect(routed).toMatchObject({ outcome: 'routed', modelCalls: 1 });
+    // Its closing tool alone, forced, although the database would still let it ask.
+    expect(model.requests[0]?.tool_choice).toEqual(FORCED_TO_ROUTE);
+    expect(toolNames(model)).toEqual(['route_task']);
+    expect(await admin('select office.question_limit($1) as n', ['KOR-1'])).toEqual([{ n: 2 }]);
+
+    // The unit agent's question does not depend on the switch.
+    const unit = new ScriptedModel([toolUse('submit_for_approval', RESULT)]);
+    const unitRun = await runner(unit, { coordinatorAsks: undefined });
+    await runAgentJob(unitRun.deps, job(taskId, 'SOS-2', ids.founder));
+    expect(toolNames(unit)).toEqual(['submit_for_approval', 'ask_requester']);
   });
 
   it('the coordinator asks twice, then routes; the unit agent is given both answers', async () => {

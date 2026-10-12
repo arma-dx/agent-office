@@ -236,6 +236,9 @@ export function runner(
       callModel: model?.call ?? null,
       jobs,
       log: (event, fields) => log.push({ event, fields }),
+      // The coordinator's question is built and switched off in the worker (COORDINATOR_ASKS);
+      // the tests run with it on, and one test holds the switch.
+      coordinatorAsks: true,
       ...overrides,
     },
   });
