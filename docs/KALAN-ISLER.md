@@ -55,6 +55,8 @@ Henüz olmayanlar: veritabanı (göç dosyası yok), giriş, işlevli ekran (yal
 
 12 Ekim 2026 (devam): adım 3'ün son parçası kuruldu: projeye yapay zekâ harcama sınırı (8 Ekim karar 17). Sınırı yalnızca kurucu, proje sayfasının "Çalışmalar" sekmesinden belirler; orada harcananı, sınırı ve kalanı görür. Sınır dolar olarak yazılır ve projenin bütün ömrü için geçerlidir (12 Ekim, karar 1). Dolunca o projede yeni çalışma başlamaz, süren çalışma bir sonraki adımında biter, açık talepler "harcama sınırı doldu" diye kurucunun "Sizden beklenenler" listesine düşer ve o projede yeni talep açılamaz; onay bekleyen sonuç yine onaylanabilir ve reddedilebilir. İlk kez sınır koymak ve sınırı düşürmek passkey istemez; yükseltmek ve kaldırmak passkey ister ve sınırın beklettiği işleri kendiliğinden yeniden başlatır, pencere kaç talebin başlayacağını önceden söyler (11 Ekim, karar 1). Üyeler yalnızca sınırın dolduğunu öğrenir; hiçbir tutar görmez. Türetilen seçimler `docs/SONRA.md` içinde P3-m ila P3-ab; P3-o ve P3-s karara bağlandı, ötekiler kurucu onayı bekliyor. Adım 3'ün dört parçası böylece tamamlandı; projenin notları Notlar işini (1.3) bekliyor. Ekranlar tarayıcıda görülmeden yazıldı; kurucunun bir proje sayfasının beş sekmesine, bütçe penceresine ve sınır penceresine bir kez bakması gerekir (P3-ab). Dört yeni göç (`20261008102700` ila `20261008103000`) yerel veritabanına uygulanana kadar yerelde proje listesi, proje sayfası ve talep listeleri sunucu hatası verir. Sıradaki adım proje dosyaları (adım 4).
 
+12 Ekim 2026 (devam): Projeler'in dördüncü adımı kuruldu (0.4c adım 4): proje dosyaları (8 Ekim, karar 11 ve 20). Proje sayfasında "Talepler"den hemen sonra "Dosyalar" sekmesi var: projenin üyeleri ve kurucu dosyaları görür, ekler ve indirir; dosyayı ekleyen kişi, projenin sahibi, yöneticileri ve kurucu siler (11 Ekim, karar 2). On iki uzantı eklenebilir (PDF, DOCX, XLSX, CSV, PPTX, PNG, JPG, JPEG, GIF, WEBP, TXT, MD), dosya başına 25 MB; tür dosyanın adına ve içeriğine birlikte bakılarak belirlenir. Dosya panelde gösterilmez, her zaman indirilir. Tarayıcı dosyayı API'ye gönderir ve API'den alır (kural 1): önce küçük bir istekle yükleme izni alınır, sonra dosya bu izinle gönderilir. Sunucuda beş uç ve dosya deposuna ulaşan tek modül var (`apps/api/src/files`); depo test ve canlı ortamda Supabase Storage, yerelde bir klasör (`FILE_STORAGE_DIR`), testlerde bellektir. Ekleme penceresi iki cümleyi söyler: avukatın görüşü gelene kadar kişisel veri içeren dosya eklenmez (karar 21); yapay zekâ izni açık projede ajanlar bu dosyaları okuyacak (11 Ekim, karar 3). Ajanların okuması kurulmadı (adım 6): bugün hiçbir ajan ve çalıştırıcı bir dosya kaydını göremez. Dosyalar şimdilik taranmadan eklenir; tarayıcı sunucu kurulunca kurulur (11 Ekim, karar 4; 0.7). Türetilen seçimler `docs/SONRA.md` içinde P4-a ila P4-w; P4-b, P4-m, P4-t ve P4-u karara bağlandı, ötekiler kurucu onayı bekliyor. Supabase'e giden üç çağrı gerçek hizmetle denenmedi; kova kurulunca `pnpm files:check` bir kez çalıştırılır. Ekranlar tarayıcıda görülmeden yazıldı; kurucunun "Dosyalar" sekmesine bir kez bakması gerekir (P4-i, P4-w). Yeni göç (`20261008103100_project_files.sql`) yerel veritabanına uygulanana kadar yerelde "Dosyalar" sekmesi sunucu hatası verir; yerelde dosya eklemek için `.env` dosyasında `FILE_STORAGE_DIR` bir klasörü göstermelidir (boşsa sekme deponun kurulu olmadığını yazar). Sıradaki adım GitHub bağlantısı (adım 5).
+
 ## Sprint 0
 
 ### 0.1 Arayüz temeli
@@ -411,7 +413,7 @@ Bu işten çıkarılanlar:
 
 ### 0.4c Projeler
 
-8 Ekim, karar 11 ve 14-22. Projeler "İş" grubunda ayrı bir bölümdür (karar 14). Çalışanlar da proje açar ve üye ekler; yapay zekâ iznini yalnızca kurucu, passkey ile açar (karar 15 ve 22). Türetilen yorumlar ve varsayımlar `docs/SONRA.md` içinde P-a ila P-u. Adım 1 tasarlanırken ve yapılırken türetilenler aynı dosyada P1-a ila P1-z. Projede sahip, yönetici ve üye ayrımı 8 Ekim karar 44 ile geldi; ondan türetilenler P1b-a ila P1b-m. Adım 2 (8 Ekim, karar 45-49) tasarlanırken ve yapılırken türetilenler P2-a ila P2-af. Adım 3 (karar 17; 11 Ekim karar 1; 12 Ekim karar 1 ve 2) tasarlanırken ve yapılırken türetilenler P3-a ila P3-ab.
+8 Ekim, karar 11 ve 14-22. Projeler "İş" grubunda ayrı bir bölümdür (karar 14). Çalışanlar da proje açar ve üye ekler; yapay zekâ iznini yalnızca kurucu, passkey ile açar (karar 15 ve 22). Türetilen yorumlar ve varsayımlar `docs/SONRA.md` içinde P-a ila P-u. Adım 1 tasarlanırken ve yapılırken türetilenler aynı dosyada P1-a ila P1-z. Projede sahip, yönetici ve üye ayrımı 8 Ekim karar 44 ile geldi; ondan türetilenler P1b-a ila P1b-m. Adım 2 (8 Ekim, karar 45-49) tasarlanırken ve yapılırken türetilenler P2-a ila P2-af. Adım 3 (karar 17; 11 Ekim karar 1; 12 Ekim karar 1 ve 2) tasarlanırken ve yapılırken türetilenler P3-a ila P3-ab. Adım 4 (karar 20 ve 21; 11 Ekim karar 2-4) tasarlanırken ve yapılırken türetilenler P4-a ila P4-w.
 
 Adım 1: en küçük Projeler
 
@@ -446,8 +448,10 @@ Adım 3: proje sayfasının öteki bölümleri (karar 17; her biri ayrı küçü
 
 Adım 4: proje dosyaları (karar 20)
 
-- [ ] (Senden) Supabase'te dosya deposu (test ve canlı ortam için)
-- [ ] Dosya modülü: yükleme, liste, indirme, silme; tür ve 25 MB sınırı; görünürlük proje üyeliğiyle
+- [ ] (Senden) Supabase'te dosya deposu (test ve canlı ortam için): `office-files` adlı özel kova ve bir gizli anahtar; adımları `docs/supabase-kurulum.md` bölüm 8. Yerelde ve testlerde gerekmez; test ortamı dosya sunmadan önce gerekir. Kurulunca `pnpm files:check` bir kez çalıştırılır (Supabase'e giden üç çağrı gerçek hizmetle henüz denenmedi)
+- [x] Dosya modülü: yükleme, liste, indirme, silme; tür ve 25 MB sınırı; görünürlük proje üyeliğiyle (proje sayfasında "Dosyalar" sekmesi; on iki uzantı, tür ada ve içeriğe bakılarak belirlenir, SONRA P4-a; ekleyen kişi, projenin sahibi, yöneticileri ve kurucu siler, 11 Ekim karar 2; projede en çok 200 dosya ve 1 GB, SONRA P4-d; dosya önce yükleme izni alınarak gönderilir, SONRA P4-k; ekleme ve silme iz kaydında; pencere kişisel veri cümlesini ve ajanların okuyacağını söyler, karar 21 ve 11 Ekim karar 3; ajanlar henüz okumaz, adım 6)
+- [ ] `20261008103100_project_files.sql` göçünün yerel veritabanına ve test ortamına uygulanması (uygulanana kadar "Dosyalar" sekmesi sunucu hatası verir); yerelde dosya eklemek için `.env` içinde `FILE_STORAGE_DIR`
+- [ ] (Senden) "Dosyalar" sekmesine tarayıcıda bir kez bakmak: bir dosya eklemek, indirmek, silmek; 25 MB'lık ve biraz daha büyük bir dosya; yükleme sürerken ve "Kaydediliyor" yazarken "Yüklemeyi durdur" (SONRA P4-i, P4-w)
 
 Adım 5: GitHub bağlantısı (karar 19 ve 22)
 
@@ -591,6 +595,9 @@ Not (8 Ekim): ince dilim (0.4) bu bölümün bir kısmını kurdu: tek dosyada C
 - [ ] Sağlık kontrolü ve yeniden başlatma
 - [ ] Log toplama ve hata bildirimi
 - [ ] Veritabanı yedeği ve bir kez geri yükleme denemesi
+- [ ] Proje dosyalarının yedeği: dosya deposunun her gece Frankfurt'ta şifreli kopyası (12 Ekim, karar 23); Supabase'in veritabanı yedeği dosyaların kendisini içermez. Geri yükleme denemesine dosyalar da eklenir (SONRA P4-t)
+- [ ] Zararlı yazılım tarayıcısı: sunucu kurulunca sunucuya kurulur (11 Ekim, karar 4; aynı makinede, 12 Ekim karar 19); proje dosyası depoya yazılmadan taranır. O zamana kadar dosyalar taranmadan eklenir (SONRA P4-m)
+- [ ] Dosya deposu için sunucu ayarları: `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `SUPABASE_STORAGE_BUCKET` gizli ayarlarda; `pnpm files:check`; API'nin veritabanı rolünde işlem içinde bekleme süresi (`idle_in_transaction_session_timeout`) 0 ya da 30 saniyeden uzun (`docs/supabase-kurulum.md` bölüm 8); sunucu boyutlandırılırken API'nin dosya baytları için en kötü anda yaklaşık 400 MB belleğe ihtiyacı olduğu hesaba katılır (SONRA P4-k)
 - [ ] Güvenlik başlıkları ve API hız sınırı
 - [ ] Node 26 sürümüne geçiş (LTS olduğunda)
 
