@@ -426,6 +426,39 @@ describe.skipIf(noDatabase)('an agent asks the requester a question', () => {
     });
   });
 
+  it('a run opened in the requester’s name asks nothing once the requester lost the request', async () => {
+    // 8 October decision 45: in whose name a run goes is the database's answer. The run row still
+    // carries the requester and is still running; the line that holds is the resolved identity.
+    await inAdminTransaction(async (tx) => {
+      const task = await requestOf(tx, employeeA, ids.projectA);
+      const run = await openRun(tx, task, 'KOR-1', ids.projectA);
+      await lose(tx, 'left_project');
+      await asAdmin(tx);
+      expect(await one(tx, 'select status, user_id from office.runs where id = $1', [run])).toEqual(
+        { status: 'running', user_id: ids.employeeA },
+      );
+      await asWorker(tx, agentRun('KOR-1', ids.projectA));
+      expect(await tx.expectError(ASK, [task, run, 'x'])).toEqual(NOT_OWN_RUN);
+      expect(await stored(tx, task)).toBe(0);
+      expect(await statusOf(tx, task)).not.toBe('awaiting_reply');
+    });
+  });
+
+  it('a run on another request of the same agent and person carries no question of this one', async () => {
+    await inAdminTransaction(async (tx) => {
+      const task = await requestOf(tx);
+      const other = await requestOf(tx);
+      await openRun(tx, task, 'KOR-1');
+      const otherRun = await openRun(tx, other, 'KOR-1');
+      // Agent, person, company and status all match: only the run's request does not.
+      await asWorker(tx, agentRun('KOR-1'));
+      expect(await tx.expectError(ASK, [task, otherRun, 'x'])).toEqual(NOT_OWN_RUN);
+      expect(await stored(tx, task)).toBe(0);
+      expect(await stored(tx, other)).toBe(0);
+      expect(await statusOf(tx, task)).not.toBe('awaiting_reply');
+    });
+  });
+
   it('only the agent whose turn it is asks, and only while the request can take a question', async () => {
     await inAdminTransaction(async (tx) => {
       // A unit agent before a routing cannot even open a run; a run row an administrator wrote
@@ -769,6 +802,45 @@ describe.skipIf(noDatabase)('an agent asks the requester a question', () => {
             answered_in_place: true,
           },
         ]);
+      });
+    }
+  });
+
+  it('nobody but the founder stands in, also on a request without a project', async () => {
+    // 7 October decision 7 and 8 October decision 45: only the requester answers, and the founder
+    // while the requester cannot read the request. Without a project every insider reads the
+    // request, and the appointed approver of the step reads the question too: reading is not
+    // answering.
+    for (const way of ['external', 'left_company', 'deactivated'] as const) {
+      await inAdminTransaction(async (tx) => {
+        await appointForHaf(tx);
+        const task = await routedToHaf(tx);
+        const { question } = await askFrom(tx, task, 'HAF-1');
+        await lose(tx, way);
+        expect(await reads(tx, approverA, task), way).toBe(1);
+        for (const other of [colleagueA, approverA]) {
+          await asPerson(tx, other);
+          expect(
+            (await tx.expectError(ANSWER, [question, 'x'])).code,
+            `${way} ${other.userId ?? ''}`,
+          ).toBe('42501');
+        }
+        expect(await questionRow(tx, question), way).toMatchObject({
+          status: 'open',
+          answer: null,
+          answered_by_user_id: null,
+        });
+
+        expect(await answerAs(tx, founderA, question, 'Kurucunun yanıtı'), way).toMatchObject({
+          task_id: task,
+          agent_code: 'HAF-1',
+          requester_user_id: ids.employeeA,
+        });
+        expect(await questionRow(tx, question), way).toMatchObject({
+          status: 'answered',
+          answer: 'Kurucunun yanıtı',
+          answered_by_user_id: ids.founder,
+        });
       });
     }
   });
