@@ -50,6 +50,11 @@ export function formatWhen(iso: string, now: number = Date.now()): string {
   return (sameYear ? dayMonth : dayMonthYear).format(then);
 }
 
+/** The time of day alone, for something read a moment ago: "14:32". */
+export function formatClock(iso: string): string {
+  return clock.format(Date.parse(iso));
+}
+
 /** The whole date and time, for a title attribute: "6 Ekim 2026 14:32". */
 export function formatFull(iso: string): string {
   return full.format(Date.parse(iso));

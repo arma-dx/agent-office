@@ -65,6 +65,7 @@ const listOf =
 const TABS: [name: string, value: string | undefined][] = [
   ['Talepler', undefined],
   ['Dosyalar', 'files'],
+  ['GitHub', 'github'],
   ['Kilometre taşları', 'milestones'],
   ['Çalışmalar', 'runs'],
   ['Onaylar', 'approvals'],

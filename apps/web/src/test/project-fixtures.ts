@@ -456,8 +456,8 @@ export function ticketHandlers(
 
 /**
  * The read routes of the section, answering the fixtures; a test replaces what it is about. The
- * project has no request, no file, no agent run and no result unless a test gives some, and no
- * request waits for an opening.
+ * project has no request, no file, no agent run and no result unless a test gives some, its
+ * company is not connected to GitHub, and no request waits for an opening.
  */
 export function projectHandlers(
   detail: ProjectDetail = projectDetail(),
@@ -469,6 +469,9 @@ export function projectHandlers(
     [`GET /projects/${detail.id}`]: () => json(detail),
     [projectRequestsRoute(detail.id)]: () => json({ requests: [], truncated: false }),
     [projectFilesRoute(detail.id)]: filesHandler([]),
+    // The "GitHub" tab: the company is not connected unless a test says otherwise.
+    [`GET /projects/${detail.id}/github`]: () =>
+      json({ state: 'not_connected', disconnected: false, canLink: false }),
     [projectRunsRoute(detail.id)]: () => json(projectRuns()),
     [projectApprovalsRoute(detail.id)]: () => json(projectApprovals()),
     // The confirmation of an opening asks how many waiting requests it would start: none.

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  formatClock,
   formatDay,
   formatFull,
   formatMessageTime,
@@ -69,6 +70,14 @@ describe('message times', () => {
     expect(formatMessageTime(earlier.toISOString(), NOW)).toMatch(/^3 Eki 14:32$/);
     const lastYear = new Date(NOW - 400 * DAY);
     expect(formatMessageTime(lastYear.toISOString(), NOW)).toMatch(/2025 \d{2}:\d{2}$/);
+  });
+
+  it('writes the time of day alone', () => {
+    const at = new Date(NOW);
+    at.setHours(14, 32, 0, 0);
+    expect(formatClock(at.toISOString())).toBe('14:32');
+    at.setHours(9, 5, 0, 0);
+    expect(formatClock(at.toISOString())).toBe('09:05');
   });
 
   it('writes the whole date for a title', () => {
