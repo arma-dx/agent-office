@@ -494,8 +494,9 @@ Kod kuruldu ve sahte bir GitHub ile sınandı. Gerçek bağlantı için kurucunu
 - [x] API'de GitHub modülü (`apps/api/src/github`): şirket başına ayrı uygulama, anahtar ve önbellek; yalnızca okur (yazan yöntemi yok); ortamda iki yuva (`GITHUB_APP_1_*`, `GITHUB_APP_2_*`); uygulama beklenen kuruluşa ait değilse, yazma izni taşıyorsa ya da durdurulmuşsa bağlanılmaz (SONRA P5-p, P5-q, P5-r, P5-aa)
 - [x] Kurum ayarlarından GitHub'ı şirkete bir kez bağlama (passkey ile): hesap menüsünde kurucu için "Bağlantılar" sayfası; kurulmamışsa GitHub'ın kurulum sayfasına bağlantı ve dönüş sayfası (`/github/setup`; dönüş hiçbir şeyi değiştirmez); bağlantıyı kesmek onay sorar, passkey istemez (SONRA P5-c, P5-z, P5-ab ila P5-ad)
 - [x] Projede o kurumun depolarından birini seçme: "Yeni proje" penceresinde isteğe bağlı "GitHub deposu" alanı (şirket bağlıyken; her deponun yalnızca adı, SONRA P5-u, P5-w); sonradan sahip, yöneticiler ve kurucu "GitHub" sekmesinden bağlar, değiştirir ve kaldırır (12 Ekim, karar 17; passkey istemez, SONRA P5-l)
-- [x] Proje sayfasında "GitHub" sekmesi: son 20 kod değişikliği, açık değişiklik istekleri, açık iş kayıtları; yazanların GitHub kullanıcı adları (12 Ekim, karar 16); beş dakikada bir yenilenir; müşteri izni kapalıysa okumaz (kural 12; SONRA P5-b, P5-n, P5-v, P5-ae ila P5-ai)
+- [x] Proje sayfasında "GitHub" sekmesi: son 20 kod değişikliği, açık değişiklik istekleri, açık iş kayıtları; yazanların GitHub kullanıcı adları (12 Ekim, karar 16); beş dakikada bir yenilenir; müşteri izni kapalıysa okumaz (kural 12; SONRA P5-b, P5-n, P5-v, P5-ae ila P5-ak)
 - [x] İz kaydı: bağlama, bağlantıyı kesme, projeye depo ekleme ve çıkarma (yalnızca numaralar; ad yazılmaz)
+- [ ] (Karar: P5-aj) "GitHub" sekmesindeki kullanıcı adları ve başlıklar kişisel veridir; saklanmaz ve modele gitmez, ama yurt dışındaki sunucudan geçer. CLAUDE.md'nin "kişisel veri içeren kaynaklar bağlanmaz" cümlesine GitHub için istisna yazılması ve avukata giden sorunun (X1-3) GitHub'ı kapsaması kurucunun onayını bekliyor; CLAUDE.md'ye GitHub paragrafı da o zaman eklenir
 
 Adım 6: ajanların proje dosyalarını okuması (karar 21)
 
@@ -618,6 +619,7 @@ Not (8 Ekim): ince dilim (0.4) bu bölümün bir kısmını kurdu: tek dosyada C
 - [ ] Docker imajları: api ve worker (tek dosyada paketleme), panel dosyaları
 - [ ] Docker Compose: Caddy, api, worker
 - [ ] Caddy: HTTPS, `/` panel, `/api` sunucu
+- [ ] Caddy erişim logu `/github/setup` adresinin sorgusunu yazmaz (GitHub'dan dönüşte tek kullanımlık değer ve kurulum numarası taşır; SONRA P5-ac ve P5 bloğundaki ertelenen teknik madde)
 - [ ] Cloudflare DNS kayıtları: `office.armadx.com`, `office-test.armadx.com`, `hooks.armadx.com` (Senden: DNS erişimi)
 - [ ] Cloudflare koruma ayarları
 - [ ] Gizli anahtar kasası ve ortam değişkenleri; `.env.example` güncel
