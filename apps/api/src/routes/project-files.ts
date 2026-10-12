@@ -87,11 +87,18 @@ const typeNotAllowed = (): ApiError =>
     'file_type_not_allowed',
     'Bu dosya türü eklenemez. Eklenebilen türler: PDF, DOCX, XLSX, PPTX, CSV, TXT, MD, PNG, JPG, GIF ve WEBP.',
   );
-const contentMismatch = (): ApiError =>
+/**
+ * The bytes are not what the extension says. For a text type (TXT, MD, CSV) the usual reason is a
+ * file saved as UTF-16, which saving again in the same program does not change: the sentence
+ * names the encoding (docs/SONRA.md P4-r).
+ */
+const contentMismatch = (type: { mimeType: string }): ApiError =>
   new ApiError(
     415,
     'file_content_mismatch',
-    'Dosyanın içeriği uzantısının söylediği türde değil. Dosyayı kendi programında açıp yeniden kaydedin. Makro içeren Office dosyaları eklenemez.',
+    type.mimeType.startsWith('text/')
+      ? 'Dosya düz metin olarak okunamadı. Metin dosyasıysa UTF-8 olarak kaydedip yeniden deneyin.'
+      : 'Dosyanın içeriği uzantısının söylediği türde değil. Dosyayı kendi programında açıp yeniden kaydedin. Makro içeren Office dosyaları eklenemez.',
   );
 const limitReached = (): ApiError =>
   new ApiError(
@@ -570,7 +577,7 @@ export function registerProjectFileRoutes(app: FastifyInstance, deps: RouteDeps)
             throw fileEmpty();
           }
           if (!contentMatches(content, type)) {
-            throw contentMismatch();
+            throw contentMismatch(type);
           }
           const sha256 = createHash('sha256').update(content).digest('hex');
           // A send that is repeated: the same person, the same file under the same id.

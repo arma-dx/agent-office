@@ -310,6 +310,37 @@ describe.skipIf(noDatabase)('project files', () => {
     expect(server.storage.calls).toEqual([]);
   });
 
+  it('the refusal of a text file says what to do with a text file', async () => {
+    const messageOf = (res: LightMyRequestResponse): string =>
+      res.json<{ error: { message: string } }>().error.message;
+    // A text file a Windows program saved as "Unicode" (UTF-16): saving it again in the same
+    // program changes nothing, so the sentence names the encoding and says nothing of macros.
+    const utf16 = Buffer.concat([
+      Buffer.from([0xff, 0xfe]),
+      Buffer.from('Ad;Soyad\r\n', 'utf16le'),
+    ]);
+    for (const name of ['notlar.txt', 'liste.csv', 'beni-oku.md']) {
+      const res = await upload(employee, name, utf16);
+      expect(res.statusCode, name).toBe(415);
+      expect(errorCode(res), name).toBe('file_content_mismatch');
+      expect(messageOf(res), name).toBe(
+        'Dosya düz metin olarak okunamadı. Metin dosyasıysa UTF-8 olarak kaydedip yeniden deneyin.',
+      );
+    }
+    // Every other type keeps its sentence.
+    for (const [name, bytes] of [
+      ['makro.docx', SAMPLES.docm],
+      ['sayfa.pdf', SAMPLES.html],
+    ] as const) {
+      const res = await upload(employee, name, bytes);
+      expect(errorCode(res), name).toBe('file_content_mismatch');
+      expect(messageOf(res), name).toBe(
+        'Dosyanın içeriği uzantısının söylediği türde değil. Dosyayı kendi programında açıp yeniden kaydedin. Makro içeren Office dosyaları eklenemez.',
+      );
+    }
+    expect(server.storage.calls).toEqual([]);
+  });
+
   it('a name cannot leave its folder: it is never part of the key, and odd names are refused', async () => {
     const raw = (value: string) =>
       upload(employee, 'x.txt', SAMPLES.text, { headers: { [FILE_NAME_HEADER]: value } });
