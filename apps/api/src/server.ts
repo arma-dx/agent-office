@@ -20,7 +20,8 @@ import type { RouteDeps, ServerServices } from './services.ts';
 
 export type { ServerServices } from './services.ts';
 
-// Request bodies are small JSON objects.
+// Request bodies are small JSON objects. The one exception is the upload of a project file: its
+// route has a scope and a parser of its own for raw bytes (routes/project-files.ts).
 const BODY_LIMIT_BYTES = 64 * 1024;
 
 export interface BuildServerOptions {
@@ -57,7 +58,8 @@ export function buildServer(opts: BuildServerOptions = {}): FastifyInstance {
   app.setNotFoundHandler((_req, reply) =>
     reply.code(404).send(errorBody('not_found', 'Bulunamadı.')),
   );
-  // Bodies are JSON only: the text/plain parser would let a cross-site form post a body.
+  // Bodies are JSON only (and raw bytes on the one upload route, which a form cannot send): the
+  // text/plain parser would let a cross-site form post a body.
   app.removeContentTypeParser('text/plain');
   // Answers carry personal data and session state; no cache keeps them. No other page may show an
   // answer in a frame (the panel's own pages get the same headers from the web server).
