@@ -45,6 +45,9 @@ const API_ONLY = [
   'passkeys',
   'sessions',
   'step_ups',
+  // An agent's question and its answer: people read them through the API; a run is given the
+  // answered questions of its own request by office.run_questions.
+  'task_questions',
 ];
 
 function person(companyId: string, userId: string, projectId: string | null = null): ContextInput {

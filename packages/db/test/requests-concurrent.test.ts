@@ -12,6 +12,7 @@ import {
   noDatabase,
   openTransaction,
   removeRequests,
+  restoreProjectA,
   untilBlocked,
   workerPool,
 } from './helpers.ts';
@@ -246,6 +247,219 @@ describe.skipIf(noDatabase)('a request across transactions', () => {
     expect(await commentsOf(commentedFirst)).toEqual([
       { author_user_id: ids.founder, body: 'Before the close' },
     ]);
+  });
+
+  // An agent's question (12 October decisions 3 and 4) -------------------------------------------
+
+  const ASK = 'select office.ask_question($1, $2, $3) as id';
+  const ANSWER = 'select agent_code from office.answer_question($1, $2)';
+  const CLOSE_REQUEST = 'select office.close_request($1)';
+
+  const questionsOf = (task: string): Promise<Record<string, unknown>[]> =>
+    adminQuery(
+      `select status, answer, answered_by_user_id from office.task_questions
+       where task_id = $1 order by created_at, id`,
+      [task],
+    );
+
+  /** A request on which the coordinator asked and ended its run, committed: it waits for an answer. */
+  async function requestWithOpenQuestion(): Promise<{ task: string; question: string }> {
+    const task = await openRequest();
+    const question = await withContext(workerPool(), coordinatorRun, async (client) => {
+      const run = await client.query<{ id: string }>(
+        `insert into office.runs (company_id, task_id, agent_code, card_version_id, trigger_type,
+           model)
+         values (office.ctx_company_id(), $1, 'KOR-1', $2, 'request', 'test-model') returning id`,
+        [task, ids.cardKor],
+      );
+      const asked = await client.query<{ id: string }>(ASK, [
+        task,
+        run.rows[0]?.id,
+        'Hangi kanal için yazayım?',
+      ]);
+      await client.query(
+        `update office.runs set status = 'completed', finished_at = now() where id = $1`,
+        [run.rows[0]?.id],
+      );
+      return asked.rows[0]?.id ?? '';
+    });
+    return { task, question };
+  }
+
+  it('two answers at once: one is stored', async () => {
+    const { task, question } = await requestWithOpenQuestion();
+    // A double click, or two tabs: both take the request's row first.
+    const first = await openTransaction('app', employeeA);
+    const second = await openTransaction('app', employeeA);
+    try {
+      await first.tx.rows(ANSWER, [question, 'The first answer']);
+      const late = outcomeOf(second.tx.rows(ANSWER, [question, 'The second answer']));
+      await untilBlocked(second.pid);
+      await first.commit();
+      expect(await late).toBe('23514');
+    } finally {
+      await first.rollback();
+      await second.rollback();
+    }
+    expect(await questionsOf(task)).toEqual([
+      { status: 'answered', answer: 'The first answer', answered_by_user_id: ids.employeeA },
+    ]);
+    expect(await statusOf(task)).toBe('in_progress');
+  });
+
+  it('an answer against a cancel and against a correction of the routing', async () => {
+    // The cancel holds the request: the answer waits and finds the question closed.
+    const cancelled = await requestWithOpenQuestion();
+    const closer = await openTransaction('app', employeeA);
+    const answerer = await openTransaction('app', employeeA);
+    try {
+      await closer.tx.rows(CLOSE_REQUEST, [cancelled.task]);
+      const answered = outcomeOf(answerer.tx.rows(ANSWER, [cancelled.question, 'Too late']));
+      await untilBlocked(answerer.pid);
+      await closer.commit();
+      expect(await answered).toBe('23514');
+    } finally {
+      await closer.rollback();
+      await answerer.rollback();
+    }
+    expect(await statusOf(cancelled.task)).toBe('cancelled');
+    expect(await questionsOf(cancelled.task)).toEqual([
+      { status: 'closed', answer: null, answered_by_user_id: null },
+    ]);
+
+    // A person's routing holds the request: the same.
+    const rerouted = await requestWithOpenQuestion();
+    const router = await openTransaction('app', founderA);
+    const requester = await openTransaction('app', employeeA);
+    try {
+      await router.tx.rows(CORRECT, [rerouted.task, TO_KOR]);
+      const answered = outcomeOf(requester.tx.rows(ANSWER, [rerouted.question, 'Too late']));
+      await untilBlocked(requester.pid);
+      await router.commit();
+      expect(await answered).toBe('23514');
+    } finally {
+      await router.rollback();
+      await requester.rollback();
+    }
+    expect(await statusOf(rerouted.task)).toBe('in_progress');
+    expect(await questionsOf(rerouted.task)).toEqual([
+      { status: 'closed', answer: null, answered_by_user_id: null },
+    ]);
+
+    // The answer holds the request: the routing waits, goes through and leaves the answer as it
+    // was given.
+    const answeredFirst = await requestWithOpenQuestion();
+    const writer = await openTransaction('app', employeeA);
+    const corrector = await openTransaction('app', founderA);
+    try {
+      await writer.tx.rows(ANSWER, [answeredFirst.question, 'In time']);
+      const corrected = outcomeOf(corrector.tx.rows(CORRECT, [answeredFirst.task, TO_KOR]));
+      await untilBlocked(corrector.pid);
+      await writer.commit();
+      expect(await corrected).toBe('ok');
+      await corrector.commit();
+    } finally {
+      await writer.rollback();
+      await corrector.rollback();
+    }
+    expect(await questionsOf(answeredFirst.task)).toEqual([
+      { status: 'answered', answer: 'In time', answered_by_user_id: ids.employeeA },
+    ]);
+    expect(await stepsOf(answeredFirst.task)).toEqual([
+      { round: 1, unit_code: 'KOR', agent_code: 'KOR-1', status: 'active', by_person: true },
+    ]);
+  });
+
+  it('a question against a cancel', async () => {
+    // The question is in flight: the cancel waits, goes through and closes it.
+    const askedFirst = await openRequest();
+    const askingRun = await openRun(askedFirst);
+    const agent = await openTransaction('worker', coordinatorRun);
+    const requester = await openTransaction('app', employeeA);
+    try {
+      await agent.tx.rows(ASK, [askedFirst, askingRun, 'Hangi kanal için?']);
+      const closed = outcomeOf(requester.tx.rows(CLOSE_REQUEST, [askedFirst]));
+      await untilBlocked(requester.pid);
+      await agent.commit();
+      expect(await closed).toBe('ok');
+      await requester.commit();
+    } finally {
+      await agent.rollback();
+      await requester.rollback();
+    }
+    expect(await statusOf(askedFirst)).toBe('cancelled');
+    expect(await questionsOf(askedFirst)).toEqual([
+      { status: 'closed', answer: null, answered_by_user_id: null },
+    ]);
+
+    // The cancel is in flight: the question waits, is refused and writes nothing.
+    const cancelledFirst = await openRequest();
+    const lateRun = await openRun(cancelledFirst);
+    const closer = await openTransaction('app', employeeA);
+    const asker = await openTransaction('worker', coordinatorRun);
+    try {
+      await closer.tx.rows(CLOSE_REQUEST, [cancelledFirst]);
+      const asked = outcomeOf(asker.tx.rows(ASK, [cancelledFirst, lateRun, 'Hangi kanal için?']));
+      await untilBlocked(asker.pid);
+      await closer.commit();
+      expect(await asked).toBe('23514');
+    } finally {
+      await closer.rollback();
+      await asker.rollback();
+    }
+    expect(await statusOf(cancelledFirst)).toBe('cancelled');
+    expect(await questionsOf(cancelledFirst)).toEqual([]);
+  });
+
+  it('a question while the AI permission is being closed', async () => {
+    // Rule 12: a request inside project A, with a run of the coordinator open in the project's
+    // context. The founder closes the project's AI permission and has not committed yet.
+    const inProject: ContextInput = { ...coordinatorRun, projectId: ids.projectA };
+    const task = await withContext(appPool(), employeeA, async (client) => {
+      const { rows } = await client.query<{ id: string }>(
+        `insert into office.tasks (company_id, project_id, kind, title, description)
+         values (office.ctx_company_id(), $1, 'request', 'A request', 'What is wanted')
+         returning id`,
+        [ids.projectA],
+      );
+      return rows[0]?.id ?? '';
+    });
+    tasks.push(task);
+    const run = await withContext(workerPool(), inProject, async (client) => {
+      const { rows } = await client.query<{ id: string }>(
+        `insert into office.runs (company_id, task_id, agent_code, card_version_id, trigger_type,
+           model)
+         values (office.ctx_company_id(), $1, 'KOR-1', $2, 'request', 'test-model') returning id`,
+        [task, ids.cardKor],
+      );
+      return rows[0]?.id ?? '';
+    });
+    const founder = await openTransaction('app', founderA);
+    const agent = await openTransaction('worker', inProject);
+    try {
+      await founder.tx.rows('select office.set_project_ai_permission($1, false, null)', [
+        ids.projectA,
+      ]);
+      // The question reads the permission under a share lock: it waits for the closing.
+      const asked = agent.tx.rows(ASK, [task, run, 'Hangi kanal için?']).then(
+        () => 'ok',
+        (error: unknown) => (error as { message?: string }).message ?? 'error',
+      );
+      await untilBlocked(agent.pid);
+      await founder.commit();
+      expect(await asked).toBe('Agents do not work in this project now');
+    } finally {
+      await founder.rollback();
+      await agent.rollback();
+      // The committed close stopped the fixtures' own open run in the project too.
+      await restoreProjectA(ids.projectA, ids.customerA, ids.runAProject);
+    }
+    expect(await questionsOf(task)).toEqual([]);
+    expect(await statusOf(task)).not.toBe('awaiting_reply');
+    // The closing stopped the run that was about to ask.
+    expect(
+      await adminQuery('select status, error_code from office.runs where id = $1', [run]),
+    ).toEqual([{ status: 'stopped', error_code: 'ai_permission_closed' }]);
   });
 
   it('the worker’s role decides nothing on the pending result of a request, in whose name ever', async () => {

@@ -82,6 +82,9 @@ export const ids = {
   requestP: id(124),
   requestRunP: id(125),
   requestApprovalP: id(126),
+  // One question the agent of each of those requests asked, answered by the requester.
+  requestQuestionA: id(127),
+  requestQuestionP: id(128),
 
   // One file a member added to a project, per company (the bytes are in no storage).
   projectFileA: id(131),
@@ -458,6 +461,23 @@ export async function loadFixtures(client: pg.Client): Promise<void> {
         (select version from office.tasks where id = '${ids.requestP}'), false, false);
     ${contextSql(ids.pillika, ids.founder)}
     update office.approvals set status = 'approved' where id = '${ids.requestApprovalP}';
+
+    -- A question of an agent with its answer, per company. Only the flow's functions write the
+    -- table (office.ask_question from a run that is still working, office.answer_question); the
+    -- fixture requests are past that point, so the rows are written as an administrator would.
+    ${NO_CONTEXT_SQL}
+    insert into office.task_questions
+        (id, company_id, task_id, routing_id, agent_code, run_id, requester_user_id, question,
+         status, answer, answered_by_user_id, answered_at)
+      values
+        ('${ids.requestQuestionA}', '${ids.arma}', '${ids.requestA}',
+          (select id from office.task_routings where task_id = '${ids.requestA}'),
+          'KOR-1', '${ids.requestRunA}', '${ids.employeeA}', 'Fixture question', 'answered',
+          'Fixture answer', '${ids.employeeA}', now()),
+        ('${ids.requestQuestionP}', '${ids.pillika}', '${ids.requestP}',
+          (select id from office.task_routings where task_id = '${ids.requestP}'),
+          'KOR-1', '${ids.requestRunP}', '${ids.employeeP}', 'Fixture question', 'answered',
+          'Fixture answer', '${ids.employeeP}', now());
   `;
   await client.query(sql);
 }

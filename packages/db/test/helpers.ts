@@ -311,7 +311,13 @@ export async function removeRequests(
     await client.query(`set local session_replication_role = 'replica'`);
     // The comments first: with the triggers off the foreign key's cascade is off too, and a
     // comment of a removed request would stay behind as a row without a task.
-    for (const table of ['task_comments', 'requester_approvals', 'approvals', 'task_routings']) {
+    for (const table of [
+      'task_comments',
+      'task_questions',
+      'requester_approvals',
+      'approvals',
+      'task_routings',
+    ]) {
       await client.query(`delete from office.${table} where task_id = any ($1::uuid[])`, [taskIds]);
     }
     await client.query(
