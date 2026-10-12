@@ -1,5 +1,6 @@
+import { createPublicKey, generateKeyPairSync, type KeyObject } from 'node:crypto';
 import { afterAll, describe, expect, it } from 'vitest';
-import { fileStorageSettings, loadApiEnv, serverConfig } from '../src/env.ts';
+import { fileStorageSettings, githubAppConfigs, loadApiEnv, serverConfig } from '../src/env.ts';
 import { isSecretKey } from '../src/log.ts';
 import { buildServer } from '../src/server.ts';
 
@@ -268,5 +269,156 @@ describe('loadApiEnv', () => {
     expect(envError({ ...REQUIRED, ...supabase, SUPABASE_SECRET_KEY: 'short' })).toContain(
       'SUPABASE_SECRET_KEY',
     );
+  });
+  describe('the GitHub App of each company', () => {
+    // Made here: no line of the repository holds a key.
+    const pem = (key: KeyObject): string =>
+      Buffer.from(key.export({ type: 'pkcs1', format: 'pem' })).toString('base64');
+    const firstKey = generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey;
+    const secondKey = generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey;
+    const first = {
+      GITHUB_APP_1_COMPANY: 'armadx',
+      GITHUB_APP_1_ORGANIZATION: 'Arma-Org',
+      GITHUB_APP_1_CLIENT_ID: 'Iv23aaaaaaaaaaaaaaaa',
+      GITHUB_APP_1_PRIVATE_KEY: pem(firstKey),
+    };
+    const second = {
+      GITHUB_APP_2_COMPANY: 'pillika',
+      GITHUB_APP_2_ORGANIZATION: 'pillika-org',
+      GITHUB_APP_2_CLIENT_ID: 'Iv23bbbbbbbbbbbbbbbb',
+      GITHUB_APP_2_PRIVATE_KEY: pem(secondKey),
+    };
+    const spki = (key: KeyObject): string =>
+      createPublicKey(key).export({ type: 'spki', format: 'der' }).toString('hex');
+
+    it('no slot, one slot alone and both slots are accepted', () => {
+      expect(githubAppConfigs(loadApiEnv(REQUIRED))).toEqual([]);
+      const empty = Object.fromEntries(Object.keys({ ...first, ...second }).map((n) => [n, '']));
+      expect(githubAppConfigs(loadApiEnv({ ...REQUIRED, ...empty }))).toEqual([]);
+
+      const one = githubAppConfigs(loadApiEnv({ ...REQUIRED, ...second }));
+      expect(one).toHaveLength(1);
+      expect(one[0]).toMatchObject({
+        companyCode: 'pillika',
+        organization: 'pillika-org',
+        clientId: 'Iv23bbbbbbbbbbbbbbbb',
+      });
+
+      const both = githubAppConfigs(loadApiEnv({ ...REQUIRED, ...first, ...second }));
+      expect(both.map((app) => [app.companyCode, app.organization, app.clientId])).toEqual([
+        ['armadx', 'Arma-Org', 'Iv23aaaaaaaaaaaaaaaa'],
+        ['pillika', 'pillika-org', 'Iv23bbbbbbbbbbbbbbbb'],
+      ]);
+      // Each slot holds its own key, as a key object.
+      expect(both.map((app) => spki(app.privateKey))).toEqual([spki(firstKey), spki(secondKey)]);
+      expect(both.every((app) => app.privateKey.type === 'private')).toBe(true);
+    });
+
+    it('the config every route gets holds nothing of the apps', () => {
+      const config = serverConfig(loadApiEnv({ ...REQUIRED, ...first, ...second }));
+      const text = JSON.stringify(config);
+      for (const value of [...Object.values(first), ...Object.values(second)]) {
+        expect(text).not.toContain(value);
+      }
+      expect(Object.keys(config)).not.toContain('github');
+    });
+
+    it('a slot is set whole or not at all', () => {
+      for (const slot of [first, second]) {
+        const names = Object.keys(slot);
+        for (let kept = 1; kept < names.length; kept += 1) {
+          for (let start = 0; start < names.length; start += 1) {
+            // One, two or three of the four values, starting at each of them.
+            const some = names.filter((_, index) => (index - start + 4) % 4 < kept);
+            const partial = Object.fromEntries(
+              Object.entries(slot).filter(([name]) => some.includes(name)),
+            );
+            const message = envError({ ...REQUIRED, ...partial });
+            expect(message, some.join(',')).toContain(names[0]);
+            expect(message, some.join(',')).toContain('are set together');
+            expect(message).not.toContain(slot[names[3] as keyof typeof slot]);
+          }
+        }
+      }
+      // A whole first slot does not make up for a half second one.
+      expect(envError({ ...REQUIRED, ...first, GITHUB_APP_2_COMPANY: 'pillika' })).toContain(
+        'GITHUB_APP_2_COMPANY',
+      );
+    });
+
+    it('a value that is not an RSA private key is refused, and never printed', () => {
+      const ec = generateKeyPairSync('ec', { namedCurve: 'P-256' }).privateKey;
+      const notKeys = [
+        'not base64 at all!',
+        Buffer.from('SECRET-not-a-key').toString('base64'),
+        // The PEM text itself, not base64 encoded.
+        firstKey.export({ type: 'pkcs1', format: 'pem' }).toString(),
+        // A public key, and a key of another kind.
+        Buffer.from(createPublicKey(firstKey).export({ type: 'spki', format: 'pem' })).toString(
+          'base64',
+        ),
+        Buffer.from(ec.export({ type: 'pkcs8', format: 'pem' })).toString('base64'),
+      ];
+      for (const value of notKeys) {
+        const message = envError({ ...REQUIRED, ...first, GITHUB_APP_1_PRIVATE_KEY: value });
+        expect(message).toContain('GITHUB_APP_1_PRIVATE_KEY');
+        expect(message).not.toContain(value);
+        expect(message).not.toContain('SECRET');
+        expect(message).not.toContain('BEGIN');
+      }
+      // A key in the other format GitHub's tools write (PKCS#8) is the same key.
+      const pkcs8 = Buffer.from(firstKey.export({ type: 'pkcs8', format: 'pem' })).toString(
+        'base64',
+      );
+      const [app] = githubAppConfigs(
+        loadApiEnv({ ...REQUIRED, ...first, GITHUB_APP_1_PRIVATE_KEY: pkcs8 }),
+      );
+      expect(app && spki(app.privateKey)).toBe(spki(firstKey));
+    });
+
+    it('the company is a company code and never the founder space', () => {
+      for (const company of ['founder_space', 'Arma DX', 'ARMADX', '1arma', 'arma-dx']) {
+        expect(
+          envError({ ...REQUIRED, ...first, GITHUB_APP_1_COMPANY: company }),
+          company,
+        ).toContain('GITHUB_APP_1_COMPANY');
+      }
+      for (const organization of ['arma org', 'arma/org', 'a'.repeat(40), 'arma_org']) {
+        expect(
+          envError({ ...REQUIRED, ...first, GITHUB_APP_1_ORGANIZATION: organization }),
+          organization,
+        ).toContain('GITHUB_APP_1_ORGANIZATION');
+      }
+      expect(envError({ ...REQUIRED, ...first, GITHUB_APP_1_CLIENT_ID: 'a client id' })).toContain(
+        'GITHUB_APP_1_CLIENT_ID',
+      );
+    });
+
+    it('the two slots differ in company, organisation, client ID and key', () => {
+      const same: [string, Record<string, string>][] = [
+        ['COMPANY', { GITHUB_APP_2_COMPANY: 'armadx' }],
+        ['ORGANIZATION', { GITHUB_APP_2_ORGANIZATION: 'Arma-Org' }],
+        // GitHub does not tell two names apart by their letter case.
+        ['ORGANIZATION', { GITHUB_APP_2_ORGANIZATION: 'arma-org' }],
+        ['CLIENT_ID', { GITHUB_APP_2_CLIENT_ID: first.GITHUB_APP_1_CLIENT_ID }],
+        ['PRIVATE_KEY', { GITHUB_APP_2_PRIVATE_KEY: first.GITHUB_APP_1_PRIVATE_KEY }],
+        // The same key written in the other format is still the same key.
+        [
+          'PRIVATE_KEY',
+          {
+            GITHUB_APP_2_PRIVATE_KEY: Buffer.from(
+              firstKey.export({ type: 'pkcs8', format: 'pem' }),
+            ).toString('base64'),
+          },
+        ],
+      ];
+      for (const [value, change] of same) {
+        const message = envError({ ...REQUIRED, ...first, ...second, ...change });
+        expect(message, value).toContain(
+          `GITHUB_APP_1_${value} and GITHUB_APP_2_${value} must differ`,
+        );
+        expect(message, value).not.toContain(first.GITHUB_APP_1_PRIVATE_KEY);
+      }
+    });
   });
 });

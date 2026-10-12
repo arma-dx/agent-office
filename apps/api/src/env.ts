@@ -1,3 +1,4 @@
+import { createHash, createPrivateKey, createPublicKey, type KeyObject } from 'node:crypto';
 import { isAbsolute } from 'node:path';
 import { z } from 'zod';
 import { APP_NAME } from '@agent-office/shared';
@@ -48,6 +49,58 @@ const httpsOrigin = z.string().refine(
   { message: 'Must be an https origin without a path' },
 );
 
+/**
+ * The private key of a GitHub App: the downloaded .pem file, base64 encoded on one line. Read into
+ * a key object here, so that the text of the key lives nowhere in the process after the start. An
+ * issue names the variable (its path) and never anything of the value.
+ */
+const githubPrivateKey = z.string().transform((value, ctx): KeyObject => {
+  const refuse = (): never => {
+    ctx.addIssue({
+      code: 'custom',
+      message: 'Must be the RSA private key of the GitHub App (the .pem file), base64 encoded',
+    });
+    return z.NEVER;
+  };
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(value)) {
+    return refuse();
+  }
+  try {
+    const key = createPrivateKey({ key: Buffer.from(value, 'base64'), format: 'pem' });
+    return key.asymmetricKeyType === 'rsa' ? key : refuse();
+  } catch {
+    return refuse();
+  }
+});
+
+// The short code of a company (companies.code). The founder space is no company (GitHub is
+// connected to a company).
+const githubCompanyCode = z
+  .string()
+  .regex(/^[a-z][a-z0-9_]*$/, { message: 'Must be the code of a company' })
+  .refine((value) => value !== 'founder_space', {
+    message: 'Must be the code of a company, not of the founder space',
+  });
+// The name of a GitHub organisation as GitHub writes it. Loose on purpose: it keeps free text
+// out, it does not define what GitHub allows.
+const githubOrganization = z
+  .string()
+  .regex(/^[A-Za-z0-9-]{1,39}$/, { message: 'Must be the name of a GitHub organisation' });
+const githubClientId = z
+  .string()
+  .regex(/^[A-Za-z0-9._-]{1,100}$/, { message: 'Must be the client ID of a GitHub App' });
+
+/** The slots of the GitHub Apps: one per company (12 October decision 12). */
+export const GITHUB_APP_SLOTS = [1, 2] as const;
+const GITHUB_APP_VALUES = ['COMPANY', 'ORGANIZATION', 'CLIENT_ID', 'PRIVATE_KEY'] as const;
+
+/** The public half of a key, hashed: says whether two slots hold one and the same key. */
+function keyFingerprint(key: KeyObject): string {
+  return createHash('sha256')
+    .update(createPublicKey(key).export({ type: 'spki', format: 'der' }))
+    .digest('hex');
+}
+
 // trustProxy gets only addresses; `true` would trust every X-Forwarded-For value.
 const proxyAddress = z.union([z.ipv4(), z.ipv6(), z.cidrv4(), z.cidrv6()]);
 
@@ -90,8 +143,60 @@ export const apiEnvSchema = baseEnvSchema
     SUPABASE_STORAGE_BUCKET: optional(
       z.string().regex(/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/, { message: 'Must be a bucket name' }),
     ),
+    // One GitHub App per company (8 October decisions 19 and 22; 12 October decisions 12 to 15):
+    // the code of the company, the name of its GitHub organisation, the app's client ID and the
+    // app's private key. A slot is set whole or left empty; an empty slot means "not configured"
+    // for that company.
+    GITHUB_APP_1_COMPANY: optional(githubCompanyCode),
+    GITHUB_APP_1_ORGANIZATION: optional(githubOrganization),
+    GITHUB_APP_1_CLIENT_ID: optional(githubClientId),
+    GITHUB_APP_1_PRIVATE_KEY: optional(githubPrivateKey),
+    GITHUB_APP_2_COMPANY: optional(githubCompanyCode),
+    GITHUB_APP_2_ORGANIZATION: optional(githubOrganization),
+    GITHUB_APP_2_CLIENT_ID: optional(githubClientId),
+    GITHUB_APP_2_PRIVATE_KEY: optional(githubPrivateKey),
   })
   .superRefine((env, ctx) => {
+    for (const slot of GITHUB_APP_SLOTS) {
+      const set = GITHUB_APP_VALUES.filter(
+        (value) => env[`GITHUB_APP_${slot}_${value}`] !== undefined,
+      ).length;
+      if (set !== 0 && set !== GITHUB_APP_VALUES.length) {
+        ctx.addIssue({
+          code: 'custom',
+          path: [`GITHUB_APP_${slot}_COMPANY`],
+          message: `GITHUB_APP_${slot}_COMPANY, _ORGANIZATION, _CLIENT_ID and _PRIVATE_KEY are set together`,
+        });
+      }
+    }
+    // Two apps never share a company, an organisation, a client ID or a key: the credentials of
+    // the two companies are two credentials.
+    const differ = (value: (typeof GITHUB_APP_VALUES)[number], same: boolean): void => {
+      if (same) {
+        ctx.addIssue({
+          code: 'custom',
+          path: [`GITHUB_APP_2_${value}`],
+          message: `GITHUB_APP_1_${value} and GITHUB_APP_2_${value} must differ`,
+        });
+      }
+    };
+    const first = env.GITHUB_APP_1_COMPANY;
+    differ('COMPANY', first !== undefined && first === env.GITHUB_APP_2_COMPANY);
+    const organization = env.GITHUB_APP_1_ORGANIZATION?.toLowerCase();
+    differ(
+      'ORGANIZATION',
+      organization !== undefined && organization === env.GITHUB_APP_2_ORGANIZATION?.toLowerCase(),
+    );
+    const clientId = env.GITHUB_APP_1_CLIENT_ID;
+    differ('CLIENT_ID', clientId !== undefined && clientId === env.GITHUB_APP_2_CLIENT_ID);
+    const keys = [env.GITHUB_APP_1_PRIVATE_KEY, env.GITHUB_APP_2_PRIVATE_KEY];
+    differ(
+      'PRIVATE_KEY',
+      keys[0] !== undefined &&
+        keys[1] !== undefined &&
+        keyFingerprint(keys[0]) === keyFingerprint(keys[1]),
+    );
+
     // The redirect URI is not a secret and may be filled in ahead of the client values; on its
     // own it leaves Google sign-in "not configured". A client id or secret needs all three.
     const hasId = env.GOOGLE_CLIENT_ID !== undefined;
@@ -232,6 +337,42 @@ export function serverConfig(env: ApiEnv): ServerConfig {
       origin: env.PANEL_ORIGIN,
     },
   };
+}
+
+/**
+ * The GitHub App of one company: the company's short code, the name of the GitHub organisation
+ * that must own the app, the app's client ID (the issuer of its signature) and its private key.
+ */
+export interface GithubAppConfig {
+  companyCode: string;
+  organization: string;
+  clientId: string;
+  privateKey: KeyObject;
+}
+
+/**
+ * The GitHub Apps an environment is set up with: none, one or two, one per company. Kept out of
+ * ServerConfig on purpose, like the file storage: the config travels to every route, and an app's
+ * private key belongs to the GitHub module alone (rule 6). Only main.ts calls this, to build the
+ * GitHub service.
+ */
+export function githubAppConfigs(env: ApiEnv): GithubAppConfig[] {
+  const apps: GithubAppConfig[] = [];
+  for (const slot of GITHUB_APP_SLOTS) {
+    const companyCode = env[`GITHUB_APP_${slot}_COMPANY`];
+    const organization = env[`GITHUB_APP_${slot}_ORGANIZATION`];
+    const clientId = env[`GITHUB_APP_${slot}_CLIENT_ID`];
+    const privateKey = env[`GITHUB_APP_${slot}_PRIVATE_KEY`];
+    if (
+      companyCode !== undefined &&
+      organization !== undefined &&
+      clientId !== undefined &&
+      privateKey !== undefined
+    ) {
+      apps.push({ companyCode, organization, clientId, privateKey });
+    }
+  }
+  return apps;
 }
 
 /**
