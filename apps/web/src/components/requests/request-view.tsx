@@ -87,12 +87,17 @@ function useCatchUp(requestId: string): () => void {
   };
 }
 
-function AgentText({ label, children }: { label: string; children: string }) {
+/**
+ * Text an agent wrote, under a label that says whose words it is. Also the text of an agent's
+ * question in its card (request-question.tsx).
+ */
+export function AgentText({ label, children }: { label: string; children: string }) {
   return (
     <div className="flex flex-col gap-1">
       <div className="text-xs font-medium text-ink-secondary">{label}</div>
-      {/* Plain text: line breaks kept, no markup, no link, no image (it is a model's output). */}
-      <p dir="auto" className="text-sm whitespace-pre-wrap">
+      {/* Plain text: line breaks kept, no markup, no link, no image (it is a model's output). A
+          word longer than the line is broken, never drawn outside the card. */}
+      <p dir="auto" className="text-sm break-words whitespace-pre-wrap">
         {children}
       </p>
     </div>

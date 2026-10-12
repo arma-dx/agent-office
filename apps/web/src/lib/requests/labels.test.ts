@@ -254,7 +254,7 @@ describe('the held request names the permission, and the reworded sentences', ()
 describe('the sentences of a request that goes on without its requester', () => {
   it('says so on the request, in the open and in the closed form', () => {
     expect(REQUESTER_ABSENT).toBe(
-      'Talep sahibi bu talebi artık göremiyor. Talep sürer: ajan kurucunun adına çalışır, sonucu da talep sahibinin yerine kurucu onaylar.',
+      'Talep sahibi bu talebi artık göremiyor. Talep sürer: ajan kurucunun adına çalışır; ajanın sorusunu talep sahibinin yerine kurucu yanıtlar, sonucu da kurucu onaylar.',
     );
     expect(REQUESTER_ABSENT_CLOSED).toBe('Talep sahibi bu talebi artık göremiyor.');
   });

@@ -16,6 +16,9 @@ import { formatDay } from '../dates.ts';
  * who may decide the work (the API gives it to nobody else): the coordinator's reason, the words
  * of a run that ended without a result and, inside the approval card, the agent's summary,
  * reasoning and risk note, each under a label that says whose words it is.
+ * A question an agent asked is the fourth place a model's text is shown: to the requester, the
+ * approver of the request and the founder, under a label that says whose words it is and that
+ * nobody approved it.
  */
 
 export const FORMER_MEMBER = 'Eski üye';
@@ -239,11 +242,12 @@ export const CHANGES_HELD =
 /**
  * A request whose requester can no longer read it (taken out of its project, made an external
  * person, removed from the company, deactivated) goes on: the agent works in the founder's name
- * and the founder gives the requester's approval in their place (8 October decision 45). The
- * request stays the requester's: every page and list keeps naming who asked.
+ * and the founder gives the requester's approval in their place (8 October decision 45), and the
+ * requester's answer to a question of the agent (docs/SONRA.md S-c). The request stays the
+ * requester's: every page and list keeps naming who asked.
  */
 export const REQUESTER_ABSENT =
-  'Talep sahibi bu talebi artık göremiyor. Talep sürer: ajan kurucunun adına çalışır, sonucu da talep sahibinin yerine kurucu onaylar.';
+  'Talep sahibi bu talebi artık göremiyor. Talep sürer: ajan kurucunun adına çalışır; ajanın sorusunu talep sahibinin yerine kurucu yanıtlar, sonucu da kurucu onaylar.';
 /** The same fact on a request that is done or cancelled: nothing goes on any more. */
 export const REQUESTER_ABSENT_CLOSED = 'Talep sahibi bu talebi artık göremiyor.';
 
@@ -270,6 +274,146 @@ export function answeredInPlace(
     status === 'approved' ? 'onayladı' : 'düzeltme istedi'
   }.`;
 }
+
+// An agent's question to the requester (7 October decision 7; 12 October decisions 3 and 4) -------
+
+export const QUESTION_HEADING = 'Ajanın sorusu';
+
+/** Who asked; the card adds the time and the full stop. */
+export function questionAskedBy(agent: { code: string; name: string }): string {
+  return `${agent.code} ${agent.name} sordu`;
+}
+
+/**
+ * The label over the text of a question: whose words they are, and that no person approved them
+ * before the requester reads them (the one text of a model that is shown unapproved to somebody
+ * who does not decide the work; docs/SONRA.md S-o).
+ */
+export function questionLabel(agent: { code: string }): string {
+  return `${agent.code} şunu sordu (ajanın yazdığı metin; onaydan geçmedi)`;
+}
+
+/**
+ * Above the answer box, for the founder who answers in the requester's place (written like
+ * `acceptInPlace`). A requester who left the company has no name the founder can read any more;
+ * the sentence then names nobody.
+ */
+export function questionInPlace(requester: { name: string | null }): string {
+  const whom =
+    requester.name === null ? 'talep sahibinin yerine' : `talep sahibi ${requester.name} yerine`;
+  return `Bu soruyu ${whom} siz yanıtlıyorsunuz: talep sahibi talebi artık göremiyor.`;
+}
+
+export const ANSWER_LABEL = 'Yanıtınız';
+export const ANSWER_SEND = 'Yanıtı gönder';
+export const ANSWER_EMPTY = 'Yanıt yazın.';
+export const ANSWER_TOO_LONG = 'Yanıt en çok 10.000 karakter olabilir.';
+export const ANSWER_FAILED = 'Yanıt gönderilemedi.';
+export const ANSWER_LIMIT = 'En çok 10.000 karakter.';
+
+/**
+ * The help under the answer box, three parts in one paragraph: what the answer does, where an
+ * answer must be written (a comment reaches no agent) and what a half answer costs, with who
+ * reads both texts. `held`: no agent can work in the request's project now (a closed AI
+ * permission or a reached spending limit), so nobody is promised that the agent goes on by
+ * itself; the answer is stored and the work starts when the block lifts (docs/SONRA.md S-j).
+ */
+export function answerHelp(held: boolean): readonly [string, string, string] {
+  return [
+    held
+      ? 'Yanıtınız kaydedilir. Bu projede ajanlar şu an çalışamaz; iş, engel kalkınca kendiliğinden başlar. Gönderdikten sonra değiştirilemez.'
+      : 'Yanıtınız ajana gider ve ajan işine kendiliğinden devam eder. Gönderdikten sonra değiştirilemez.',
+    'Yanıtı bu kutuya yazın: yorum olarak yazılan yanıtı ajan görmez.',
+    'Sorudaki her maddeyi yanıtlayın: ajan eksik kalanı yeniden sormayabilir, elindekiyle çalışır. Soruyu ve yanıtı talep sahibi, birimin onaylayıcısı ve kurucu okur.',
+  ];
+}
+
+/**
+ * What is said after an answer was stored, from the page the API answered with: the agent has the
+ * turn, the work is held (the reason is on the page: the fallen notice), or anything else.
+ */
+export function answerSentAs(request: Pick<RequestDetail, 'stage'>): string {
+  if (machineHasTurn(request)) {
+    return 'Yanıtınız gönderildi. Ajan işine kendiliğinden devam ediyor.';
+  }
+  if (request.stage === 'fell_to_person') {
+    return 'Yanıtınız kaydedildi. İş şu an başlamadı; nedeni bu sayfada yazıyor.';
+  }
+  return 'Yanıtınız gönderildi.';
+}
+
+/**
+ * The question went away (answered by somebody else, or closed by a new routing, a cancel or a
+ * stop) while a text was in the box: the text is not taken from the person.
+ */
+export const QUESTION_GONE =
+  'Bu soru kapandı ya da yanıtlandı. Yazdığınız metin aşağıda duruyor; gerekiyorsa kopyalayın.';
+/**
+ * The reader typed an answer and is no longer the one who answers: the founder stood in, and the
+ * requester reads the request again.
+ */
+export const ANSWER_NOT_YOURS =
+  'Bu soruyu artık talep sahibi yanıtlıyor. Yazdığınız metin aşağıda duruyor; gerekiyorsa kopyalayın.';
+export const DRAFT_DISCARD = 'Taslağı at';
+export const DRAFT_DISCARDED = 'Taslak atıldı.';
+
+/**
+ * The read card of the approver of the request and the founder, who read the question and do not
+ * answer it: who answers, and what they can do instead of waiting (null when the page offers them
+ * neither act). While the requester cannot read the request the founder answers, and an approver
+ * who is not a founder is told so.
+ */
+export function questionForReader(
+  requester: { name: string | null },
+  actions: Pick<RequestDetail['actions'], 'reroute' | 'stop'>,
+  requesterReads: boolean,
+): readonly [string, string | null] {
+  const who = requesterReads
+    ? `Yanıtı talep sahibi ${personName(requester)} yazar.`
+    : 'Yanıtı talep sahibinin yerine kurucu yazar.';
+  return [
+    `${who} Yanıt gelince ajan işine kendiliğinden devam eder. Yanıt için süre sınırı ve hatırlatma yoktur.`,
+    !actions.stop
+      ? null
+      : actions.reroute
+        ? 'Beklemek istemiyorsanız yönlendirmeyi düzeltebilir ya da işi durdurabilirsiniz; ikisi de soruyu kapatır.'
+        : // The routing is held (a closed AI permission, a reached spending limit).
+          'Beklemek istemiyorsanız işi durdurabilirsiniz; durdurmak soruyu kapatır.',
+  ];
+}
+
+/**
+ * A request that waits for an answer, for a reader who may not read the question (every other
+ * person who reads the request): that it waits, and who reads the texts. Never the question.
+ */
+export const QUESTION_WAITS_FOR_OTHERS =
+  'Ajan talep sahibine bir soru sordu; yanıt gelince iş sürer. Soruyu ve yanıtı talep sahibi, birimin onaylayıcısı ve kurucu okur.';
+
+/** Said once to a screen reader when a question arrives while the page is open. */
+export const QUESTION_ARRIVED = 'Ajan bir soru sordu.';
+
+/**
+ * Above the comment box, only while a question waits for the reader's own answer: the comment box
+ * is the text box a person finds at the end of the page, and no agent reads a comment.
+ */
+export const ANSWER_IN_CARD_ABOVE =
+  'Ajanın sorusunu sayfanın üstündeki soru kartından yanıtlayın; buraya yazdığınızı ajan görmez.';
+
+/**
+ * The journey's line over an answer: who answered, and whether it was in the requester's place.
+ * The line goes on with the time and a colon. An answered question always names who answered;
+ * without a name to show, the line says only what is known.
+ */
+export function answeredLine(by: { name: string | null } | null, inPlace: boolean): string {
+  if (by === null) return 'Talep sahibi yanıtladı';
+  return inPlace
+    ? `${personName(by)}, talep sahibinin yerine yanıtladı`
+    : `${personName(by)} yanıtladı`;
+}
+
+/** The journey's line of a question that was closed without an answer. */
+export const QUESTION_CLOSED_UNANSWERED =
+  'Soru yanıtlanmadan kapandı: talep yeniden yönlendirildi ya da kapatıldı.';
 
 /**
  * Appended to the confirmation of an act that takes a person's requests from them, so that

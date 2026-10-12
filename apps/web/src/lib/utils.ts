@@ -22,3 +22,9 @@ export function initials(name: string): string {
   const last = words.length > 1 ? (Array.from(words.at(-1) ?? '')[0] ?? '') : '';
   return (first + last).toLocaleUpperCase('tr-TR');
 }
+
+/**
+ * The key that sends a text box together with Enter: the Command key on a Mac, the Control key
+ * elsewhere. The hint under a box names the right one.
+ */
+export const SEND_KEY = /Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌘' : 'Ctrl';

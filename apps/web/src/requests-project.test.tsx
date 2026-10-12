@@ -1216,7 +1216,7 @@ describe('the page of a request inside a project', () => {
 // request stays the requester's on every page.
 describe('a request that goes on in the founder’s name', () => {
   const ABSENT =
-    'Talep sahibi bu talebi artık göremiyor. Talep sürer: ajan kurucunun adına çalışır, sonucu da talep sahibinin yerine kurucu onaylar.';
+    'Talep sahibi bu talebi artık göremiyor. Talep sürer: ajan kurucunun adına çalışır; ajanın sorusunu talep sahibinin yerine kurucu yanıtlar, sonucu da kurucu onaylar.';
   const ABSENT_CLOSED = 'Talep sahibi bu talebi artık göremiyor.';
   const IN_PLACE =
     'Bu sonuca talep sahibi Ayşe Yılmaz yerine siz karar veriyorsunuz: talep sahibi talebi artık göremiyor.';

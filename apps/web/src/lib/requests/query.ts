@@ -8,6 +8,7 @@ import {
   routingOptionsSchema,
   type AcceptanceDecision,
   type AgentOpenResponse,
+  type AnswerQuestion,
   type ApprovalDecision,
   type ApprovalDesk,
   type CorrectRouting,
@@ -26,7 +27,8 @@ import { decisionDialogOpen } from './hold.ts';
  * Flow (A), "Talepler": the requests agents carry out. Every answer is validated with the shared
  * contract. Nothing here sets a status or an approver; the only things the panel sends are a
  * request text with its optional due day, a decision, a close, for the founder and the approver
- * of the request a correction of the routing, and a comment, which changes nothing of the request.
+ * of the request a correction of the routing, a comment, which changes nothing of the request,
+ * and the answer to an agent's question.
  * The comments of a request have no query and no key of their own: they are part of its page.
  *
  * Each query has a twin that sends the same request as a background request, for the periodic
@@ -163,6 +165,24 @@ export function addRequestComment(
   return apiRequest(`/requests/${requestId}/comments`, {
     method: 'POST',
     body: comment,
+    schema: requestDetailSchema,
+    companyId,
+  });
+}
+
+/**
+ * The answer to an agent's question; the API's answer is the page of the request after it. The
+ * question's id is the key of a retry: the same text again by the same person changes nothing.
+ */
+export function answerQuestion(
+  companyId: string,
+  requestId: string,
+  questionId: string,
+  answer: AnswerQuestion,
+): Promise<RequestDetail> {
+  return apiRequest(`/requests/${requestId}/questions/${questionId}/answer`, {
+    method: 'POST',
+    body: answer,
     schema: requestDetailSchema,
     companyId,
   });

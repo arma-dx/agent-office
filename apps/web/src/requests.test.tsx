@@ -19,10 +19,12 @@ import {
 import {
   APPROVAL_CARD,
   APPROVAL_ID,
+  AWAITING_REPLY,
   comment,
   DEFAULT_JOURNEY,
   EMPLOYEE,
   FOUNDER,
+  openQuestion,
   REQUEST_ID,
   RESULT,
   requestDetail,
@@ -2679,6 +2681,43 @@ describe('the page of a request', () => {
         /ajan\S* (\S+ )?(okur|görür|yanıtlar|dikkate alır)|ajan\S* (iletilir|bildirilir|gider|ulaşır)/i,
       );
       expect(within(region()).queryByText(WHO_MAY_WRITE)).toBeNull();
+    });
+
+    it('the comment box points at the question card only for the one who answers', async () => {
+      const POINTER =
+        'Ajanın sorusunu sayfanın üstündeki soru kartından yanıtlayın; buraya yazdığınızı ajan görmez.';
+      // The requester, whose answer an agent's question waits for: the comment box is the text
+      // box at the end of the page, and what is written into it reaches no agent.
+      mockApi({
+        'GET /session': sessionHandler(EMPLOYEE_SESSION),
+        [GET]: () => json(requestDetail({ ...AWAITING_REPLY, question: openQuestion() })),
+      });
+      renderApp(`/c/armadx/requests/${REQUEST_ID}`);
+      await screen.findByRole('region', { name: /^Yorumlar/ });
+      const pointer = within(region()).getByText(POINTER);
+      expect(pointer).toBeVisible();
+      // Directly above the box, and read with it.
+      expect(pointer.compareDocumentPosition(box()) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+      expect(pointer.nextElementSibling).toHaveTextContent('Yorum yaz');
+      expect(box()).toHaveAccessibleDescription(
+        `${POINTER} ${SENTENCE} Ctrl+Enter ile de gönderilir.`,
+      );
+      cleanup();
+
+      // The founder reads the same question and does not answer it: nothing points anywhere.
+      await openPage(withComments([]), {
+        ...AWAITING_REPLY,
+        waitingForMe: false,
+        question: openQuestion({ mayAnswer: false }),
+        actions: { cancel: false, stop: true, reroute: true },
+      });
+      expect(within(region()).queryByText(POINTER)).toBeNull();
+      expect(box()).toHaveAccessibleDescription(`${SENTENCE} Ctrl+Enter ile de gönderilir.`);
+      cleanup();
+
+      // No question waits: the box is as it always was.
+      await openPage(withComments([]));
+      expect(within(region()).queryByText(POINTER)).toBeNull();
     });
 
     it('sends a comment with an id, shows it only when the API has stored it, and empties the box', async () => {

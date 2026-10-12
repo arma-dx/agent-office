@@ -4,6 +4,7 @@ import { CLOSE_REASON_MAX } from '@agent-office/shared';
 import { useId, useState } from 'react';
 import { z } from 'zod';
 import { RequestComments } from '@/components/requests/request-comments';
+import { RequestQuestion } from '@/components/requests/request-question';
 import {
   AcceptanceCardView,
   ApprovalCardView,
@@ -51,7 +52,8 @@ import { busyProps } from '@/lib/utils';
  * journey and, under it, what people wrote to each other about the request. Everything on it
  * comes from one answer of the API, already cut to what the reader may read. The page offers only the acts 7 October decision 7 gives: the requester cancels; the
  * approver of the request and the founder correct the routing and stop; the approver decides and
- * the requester accepts in their cards. Whoever stops somebody else's request says why.
+ * the requester accepts in their cards; the requester answers an agent's question in its card.
+ * Whoever stops somebody else's request says why.
  */
 export const Route = createFileRoute('/_authed/c/$company/requests_/$requestId')({
   // The list the request belongs to: the top bar links back to it, and a change of company opens
@@ -222,6 +224,12 @@ function RequestScreen() {
       )}
       <FellNotice request={request} isFounder={company.role === 'founder'} />
       <ClosedNotice request={request} />
+      {/* An agent's question, with the other cards that wait for the reader (an approval, an
+          acceptance and an open question never exist together). The key names the request, as
+          the key of the comments does: a text typed for one request's question must not open in
+          the box of another. Not the bare id: the comments below carry that key, and two
+          children of one parent with the same key are drawn twice. */}
+      <RequestQuestion key={`question.${request.id}`} request={request} />
       {/* A card belongs to one approval (one round of the acceptance): what was chosen or opened
           on it is not carried to the next one that takes its place. */}
       {request.approval ? (

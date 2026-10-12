@@ -133,6 +133,38 @@ export function requestDetail(overrides: Partial<RequestDetail> = {}): RequestDe
   });
 }
 
+export const QUESTION_ID = '88888888-8888-4888-8888-888888888881';
+export const QUESTION_TEXT = 'Gönderi hangi ofisin açılışı için?\nİzmir mi, Ankara mı?';
+
+/** An agent's open question as the page carries it; the default reader is the one who answers. */
+export function openQuestion(
+  overrides: Partial<NonNullable<RequestDetail['question']>> = {},
+): NonNullable<RequestDetail['question']> {
+  return {
+    id: QUESTION_ID,
+    agent: SOS_2,
+    askedAt: '2026-10-07T09:05:00.000Z',
+    text: QUESTION_TEXT,
+    mayAnswer: true,
+    inPlaceOfRequester: false,
+    ...overrides,
+  };
+}
+
+/**
+ * The fields of a request that waits for an answer, as its requester (the employee) reads it:
+ * the turn is theirs, they may cancel and comment, and no card of a decision is open.
+ */
+export const AWAITING_REPLY = {
+  status: 'awaiting_reply',
+  stage: 'awaiting_reply',
+  turn: { kind: 'person', ...EMPLOYEE },
+  waitingForMe: true,
+  approval: null,
+  actions: { cancel: true, stop: false, reroute: false },
+  comments: { items: [], truncated: false, mayWrite: true },
+} satisfies Partial<RequestDetail>;
+
 /** A comment as the API answers it; the default is the requester's question. */
 export function comment(overrides: Partial<RequestComment> = {}): RequestComment {
   return requestCommentSchema.parse({

@@ -7,10 +7,10 @@ import { Textarea } from '@/components/ui/textarea';
 import { ApiError, isUnauthorized, userMessage } from '@/lib/api';
 import { formatFull, formatMessageTime } from '@/lib/dates';
 import { draftKey, readDraft, saveDraft, saveDraftSoon } from '@/lib/drafts';
-import { personName } from '@/lib/requests/labels';
+import { ANSWER_IN_CARD_ABOVE, personName } from '@/lib/requests/labels';
 import { addRequestComment, requestKey } from '@/lib/requests/query';
 import { useCompany, useSession } from '@/lib/session';
-import { busyProps } from '@/lib/utils';
+import { busyProps, SEND_KEY } from '@/lib/utils';
 
 /**
  * "Yorumlar": what people wrote to each other about a request (8 October decision 13). The
@@ -38,8 +38,6 @@ import { busyProps } from '@/lib/utils';
 const draftSchema = z.object({ id: z.uuid(), text: z.string() });
 type Held = z.infer<typeof draftSchema>;
 const nothingHeld = (): Held => ({ id: crypto.randomUUID(), text: '' });
-// What sends: the Command key on a Mac, the Control key elsewhere. The hint names the right one.
-const SEND_KEY = /Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌘' : 'Ctrl';
 
 export function RequestComments({ request }: { request: RequestDetail }) {
   const session = useSession();
@@ -106,7 +104,12 @@ export function RequestComments({ request }: { request: RequestDetail }) {
       <p role="status" className="sr-only">
         {news}
       </p>
-      <CommentBox requestId={request.id} mayWrite={mayWrite} items={items} />
+      <CommentBox
+        requestId={request.id}
+        mayWrite={mayWrite}
+        items={items}
+        answerInCard={request.question?.mayAnswer === true}
+      />
     </section>
   );
 }
@@ -115,10 +118,17 @@ function CommentBox({
   requestId,
   mayWrite,
   items,
+  answerInCard,
 }: {
   requestId: string;
   mayWrite: boolean;
   items: RequestDetail['comments']['items'];
+  /**
+   * An agent's question waits for this reader's answer. This box is the text box a person finds
+   * at the end of the page, and no agent reads a comment: one sentence directly above it says
+   * where the answer is written (the question card at the top of the page).
+   */
+  answerInCard: boolean;
 }) {
   const company = useCompany();
   const session = useSession();
@@ -226,6 +236,11 @@ function CommentBox({
       noValidate
       onSubmit={submit}
     >
+      {answerInCard ? (
+        <p id={`${id}-answer`} className="text-sm text-ink-secondary">
+          {ANSWER_IN_CARD_ABOVE}
+        </p>
+      ) : null}
       <label htmlFor={`${id}-text`} className={gone ? 'sr-only' : 'text-sm font-medium'}>
         Yorum yaz
       </label>
@@ -244,9 +259,9 @@ function CommentBox({
         // Not disabled while the comment is being sent: the box keeps the focus.
         readOnly={busy || gone}
         aria-invalid={!gone && problem !== null}
-        aria-describedby={
+        aria-describedby={`${answerInCard ? `${id}-answer ` : ''}${
           gone ? `${id}-gone` : `${id}-help ${id}-keys${problem ? ` ${id}-error` : ''}`
-        }
+        }`}
         onChange={(event) => {
           if (gone) return;
           // A new text is a new comment, and the reason the last one failed no longer applies.
