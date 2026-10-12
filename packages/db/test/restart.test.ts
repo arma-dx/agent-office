@@ -69,6 +69,9 @@ const SWITCH = `update office.company_agents set status = $2
   where company_id = office.ctx_company_id() and agent_code = $1`;
 const FACTS = `select restarted_at is not null as restarted, not_started_at is not null as missed
   from office.request_flow_facts(array[$1::uuid])`;
+// An agent's question from its own run, and the requester's answer (12 October decisions 3, 4).
+const ASK = 'select office.ask_question($1, $2, $3) as id';
+const ANSWER = 'select agent_enabled from office.answer_question($1, $2)';
 
 interface Scope {
   agent?: Agent;
@@ -252,6 +255,36 @@ describe.skipIf(noDatabase)('waiting work starts again', () => {
   // does, without a person in the context (the routes are tested with the passkey in apps/api).
   const openProjectPermission = (): Promise<unknown> =>
     adminQuery('update office.projects set ai_allowed = true where id = $1', [ids.projectA]);
+
+  /** The agent opens a run on the request, asks the requester and ends the run, as the runner does. */
+  const ask = (task: string, agent: Agent, project: string | null = null): Promise<string> =>
+    committed('worker', agentRun(agent, project), async (tx) => {
+      const [run] = await tx.rows<{ id: string }>(RUN, [
+        task,
+        agent,
+        agent === 'KOR-1' ? ids.cardKor : ids.cardHaf,
+      ]);
+      const [question] = await tx.rows<{ id: string }>(ASK, [task, run?.id, 'Hangi kanal için?']);
+      await tx.exec(
+        `update office.runs set status = 'completed', finished_at = now() where id = $1`,
+        [run?.id],
+      );
+      return question?.id ?? '';
+    });
+
+  /**
+   * The requester answers, as the API does it: when the database says that the agent that asked
+   * is stopped, no job is sent and the trace run_not_started is written in the same transaction.
+   * Returns whether the agent was open.
+   */
+  const answer = (task: string, question: string): Promise<boolean> =>
+    committed('app', employeeA, async (tx) => {
+      const [row] = await tx.rows<{ agent_enabled: boolean }>(ANSWER, [question, 'LinkedIn için.']);
+      if (row?.agent_enabled === false) {
+        await tx.exec(TRACE, [task, 'run_not_started']);
+      }
+      return row?.agent_enabled ?? false;
+    });
 
   // The cases ------------------------------------------------------------------------------------
 
@@ -749,6 +782,138 @@ describe.skipIf(noDatabase)('waiting work starts again', () => {
       }
     }
     expect(await restartTraces(task)).toHaveLength(2);
+  });
+
+  it('an answer that found its agent stopped is started by the opening', async () => {
+    await setSwitch('HAF-1', 'enabled');
+    const task = await routed();
+    const question = await ask(task, 'HAF-1');
+    await setSwitch('HAF-1', 'stopped');
+    // While the question is open the request waits for a person, not for the switch.
+    expect(await waiting({ agent: 'HAF-1' })).toBe(0);
+    // The answer is stored although the agent is stopped; no job is sent, the trace is left.
+    expect(await answer(task, question)).toBe(false);
+    expect(await waiting({ agent: 'HAF-1' })).toBe(1);
+    expect(await restart({ agent: 'HAF-1' })).toEqual([]);
+
+    await setSwitch('HAF-1', 'enabled');
+    expect(await restart({ agent: 'HAF-1' })).toEqual([
+      { task_id: task, agent_code: 'HAF-1', requester_user_id: ids.employeeA },
+    ]);
+    // Once: a second opening finds nothing.
+    expect(await restart({ agent: 'HAF-1' })).toEqual([]);
+    expect(await waiting({ agent: 'HAF-1' })).toBe(0);
+    expect(await restartTraces(task)).toHaveLength(1);
+  });
+
+  it('an answer whose job was refused for a closed AI permission or a reached limit is started when it lifts', async () => {
+    await setSwitch('HAF-1', 'enabled');
+    // The AI permission of the project is closed while the question waits.
+    const byPermission = await routed(ids.projectA);
+    const asked = await ask(byPermission, 'HAF-1', ids.projectA);
+    await closeProjectPermission();
+    // Nothing waits for the permission yet: the request waits for its answer.
+    expect(await waiting({ project: ids.projectA })).toBe(0);
+    // The agent is open, so the answer's job is sent; the runner refuses it and leaves its trace.
+    expect(await answer(byPermission, asked)).toBe(true);
+    await refused(byPermission, 'HAF-1', ids.projectA);
+    expect(await waiting({ project: ids.projectA })).toBe(1);
+    expect(await restart({ project: ids.projectA })).toEqual([]);
+    await openProjectPermission();
+    expect(idsOf(await restart({ project: ids.projectA }))).toEqual([byPermission]);
+    expect(await restart({ project: ids.projectA })).toEqual([]);
+
+    // The same with the project's AI spending limit (11 October decision 1). The limit and what
+    // the project has spent are written as an administrator would (a person's limit asks for a
+    // passkey), and put back at the end.
+    const HELD = 'select office.count_work_held_by_spending_limit($1, null) as waiting';
+    const held = async (): Promise<number> =>
+      (
+        await committed('app', founderA, (tx) => tx.rows<{ waiting: number }>(HELD, [ids.projectA]))
+      )[0]?.waiting ?? -1;
+    const limit = (value: string | null, spent: string): Promise<unknown> =>
+      adminQuery(
+        `with project as (
+           update office.projects set ai_spend_limit_usd = $2::numeric where id = $1
+         )
+         update office.runs set cost_usd = $4::numeric where id = $3`,
+        [ids.projectA, value, ids.runAProject, spent],
+      );
+    try {
+      const byLimit = await routed(ids.projectA);
+      const question = await ask(byLimit, 'HAF-1', ids.projectA);
+      await limit('1.00', '1.00');
+      expect(await held()).toBe(0);
+      expect(await answer(byLimit, question)).toBe(true);
+      await refused(byLimit, 'HAF-1', ids.projectA);
+      // The number the founder is told before raising the limit, and what the raise starts.
+      expect(await held()).toBe(1);
+      expect(await restart({ project: ids.projectA })).toEqual([]);
+      await limit(null, '0');
+      expect(idsOf(await restart({ project: ids.projectA }))).toEqual([byLimit]);
+      expect(await restart({ project: ids.projectA })).toEqual([]);
+    } finally {
+      await limit(null, '0');
+    }
+  });
+
+  it('a request that waits for an answer is not waiting work', async () => {
+    await setSwitch('HAF-1', 'enabled');
+    const task = await routed();
+    await ask(task, 'HAF-1');
+    // A late duplicate of the job is refused while the agent is stopped: the trace of a missed
+    // start beside an open question.
+    await setSwitch('HAF-1', 'stopped');
+    await refused(task, 'HAF-1');
+    await asFounder((tx) => tx.exec(TRACE, [task, 'run_not_started']));
+    expect(await waiting({ agent: 'HAF-1' })).toBe(0);
+    await setSwitch('HAF-1', 'enabled');
+    expect(await restart({ agent: 'HAF-1' })).toEqual([]);
+
+    // The line behind it: the run that asked is what keeps the request out of the pick above
+    // (it is the agent's latest run since the call, and it ended by itself). With that run's
+    // start moved before the call, as no clock of the flow leaves it, only the open question
+    // itself keeps the request from being started.
+    const admin = await openAdminTransaction();
+    try {
+      // The start of a run is fixed for every role: the triggers are off for this one change.
+      await admin.tx.exec(`set local session_replication_role = 'replica'`);
+      await admin.tx.exec(
+        `update office.runs set started_at = started_at - interval '1 hour'
+         where task_id = $1 and agent_code = 'HAF-1'`,
+        [task],
+      );
+      await admin.commit();
+    } finally {
+      await admin.rollback();
+    }
+    await setSwitch('HAF-1', 'stopped');
+    expect(await waiting({ agent: 'HAF-1' })).toBe(0);
+    await setSwitch('HAF-1', 'enabled');
+    expect(await restart({ agent: 'HAF-1' })).toEqual([]);
+    expect(await restartTraces(task)).toEqual([]);
+    expect(await adminQuery('select status from office.tasks where id = $1', [task])).toEqual([
+      { status: 'awaiting_reply' },
+    ]);
+  });
+
+  it('the coordinator’s answered question is started by the opening of the coordinator', async () => {
+    // Not routed: the question carries no step, and the call for the work is the answer alone.
+    const task = await open();
+    const question = await ask(task, 'KOR-1');
+    await setSwitch('KOR-1', 'stopped');
+    expect(await waiting({ agent: 'KOR-1' })).toBe(0);
+    expect(await answer(task, question)).toBe(false);
+    expect(await waiting({ agent: 'KOR-1' })).toBe(1);
+    // No unit agent's opening starts it.
+    await setSwitch('HAF-1', 'enabled');
+    expect(await restart({ agent: 'HAF-1' })).toEqual([]);
+    await setSwitch('KOR-1', 'enabled');
+    expect(await restart({ agent: 'KOR-1' })).toEqual([
+      { task_id: task, agent_code: 'KOR-1', requester_user_id: ids.employeeA },
+    ]);
+    expect(await restart({ agent: 'KOR-1' })).toEqual([]);
+    expect(await waiting({ agent: 'KOR-1' })).toBe(0);
   });
 
   it('counting writes nothing', async () => {

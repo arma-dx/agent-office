@@ -370,6 +370,68 @@ describe.skipIf(noDatabase)('a request across transactions', () => {
     ]);
   });
 
+  it('an answer against the opening of its stopped agent: the work starts in both orders', async () => {
+    const SWITCH = `update office.company_agents set status = $1
+      where company_id = office.ctx_company_id() and agent_code = 'KOR-1'`;
+    const RESTART = `select task_id from office.restart_waiting_work('KOR-1', null, null)`;
+    const ENABLED = 'select agent_enabled from office.answer_question($1, $2)';
+    // What the API writes instead of a job for an agent that is stopped.
+    const NOT_STARTED = `insert into office.audit_log (company_id, event, record_type, record_id)
+      values (office.ctx_company_id(), 'run_not_started', 'task', $1)`;
+    const stopCoordinator = (): Promise<unknown> =>
+      withContext(appPool(), founderA, (client) => client.query(SWITCH, ['stopped']));
+    try {
+      // (1) The answer first: it reads the agent as stopped and leaves its trace. The opening's
+      // restart waits for it, and then finds the answer and the trace.
+      const answeredFirst = await requestWithOpenQuestion();
+      await stopCoordinator();
+      const requester = await openTransaction('app', employeeA);
+      const founder = await openTransaction('app', founderA);
+      try {
+        expect(await requester.tx.rows(ENABLED, [answeredFirst.question, 'An answer'])).toEqual([
+          { agent_enabled: false },
+        ]);
+        await requester.tx.exec(NOT_STARTED, [answeredFirst.task]);
+        await founder.tx.exec(SWITCH, ['enabled']);
+        const restarted = founder.tx.rows<{ task_id: string }>(RESTART);
+        await untilBlocked(founder.pid);
+        await requester.commit();
+        expect(await restarted).toEqual([{ task_id: answeredFirst.task }]);
+        await founder.commit();
+      } finally {
+        await requester.rollback();
+        await founder.rollback();
+      }
+
+      // (2) The opening first: its restart finds nothing yet (the question is open). The answer
+      // waits for it and then reads the agent as open: its own job starts the work.
+      const openedFirst = await requestWithOpenQuestion();
+      await stopCoordinator();
+      const opener = await openTransaction('app', founderA);
+      const answerer = await openTransaction('app', employeeA);
+      try {
+        await opener.tx.exec(SWITCH, ['enabled']);
+        expect(await opener.tx.rows(RESTART)).toEqual([]);
+        const answered = answerer.tx.rows(ENABLED, [openedFirst.question, 'An answer']);
+        await untilBlocked(answerer.pid);
+        await opener.commit();
+        expect(await answered).toEqual([{ agent_enabled: true }]);
+        await answerer.commit();
+      } finally {
+        await opener.rollback();
+        await answerer.rollback();
+      }
+      expect(await questionsOf(openedFirst.task)).toMatchObject([{ status: 'answered' }]);
+    } finally {
+      // The coordinator's switch as the fixtures have it.
+      await adminQuery(
+        `update office.company_agents set status = 'enabled'
+         where company_id = $1 and agent_code = 'KOR-1'`,
+        [ids.arma],
+      );
+    }
+  });
+
   it('a question against a cancel', async () => {
     // The question is in flight: the cancel waits, goes through and closes it.
     const askedFirst = await openRequest();

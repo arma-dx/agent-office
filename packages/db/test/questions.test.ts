@@ -1326,6 +1326,86 @@ describe.skipIf(noDatabase)('an agent asks the requester a question', () => {
     });
   });
 
+  it('the flow facts say that a question waits and when it was answered, never what', async () => {
+    await inAdminTransaction(async (tx) => {
+      await enableHaf(tx);
+      const task = await requestOf(tx);
+      const facts = async (person: ContextInput): Promise<Record<string, unknown>[]> => {
+        await asPerson(tx, person);
+        return tx.rows('select * from office.request_flow_facts(array[$1::uuid])', [task]);
+      };
+      const said = async (person: ContextInput): Promise<unknown> => {
+        const [row] = await facts(person);
+        return row ? [row.open_question, row.answered_at] : null;
+      };
+      const answeredAt = async (question: string): Promise<unknown> => {
+        await asAdmin(tx);
+        const [row] = await tx.rows('select answered_at from office.task_questions where id = $1', [
+          question,
+        ]);
+        return row?.answered_at;
+      };
+      expect(await said(employeeA)).toEqual([false, null]);
+
+      // The coordinator asks: every reader of the request learns that a question waits, also
+      // the employee who may not read it.
+      const first = await askFrom(tx, task, 'KOR-1', 'Hangi kanal için yazayım?');
+      for (const reader of [employeeA, founderA, colleagueA, approverA]) {
+        expect(await said(reader), reader.userId ?? '').toEqual([true, null]);
+      }
+      expect(await reads(tx, colleagueA, task)).toBe(0);
+      // Nobody who cannot read the request, and no agent run.
+      for (const other of [externalA, founderP, agentRun('KOR-1'), {}]) {
+        expect(await facts(other)).toEqual([]);
+      }
+      await asWorker(tx, agentRun('KOR-1'));
+      expect(
+        (await tx.expectError('select 1 from office.request_flow_facts(array[$1::uuid])', [task]))
+          .code,
+      ).toBe('42501');
+
+      // The answer to the coordinator calls for the coordinator's work.
+      await answerAs(tx, employeeA, first.question, 'LinkedIn için, kısa bir duyuru.');
+      const firstAnswer = await answeredAt(first.question);
+      expect(firstAnswer).toBeInstanceOf(Date);
+      expect(await said(colleagueA)).toEqual([false, firstAnswer]);
+
+      // Once a step is active the coordinator's answer is no call for that step's work.
+      await routeToHaf(tx, task);
+      expect(await said(employeeA)).toEqual([false, null]);
+      const second = await askFrom(tx, task, 'HAF-1', 'Hangi ürün için?');
+      expect(await said(colleagueA)).toEqual([true, null]);
+      await answerAs(tx, employeeA, second.question, 'Yeni şarj istasyonu.');
+      expect(await said(colleagueA)).toEqual([false, await answeredAt(second.question)]);
+
+      // A new step: the answer to the earlier step's agent is not a call for it.
+      await asPerson(tx, founderA);
+      await tx.rows(CORRECT, [task, HAF_STEP]);
+      expect(await said(employeeA)).toEqual([false, null]);
+
+      // A yes or no and a time: the result has no column for the text, and carries none of it.
+      const [row] = await facts(colleagueA);
+      expect(Object.keys(row ?? {})).toEqual([
+        'task_id',
+        'pending_result',
+        'last_result_status',
+        'last_result_attempt',
+        'last_change_request_at',
+        'rejected_by_user_id',
+        'rejected_reason',
+        'rejected_note',
+        'not_started_at',
+        'restarted_at',
+        'open_question',
+        'answered_at',
+      ]);
+      const everything = JSON.stringify(row);
+      for (const text of ['Hangi kanal', 'LinkedIn', 'Hangi ürün', 'şarj istasyonu']) {
+        expect(everything).not.toContain(text);
+      }
+    });
+  });
+
   it('the name of the runner’s tool cannot be a catalog row', async () => {
     await inAdminTransaction(async (tx) => {
       await asAdmin(tx);
