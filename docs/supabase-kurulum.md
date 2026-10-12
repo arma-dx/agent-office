@@ -109,7 +109,7 @@ Bu sorgu uygulamanın kendi rolleriyle (`office_api`, `office_worker`) çalışm
 Projelere eklenen dosyalar Supabase Storage'da durur (6 Ekim, karar 9; 8 Ekim, karar 20). Panel Supabase'e bağlanmaz: dosya API'ye gönderilir ve API'den indirilir. Yerelde ve testlerde bu adımlar gerekmez: yerelde `.env` dosyasındaki `FILE_STORAGE_DIR` bir klasörü gösterir, testler dosyayı bellekte tutar.
 
 1. Önce Integrations > Data API'nin hâlâ kapalı olduğuna bakın (bölüm 1). Gizli anahtar, Data API açıksa veritabanına satır kurallarını aşarak ulaşabilir; kapalıyken işe yaradığı yer dosya deposudur.
-2. Storage > New bucket: adı `office-files`. "Public bucket" kapalı. "Restrict file size" 25 MB. "Restrict MIME types" boş kalır (türe API karar verir). Kova için kural (policy) yazılmaz: kuralsız kovayı yalnızca gizli anahtar okur ve yazar.
+2. Storage > New bucket: adı `office-files`. "Public bucket" kapalı. "Restrict file size" 25 MB. "Restrict MIME types" boş kalır (türe API karar verir). Bu adımda kova için kural (policy) yazılmaz: kuralsız kovayı yalnızca gizli anahtar okur ve yazar. Tek kural, çalıştırıcının yalnızca okuyan rolü için bölüm 9'da eklenir.
 3. Settings > API Keys > Secret keys: `office-files` adıyla yeni bir gizli anahtar. Anahtar yalnızca sunucunun gizli ayarlarına `SUPABASE_SECRET_KEY` olarak yazılır; sohbete, dosyaya ya da depoya yazılmaz.
 4. Sunucunun ayarlarına üç değer birlikte girer: `SUPABASE_URL` (`https://PROJE_KIMLIGI.supabase.co`), `SUPABASE_SECRET_KEY`, `SUPABASE_STORAGE_BUCKET` (`office-files`). Test ve canlı ortamda `FILE_STORAGE_DIR` boş kalır.
 5. Sunucu kurulurken, giriş rollerine parola verildikten sonra (bölüm 4), veritabanına API'nin rolüyle (`office_api`) bağlanıp şuna bakın; yanıt `0` ya da 30 saniyeden uzun olmalı. Dosya eklenirken ve silinirken API, depo yanıt verene kadar (en çok 30 saniye) veritabanı işlemini açık tutar:
@@ -134,3 +134,52 @@ SUPABASE_URL=https://PROJE_KIMLIGI.supabase.co SUPABASE_STORAGE_BUCKET=office-fi
 ```bash
 unset SUPABASE_SECRET_KEY
 ```
+
+## 9. Çalıştırıcının dosya okuma belirteci (ajanların proje dosyalarını okuması)
+
+Yapay zekâ izni açık projede ajanlar proje dosyalarını okur (8 Ekim, karar 21). Dosyayı ajan için çalıştırıcı okur; çalıştırıcı dosya deposuna gizli anahtarla değil, yalnızca `office-files` kovasını okuyabilen bir belirteçle ulaşır. Her ortam için (test, sonra canlı) bir kez yapılır; bölüm 8'deki kova kurulduktan sonra. Yerelde gerekmez: çalıştırıcı yerelde `FILE_STORAGE_DIR` klasörünü okur. Belirteç ortam başınadır, firma başına değil: tek kova bütün firmaların dosyalarını tutar ve hangi dosyanın okunacağına veritabanındaki satır kuralı karar verir.
+
+1. Supabase panelinde SQL Editor'da şunu çalıştırın:
+
+   ```sql
+   create role office_file_reader nologin noinherit;
+   grant office_file_reader to authenticator;
+   grant usage on schema storage to office_file_reader;
+   grant select on storage.objects, storage.buckets to office_file_reader;
+   create policy "office_file_reader reads office-files"
+     on storage.objects for select to office_file_reader
+     using (bucket_id = 'office-files');
+   create policy "office_file_reader sees the bucket"
+     on storage.buckets for select to office_file_reader
+     using (id = 'office-files');
+   ```
+
+2. Settings, API Keys bölümünden "publishable key" değerini (`sb_publishable_...`) alın; gizli değildir.
+3. Settings, JWT Keys bölümünden JWT gizli değerini kopyalayın. Kendi bilgisayarınızda, proje klasöründe `pnpm files:mint-read-token` çalıştırın; gizli değeri sorulduğunda yapıştırın (yazdığınız ekranda görünmez). Komut belirteci ve biteceği günü yazar; gizli değeri hiçbir yere kaydetmez. Gizli değer sohbete, depoya ve `.env` dosyasına girmez.
+4. İki değeri çalıştırıcının gizli ayarlarına yazın: `SUPABASE_PUBLISHABLE_KEY` ve `SUPABASE_STORAGE_READ_TOKEN`; `SUPABASE_URL` ve `SUPABASE_STORAGE_BUCKET` API'ninkiyle aynıdır. Çalıştırıcının ortamında `SUPABASE_SECRET_KEY` bulunmaz: çalıştırıcı canlıda bu değerle başlamayı reddeder. API ile çalıştırıcının gizli ayarları bu yüzden ayrı tutulur.
+5. Belirteci deneyin: `pnpm files:check`. Komut önce bölüm 8'deki dört satırı yazar, sonra dört satır daha: `ok  read token reads`, `ok  read token cannot write`, `ok  read token cannot delete`, `ok  read token reads one bucket` (belirteç API'nin yazdığı nesneyi okuyor, onu değiştiremiyor ve yenisini oluşturamıyor, silemiyor, başka adlı bir kovayı okuyamıyor). Deneme nesneyi API'nin anahtarıyla yazıp belirteçle okuduğu için iki tarafın değerlerini birlikte ister; bu yüzden çalıştırıcının ortamında değil, bilgisayardan çalıştırılır (aşağıda). Satırlardan biri `FAIL` yazarsa çalıştırıcı bu belirteçle başlatılmaz; çıktıyı olduğu gibi iletin. `skip  read token (not set)` yazarsa iki değer komuta ulaşmamıştır.
+6. Belirteç 400 gün geçerlidir. Çalıştırıcı başlarken kaç gün kaldığını kaydına yazar (`file_reader_configured`, `token_days_left`); süresi dolunca çalıştırıcı `file_read_token_expired` yazar ve ajanlar dosya okuyamaz, 3. ve 4. adım yinelenir. Belirteç erken iptal edilmek istenirse 1. adımdaki iki kural silinir; belirteç o anda hiçbir şey okuyamaz.
+
+Belirteci bilgisayardan denemek için (terminalde, proje klasöründe; ilk iki komut değeri ekranda göstermeden alır):
+
+```bash
+read -s SUPABASE_SECRET_KEY && export SUPABASE_SECRET_KEY
+```
+
+```bash
+read -s SUPABASE_STORAGE_READ_TOKEN && export SUPABASE_STORAGE_READ_TOKEN
+```
+
+```bash
+SUPABASE_URL=https://PROJE_KIMLIGI.supabase.co SUPABASE_STORAGE_BUCKET=office-files SUPABASE_PUBLISHABLE_KEY=YAYINLANABILIR_ANAHTAR FILE_STORAGE_DIR= pnpm files:check
+```
+
+```bash
+unset SUPABASE_SECRET_KEY SUPABASE_STORAGE_READ_TOKEN
+```
+
+Doğrulanmayanlar (gerçek projede ilk kez burada denenir; sonuç `docs/SONRA.md` P6-i'ye yazılır):
+
+- Bu yol Supabase'in belgesindeki "custom roles" yoludur. Supabase'in sayfası yeni role `anon` rolünü de verir; burada rol yalnızca gerekeni alır (şemayı kullanma, iki tabloyu okuma). 5. adım okumada takılırsa `grant anon to office_file_reader;` eklenir ve 5. adım yeniden çalıştırılır; "read token cannot write" ve "read token cannot delete" satırları yine geçmelidir.
+- Yeni anahtar düzenindeki bir Supabase projesinde eski JWT gizli değeri olmayabilir. O zaman önce şu denenir: belirteç, Supabase'e bizim eklediğimiz bir imza anahtarıyla imzalanır. O da yürümezse çalıştırıcıya ayrı bir gizli anahtar verilmesi kurucuya sorulur; sormadan kurulmaz (P6-i).
+- "read token reads one bucket" satırı var olmayan bir kova adını dener; hiçbir belirteç onu okuyamaz. Gerçek kanıt için projede ikinci bir kova gerekir (P6-s).
