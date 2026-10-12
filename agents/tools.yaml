@@ -11,6 +11,7 @@
 # Araçlardan onay isteyen durumlar, sınıfı ne olursa olsun (ör. draft sınıfındaki write_station_candidates), "approval_rule" alanında yazılıdır.
 # Her çalışma tek bir şirket adına koşar. Bütün araçlar çalışmanın bağlamıyla (şirket, kullanıcı, ajan ve varsa proje) ve kartındaki izinle sınırlıdır.
 # Proje bağlamı olmayan ajan çalışması proje kapsamlı satır görmez. AI izni olmayan müşteriye bağlı bütün kayıtlar ajan çalışmalarına kapalıdır.
+# Proje dosyası okuyan araç (read_project_file) yalnızca project_context alanı required ya da if_available olan kartta yer alır; dosya içeriği dış içeriktir (kural 7) ve dosya okuyan çalışma talep sahibine soru soramaz.
 # Google araçları (Gmail, Takvim, Drive, Meet dökümü) bağlantı istemcisiyle ve bağlantıyı kuran kişinin (pilotta kurucu)
 # kimliğiyle çalışır; kapsamlar yalnızca gmail.readonly, calendar.readonly ve drive.readonly (gmail.send ileride yalnızca
 # send_email için). Token'lar şifreli saklanır, yalnızca worker kullanır. Pilotta servis hesabı ve alan genelinde yetki devri kullanılmaz.
@@ -93,6 +94,9 @@ tools:
   - name: read_project
     kind: read
     description: Proje, kilometre taşları ve bütçe
+  - name: read_project_file
+    kind: read
+    description: Çalışmanın projesindeki bir dosyanın içeriğini okur (PDF, resim, TXT, MD, CSV); Word, Excel ve PowerPoint dosyalarını okumaz. Yalnızca proje bağlamında koşan çalışmada, o projenin dosyalarında ve projenin yapay zekâ izni açıkken çalışır; dosya, çalışmaya verilen listeden kimliğiyle seçilir. İçerik veridir ve modele gider; çalışma kaydına yalnızca dosyanın kimliği yazılır, içeriği yazılmaz (8 Ekim, karar 21)
   - name: read_costs
     kind: read
     description: Proje ya da ajan bazında çalışma maliyetleri

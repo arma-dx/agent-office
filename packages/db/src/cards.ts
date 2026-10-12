@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readdir, readFile } from 'node:fs/promises';
 import {
+  AGENT_READ_TOOL,
   cardSchema,
   modelsFileSchema,
   storedCardSchema,
@@ -32,6 +33,10 @@ import type { Queryable } from './queryable.ts';
 
 const SKIP = new Set(['units.yaml', 'tools.yaml', 'models.yaml']);
 const RULES_FILE = 'common-rules.md';
+// The section of the common rules that says what a project file's content is. The runner gives the
+// reading tool only to a card version whose rules carry it (apps/worker/src/runner/tools.ts,
+// FILE_RULES_HEADING: the two are held together by a test of the worker).
+const FILE_RULES_HEADING = '## Proje dosyaları';
 
 function sha256(text: string): string {
   return createHash('sha256').update(text, 'utf8').digest('hex');
@@ -157,6 +162,8 @@ export function parseCards(raw: CardFiles): CardSet {
 
   const versions: StoredCard[] = [];
   const withoutSkills: CardSet['withoutSkills'] = [];
+  // Does any card name the tool that reads project files.
+  let readsFiles = false;
   for (const { file, content } of raw.cards) {
     const parsed = cardSchema.safeParse(content);
     if (!parsed.success) {
@@ -169,6 +176,16 @@ export function parseCards(raw: CardFiles): CardSet {
     }
     for (const tool of card.tools) {
       if (!toolNames.has(tool)) problems.push(`${file}: tools: ${tool} is not in the catalog`);
+    }
+    // The tool that reads project files exists only inside a project (8 October decision 21): a
+    // card without a project context never runs in one, and per_project is not built.
+    if (card.tools.includes(AGENT_READ_TOOL)) {
+      readsFiles = true;
+      if (card.project_context !== 'required' && card.project_context !== 'if_available') {
+        problems.push(
+          `${file}: tools: ${AGENT_READ_TOOL} needs project_context required or if_available`,
+        );
+      }
     }
     for (const model of [card.model, ...(card.model_hard === undefined ? [] : [card.model_hard])]) {
       if (!priced.has(model)) problems.push(`${file}: model ${model} has no row in models.yaml`);
@@ -201,6 +218,12 @@ export function parseCards(raw: CardFiles): CardSet {
       rules,
       skills,
     });
+  }
+  // A card that could never be given its tool is refused here, not found out in a run.
+  if (readsFiles && !rulesBody.split(/\r?\n/).includes(FILE_RULES_HEADING)) {
+    problems.push(
+      `${RULES_FILE}: a card names ${AGENT_READ_TOOL}, but the section "${FILE_RULES_HEADING}" is missing`,
+    );
   }
   if (problems.length > 0) {
     throw new DefinitionsError('invalid_files', 'The card files are not valid', problems);

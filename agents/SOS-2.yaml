@@ -20,6 +20,7 @@ triggers:
 inputs:
   - İçerik talebi: kanal, amaç, hedef kitle
   - Kaynak bilgi: not, doküman ya da proje
+  - Talebin projesindeki dosyalar (PDF, resim ve metin); yalnızca talep bir projenin içindeyse
   - Marka dili notu ve onaylanmış örnek gönderiler
 
 outputs:
@@ -30,11 +31,13 @@ outputs:
 
 skills: [social-content, brand-voice]
 
-tools: [search_notes, read_note, write_note, submit_for_approval, suggest_task]
+# 8 Ekim, karar 21: yapay zekâ izni açık projede ajan projenin dosyalarını okur (read_project_file).
+tools: [search_notes, read_note, write_note, read_project_file, submit_for_approval, suggest_task]
 
 knowledge_sources:
   - Şirketin marka dili notu
   - Onaylanmış örnek gönderiler
+  - Talebin projesindeki dosyalar
 
 authority:
   level: Y1
@@ -55,9 +58,11 @@ escalation:
   - Kaynak yetersizse metin uydurmaz; iş onsuz yapılamayacak bilgiyi talep sahibine bir kez sorar
   - Yanıt da yetmezse yeniden sormaz; elindekiyle yazar ya da yazamadığını söyler
   - Müşteri adı ya da proje bilgisi geçiyorsa müşteri izni sorusunu onay notuna ekler
+  - Proje dosyası okuduktan sonra talep sahibine soramaz; sorması gereken bilgiyi dosya okumadan önce sorar
 
 prohibitions:
   - Kaynakta olmayan iddia, rakam ya da müşteri adı yazmaz
+  - Proje dosyasında yazmayan bir şeyi dosyadan almış gibi yazmaz; okumadığı dosyanın içeriğini tahmin etmez
   - Uzun tire kullanmaz; İngilizceden birebir çeviri kalıplarından ve süslü benzetmelerden kaçınır
   - Emoji yalnızca marka dili izin veriyorsa kullanır
 

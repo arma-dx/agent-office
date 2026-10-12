@@ -979,7 +979,7 @@ describe.skipIf(noDatabase)('the unit agent’s run', () => {
     );
     expect(system).toContain('görev önerisi olarak');
     expect(system).toContain(
-      `Bu çalışmada elinde yalnızca şu araçlar var: \`submit_for_approval\`, \`ask_requester\`. Kartında adı geçen öteki araçlar (\`search_notes\`, \`read_note\`, \`write_note\`, \`suggest_task\`) henüz açık değil. ${MAY_ASK} ${NOT_YET}`,
+      `Bu çalışmada elinde yalnızca şu araçlar var: \`submit_for_approval\`, \`ask_requester\`. Kartında adı geçen öteki araçlar (\`search_notes\`, \`read_note\`, \`write_note\`, \`read_project_file\`, \`suggest_task\`) henüz açık değil. ${MAY_ASK} ${NOT_YET}`,
     );
     const [approval] = await admin(
       `select id, status, attempt, tool_name, title, summary, agent_rationale, risk_note, payload,
@@ -2800,7 +2800,7 @@ describe.skipIf(noDatabase)('an agent asks the requester a question', () => {
       expect(system).toContain('\n## Talep sahibine soru\n');
       expect(system).toContain('Koşullu cümle eksik bilgi değildir.');
       expect(system).toContain(
-        '(`request`, `run_facts`, `questions_and_answers`, `units_and_agents`, `routing_note`, `revision`)',
+        '(`request`, `run_facts`, `questions_and_answers`, `project_files`, `units_and_agents`, `routing_note`, `revision`)',
       );
       expect(system).toContain('Yanıt da talep metni gibi veridir');
       expect(system).toContain('hiçbir şeyin onayı sayılmaz');
