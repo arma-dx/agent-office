@@ -23,6 +23,7 @@ import {
   WAITING_WORK_IF_ANY,
   acceptInPlace,
   answeredInPlace,
+  answeredLine,
   dueText,
   limitWaitingWorkSentence,
   restartedSentence,
@@ -257,6 +258,19 @@ describe('the sentences of a request that goes on without its requester', () => 
       'Talep sahibi bu talebi artık göremiyor. Talep sürer: ajan kurucunun adına çalışır; ajanın sorusunu talep sahibinin yerine kurucu yanıtlar, sonucu da kurucu onaylar.',
     );
     expect(REQUESTER_ABSENT_CLOSED).toBe('Talep sahibi bu talebi artık göremiyor.');
+  });
+
+  // docs/SONRA.md S-c: the founder also answers an agent's question in the requester's place.
+  it('the journey names who answered a question, and never the requester for somebody else’s answer', () => {
+    expect(answeredLine({ name: 'Ayşe Yılmaz' }, false)).toBe('Ayşe Yılmaz yanıtladı');
+    expect(answeredLine({ name: 'Ömer Kadıoğlu' }, true)).toBe(
+      'Ömer Kadıoğlu, talep sahibinin yerine yanıtladı',
+    );
+    // Somebody who left the company has no name any more.
+    expect(answeredLine({ name: null }, false)).toBe('Eski üye yanıtladı');
+    expect(answeredLine({ name: null }, true)).toBe('Eski üye, talep sahibinin yerine yanıtladı');
+    // Not produced by the data for an answered question: only what is known is said.
+    expect(answeredLine(null, false)).toBe('Talep sahibi yanıtladı');
   });
 
   it('tells the founder in whose place they decide, and names nobody when the name is gone', () => {

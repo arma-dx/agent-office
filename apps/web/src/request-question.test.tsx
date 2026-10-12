@@ -6,8 +6,10 @@ import { apiError, ARMADX, json, mockApi, sessionHandler, USER_ID } from './test
 import {
   AWAITING_REPLY,
   comment,
+  DEFAULT_JOURNEY,
   EMPLOYEE,
   EMPLOYEE_ID,
+  FOUNDER,
   openQuestion,
   PROJECT_REF,
   QUESTION_ID,
@@ -765,5 +767,160 @@ describe('an agent’s question on the page of its request', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('an agent’s question in the journey of its request', () => {
+  const KOR_1 = { code: 'KOR-1', name: 'Ofis Koordinatörü' };
+  const SOS_2 = { code: 'SOS-2', name: 'Sosyal İçerik Yazım Ajanı' };
+  const [KOR_RUN, ROUTING, SOS_RUN] = DEFAULT_JOURNEY;
+  if (!KOR_RUN || !ROUTING || !SOS_RUN || SOS_RUN.kind !== 'run') throw new Error('No journey');
+  /** The run that ended with a question: the runner's fixed sentence, and no tool call row. */
+  const ASKING_RUN = {
+    ...SOS_RUN,
+    summary: 'Ajan talep sahibine bir soru sordu ve çalışmasını bitirdi.',
+    steps: [],
+  };
+  const CLOSED = 'Soru yanıtlanmadan kapandı: talep yeniden yönlendirildi ya da kapatıldı.';
+
+  type QuestionItem = Extract<(typeof DEFAULT_JOURNEY)[number], { kind: 'question' }>;
+  const item = (overrides: Partial<QuestionItem>): QuestionItem => ({
+    kind: 'question',
+    id: QUESTION_ID,
+    at: '2026-10-07T09:05:00.000Z',
+    agent: SOS_2,
+    status: 'open',
+    text: QUESTION_TEXT,
+    answer: null,
+    answeredAt: null,
+    answeredBy: null,
+    answeredInPlace: false,
+    closedAt: null,
+    ...overrides,
+  });
+
+  function rows(): HTMLElement[] {
+    return within(screen.getByRole('region', { name: 'Yolculuk' })).getAllByRole('listitem');
+  }
+
+  function rowWith(text: string): HTMLElement {
+    const row = rows().find((candidate) => candidate.textContent.includes(text));
+    if (!row) throw new Error(`No journey row with: ${text}`);
+    return row;
+  }
+
+  it('the journey shows an answered question with both texts, an answer in the requester’s place and a question closed without one; an open one without its text', async () => {
+    const journey = [
+      KOR_RUN,
+      // The coordinator asked twice before it routed; the requester answered the first.
+      item({
+        id: '88888888-8888-4888-8888-888888888891',
+        agent: KOR_1,
+        status: 'answered',
+        text: 'Metin nerede yayınlanacak?',
+        answer: 'LinkedIn.\nŞirket sayfasında.',
+        answeredAt: '2026-10-07T09:10:00.000Z',
+        answeredBy: EMPLOYEE,
+      }),
+      // The founder routed the request by hand meanwhile: the second was closed without an answer.
+      item({
+        id: '88888888-8888-4888-8888-888888888892',
+        at: '2026-10-07T09:12:00.000Z',
+        agent: KOR_1,
+        status: 'closed',
+        text: 'Şirket sayfası için mi?',
+        closedAt: '2026-10-07T09:20:00.000Z',
+      }),
+      ROUTING,
+      ASKING_RUN,
+      // The requester could not read the request any more: the founder answered in their place.
+      item({
+        id: '88888888-8888-4888-8888-888888888893',
+        at: '2026-10-07T09:30:00.000Z',
+        status: 'answered',
+        answer: 'İzmir.',
+        answeredAt: '2026-10-07T09:40:00.000Z',
+        answeredBy: FOUNDER,
+        answeredInPlace: true,
+      }),
+    ];
+    // The founder reads; the agent works on with the answers.
+    await openPage(
+      answered({ journey, actions: { cancel: false, stop: true, reroute: true } }),
+      {},
+    );
+
+    const first = rowWith('Metin nerede yayınlanacak?');
+    expect(first).toHaveTextContent('KOR-1 talep sahibine sordu:');
+    // The agent's words under the label that says whose they are; plain text.
+    const label = within(first).getByText(
+      'KOR-1 şunu sordu (ajanın yazdığı metin; onaydan geçmedi)',
+    );
+    expect(label.nextElementSibling?.textContent).toBe('Metin nerede yayınlanacak?');
+    // Who answered and when, then the person's own words with their line break.
+    expect(first.textContent).toMatch(/Ayşe Yılmaz yanıtladı, .+:/);
+    expect(first.querySelector('time[datetime="2026-10-07T09:10:00.000Z"]')).not.toBeNull();
+    const answer = within(first).getByText(/^LinkedIn\./);
+    expect(answer.textContent).toBe('LinkedIn.\nŞirket sayfasında.');
+    expect(answer).toHaveAttribute('dir', 'auto');
+    expect(first).not.toHaveTextContent('talep sahibinin yerine');
+    expect(first.querySelector('a, img')).toBeNull();
+    // An event of the record, not a status that still waits.
+    expect(first.querySelector('[data-journey-mark="event"]')).not.toBeNull();
+
+    const second = rowWith('Şirket sayfası için mi?');
+    expect(second).toHaveTextContent('KOR-1 talep sahibine sordu:');
+    expect(within(second).getByText(CLOSED)).toBeVisible();
+    expect(second).not.toHaveTextContent('yanıtladı');
+    expect(second.querySelector('[data-journey-mark="event"]')).not.toBeNull();
+
+    // Never "the requester answered" for an answer somebody else gave.
+    const third = rowWith('İzmir.');
+    expect(third).toHaveTextContent('SOS-2 talep sahibine sordu:');
+    expect(third.textContent).toMatch(/Ömer Kadıoğlu, talep sahibinin yerine yanıtladı, .+:/);
+    expect(within(third).getByText('İzmir.')).toBeVisible();
+    expect(third).not.toHaveTextContent(CLOSED);
+
+    // In the order the API gave: each question after the run that asked it.
+    const texts = rows().map((row) => row.textContent);
+    const at = (text: string) => texts.findIndex((row) => row.includes(text));
+    expect(at('Metin nerede yayınlanacak?')).toBeLessThan(at('Şirket sayfası için mi?'));
+    expect(at('Şirket sayfası için mi?')).toBeLessThan(
+      at('Koordinasyon merkezi talebi yönlendirdi'),
+    );
+    expect(at('bir soru sordu ve çalışmasını bitirdi')).toBeLessThan(at('İzmir.'));
+    cleanup();
+
+    // Open: the text is in the card at the top of the page and is not said twice.
+    await openPage(waiting({ journey: [KOR_RUN, ROUTING, ASKING_RUN, item({})] }));
+    const open = rowWith('yanıt bekleniyor');
+    expect(open).toHaveTextContent('SOS-2 talep sahibine bir soru sordu; yanıt bekleniyor.');
+    expect(open).not.toHaveTextContent('hangi ofisin');
+    expect(screen.getByRole('region', { name: 'Yolculuk' })).not.toHaveTextContent('hangi ofisin');
+    expect(within(card()).getByText(LABEL).nextElementSibling?.textContent).toBe(QUESTION_TEXT);
+    // The sign of "Yanıt bekliyor", as in the header; the words beside it say what it is.
+    expect(open.querySelector('[data-journey-mark="event"]')).toBeNull();
+    expect(open.querySelector('svg[aria-hidden="true"]')).not.toBeNull();
+    // The run that asked is a run like every other, with the runner's fixed sentence.
+    expect(rowWith('bir soru sordu ve çalışmasını bitirdi')).toHaveTextContent('SOS-2');
+  });
+
+  it('a reader who is given no question reads the run’s fixed sentence and nothing of the texts', async () => {
+    // The API cuts the question items for this reader; the journey draws what it was given.
+    await openPage(
+      waiting({
+        question: null,
+        waitingForMe: false,
+        journey: [KOR_RUN, ROUTING, ASKING_RUN],
+        actions: { cancel: false, stop: false, reroute: false },
+        comments: withComments([], false),
+      }),
+      COLLEAGUE_SESSION,
+    );
+    expect(rows()).toHaveLength(4);
+    expect(rowWith('bir soru sordu ve çalışmasını bitirdi')).toBeVisible();
+    expect(screen.getByRole('region', { name: 'Yolculuk' })).not.toHaveTextContent(
+      /talep sahibine sordu|yanıt bekleniyor|yanıtladı/,
+    );
   });
 });

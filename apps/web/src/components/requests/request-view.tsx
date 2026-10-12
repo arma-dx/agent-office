@@ -35,13 +35,16 @@ import {
   CHANGES_HELD_BY_LIMIT_FOR_REQUESTER,
   LIMIT_FOR_OTHERS,
   OPEN_PROJECT,
+  QUESTION_CLOSED_UNANSWERED,
   REASON_LABEL,
   RESULT_HELD,
   RESULT_HELD_FOR_FOUNDER,
   RETURNED_NEXT,
   acceptInPlace,
   answeredInPlace,
+  answeredLine,
   personName,
+  questionLabel,
   returnedSentence,
   runLine,
   stepText,
@@ -1167,7 +1170,11 @@ function RunItem({
   );
 }
 
-/** What happened, in order, already cut by the API to what the reader may read. */
+/**
+ * What happened, in order, already cut by the API to what the reader may read. A question an
+ * agent asked is a row of its own after the run that asked it: the question under its label,
+ * then who answered and the answer, or that it was closed without one.
+ */
 export function Journey({ request }: { request: RequestDetail }) {
   const headingId = useId();
   // The words of the run a request fell on are in the notice at the top; not said twice. The
@@ -1304,9 +1311,60 @@ export function Journey({ request }: { request: RequestDetail }) {
                 </JourneyRow>
               );
             case 'question':
-              // An agent's question and its answer have no line of their own yet: the run that
-              // asked says so in its own sentence, and the stage says that the request waits.
-              return null;
+              // The API gives these items only to a reader who may read the question (the
+              // requester, the approver of the request, the founder); for everybody else the
+              // sentence of the run that asked says that a question was asked.
+              return (
+                <JourneyRow
+                  key={item.id}
+                  icon={
+                    // Closed or answered: an event of the record. Open: the request waits on it.
+                    item.status === 'open' ? (
+                      <StatusIcon kind="task" status="awaiting_reply" labelled={false} />
+                    ) : (
+                      <EventMark />
+                    )
+                  }
+                  time={item.at}
+                >
+                  {item.status === 'open' ? (
+                    // The text is in the card at the top of the page; not said twice.
+                    <p>
+                      <span className="font-medium">{item.agent.code}</span> talep sahibine bir soru
+                      sordu; yanıt bekleniyor.
+                    </p>
+                  ) : (
+                    <>
+                      <p>
+                        <span className="font-medium">{item.agent.code}</span> talep sahibine sordu:
+                      </p>
+                      <AgentText label={questionLabel(item.agent)}>{item.text}</AgentText>
+                      {item.status === 'answered' && item.answer !== null ? (
+                        <>
+                          <p>
+                            {answeredLine(item.answeredBy, item.answeredInPlace)}
+                            {item.answeredAt ? (
+                              <>
+                                {', '}
+                                <time dateTime={item.answeredAt}>
+                                  {formatMessageTime(item.answeredAt)}
+                                </time>
+                              </>
+                            ) : null}
+                            :
+                          </p>
+                          {/* A person's words: plain text, line breaks kept. */}
+                          <p dir="auto" className="break-words whitespace-pre-wrap">
+                            {item.answer}
+                          </p>
+                        </>
+                      ) : (
+                        <p className="text-ink-secondary">{QUESTION_CLOSED_UNANSWERED}</p>
+                      )}
+                    </>
+                  )}
+                </JourneyRow>
+              );
           }
         })}
       </ol>
