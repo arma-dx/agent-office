@@ -1,5 +1,10 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { ModelCallError, type CallModel, type ModelErrorCode } from './client.ts';
+import {
+  ModelCallError,
+  type CallModel,
+  type CountFileTokens,
+  type ModelErrorCode,
+} from './client.ts';
 
 /**
  * The Claude API client: the only file that loads the SDK as a value and the only place the key
@@ -68,11 +73,9 @@ function codeOf(error: unknown): ModelErrorCode {
   return 'anthropic_error';
 }
 
-export function createAnthropicModel(
-  apiKey: string,
-  options: AnthropicModelOptions = {},
-): CallModel {
-  const client = new Anthropic({
+/** The one client both calls are made with: the options the header above explains. */
+function newClient(apiKey: string, options: AnthropicModelOptions): Anthropic {
+  return new Anthropic({
     apiKey,
     authToken: null,
     baseURL: API_ADDRESS,
@@ -80,6 +83,28 @@ export function createAnthropicModel(
     logLevel: 'off',
     ...(options.fetch ? { fetch: options.fetch } : {}),
   });
+}
+
+/** What a failed call throws: a code, the status and the request id; never the provider's text. */
+function failureOf(error: unknown, signal: AbortSignal, sends: number): ModelCallError {
+  const status: unknown = error instanceof Anthropic.APIError ? error.status : null;
+  const requestId: unknown = error instanceof Anthropic.APIError ? error.requestID : null;
+  // Ended by a signal: the runner's (its deadline, a stop) or the call's own time limit.
+  const timedOut = error instanceof Anthropic.APIUserAbortError && !signal.aborted;
+  return new ModelCallError(
+    timedOut ? 'anthropic_timeout' : codeOf(error),
+    typeof status === 'number' ? status : null,
+    typeof requestId === 'string' ? requestId : null,
+    errorType(error),
+    sends,
+  );
+}
+
+export function createAnthropicModel(
+  apiKey: string,
+  options: AnthropicModelOptions = {},
+): CallModel {
+  const client = newClient(apiKey, options);
   return async (params, { signal, timeoutMs }) => {
     let sends = 0;
     // A client of this one call: the same options, and a fetch that counts.
@@ -101,17 +126,42 @@ export function createAnthropicModel(
         .withResponse();
       return { message: data, requestId: request_id ?? null, sends };
     } catch (error) {
-      const status: unknown = error instanceof Anthropic.APIError ? error.status : null;
-      const requestId: unknown = error instanceof Anthropic.APIError ? error.requestID : null;
-      // Ended by a signal: the runner's (its deadline, a stop) or the call's own time limit.
-      const timedOut = error instanceof Anthropic.APIUserAbortError && !signal.aborted;
-      throw new ModelCallError(
-        timedOut ? 'anthropic_timeout' : codeOf(error),
-        typeof status === 'number' ? status : null,
-        typeof requestId === 'string' ? requestId : null,
-        errorType(error),
-        sends,
+      throw failureOf(error, signal, sends);
+    }
+  };
+}
+
+/**
+ * The provider's token count for one file (client.ts, CountFileTokens): one user message that
+ * holds the file's block and nothing else, sent to the counting endpoint. The same client, the
+ * same retries and the same time limit as a model call; nothing is logged.
+ */
+export function createAnthropicTokenCounter(
+  apiKey: string,
+  options: AnthropicModelOptions = {},
+): CountFileTokens {
+  const client = newClient(apiKey, options);
+  return async ({ model, block }, { signal, timeoutMs }) => {
+    let sends = 0;
+    const counting = client.withOptions({
+      fetch: (input, init) => {
+        sends += 1;
+        return (options.fetch ?? globalThis.fetch)(input, init);
+      },
+    });
+    const limit = AbortSignal.timeout(Math.max(1, Math.ceil(timeoutMs)));
+    try {
+      const counted = await counting.messages.countTokens(
+        { model, messages: [{ role: 'user', content: [block] }] },
+        {
+          signal: AbortSignal.any([signal, limit]),
+          timeout: timeoutMs + SDK_TIMEOUT_SLACK_MS,
+          maxRetries: MAX_RETRIES,
+        },
       );
+      return counted.input_tokens;
+    } catch (error) {
+      throw failureOf(error, signal, sends);
     }
   };
 }

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createAnthropicModel } from '../src/model/anthropic.ts';
-import { ModelCallError, type ModelRequest } from '../src/model/client.ts';
+import { createAnthropicModel, createAnthropicTokenCounter } from '../src/model/anthropic.ts';
+import { ModelCallError, type FileBlock, type ModelRequest } from '../src/model/client.ts';
 
 // The one file that talks to the Claude API, against a fetch stub: no request leaves the machine.
 // What is pinned here is what the runner relies on and what an SDK upgrade could change without a
@@ -19,6 +19,9 @@ const PARAMS: ModelRequest = {
 interface Sent {
   url: string;
   headers: Record<string, string>;
+  method: string;
+  // The request's body as it was sent (JSON text); '' without one.
+  body: string;
 }
 
 type Behaviour = (init: RequestInit) => Promise<Response> | Response;
@@ -29,7 +32,12 @@ function stub(behaviour: Behaviour): { sent: Sent[]; fetch: typeof globalThis.fe
     sent,
     fetch: (input, init = {}) => {
       const url = input instanceof Request ? input.url : input.toString();
-      sent.push({ url, headers: Object.fromEntries(new Headers(init.headers).entries()) });
+      sent.push({
+        url,
+        headers: Object.fromEntries(new Headers(init.headers).entries()),
+        method: init.method ?? 'GET',
+        body: typeof init.body === 'string' ? init.body : '',
+      });
       return Promise.resolve(behaviour(init));
     },
   };
@@ -232,6 +240,149 @@ describe('the Claude API client', () => {
     } finally {
       logged.mockRestore();
       debugged.mockRestore();
+    }
+  });
+});
+
+// The provider's token count for one file (8 October decision 21): asked before a project file is
+// given to the model.
+
+const PDF_BLOCK: FileBlock = {
+  type: 'document',
+  source: { type: 'base64', media_type: 'application/pdf', data: 'JVBERi0xLjQK' },
+};
+
+const counted =
+  (tokens: number): Behaviour =>
+  () =>
+    new Response(JSON.stringify({ input_tokens: tokens }), {
+      status: 200,
+      headers: { 'content-type': 'application/json', 'request-id': 'req_count' },
+    });
+
+async function countFailureOf(
+  behaviour: Behaviour,
+  options: { timeoutMs?: number; abortAfterMs?: number } = {},
+): Promise<{ error: ModelCallError; sends: number }> {
+  const { sent, fetch } = stub(behaviour);
+  const controller = new AbortController();
+  if (options.abortAfterMs !== undefined) {
+    setTimeout(() => {
+      controller.abort();
+    }, options.abortAfterMs);
+  }
+  const thrown: unknown = await createAnthropicTokenCounter(KEY, { fetch })(
+    { model: 'claude-test', block: PDF_BLOCK },
+    { signal: controller.signal, timeoutMs: options.timeoutMs ?? 5000 },
+  ).then(
+    () => null,
+    (error: unknown) => error,
+  );
+  if (!(thrown instanceof ModelCallError)) throw new Error('The count did not fail as expected');
+  return { error: thrown, sends: sent.length };
+}
+
+describe('the token counter', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('the token counter sends one user message that holds the block and nothing else, to the count endpoint', async () => {
+    vi.stubEnv('ANTHROPIC_BASE_URL', 'https://elsewhere.example');
+    vi.stubEnv('ANTHROPIC_AUTH_TOKEN', 'env-bearer-token');
+    const image: FileBlock = {
+      type: 'image',
+      source: { type: 'base64', media_type: 'image/png', data: 'iVBORw0KGgo=' },
+    };
+    for (const block of [PDF_BLOCK, image]) {
+      const { sent, fetch } = stub(counted(12345));
+      const tokens = await createAnthropicTokenCounter(KEY, { fetch })(
+        { model: 'claude-test', block },
+        { signal: new AbortController().signal, timeoutMs: 5000 },
+      );
+      expect(tokens).toBe(12345);
+      expect(sent).toHaveLength(1);
+      expect(sent[0]?.url).toBe('https://api.anthropic.com/v1/messages/count_tokens');
+      expect(sent[0]?.method).toBe('POST');
+      expect(sent[0]?.headers['x-api-key']).toBe(KEY);
+      expect(sent[0]?.headers).not.toHaveProperty('authorization');
+      // The whole body: the model and one user turn with the one block. No system text, no
+      // tools, no cache mark, no title.
+      expect(JSON.parse(sent[0]?.body ?? '')).toEqual({
+        model: 'claude-test',
+        messages: [{ role: 'user', content: [block] }],
+      });
+    }
+  });
+
+  it('a 400 is anthropic_request_invalid, a timeout anthropic_timeout', async () => {
+    // The provider cannot take the file: sent once, never again.
+    const invalid = await countFailureOf(failure(400, 'invalid_request_error'));
+    expect({
+      code: invalid.error.code,
+      status: invalid.error.status,
+      sends: invalid.sends,
+    }).toEqual({ code: 'anthropic_request_invalid', status: 400, sends: 1 });
+    expect(invalid.error.requestId).toBe('req_stub');
+    // The provider's text can quote the file: the message is the code.
+    expect(invalid.error.message).toBe('anthropic_request_invalid');
+    expect(JSON.stringify(Object.entries(invalid.error))).not.toContain('SECRET');
+    const slow = await countFailureOf(silence, { timeoutMs: 80 });
+    expect({ code: slow.error.code, sends: slow.sends, counted: slow.error.sends }).toEqual({
+      code: 'anthropic_timeout',
+      sends: 1,
+      counted: 1,
+    });
+    // Ended by the run's own signal (its deadline, a stop): told apart from a slow provider.
+    const aborted = await countFailureOf(silence, { abortAfterMs: 50 });
+    expect({ code: aborted.error.code, sends: aborted.sends }).toEqual({
+      code: 'aborted',
+      sends: 1,
+    });
+  });
+
+  it('it retries as the model call does and never logs', async () => {
+    vi.stubEnv('ANTHROPIC_LOG', 'debug');
+    const spies = (['log', 'debug', 'info', 'warn', 'error'] as const).map((method) =>
+      vi.spyOn(console, method).mockImplementation(() => undefined),
+    );
+    try {
+      for (const [status, type, code] of [
+        [429, 'rate_limit_error', 'anthropic_rate_limited'],
+        [500, 'api_error', 'anthropic_error'],
+        [529, 'overloaded_error', 'anthropic_overloaded'],
+      ] as const) {
+        const { error, sends } = await countFailureOf(failure(status, type));
+        // Once and the SDK's two retries, counted with the error.
+        expect({ code: error.code, sends, counted: error.sends }).toEqual({
+          code,
+          sends: 3,
+          counted: 3,
+        });
+      }
+      // A server error, then the count.
+      let first = true;
+      const { sent, fetch } = stub((init) => {
+        if (first) {
+          first = false;
+          return failure(500, 'api_error')(init);
+        }
+        return counted(7)(init);
+      });
+      expect(
+        await createAnthropicTokenCounter(KEY, { fetch })(
+          { model: 'claude-test', block: PDF_BLOCK },
+          { signal: new AbortController().signal, timeoutMs: 5000 },
+        ),
+      ).toBe(7);
+      expect(sent).toHaveLength(2);
+      for (const spy of spies) {
+        expect(spy).not.toHaveBeenCalled();
+      }
+    } finally {
+      for (const spy of spies) {
+        spy.mockRestore();
+      }
     }
   });
 });

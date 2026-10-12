@@ -31,6 +31,20 @@ export interface ModelAnswer {
 
 export type CallModel = (params: ModelRequest, options: ModelCallOptions) => Promise<ModelAnswer>;
 
+/** A project file as the model is given it. */
+export type FileBlock = Anthropic.DocumentBlockParam | Anthropic.ImageBlockParam;
+
+/**
+ * Asks the provider how many input tokens a file's block is, before the file is given to the
+ * model. Free; a request of its own with its own rate limit. Fails like a model call
+ * (ModelCallError): 'anthropic_request_invalid' means the provider cannot take the file (a PDF
+ * over its page limit, with a password, or damaged; a picture over its size).
+ */
+export type CountFileTokens = (
+  request: { model: string; block: FileBlock },
+  options: ModelCallOptions,
+) => Promise<number>;
+
 /** Why a model call failed after the client's own retries. A code; never the provider's text. */
 export type ModelErrorCode =
   | 'aborted'
