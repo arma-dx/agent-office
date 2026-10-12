@@ -9,8 +9,10 @@ import { stageText } from '../requests/labels.ts';
 /**
  * What is expected of the reader, in the words the request page and the Talepler list use for the
  * one whose turn it is: "Onayınız bekleniyor", "Sonucu onaylamanız bekleniyor",
+ * "Yanıtınız bekleniyor" (an agent asked the requester a question; 12 October decisions 3 and 4),
  * "Sizden bekleniyor: <neden>". Every row of the list is expected of the reader, also a result the
- * founder may decide while somebody else is appointed for it.
+ * founder may decide while somebody else is appointed for it, and a question the founder answers
+ * in the place of a requester who cannot read the request.
  */
 export function expectationText(
   request: Pick<RequestSummary, 'stage' | 'cause' | 'delayed'>,

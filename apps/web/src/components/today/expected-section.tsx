@@ -15,7 +15,9 @@ import { useStableOrder } from '@/lib/today/order';
 /**
  * "Sizden beklenenler": everything in the selected company that waits for the reader's approval,
  * answer or attention. A row is a link to the page of its request and nothing else: no decision
- * is given here, and nothing can be dismissed or postponed.
+ * is given here, an agent's question is not answered here (docs/SONRA.md W-n), and nothing can be
+ * dismissed or postponed. A request that waits for an answer is listed only for the one who
+ * answers: the requester, or the founder in the place of a requester who cannot read the request.
  */
 function ExpectedRow({ request, company }: { request: RequestSummary; company: string }) {
   const expectation = expectationText(request);
@@ -32,8 +34,8 @@ function ExpectedRow({ request, company }: { request: RequestSummary; company: s
         <>
           {/* 336 px holds the longest expectation whole ("Sizden bekleniyor: model hesabında ödeme
               sorunu", 321 px); the width test of lib/today/labels.ts keeps a new reason inside
-              it. No title attribute here or on the time: both lie under the cover of the row's
-              link, where a tooltip is never shown. */}
+              it ("Yanıtınız bekleniyor" is far inside). No title attribute here or on the time:
+              both lie under the cover of the row's link, where a tooltip is never shown. */}
           <span className="w-84 truncate">{expectation}</span>
           <time
             dateTime={request.updatedAt}
@@ -72,7 +74,7 @@ export function ExpectedSection({
       <EmptyState
         headingRef={headingRef}
         title="Sizden beklenen iş yok"
-        description="Onayınızı ya da bakmanızı bekleyen talepler burada görünür. Ajanlardan bir iş istemek için talep gönderin."
+        description="Onayınızı, yanıtınızı ya da bakmanızı bekleyen talepler burada görünür. Ajanlardan bir iş istemek için talep gönderin."
         action={
           openDialog ? (
             <Button size="lg" onClick={openDialog}>

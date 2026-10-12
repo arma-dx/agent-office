@@ -23,6 +23,10 @@ describe('the words of the Bugün screen', () => {
     expect(expectationText({ stage: 'requester_approval', cause: null, delayed: false })).toBe(
       'Sonucu onaylamanız bekleniyor',
     );
+    // An agent asked a question and the reader is the one who answers it.
+    expect(expectationText({ stage: 'awaiting_reply', cause: null, delayed: false })).toBe(
+      'Yanıtınız bekleniyor',
+    );
     expect(
       expectationText({ stage: 'fell_to_person', cause: 'no_submission', delayed: false }),
     ).toBe('Sizden bekleniyor: ajan sonuç sunmadı');
@@ -35,6 +39,9 @@ describe('the words of the Bugün screen', () => {
       waitingForMe: false,
     };
     expect(expectationText(appointed)).toBe('Onayınız bekleniyor');
+    // The same for a question the founder answers in the requester's place: the summary may name
+    // the founder as the one whose turn it is, and the row still speaks to the reader.
+    expect(expectationText({ ...appointed, stage: 'awaiting_reply' })).toBe('Yanıtınız bekleniyor');
   });
 
   it('keeps every expectation inside its column of the row', () => {
@@ -67,10 +74,15 @@ describe('the words of the Bugün screen', () => {
     const texts = [
       expectationText({ stage: 'unit_approval', cause: null, delayed: false }),
       expectationText({ stage: 'requester_approval', cause: null, delayed: false }),
+      // A request that waits for the reader's answer to an agent's question.
+      expectationText({ stage: 'awaiting_reply', cause: null, delayed: false }),
       // A request that fell to a person is never "gecikti": nothing runs that could be late.
       ...fallen.map((cause) => expectationText({ stage: 'fell_to_person', cause, delayed: false })),
     ];
     expect(texts.filter((text) => textWidth(text) > COLUMN)).toEqual([]);
+    // The answer's expectation is far inside the column.
+    expect(texts).toContain('Yanıtınız bekleniyor');
+    expect(textWidth('Yanıtınız bekleniyor')).toBeLessThan(COLUMN / 2);
     // The widest today, and the measure itself: 320.6 px without kerning, 320.4 px in a browser.
     const widest = texts.reduce((a, b) => (textWidth(a) >= textWidth(b) ? a : b));
     expect(widest).toBe('Sizden bekleniyor: model hesabında ödeme sorunu');

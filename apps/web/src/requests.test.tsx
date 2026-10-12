@@ -798,6 +798,49 @@ describe('Talepler', () => {
     expect(await screen.findByRole('heading', { name: 'Açık talebiniz yok' })).toBeVisible();
   });
 
+  it('a request that waits for an answer is the reader’s own only for the one who answers', async () => {
+    // The founder's own request: an agent asked, and the founder is the one who answers.
+    const mine = requestDetail({
+      ...AWAITING_REPLY,
+      requester: FOUNDER,
+      turn: { kind: 'person', ...FOUNDER },
+    });
+    // A colleague's request waits for the colleague: the founder reads that it waits, and whose
+    // answer is awaited.
+    const theirs = requestDetail({
+      ...AWAITING_REPLY,
+      id: '77777777-7777-4777-8777-777777777777',
+      title: 'Kasım bülteni',
+      waitingForMe: false,
+    });
+    mockApi({
+      'GET /session': sessionHandler(),
+      'GET /requests': () => json({ requests: [theirs, mine].map(summaryOf), truncated: false }),
+    });
+    renderApp('/c/armadx/requests');
+    const waiting = await screen.findByRole('region', { name: /Sizden beklenenler/ });
+    const own = within(waiting).getByRole('listitem');
+    expect(own).toHaveTextContent('Yanıtınız bekleniyor');
+    expect(own).toHaveTextContent('Sizde');
+    // The sign of the status with its name: never a colour alone.
+    expect(within(own).getByRole('img', { name: 'Yanıt bekliyor' })).toBeVisible();
+    expect(
+      within(own).getByRole('link', {
+        name: 'LinkedIn için gönderi yaz, Yanıtınız bekleniyor, sıra sizde',
+      }),
+    ).toHaveAttribute('href', `/c/armadx/requests/${REQUEST_ID}`);
+    // Somebody else's answer is under way, not expected of the reader.
+    const other = within(screen.getByRole('region', { name: /Sürenler/ })).getByRole('listitem');
+    expect(other).toHaveTextContent('Yanıt bekliyor');
+    expect(other).not.toHaveTextContent('Yanıtınız bekleniyor');
+    expect(other).toHaveTextContent('Ayşe Yılmaz');
+    expect(
+      within(other).getByRole('link', { name: 'Kasım bülteni, Yanıt bekliyor, sıra Ayşe Yılmaz' }),
+    ).toBeVisible();
+    // A row is a link: no answer is given from the list.
+    expect(within(screen.getByRole('main')).queryAllByRole('textbox')).toEqual([]);
+  });
+
   it('shows the due day of a row and says "Son tarihi geçti" for an open request whose day has ended', async () => {
     const agentTurn = {
       status: 'in_progress' as const,

@@ -173,6 +173,63 @@ describe('Bugün: Sizden beklenenler', () => {
     ).toBeVisible();
   });
 
+  it('lists a request that waits for the reader’s answer to an agent’s question, as a link to its page', async () => {
+    const REPLY_ID = '99999999-9999-4999-8999-999999999991';
+    // The requester's own request: an agent asked, and nothing runs until they answer.
+    const reply = summaryOf(
+      requestDetail({
+        id: REPLY_ID,
+        title: 'Ekim duyurusu',
+        status: 'awaiting_reply',
+        stage: 'awaiting_reply',
+        turn: { kind: 'person', ...EMPLOYEE },
+        waitingForMe: true,
+        // The request's last movement: the moment the question was asked.
+        updatedAt: '2026-10-07T09:05:00.000Z',
+      }),
+    );
+    const api = mockApi({
+      'GET /session': sessionHandler(EMPLOYEE_SESSION),
+      'GET /today': () => json(todayBody({ expected: [reply] })),
+      'GET /today/counts': () => json({ today: 1, approvals: 0 }),
+    });
+    renderApp('/c/armadx');
+    const region = await screen.findByRole('region', { name: 'Sizden beklenenler 1' });
+    const row = within(region).getByRole('listitem');
+    expect(row).toHaveTextContent('Yanıtınız bekleniyor');
+    expect(row).not.toHaveTextContent('Yanıt bekliyor');
+    // The sign of the status, in words too; never a colour alone.
+    expect(within(row).getByRole('img', { name: 'Yanıt bekliyor' })).toBeVisible();
+    expect(
+      within(row).getByRole('link', { name: 'Ekim duyurusu, Yanıtınız bekleniyor' }),
+    ).toHaveAttribute('href', `/c/armadx/requests/${REPLY_ID}`);
+    expect(row.querySelector('time')).toHaveAttribute('datetime', '2026-10-07T09:05:00.000Z');
+    // The answer is given on the request's page: the row has no box and no button.
+    expect(within(region).queryAllByRole('textbox')).toEqual([]);
+    expect(within(region).queryAllByRole('button')).toEqual([]);
+    // The number on the "Bugün" row of the sidebar counts it; the "Onaylar" row does not (a
+    // question is not a decision of the desk).
+    expect(await within(menu()).findByRole('link', { name: 'Bugün, 1 bekleyen iş' })).toBeVisible();
+    expect(within(menu()).getByRole('link', { name: 'Onaylar' })).toBeVisible();
+    cleanup();
+
+    // The founder who answers in the place of a requester who cannot read the request reads the
+    // same row and the same words; the request's page says in whose place.
+    mockApi({
+      'GET /session': sessionHandler(),
+      'GET /today': () =>
+        json(
+          todayBody({ expected: [{ ...reply, turn: { kind: 'founder' }, waitingForMe: true }] }),
+        ),
+    });
+    renderApp('/c/armadx');
+    const again = await screen.findByRole('region', { name: 'Sizden beklenenler 1' });
+    expect(
+      within(again).getByRole('link', { name: 'Ekim duyurusu, Yanıtınız bekleniyor' }),
+    ).toBeVisible();
+    expect(api.unexpected).toEqual([]);
+  });
+
   it('gives the longest reason of a fallen request a column that holds it whole', async () => {
     mockApi({
       'GET /session': sessionHandler(),
@@ -246,7 +303,7 @@ describe('Bugün: Sizden beklenenler', () => {
       const main = screen.getByRole('main');
       expect(
         within(main).getByText(
-          'Onayınızı ya da bakmanızı bekleyen talepler burada görünür. Ajanlardan bir iş istemek için talep gönderin.',
+          'Onayınızı, yanıtınızı ya da bakmanızı bekleyen talepler burada görünür. Ajanlardan bir iş istemek için talep gönderin.',
         ),
       ).toBeVisible();
       expect(within(main).queryByRole('region', { name: /^Sizden beklenenler/ })).toBeNull();
