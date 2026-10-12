@@ -42,6 +42,8 @@ export async function closePools(): Promise<void> {
 export interface QueryError {
   code: string | undefined;
   message: string;
+  // The constraint a unique or check violation names.
+  constraint?: string | undefined;
 }
 
 /** A transaction opened with the restricted role and rolled back at the end. */
@@ -84,8 +86,12 @@ export class Tx {
       await this.client.query(sql, values);
     } catch (error) {
       await this.client.query(`rollback to savepoint ${savepoint}`);
-      const pgError = error as { code?: string; message?: string };
-      return { code: pgError.code, message: pgError.message ?? '' };
+      const pgError = error as { code?: string; message?: string; constraint?: string };
+      return {
+        code: pgError.code,
+        message: pgError.message ?? '',
+        constraint: pgError.constraint,
+      };
     }
     await this.client.query(`release savepoint ${savepoint}`);
     throw new Error(`Expected an error but the query succeeded: ${sql}`);

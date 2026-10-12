@@ -89,10 +89,42 @@ export const ids = {
   // One file a member added to a project, per company (the bytes are in no storage).
   projectFileA: id(131),
   projectFileP: id(132),
+
+  // The GitHub connection of each company (12 October decision 12: two organisations).
+  githubA: id(141),
+  githubP: id(142),
 } as const;
 
 /** The credential id of the founder's passkey in the fixtures. */
 export const FOUNDER_PASSKEY = 'fixture-passkey-founder-0001';
+
+/**
+ * What GitHub would have told about the installation of each company's app: the organisation, its
+ * number, the installation's number and the app's number. The fixtures connect both companies as
+ * an administrator would (no passkey is asked from a writer without a person in the context).
+ */
+export interface GithubFixture {
+  account: string;
+  accountId: number;
+  installationId: number;
+  appId: number;
+}
+
+export const GITHUB = {
+  arma: { account: 'arma-org', accountId: 1001, installationId: 5001, appId: 9001 },
+  pillika: { account: 'pillika-org', accountId: 2001, installationId: 6001, appId: 9101 },
+} as const satisfies Record<string, GithubFixture>;
+
+function githubRowSql(id: string, company: string, facts: GithubFixture): string {
+  const settings = JSON.stringify({
+    installation_id: facts.installationId,
+    account_id: facts.accountId,
+    app_id: facts.appId,
+    connected_at: '2026-10-12T09:00:00+00:00',
+  });
+  return `('${id}', '${company}', 'github', '${facts.account}',
+          '{metadata:read,contents:read,pull_requests:read,issues:read}', '${settings}', 'enabled')`;
+}
 
 export const TOOL = {
   read: 'read_task',
@@ -478,6 +510,13 @@ export async function loadFixtures(client: pg.Client): Promise<void> {
           (select id from office.task_routings where task_id = '${ids.requestP}'),
           'KOR-1', '${ids.requestRunP}', '${ids.employeeP}', 'Fixture question', 'answered',
           'Fixture answer', '${ids.employeeP}', now());
+
+    -- The GitHub connection of each company. Only office.connect_github writes such a row for a
+    -- person, with a passkey; the fixture writes them as an administrator would.
+    insert into office.integrations (id, company_id, provider, account, scopes, settings, status)
+      values
+        ${githubRowSql(ids.githubA, ids.arma, GITHUB.arma)},
+        ${githubRowSql(ids.githubP, ids.pillika, GITHUB.pillika)};
   `;
   await client.query(sql);
 }

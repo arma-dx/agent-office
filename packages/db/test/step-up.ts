@@ -18,7 +18,8 @@ export type StepUpPurpose =
   | 'access_grant'
   | 'project_ai_permission'
   | 'customer_ai_permission'
-  | 'project_ai_spending_limit';
+  | 'project_ai_spending_limit'
+  | 'github_connection';
 
 export interface TestSession {
   id: string;
@@ -36,6 +37,7 @@ const COMPANY_PURPOSES: StepUpPurpose[] = [
   'project_ai_permission',
   'customer_ai_permission',
   'project_ai_spending_limit',
+  'github_connection',
 ];
 
 function first<T>(rows: T[], what: string): T {
