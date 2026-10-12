@@ -478,7 +478,9 @@ Adım 4: proje dosyaları (karar 20)
 
 Adım 5: GitHub bağlantısı (karar 19 ve 22; 12 Ekim, karar 12-17)
 
-Kod kuruldu ve sahte bir GitHub ile sınandı. Gerçek bağlantı için kurucunun yapacakları sırayla aşağıda; ayrıntıları `docs/github-kurulum.md`.
+Kod kuruldu ve sahte bir GitHub ile sınandı. **12 Ekim, karar 28 ile değişiyor:** her firma kendi özel uygulamasını kendi Ayarlar sayfasından kuracak, anahtar firmanın kaydında şifreli duracak. Aşağıdaki 2 ila 5. ve 8. adımlar (uygulamayı elle oluşturmak, anahtarı `.env` dosyasına yazmak) o iş bitene kadar yapılmaz; yerlerine panelden tek akış gelecek.
+
+- [ ] GitHub bağlantısının karar 28'e çevrilmesi: uygulamayı firmanın kurucusu Ayarlar, Bağlantılar sayfasından oluşturur ve kurar; anahtar firmanın kaydında şifreli durur; sunucunun ortamındaki şirket başına yuvalar (`GITHUB_APP_1_*`, `GITHUB_APP_2_*`) kalkar
 
 - [ ] (Senden) 1. İki kuruluşun GitHub'daki adı (adres çubuğunda `github.com/` sonrasında yazan ad, harfi harfine; gizli değil) ve iki kuruluşta da "owner" olduğunun doğrulanması (uygulamayı kuruluşa yalnızca owner kurabilir)
 - [ ] (Senden) 2. Her kuruluşta bir GitHub uygulaması oluşturmak (önce Arma DX, sonra Pillika; yerel ortam için): yalnızca o kuruluşa kurulabilir, dört okuma izni (Metadata, Contents, Pull requests, Issues), webhook ve OAuth kapalı; alan alan `docs/github-kurulum.md` bölüm 3
@@ -503,6 +505,8 @@ Adım 6: ajanların proje dosyalarını okuması (karar 21)
 - [ ] İzin açık projede ajanın dosyaları okuması; dosya içeriğinin veri olarak verilmesi (kural 7)
 
 Adım 7: ajanların kod yazıp değişiklik isteği açması (karar 18 ve 23-30)
+
+Tasarım notu (12 Ekim, karar 27 ve 28): yazma yetkisi şirketin kendi bağlantı kaydından alınır, sunucunun ortamından değil; "bu depo ajana açık" işareti projenin depo kaydında durur; "önce yalnızca Arma DX" kartta bir şirket adı değil, şirketin ajan düğmesidir.
 
 Ön planı kurucu onayladı (8 Ekim, karar 23-30). Adım 1 ila 6'dan sonra yapılır (karar 30). Varsayımlar `docs/SONRA.md` içinde K-a ila K-o; Ponytail skill planı aynı dosyada PT-a ila PT-g.
 
@@ -812,6 +816,8 @@ Testler:
 
 ### 1.4 Drive bağlantısı (M12)
 
+Tasarım notu (12 Ekim, karar 27): bağlantı bilgisi ve token firmanın kaydında şifreli durur, bağlantıyı o firmanın kurucusu panelden kurar, sunucunun ortamına şirket başına Google değeri girmez.
+
 - [ ] Arma DX Workspace'inde bağlantı istemcisi: Internal, `drive.readonly`
 - [ ] Pillika Workspace'inde ikinci bağlantı istemcisi (Karar: X2-1; Senden: yönetici yetkisi)
 - [ ] Ayarlar, Entegrasyonlar: Drive'ı bağlama akışı
@@ -865,7 +871,7 @@ KOR-1, Ofis Koordinatörü (M8):
 - [ ] `routing` skill'i
 - [ ] Talebin şirket, birim ve önceliğe göre sınıflandırılması
 - [ ] Alt görevlere bölme ve atama
-- [ ] İki şirketi kapsayan talepte öteki şirket için öneri bırakma
+- [ ] İki şirketi kapsayan talepte öteki şirket için öneri: çalışma yalnızca kendi şirketini görür; öneri kişiye, çalışmanın dışında ve yalnızca o kişinin üyesi olduğu şirketler için sunulur (12 Ekim, karar 31)
 - [ ] Kimin hangi ajana iş verebileceği (Karar: M29)
 - [ ] Alt görevler bitince sonucu birleştirme (Karar: M31)
 - [ ] "Bu iş bana ait değil" dönüşlerinin işlenmesi
