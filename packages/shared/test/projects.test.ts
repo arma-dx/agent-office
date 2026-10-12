@@ -373,6 +373,7 @@ describe('the contracts of the Projects section', () => {
       budget: { visible: false },
       milestones: [],
       aiSpending: null,
+      repository: null,
       actions: {
         edit: true,
         addMembers: true,
@@ -380,6 +381,7 @@ describe('the contracts of the Projects section', () => {
         setAiPermission: false,
         setCustomerPermissions: false,
         setAiSpendingLimit: false,
+        setRepository: false,
       },
     };
     expect(projectDetailSchema.parse(detail)).toEqual(detail);
@@ -550,6 +552,7 @@ describe('the owner, the managers and the members of a project', () => {
       budget: { visible: false },
       milestones: [],
       aiSpending: null,
+      repository: null,
     };
     const actions = {
       edit: true,
@@ -557,6 +560,7 @@ describe('the owner, the managers and the members of a project', () => {
       setAiPermission: false,
       setCustomerPermissions: false,
       setAiSpendingLimit: false,
+      setRepository: false,
     };
     expect(
       projectDetailSchema.safeParse({ ...detail, actions: { ...actions, addMembers: false } })
@@ -620,6 +624,7 @@ describe('the budget and the milestones of a project', () => {
     budget: { visible: false },
     milestones: [],
     aiSpending: null,
+    repository: null,
     actions: {
       edit: true,
       addMembers: false,
@@ -627,6 +632,7 @@ describe('the budget and the milestones of a project', () => {
       setAiPermission: false,
       setCustomerPermissions: false,
       setAiSpendingLimit: false,
+      setRepository: false,
     },
   };
 
@@ -872,6 +878,7 @@ describe('the AI spending limit of a project', () => {
     budget: { visible: false },
     milestones: [],
     aiSpending: null,
+    repository: null,
     actions: {
       edit: true,
       addMembers: false,
@@ -879,6 +886,7 @@ describe('the AI spending limit of a project', () => {
       setAiPermission: false,
       setCustomerPermissions: false,
       setAiSpendingLimit: false,
+      setRepository: false,
     },
   };
   const without = (object: Record<string, unknown>, field: string) =>

@@ -89,6 +89,12 @@ import {
   notFound,
 } from '../errors.ts';
 import { stepUpRequired, verifyStepUp } from '../passkeys.ts';
+import {
+  linkRepository,
+  openConnectionOf,
+  repositoryNotAllowedForNewProject,
+  repositoryToLink,
+} from '../project-repository.ts';
 import { startWaitingWork } from '../restart.ts';
 import type { RouteDeps } from '../services.ts';
 
@@ -125,6 +131,7 @@ import type { RouteDeps } from '../services.ts';
  *   GET    /api/projects/:projectId/approvals         the results of the project's requests, as
  *                                                     they wait or were decided; no decision is
  *                                                     made here
+ *   (the GitHub repository of a project and its GitHub tab: routes/project-github.ts)
  *   GET   /api/customers                   the customers of the company to choose from, by name
  *   PATCH /api/customers/:customerId/permissions      the founder sets the contract permissions
  *                                                     of a customer (the AI one with a passkey)
@@ -325,6 +332,14 @@ function managesBudget(actor: ProjectActor): boolean {
   return actor.founder || actor.projectRole === 'owner' || actor.projectRole === 'manager';
 }
 
+/**
+ * Who gives, changes and removes the GitHub repository of a project: the same three (12 October
+ * decision 17).
+ */
+export function managesRepository(actor: ProjectActor): boolean {
+  return actor.founder || actor.projectRole === 'owner' || actor.projectRole === 'manager';
+}
+
 /** Rule 12 as a whole: the project's permission and, if it has a customer, the customer's. */
 function agentsMayWork(row: ProjectRow): boolean {
   return row.ai_allowed && (row.customer_id === null || row.customer_ai_allowed === true);
@@ -383,7 +398,7 @@ function usageOf(
 }
 
 /** Who the reader is to this project (decision 44). */
-function actorOf(context: CompanyContext, row: ProjectRow): ProjectActor {
+export function actorOf(context: CompanyContext, row: ProjectRow): ProjectActor {
   return {
     userId: context.session.userId.toLowerCase(),
     founder: row.reader_is_founder,
@@ -403,7 +418,7 @@ function actorOf(context: CompanyContext, row: ProjectRow): ProjectActor {
  * spending limit is reached is every reader's too (a yes or a no); the limit and what was spent
  * are the founder's (docs/SONRA.md P-t).
  */
-async function detailOf(context: CompanyContext, row: ProjectRow): Promise<ProjectDetail> {
+export async function detailOf(context: CompanyContext, row: ProjectRow): Promise<ProjectDetail> {
   const { client } = context;
   const actor = actorOf(context, row);
   const members = await listProjectMembers(client, row.id);
@@ -456,6 +471,10 @@ async function detailOf(context: CompanyContext, row: ProjectRow): Promise<Proje
       : { visible: false },
     milestones: milestonesOf(row),
     aiSpending: spending ? { limitUsd: spending.limit_usd, spentUsd: spending.spent_usd } : null,
+    repository:
+      row.repository_id !== null && row.repository_full_name !== null
+        ? { id: Number(row.repository_id), fullName: row.repository_full_name }
+        : null,
     actions: {
       edit: true,
       addMembers: mayAddProjectMembers(actor),
@@ -463,12 +482,13 @@ async function detailOf(context: CompanyContext, row: ProjectRow): Promise<Proje
       setAiPermission: row.reader_is_founder,
       setCustomerPermissions: row.reader_is_founder && row.customer_id !== null,
       setAiSpendingLimit: row.reader_is_founder,
+      setRepository: managesRepository(actor),
     },
   });
 }
 
 /** The project as the person reads it now; 404 when they cannot. */
-async function projectOf(context: CompanyContext, projectId: string): Promise<ProjectRow> {
+export async function projectOf(context: CompanyContext, projectId: string): Promise<ProjectRow> {
   const row = await readProject(context.client, projectId);
   if (!row) {
     throw notFound();
@@ -489,7 +509,7 @@ function descriptionOf(text: string): string | null {
 
 export function registerProjectRoutes(
   app: FastifyInstance,
-  { runner, config, jobs }: RouteDeps,
+  { runner, config, jobs, github }: RouteDeps,
 ): void {
   const relyingParty = config.relyingParty;
 
@@ -527,6 +547,18 @@ export function registerProjectRoutes(
         throw privateSpace();
       }
       if (!(await ownProjectExists(client, id))) {
+        // A repository named with the project (decision 19): the company must be connected and
+        // the repository one its installation reaches. Asked now, before anything is written
+        // and before a passkey is checked: a project that cannot be given the repository the
+        // person asked for is not opened at all.
+        const repository =
+          body.data.repositoryId !== undefined
+            ? await repositoryToLink(
+                await openConnectionOf(context, github),
+                body.data.repositoryId,
+              )
+            : null;
+        let opened = false;
         const marks =
           customer.kind === 'new' && (customer.aiAllowed || customer.automatedProcessingAllowed);
         if (marks && role !== 'founder') {
@@ -574,6 +606,7 @@ export function registerProjectRoutes(
           for (const userId of others) {
             await addProjectMember(client, id, userId);
           }
+          opened = true;
         } catch (error) {
           await client.query('rollback to savepoint create_project');
           const code = databaseErrorCode(error);
@@ -603,6 +636,11 @@ export function registerProjectRoutes(
           } else {
             throw error;
           }
+        }
+        // The opener is the owner by now. A refusal (rule 12: the customer allows neither AI nor
+        // automated processing) ends the request, and the project is not opened either.
+        if (opened && repository) {
+          await linkRepository(context, id, repository, repositoryNotAllowedForNewProject);
         }
       }
       reply.code(201);

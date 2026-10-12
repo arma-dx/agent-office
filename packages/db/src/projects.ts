@@ -56,6 +56,10 @@ export interface ProjectRow {
   reader_is_founder: boolean;
   // owner, manager or member; null when the reader is no member of the project (the founder).
   reader_project_role: string | null;
+  // The GitHub repository the project was given (12 October decision 17): GitHub's number, read
+  // as text, and the name it had when it was linked; both null when it has none.
+  repository_id: string | null;
+  repository_full_name: string | null;
 }
 
 const PROJECT_SQL = `
@@ -77,9 +81,11 @@ const PROJECT_SQL = `
          ) as member_count,
          p.created_at, p.created_by_user_id,
          office.is_founder() as reader_is_founder,
-         office.project_role(p.id) as reader_project_role
+         office.project_role(p.id) as reader_project_role,
+         pr.repository_id::text as repository_id, pr.full_name as repository_full_name
   from office.projects p
   left join office.customers c on c.id = p.customer_id
+  left join office.project_repositories pr on pr.project_id = p.id
   where p.company_id = office.ctx_company_id()`;
 
 /** The projects of the context company the person may read: open ones first, the newest first. */

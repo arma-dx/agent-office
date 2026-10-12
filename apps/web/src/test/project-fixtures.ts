@@ -127,6 +127,8 @@ export function projectDetail(overrides: Partial<ProjectDetail> = {}): ProjectDe
     budget: { visible: false },
     milestones: [],
     aiSpending: null,
+    // The GitHub repository of the project: none until a test gives one.
+    repository: null,
     actions: {
       edit: true,
       addMembers: true,
@@ -134,6 +136,7 @@ export function projectDetail(overrides: Partial<ProjectDetail> = {}): ProjectDe
       setAiPermission: true,
       setCustomerPermissions: true,
       setAiSpendingLimit: false,
+      setRepository: false,
     },
     ...overrides,
   });

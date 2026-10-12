@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { hasHiddenCharacter, stepUpSchema } from './api.ts';
+import { githubIdSchema, hasHiddenCharacter, stepUpSchema } from './api.ts';
 import { taskPersonSchema } from './tasks.ts';
 
 /**
@@ -259,6 +259,10 @@ export const createProjectSchema = z.strictObject({
   color: projectColorSchema.default(DEFAULT_PROJECT_COLOR),
   icon: projectIconSchema.default(DEFAULT_PROJECT_ICON),
   targetDate: projectDaySchema.nullable().default(null),
+  // One repository of the company's connected GitHub organisation (8 October decision 19), by
+  // GitHub's number, from GET /api/github/repositories. A project that cannot be given it is not
+  // opened at all (409).
+  repositoryId: githubIdSchema.optional(),
   stepUp: stepUpSchema.optional(),
 });
 export type CreateProject = z.input<typeof createProjectSchema>;
@@ -517,6 +521,10 @@ export const projectDetailSchema = projectSummarySchema.extend({
   // What the project's agents have spent and its limit, in US dollars. Null for a reader who is
   // not the founder (docs/SONRA.md P-t).
   aiSpending: z.object({ limitUsd: usdSchema.nullable(), spentUsd: usdSchema }).nullable(),
+  // The GitHub repository the project was given: GitHub's number and the name it had when it
+  // was linked. What GitHub shows of it is not here: the GitHub tab has its own request
+  // (GET /api/projects/:projectId/github), so a slow GitHub never slows the page.
+  repository: z.object({ id: githubIdSchema, fullName: z.string() }).nullable(),
   actions: z.object({
     // Name, description, customer, status, colour, icon, target date; and the milestones.
     edit: z.boolean(),
@@ -528,6 +536,9 @@ export const projectDetailSchema = projectSummarySchema.extend({
     setAiPermission: z.boolean(),
     setCustomerPermissions: z.boolean(),
     setAiSpendingLimit: z.boolean(),
+    // The owner, a manager, the founder (12 October decision 17): gives, changes or removes the
+    // project's GitHub repository.
+    setRepository: z.boolean(),
   }),
 });
 export type ProjectDetail = z.output<typeof projectDetailSchema>;

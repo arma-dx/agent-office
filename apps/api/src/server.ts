@@ -12,6 +12,7 @@ import { registerMemberRoutes } from './routes/members.ts';
 import { registerOfficeRoutes } from './routes/office.ts';
 import { registerPasskeyRoutes } from './routes/passkeys.ts';
 import { registerProjectFileRoutes } from './routes/project-files.ts';
+import { registerProjectGithubRoutes } from './routes/project-github.ts';
 import { registerProjectRoutes } from './routes/projects.ts';
 import { registerRequestRoutes } from './routes/requests.ts';
 import { registerSessionRoutes } from './routes/session.ts';
@@ -100,6 +101,7 @@ export function buildServer(opts: BuildServerOptions = {}): FastifyInstance {
       registerProjectRoutes(api, deps);
       registerProjectFileRoutes(api, deps);
       registerGithubRoutes(api, deps);
+      registerProjectGithubRoutes(api, deps);
       done();
     });
   }

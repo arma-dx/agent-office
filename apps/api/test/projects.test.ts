@@ -914,6 +914,8 @@ describe.skipIf(noDatabase)('projects', () => {
       setAiPermission: true,
       setCustomerPermissions: true,
       setAiSpendingLimit: true,
+      // 12 October decision 17: the founder, the owner and the managers change the repository.
+      setRepository: true,
     });
     // Without a customer there is no customer permission to set.
     const plain = await open(founder, { name: 'Müşterisiz proje' });

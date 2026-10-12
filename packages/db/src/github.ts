@@ -137,3 +137,93 @@ export async function countLinkedProjects(client: Queryable): Promise<number> {
   );
   return rows[0]?.n ?? 0;
 }
+
+// The repository of a project ---------------------------------------------------------------------
+
+/**
+ * Statements of the repository of a project (8 October decision 19; 12 October decision 17). A
+ * row is read like the project itself and written by the founder, the owner and the managers of
+ * the project (the row policies); it is linked and unlinked, never rewritten. Whether the
+ * repository is one the company's installation reaches is asked of GitHub by the API before it
+ * links: the database cannot know it.
+ */
+export interface ProjectRepositoryRow {
+  // GitHub's number of the repository.
+  repositoryId: number;
+  // The name it had when it was linked.
+  fullName: string;
+  // The connection it came through: the company's own.
+  integrationId: string;
+}
+
+/** The repository of a project the person may read; null when it has none. */
+export async function readProjectRepository(
+  client: Queryable,
+  projectId: string,
+): Promise<ProjectRepositoryRow | null> {
+  const { rows } = await client.query<{
+    repository_id: string;
+    full_name: string;
+    integration_id: string;
+  }>(
+    `select pr.repository_id::text as repository_id, pr.full_name, pr.integration_id
+     from office.project_repositories pr
+     where pr.project_id = $1 and pr.company_id = office.ctx_company_id()`,
+    [projectId],
+  );
+  const row = rows[0];
+  return row
+    ? {
+        repositoryId: Number(row.repository_id),
+        fullName: row.full_name,
+        integrationId: row.integration_id,
+      }
+    : null;
+}
+
+/**
+ * Gives a project of the context company a repository of the company's open connection. The
+ * database writes who and when. It raises 42501 for anybody but the founder, the owner and a
+ * manager of the project, 23514 when the connection is not the company's open GitHub connection,
+ * 55000 when the customer of the project allows neither AI nor automated processing (rule 12),
+ * 23505 when the project has a repository already.
+ */
+export async function linkProjectRepository(
+  client: Queryable,
+  link: { projectId: string; integrationId: string; repositoryId: number; fullName: string },
+): Promise<void> {
+  await client.query(
+    `insert into office.project_repositories
+       (company_id, project_id, integration_id, repository_id, full_name)
+     values (office.ctx_company_id(), $1, $2, $3, $4)`,
+    [link.projectId, link.integrationId, link.repositoryId, link.fullName],
+  );
+}
+
+/** Takes the repository of a project away; answers whether there was one the person may remove. */
+export async function unlinkProjectRepository(
+  client: Queryable,
+  projectId: string,
+): Promise<boolean> {
+  const result = await client.query(
+    `delete from office.project_repositories pr
+     where pr.project_id = $1 and pr.company_id = office.ctx_company_id()`,
+    [projectId],
+  );
+  return (result.rowCount ?? 0) > 0;
+}
+
+/**
+ * May code-only work touch the repository of this project (rule 12; docs/SONRA.md P-s): the
+ * database's own answer. False for a project the person cannot read.
+ */
+export async function projectCodeProcessingAllowed(
+  client: Queryable,
+  projectId: string,
+): Promise<boolean> {
+  const { rows } = await client.query<{ allowed: boolean }>(
+    'select office.project_code_processing_allowed($1) as allowed',
+    [projectId],
+  );
+  return rows[0]?.allowed === true;
+}

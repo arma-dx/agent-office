@@ -4,10 +4,15 @@ import {
   connectGithub,
   countLinkedProjects,
   disconnectGithub,
+  linkProjectRepository,
+  projectCodeProcessingAllowed,
   readCompanyForGithub,
   readGithubConnection,
+  readProjectRepository,
+  unlinkProjectRepository,
 } from '../src/github.ts';
-import { GITHUB, ids } from './fixtures.ts';
+import { listProjects, readProject } from '../src/projects.ts';
+import { GITHUB, REPOSITORY, ids } from './fixtures.ts';
 import { closePools, inTransaction, inWorkerTransaction, noDatabase } from './helpers.ts';
 import { stepUp } from './step-up.ts';
 
@@ -159,6 +164,141 @@ describe.skipIf(noDatabase)('the statements of the GitHub connection', () => {
         await tx.client.query('savepoint refused');
         await expect(run()).rejects.toMatchObject({ code: '42501' });
         await tx.client.query('rollback to savepoint refused');
+      }
+    });
+  });
+});
+
+describe.skipIf(noDatabase)('the statements of the repository of a project', () => {
+  afterAll(closePools);
+
+  const approverA: ContextInput = { companyId: ids.arma, userId: ids.approverA };
+  const link = { integrationId: ids.githubA, repositoryId: 778, fullName: 'arma-org/other' };
+
+  it('the repository is read like the project, and never across the companies', async () => {
+    await inTransaction(async (tx) => {
+      const arma = {
+        repositoryId: REPOSITORY.arma.id,
+        fullName: REPOSITORY.arma.fullName,
+        integrationId: ids.githubA,
+      };
+      const readers: [ContextInput, string, unknown][] = [
+        [founderA, ids.projectA, arma],
+        [employeeA, ids.projectA, arma],
+        [founderA, ids.projectANoAi, null],
+        // No member of the project, an external person, the other company, nobody.
+        [approverA, ids.projectA, null],
+        [externalA, ids.projectA, null],
+        [founderP, ids.projectA, null],
+        [employeeP, ids.projectA, null],
+        [{}, ids.projectA, null],
+        [founderA, ids.projectP, null],
+        [
+          founderP,
+          ids.projectP,
+          {
+            repositoryId: REPOSITORY.pillika.id,
+            fullName: REPOSITORY.pillika.fullName,
+            integrationId: ids.githubP,
+          },
+        ],
+      ];
+      for (const [context, project, repository] of readers) {
+        await tx.setContext(context);
+        expect(
+          await readProjectRepository(tx.client, project),
+          JSON.stringify([context, project]),
+        ).toEqual(repository);
+      }
+    });
+  });
+
+  it('the project carries its repository, in the page and in the list', async () => {
+    await inTransaction(async (tx) => {
+      await tx.setContext(founderA);
+      expect(await readProject(tx.client, ids.projectA)).toMatchObject({
+        repository_id: String(REPOSITORY.arma.id),
+        repository_full_name: REPOSITORY.arma.fullName,
+      });
+      expect(await readProject(tx.client, ids.projectANoAi)).toMatchObject({
+        repository_id: null,
+        repository_full_name: null,
+      });
+      // One row per project still: the join adds none.
+      const listed = await listProjects(tx.client, 100);
+      expect(listed).toHaveLength(3);
+      expect(listed.filter((row) => row.repository_id !== null).map((row) => row.id)).toEqual([
+        ids.projectA,
+      ]);
+      await tx.setContext(founderP);
+      expect((await listProjects(tx.client, 100)).map((row) => row.repository_full_name)).toEqual([
+        REPOSITORY.pillika.fullName,
+      ]);
+    });
+  });
+
+  it('link and unlink act on a project of the context company, for who may', async () => {
+    await inTransaction(async (tx) => {
+      await tx.setContext(founderA);
+      await linkProjectRepository(tx.client, { projectId: ids.projectANoAi, ...link });
+      expect(await readProjectRepository(tx.client, ids.projectANoAi)).toEqual({
+        repositoryId: 778,
+        fullName: 'arma-org/other',
+        integrationId: ids.githubA,
+      });
+      expect(await unlinkProjectRepository(tx.client, ids.projectANoAi)).toBe(true);
+      expect(await unlinkProjectRepository(tx.client, ids.projectANoAi)).toBe(false);
+
+      const refused = async (run: () => Promise<unknown>): Promise<string | undefined> => {
+        await tx.client.query('savepoint refused');
+        try {
+          await run();
+        } catch (error) {
+          return (error as { code?: string }).code;
+        } finally {
+          await tx.client.query('rollback to savepoint refused');
+        }
+        return 'NO_ERROR';
+      };
+      // A plain member links nothing and removes nothing.
+      await tx.setContext(employeeA);
+      expect(
+        await refused(() =>
+          linkProjectRepository(tx.client, { projectId: ids.projectANoAi, ...link }),
+        ),
+      ).toBe('42501');
+      expect(await unlinkProjectRepository(tx.client, ids.projectA)).toBe(false);
+      // The founder in the context of Pillika does nothing to an Arma DX project.
+      await tx.setContext(founderP);
+      expect(await unlinkProjectRepository(tx.client, ids.projectA)).toBe(false);
+      expect(
+        await refused(() =>
+          linkProjectRepository(tx.client, { projectId: ids.projectANoAi, ...link }),
+        ),
+      ).not.toBe('NO_ERROR');
+      await tx.setContext(founderA);
+      expect(await readProjectRepository(tx.client, ids.projectA)).not.toBeNull();
+      expect(await readProjectRepository(tx.client, ids.projectANoAi)).toBeNull();
+    });
+  });
+
+  it("rule 12: the database's own answer, for a reader of the project only", async () => {
+    await inTransaction(async (tx) => {
+      const answers: [ContextInput, string, boolean][] = [
+        [founderA, ids.projectA, true],
+        [founderA, ids.projectANoAi, true],
+        [founderA, ids.projectACustomerNoAi, false],
+        [employeeA, ids.projectA, true],
+        [approverA, ids.projectA, false],
+        [founderP, ids.projectA, false],
+        [{}, ids.projectA, false],
+      ];
+      for (const [context, project, allowed] of answers) {
+        await tx.setContext(context);
+        expect(
+          await projectCodeProcessingAllowed(tx.client, project),
+          JSON.stringify([context, project]),
+        ).toBe(allowed);
       }
     });
   });

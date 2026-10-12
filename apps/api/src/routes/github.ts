@@ -13,8 +13,11 @@ import {
   githubConnectionDetails,
   githubConnectionSchema,
   githubPermissionSchema,
+  githubRepositoriesQuerySchema,
+  githubRepositoriesSchema,
   type GithubConnection,
   type GithubPermission,
+  type GithubRepositories,
   type TaskPerson,
 } from '@agent-office/shared';
 import type { FastifyInstance } from 'fastify';
@@ -31,6 +34,8 @@ import type { RouteDeps } from '../services.ts';
  *   GET    /api/github/connection   the founder reads the connection of the company
  *   POST   /api/github/connection   the founder connects, with a passkey
  *   DELETE /api/github/connection   the founder switches the connection off
+ *   GET    /api/github/repositories the founder and the employees read the repositories of the
+ *                                   connected organisation, to pick one for a project
  *
  * Every route answers for the company of the request and for no other. The company's short code
  * is read from the database in the request's transaction and is the only thing the GitHub client
@@ -42,8 +47,14 @@ import type { RouteDeps } from '../services.ts';
  * and the installation the page showed, and the route builds the same from what GitHub answers at
  * that moment.
  *
- * The routes are for the founder: an external person is refused as on every screen of the
- * section, an employee is told that the act is the founder's.
+ * The connection routes are for the founder: an external person is refused as on every screen
+ * of the section, an employee is told that the act is the founder's.
+ *
+ * The list of repositories is every founder's and employee's of the company (12 October decision
+ * 15: every employee sees the name of every repository of the organisation, whether or not that
+ * person can see the repository on GitHub): the names and nothing beside them. Never an external
+ * person's, and never the other company's: the list is asked with the app of the request's
+ * company and kept in that company's client.
  */
 
 const INSIDERS = { founderOnly: false, insidersOnly: true } as const;
@@ -59,7 +70,7 @@ const privateSpace = (): ApiError =>
     'GitHub bir şirkete bağlanır. Şirket seçiciden bir şirket seçin.',
   );
 
-const notConfigured = (): ApiError =>
+export const githubNotConfigured = (): ApiError =>
   new ApiError(
     409,
     'github_not_configured',
@@ -270,7 +281,7 @@ export function registerGithubRoutes(
       const company = await githubCompanyOf(context);
       const companyGithub = github.forCompany(company.code);
       if (!companyGithub) {
-        throw notConfigured();
+        throw githubNotConfigured();
       }
       const discovery = await companyGithub.discover({ fresh: true });
       if (discovery.state === 'unavailable') {
@@ -355,5 +366,47 @@ export function registerGithubRoutes(
     const client = github.forCompany(done.company.code);
     client?.forget(done.before?.installationId ?? null);
     return githubConnectionSchema.parse(await connectionAnswer(client, done.read));
+  });
+  /**
+   * The repositories of the connected organisation, by name (decision 15). Read live from GitHub
+   * and kept five minutes in the memory of the company's client; nothing of it is stored.
+   * `?refresh=1` reads it again now (the founder's "Listeyi yenile"; at most once in ten seconds).
+   * A company that is not connected is answered so, and no call is made to GitHub.
+   */
+  app.get('/api/github/repositories', async (request, reply): Promise<GithubRepositories> => {
+    const read = await runner.withCompany(request, reply, INSIDERS, async (context) => {
+      const query = githubRepositoriesQuerySchema.safeParse(request.query);
+      if (!query.success) {
+        throw invalidRequest();
+      }
+      const refresh = query.data.refresh === '1';
+      if (refresh) {
+        requireFounder(context);
+      }
+      return {
+        company: await githubCompanyOf(context),
+        row: await readGithubConnection(context.client),
+        refresh,
+      };
+    });
+    const client = github.forCompany(read.company.code);
+    if (!client || read.row?.status !== 'enabled') {
+      return githubRepositoriesSchema.parse({ state: 'not_connected' });
+    }
+    const list = await client.repositories(connectionRef(read.row), { refresh: read.refresh });
+    if (list.state !== 'ok') {
+      return githubRepositoriesSchema.parse({ state: 'unavailable' });
+    }
+    return githubRepositoriesSchema.parse({
+      state: 'ok',
+      organization: read.row.account,
+      // The number and the name, and nothing beside the name.
+      repositories: list.repositories.map((repository) => ({
+        id: repository.id,
+        fullName: repository.fullName,
+      })),
+      truncated: list.truncated,
+      fetchedAt: new Date(list.fetchedAtMs).toISOString(),
+    });
   });
 }
