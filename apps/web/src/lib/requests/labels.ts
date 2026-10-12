@@ -368,18 +368,24 @@ export const DRAFT_DISCARDED = 'Taslak atıldı.';
  * The read card of the approver of the request and the founder, who read the question and do not
  * answer it: who answers, and what they can do instead of waiting (null when the page offers them
  * neither act). While the requester cannot read the request the founder answers, and an approver
- * who is not a founder is told so.
+ * who is not a founder is told so. `held` as in `answerHelp`: in a project where no agent can
+ * work now nobody is promised that the agent goes on when the answer comes; the reader may be the
+ * founder, the one person who can lift the block.
  */
 export function questionForReader(
   requester: { name: string | null },
   actions: Pick<RequestDetail['actions'], 'reroute' | 'stop'>,
   requesterReads: boolean,
+  held: boolean,
 ): readonly [string, string | null] {
   const who = requesterReads
     ? `Yanıtı talep sahibi ${personName(requester)} yazar.`
     : 'Yanıtı talep sahibinin yerine kurucu yazar.';
+  const then = held
+    ? 'Bu projede ajanlar şu an çalışamaz; yanıt kaydedilir ve iş, engel kalkınca kendiliğinden başlar.'
+    : 'Yanıt gelince ajan işine kendiliğinden devam eder.';
   return [
-    `${who} Yanıt gelince ajan işine kendiliğinden devam eder. Yanıt için süre sınırı ve hatırlatma yoktur.`,
+    `${who} ${then} Yanıt için süre sınırı ve hatırlatma yoktur.`,
     !actions.stop
       ? null
       : actions.reroute
@@ -392,9 +398,14 @@ export function questionForReader(
 /**
  * A request that waits for an answer, for a reader who may not read the question (every other
  * person who reads the request): that it waits, and who reads the texts. Never the question.
+ * `held` as in `answerHelp`: the work does not go on with the answer alone.
  */
-export const QUESTION_WAITS_FOR_OTHERS =
-  'Ajan talep sahibine bir soru sordu; yanıt gelince iş sürer. Soruyu ve yanıtı talep sahibi, birimin onaylayıcısı ve kurucu okur.';
+export function questionWaitsForOthers(held: boolean): string {
+  const then = held
+    ? 'Ajan talep sahibine bir soru sordu. Bu projede ajanlar şu an çalışamaz; iş, yanıt gelip engel kalkınca sürer.'
+    : 'Ajan talep sahibine bir soru sordu; yanıt gelince iş sürer.';
+  return `${then} Soruyu ve yanıtı talep sahibi, birimin onaylayıcısı ve kurucu okur.`;
+}
 
 /** Said once to a screen reader when a question arrives while the page is open. */
 export const QUESTION_ARRIVED = 'Ajan bir soru sordu.';

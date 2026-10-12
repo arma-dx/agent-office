@@ -551,6 +551,57 @@ describe('an agent’s question on the page of its request', () => {
     expect(document.body).not.toHaveTextContent('kendiliğinden devam eder');
   });
 
+  it('in a project where agents cannot work no reader is promised that the agent goes on with the answer', async () => {
+    const READ_HELD =
+      'Bu projede ajanlar şu an çalışamaz; yanıt kaydedilir ve iş, engel kalkınca kendiliğinden başlar. Yanıt için süre sınırı ve hatırlatma yoktur.';
+    const OTHERS_HELD =
+      'Ajan talep sahibine bir soru sordu. Bu projede ajanlar şu an çalışamaz; iş, yanıt gelip engel kalkınca sürer. Soruyu ve yanıtı talep sahibi, birimin onaylayıcısı ve kurucu okur.';
+    // Rule 12 (a closed AI permission) and 8 October decision 17 (a reached spending limit).
+    const holds: Overrides[] = [{ agentsMayWork: false }, { spendingLimitReached: true }];
+    for (const hold of holds) {
+      const inProject: Overrides = { project: PROJECT_REF, ...hold };
+      // The founder, who reads the question and is the one who can lift the block. The routing is
+      // held with the work: stopping is what is left.
+      await openPage(
+        readOnly({ ...inProject, actions: { cancel: false, stop: true, reroute: false } }),
+        {},
+      );
+      expect(
+        within(card()).getByText(`Yanıtı talep sahibi Ayşe Yılmaz yazar. ${READ_HELD}`),
+      ).toBeVisible();
+      expect(within(card()).getByText(MAY_STOP)).toBeVisible();
+      expect(document.body).not.toHaveTextContent('kendiliğinden devam eder');
+      cleanup();
+
+      // An approver, while the requester cannot read the request.
+      await openPage(
+        readOnly({ ...inProject, requesterReads: false, turn: { kind: 'founder' } }),
+        APPROVER_SESSION,
+      );
+      expect(
+        within(card()).getByText(`Yanıtı talep sahibinin yerine kurucu yazar. ${READ_HELD}`),
+      ).toBeVisible();
+      expect(document.body).not.toHaveTextContent('kendiliğinden devam eder');
+      cleanup();
+
+      // Every other reader of the request: the banner.
+      await openPage(
+        waiting({
+          ...inProject,
+          question: null,
+          waitingForMe: false,
+          actions: { cancel: false, stop: false, reroute: false },
+          comments: withComments([], false),
+        }),
+        COLLEAGUE_SESSION,
+      );
+      expect(screen.getByText(OTHERS_HELD)).toBeVisible();
+      expect(screen.queryByText(FOR_OTHERS)).toBeNull();
+      expect(document.body).not.toHaveTextContent('yanıt gelince iş sürer');
+      cleanup();
+    }
+  });
+
   it('a refresh does not touch what is being typed', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {

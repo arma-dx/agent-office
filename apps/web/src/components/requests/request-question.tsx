@@ -22,13 +22,13 @@ import {
   QUESTION_ARRIVED,
   QUESTION_GONE,
   QUESTION_HEADING,
-  QUESTION_WAITS_FOR_OTHERS,
   answerHelp,
   answerSentAs,
   questionAskedBy,
   questionForReader,
   questionInPlace,
   questionLabel,
+  questionWaitsForOthers,
 } from '@/lib/requests/labels';
 import { answerQuestion, requestKey } from '@/lib/requests/query';
 import { useSettle } from '@/lib/requests/settle';
@@ -212,14 +212,16 @@ export function RequestQuestion({ request }: { request: RequestDetail }) {
     send.mutate({ questionId: question.id, text });
   }
 
+  // No agent can work in the request's project now: neither the box, nor the read card, nor the
+  // banner promises that one goes on when the answer comes.
+  const workHeld = !request.agentsMayWork || request.spendingLimitReached;
   const [waits, canDo] = questionForReader(
     request.requester,
     request.actions,
     request.requesterReads,
+    workHeld,
   );
   const inPlace = editable && question.inPlaceOfRequester;
-  // No agent can work in the request's project now: the box does not promise that one goes on.
-  const workHeld = !request.agentsMayWork || request.spendingLimitReached;
 
   return (
     <>
@@ -416,7 +418,7 @@ export function RequestQuestion({ request }: { request: RequestDetail }) {
       ) : request.stage === 'awaiting_reply' ? (
         // Every other reader of the request: that it waits, never the question.
         <InlineBanner tone="info" compact>
-          {QUESTION_WAITS_FOR_OTHERS}
+          {questionWaitsForOthers(workHeld)}
         </InlineBanner>
       ) : null}
     </>
