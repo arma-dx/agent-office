@@ -8,7 +8,8 @@
     "start": "node src/main.ts",
     "typecheck": "tsc -p tsconfig.json",
     "smoke": "node --input-type=module -e \"import { globSync } from 'node:fs'; import { pathToFileURL } from 'node:url'; for (const file of globSync('src/**/*.ts')) { if (!file.endsWith('main.ts')) await import(pathToFileURL(file).href); }\"",
-    "smoke:claude": "node --env-file-if-exists=../../.env scripts/smoke-claude.ts"
+    "smoke:claude": "node --env-file-if-exists=../../.env scripts/smoke-claude.ts",
+    "probe:questions": "node --env-file-if-exists=../../.env scripts/probe-questions.ts"
   },
   "dependencies": {
     "@agent-office/db": "workspace:*",
