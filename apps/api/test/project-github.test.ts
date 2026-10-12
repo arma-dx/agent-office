@@ -694,6 +694,91 @@ describe.skipIf(noDatabase)('the repository of a project and its GitHub tab', ()
     });
   });
 
+  describe('GitHub and the transaction of a request', () => {
+    // GitHub may take up to fifteen seconds to answer. A read that asked it inside its
+    // transaction would hold one of the pool's connections that long; a write that asked it after
+    // its first write would hold row locks that long. What the API's own database sessions are
+    // doing is looked at from outside, at the moment each call reaches GitHub.
+    interface Seen {
+      method: string;
+      // Sessions of the API with a transaction open.
+      open: number;
+      // Write locks those sessions hold on the tables a project and its repository are written to.
+      writeLocks: number;
+    }
+
+    function watch(): Seen[] {
+      const seen: Seen[] = [];
+      scene.armadx.api.onCall = async (entry) => {
+        const [row] = await adminQuery<{ open: number; write_locks: number }>(`
+          select
+            (select count(*)::int from pg_catalog.pg_stat_activity a
+              where a.datname = current_database()
+                and a.application_name = 'agent-office-api-test'
+                and a.xact_start is not null) as open,
+            (select count(*)::int from pg_catalog.pg_locks l
+              join pg_catalog.pg_stat_activity a on a.pid = l.pid
+              where a.datname = current_database()
+                and a.application_name = 'agent-office-api-test'
+                and l.locktype = 'relation' and l.mode = 'RowExclusiveLock'
+                and l.relation in ('office.projects'::regclass,
+                                   'office.project_members'::regclass,
+                                   'office.project_repositories'::regclass)) as write_locks
+        `);
+        seen.push({
+          method: entry.method,
+          open: row?.open ?? -1,
+          writeLocks: row?.write_locks ?? -1,
+        });
+      };
+      return seen;
+    }
+
+    it('the three reads ask GitHub only after their transaction has ended', async () => {
+      const project = await open(employee, { repositoryId: PANEL });
+      const seen = watch();
+      const asked = async (session: string, url: string, methods: string[]): Promise<void> => {
+        // Past every cache, so that GitHub is really asked.
+        scene.clock.advance(6 * MINUTE);
+        seen.length = 0;
+        expect((await call(session, 'GET', url)).statusCode, url).toBe(200);
+        expect(
+          seen.map((entry) => entry.method),
+          url,
+        ).toEqual(methods);
+        expect(
+          seen.map((entry) => entry.open),
+          url,
+        ).toEqual(methods.map(() => 0));
+      };
+      await asked(employee, `/api/projects/${project.id}/github`, [
+        'repositories',
+        'commits',
+        'pullRequests',
+        'issues',
+      ]);
+      await asked(employee, '/api/github/repositories', ['repositories']);
+      await asked(founder, '/api/github/connection', ['app', 'installations', 'repositories']);
+    });
+
+    it('the two writes ask GitHub before their first write', async () => {
+      const seen = watch();
+      // Past the five minutes of the list, so that each write has to ask GitHub.
+      scene.clock.advance(6 * MINUTE);
+      const project = await open(employee, { repositoryId: PANEL });
+      expect(seen.map((entry) => entry.method)).toEqual(['repositories']);
+      // The request is one transaction (rule 9): it is open, and has written nothing yet.
+      expect(seen.map((entry) => [entry.open, entry.writeLocks])).toEqual([[1, 0]]);
+
+      scene.clock.advance(6 * MINUTE);
+      seen.length = 0;
+      expect((await setRepository(employee, project.id, API)).statusCode).toBe(200);
+      expect(seen.map((entry) => entry.method)).toEqual(['repositories']);
+      expect(seen.map((entry) => [entry.open, entry.writeLocks])).toEqual([[1, 0]]);
+      expect((await read(employee, project.id)).repository?.id).toBe(API);
+    });
+  });
+
   describe('when access is taken away', () => {
     it('a repository taken out of the installation shows no row, although it was read a moment ago', async () => {
       const project = await team({ repositoryId: PANEL });
@@ -743,6 +828,27 @@ describe.skipIf(noDatabase)('the repository of a project and its GitHub tab', ()
         );
         expect(row?.status).toBe('enabled');
       }
+    });
+
+    it('GitHub refusing the list of repositories shows no row, although the tab was read a minute ago', async () => {
+      const project = await open(employee, { repositoryId: PANEL });
+      // Four minutes after the list of repositories was read the tab reads its lists.
+      scene.clock.advance(4 * MINUTE);
+      expect((await tab(employee, project.id)).state).toBe('ok');
+      // GitHub answers the token the client holds with a refusal: it is not down, it said no.
+      scene.armadx.api.failWith('forbidden', null, 403);
+      scene.clock.advance(MINUTE);
+      scene.armadx.api.clearCalls();
+      expect(await tab(employee, project.id)).toEqual({
+        state: 'unavailable',
+        repository: { id: PANEL, fullName: 'arma-org/panel', url: null },
+        canLink: true,
+        reason: 'installation_gone',
+        retryAt: null,
+        last: null,
+      });
+      expect(calls()).toEqual(['repositories']);
+      expect(scene.armadx.api.forgotten).toEqual([5001]);
     });
 
     it('switched off: the tab asks nothing and shows nothing; connected again, the links are back', async () => {

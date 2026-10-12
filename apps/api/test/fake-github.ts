@@ -135,6 +135,9 @@ export class FakeGithubApi implements GithubApi {
   // Installations on other accounts (a public app that strangers installed).
   otherInstallations: GithubInstallation[] = [];
   truncated = false;
+  // Awaited at the start of every call, before GitHub "answers": what a test looks at while
+  // GitHub is being asked (for example what the database sessions of the API are doing).
+  onCall: ((call: FakeCall) => Promise<void>) | null = null;
   #repositories: GithubRepository[];
   #selected: Set<number> | null = null;
   readonly #lists = new Map<number, FakeRepositoryLists>();
@@ -320,6 +323,9 @@ export class FakeGithubApi implements GithubApi {
 
   async #begin(call: FakeCall): Promise<void> {
     this.calls.push(call);
+    if (this.onCall) {
+      await this.onCall(call);
+    }
     if (this.#gate) {
       await this.#gate;
     }
