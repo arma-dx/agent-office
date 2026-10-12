@@ -166,10 +166,14 @@ export function RequestQuestion({ request }: { request: RequestDetail }) {
   // focus (the send button, when the question goes away) tells nobody; this is how it is known.
   const focusInForm = useRef(false);
   // The button the person pressed is gone with the card: the focus goes to the notice that takes
-  // its place, once per answered question, not to the top of the page.
+  // its place, once per answered question, not to the top of the page. Only a focus that would
+  // otherwise be lost is moved: a person who went on to another control while the answer was on
+  // its way (the comment box, say) keeps typing there.
   const sentShown = showSent ? sentFor : null;
   useEffect(() => {
-    if (sentShown !== null) sentNotice.current?.focus();
+    if (sentShown === null) return;
+    const active = document.activeElement;
+    if (active === null || active === document.body) sentNotice.current?.focus();
   }, [sentShown]);
   // The same for "Taslağı at", which removes the box and itself.
   const discardedShown = discarded ? discardedFor : null;

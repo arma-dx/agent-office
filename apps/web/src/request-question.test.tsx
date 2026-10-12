@@ -275,6 +275,35 @@ describe('an agent’s question on the page of its request', () => {
     expect(notice.closest('[tabindex="-1"]')).toHaveFocus();
   });
 
+  it('storing the answer does not take the focus from a person who went on to the comment box', async () => {
+    const { api } = await openPage(waiting());
+    let answer: (response: Response) => void = () => undefined;
+    api.handle(
+      POST,
+      () =>
+        new Promise<Response>((resolve) => {
+          answer = resolve;
+        }),
+    );
+    await userEvent.type(box(), 'İzmir.');
+    await userEvent.click(within(card()).getByRole('button', { name: 'Yanıtı gönder' }));
+    await waitFor(() => {
+      expect(api.callsTo(POST)).toHaveLength(1);
+    });
+    // While the answer is on its way the person starts a comment at the end of the page.
+    const comments = screen.getByRole('textbox', { name: 'Yorum yaz' });
+    await userEvent.click(comments);
+    await userEvent.keyboard('Bir de');
+    expect(comments).toHaveFocus();
+
+    answer(json(answered()));
+    expect(await screen.findByText(SENT_AGENT)).toBeVisible();
+    // The notice is on the page, and what the person types still goes where they are typing.
+    expect(comments).toHaveFocus();
+    await userEvent.keyboard(' sorum var');
+    expect(comments).toHaveValue('Bir de sorum var');
+  });
+
   it('a request that falls to a person after the agent ran with the answer is not said to have not started', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
