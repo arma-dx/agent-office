@@ -2050,6 +2050,32 @@ describe.skipIf(noDatabase)('an agent asks the requester a question', () => {
     );
   });
 
+  it('a question does not stay when its run was closed from elsewhere before the runner closed it', async () => {
+    const taskId = await routedRequest();
+    const { deps } = await runner(
+      new ScriptedModel([toolUse('ask_requester', { question: QUESTION })]),
+    );
+    // The database has stored the question in the runner's step; before the step closes the run,
+    // something else closes it (a stop, a restart of another worker).
+    let met = 0;
+    const pool = meeting(deps.pool, 'summary = $2, output = $3', async () => {
+      met += 1;
+      await admin(
+        `update office.runs set status = 'stopped', finished_at = now()
+         where task_id = $1 and status = 'running'`,
+        [taskId],
+      );
+    });
+    await expect(runAgentJob({ ...deps, pool }, job(taskId, 'SOS-2', ids.founder))).rejects.toThrow(
+      'The run that asked could not be closed',
+    );
+    expect(met).toBe(1);
+    // The step was rolled back with the question in it: a question without the end of its run
+    // would leave the request waiting for an answer no run was closed for.
+    expect(await questionsOf(taskId)).toEqual([]);
+    expect(await statusOf(taskId)).not.toBe('awaiting_reply');
+  });
+
   it('after the answer the same agent runs for the same step and is given the question and the answer as marked data', async () => {
     const { taskId, first } = await askedAndAnswered();
     // The answer put the request back in progress; the question is answered by the requester.
@@ -4284,6 +4310,50 @@ describe.skipIf(noDatabase)('a request inside a project', () => {
       ['stopped', ids.employee],
       ['completed', ids.founder],
     ]);
+  });
+
+  it('the next run is told that the founder answered in the requester’s place', async () => {
+    const projectId = await project(true);
+    const taskId = await openIn(projectId);
+    const first = await runner(
+      new ScriptedModel([toolUse('ask_requester', { question: 'Bu metin nerede kullanılacak?' })]),
+    );
+    expect((await runAgentJob(first.deps, job(taskId, 'KOR-1', ids.employee))).outcome).toBe(
+      'asked',
+    );
+    // The requester can no longer read the request: the founder answers (8 October decision 45).
+    await takeOut(projectId);
+    const [open] = await admin<{ id: string }>(
+      `select id from office.task_questions where task_id = $1 and status = 'open'`,
+      [taskId],
+    );
+    await withContext(testPools().app, { companyId: ids.arma, userId: ids.founder }, (client) =>
+      answerRequestQuestion(client, open?.id ?? '', 'LinkedIn için.'),
+    );
+
+    const model = new ScriptedModel([toolUse('route_task', ROUTE_TO_SOS)]);
+    const { deps } = await runner(model);
+    expect((await runAgentJob(deps, job(taskId, 'KOR-1', ids.employee))).outcome).toBe('routed');
+    expect((await runsOf(taskId)).at(-1)).toMatchObject({
+      user_id: ids.founder,
+      status: 'completed',
+    });
+    // Who wrote the answer is a fact the model is given with it, never a name.
+    const text = firstUserText(model);
+    const block = (name: string): unknown => {
+      const body = new RegExp(`<${name}>\\n(.*)\\n</${name}>`, 's').exec(text)?.[1];
+      return body === undefined ? null : (JSON.parse(body) as unknown);
+    };
+    expect(block('questions_and_answers')).toEqual([
+      {
+        askedBy: 'KOR-1',
+        own: true,
+        question: 'Bu metin nerede kullanılacak?',
+        answer: 'LinkedIn için.',
+        answeredBy: 'founder_for_requester',
+      },
+    ]);
+    expect(block('run_facts')).toMatchObject({ requesterRole: 'founder' });
   });
 
   it('a job cannot choose the person', async () => {
