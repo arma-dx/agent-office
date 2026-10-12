@@ -5,22 +5,27 @@ import {
   projectApprovalSchema,
   projectApprovalsSchema,
   projectDetailSchema,
+  projectFileListSchema,
+  projectFileSchema,
   projectRunSchema,
   projectRunsSchema,
   projectSummarySchema,
   setProjectMemberRoleSchema,
+  uploadTicketSchema,
   type CustomerOption,
   type MembershipSummary,
   type ProjectActor,
   type ProjectApproval,
   type ProjectApprovals,
   type ProjectDetail,
+  type ProjectFile,
   type ProjectMember,
   type ProjectMemberCandidate,
   type ProjectMemberRole,
   type ProjectRun,
   type ProjectRuns,
   type ProjectSummary,
+  type UploadTicket,
 } from '@agent-office/shared';
 import { apiError, ARMADX, json, sessionHandler, USER_ID, type Handler } from './mock-api.ts';
 
@@ -363,6 +368,87 @@ export function projectApprovals(
     seesUndecided: true,
     ...overrides,
   });
+}
+
+/** The key of the list of a project's files (the "Dosyalar" tab of its page). */
+export function projectFilesRoute(projectId: string = PROJECT_ID): string {
+  return `GET /projects/${projectId}/files`;
+}
+
+export const FILE_ID = 'f1111111-1111-4111-8111-111111111111';
+
+/** One file of the fixture's project: a PDF the reader added three days before the fixtures' day. */
+export function projectFile(overrides: Partial<ProjectFile> = {}): ProjectFile {
+  return projectFileSchema.parse({
+    id: FILE_ID,
+    name: 'Şartname.pdf',
+    kind: 'pdf',
+    sizeBytes: 1_258_291,
+    createdAt: '2026-10-05T09:00:00.000Z',
+    createdBy: { userId: USER_ID, name: 'Ömer Kadıoğlu' },
+    deletable: true,
+    ...overrides,
+  });
+}
+
+/**
+ * Three files as the founder reads them, newest first: a text file written without a person, a
+ * spreadsheet a colleague added (the founder may delete it), a PDF the reader added.
+ */
+export const FILES: ProjectFile[] = [
+  projectFile({
+    id: 'f3333333-3333-4333-8333-333333333333',
+    name: 'notlar.txt',
+    kind: 'text',
+    sizeBytes: 850,
+    createdAt: '2026-10-07T09:00:00.000Z',
+    createdBy: null,
+  }),
+  projectFile({
+    id: 'f2222222-2222-4222-8222-222222222222',
+    name: 'Maliyet tablosu.xlsx',
+    kind: 'spreadsheet',
+    sizeBytes: 12_700,
+    createdAt: '2026-10-06T09:00:00.000Z',
+    createdBy: { userId: AYSE.userId, name: 'Ayşe Yılmaz' },
+  }),
+  projectFile(),
+];
+
+/** GET /projects/:id/files answering the given files. */
+export function filesHandler(files: ProjectFile[] = FILES, storageAvailable = true): Handler {
+  return () => json(projectFileListSchema.parse({ files, storageAvailable }));
+}
+
+/**
+ * The ids the upload dialog gives the files a test chooses: the dialog makes a random id with every
+ * choice, so a test that sends a file makes crypto.randomUUID answer these in turn (useUploadIds
+ * in the test file) and the fake API answers the ticket request of each.
+ */
+export const UPLOAD_IDS = [1, 2, 3, 4, 5, 6, 7, 8].map(
+  (n) =>
+    `e${String(n).repeat(7)}-${String(n).repeat(4)}-4${String(n).repeat(3)}-8${String(n).repeat(3)}-${String(n).repeat(12)}`,
+);
+
+/** The key of the ticket request of one upload to the fixture's project. */
+export function ticketRoute(fileId: string, projectId: string = PROJECT_ID): string {
+  return `POST /projects/${projectId}/files/${fileId}/ticket`;
+}
+
+export const UPLOAD_TICKET: UploadTicket = uploadTicketSchema.parse({
+  ticket: `1791500000.${'A'.repeat(43)}`,
+  expiresAt: '2026-10-08T09:01:00.000Z',
+});
+
+/**
+ * POST /projects/:id/files/:fileId/ticket for every id of UPLOAD_IDS, answering a ticket unless
+ * the test gives another answer.
+ */
+export function ticketHandlers(
+  handler: Handler = () => json(UPLOAD_TICKET),
+  projectId: string = PROJECT_ID,
+): Record<string, Handler> {
+  return Object.fromEntries(UPLOAD_IDS.map((id) => [ticketRoute(id, projectId), handler]));
 }
 
 /**

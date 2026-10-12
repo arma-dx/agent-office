@@ -216,6 +216,24 @@ export const FILE_PROBLEM: Record<ProjectFileProblem, string> = {
   too_large: 'Dosya 25 MB sınırını aşıyor. Daha küçük bir dosya seçin.',
 };
 
+/**
+ * The sentences of the upload dialog that are rules, not labels.
+ * - personalData: 8 October decision 21 (docs/SONRA.md P-g). The code cannot tell personal data;
+ *   the rule is kept by this sentence and by the person who adds the file.
+ * - agentsWillRead: 11 October decision 3. Said already now, although no agent reads a file yet
+ *   (that is a later step): the files added today are still there when the reading opens. It is a
+ *   sentence about every project, not about the state of this one: the permission can be opened
+ *   after the file was added.
+ */
+export const FILE_DIALOG_TEXT = {
+  personalData: 'Avukatın görüşü gelene kadar projeye kişisel veri içeren dosya eklenmez.',
+  agentsWillRead: 'Yapay zekâ izni açık projede ajanlar da projedeki bütün dosyaları okuyacak.',
+  sizeLimit: 'Dosya başına en çok 25 MB.',
+  chooseFirst: 'Önce bir dosya seçin.',
+  stored: 'Dosya gönderildi, kaydediliyor.',
+  sendingForScreenReader: 'Dosya yükleniyor.',
+} as const;
+
 const oneDecimal = new Intl.NumberFormat('tr-TR', { maximumFractionDigits: 1 });
 
 /** A size as a person reads it: "850 B", "12,4 KB", "3,2 MB" (1 KB is 1024 B, as the limit counts). */
