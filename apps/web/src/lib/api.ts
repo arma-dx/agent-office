@@ -88,19 +88,27 @@ interface RequestOptions<T> {
   signal?: AbortSignal;
 }
 
-/** Reads the error body; returns an ApiError with the API's message when the body has the agreed shape. */
-async function errorFromResponse(response: Response): Promise<ApiError> {
+/**
+ * The error of an answer that was not a success: an ApiError with the API's own message when the
+ * body has the agreed shape, otherwise one that carries only the status.
+ */
+export function errorFromBody(status: number, body: unknown): ApiError {
+  const parsed = apiErrorSchema.safeParse(body);
+  if (parsed.success && parsed.data.error.message.trim() !== '') {
+    return new ApiError(status, parsed.data.error.message, parsed.data.error.code);
+  }
+  return new ApiError(status, `Request failed (${String(status)})`);
+}
+
+/** Reads the error body of a fetch answer. */
+export async function errorFromResponse(response: Response): Promise<ApiError> {
   let body: unknown = undefined;
   try {
     body = await response.json();
   } catch {
     // Not JSON (for example a proxy error page); fall back to the status code.
   }
-  const parsed = apiErrorSchema.safeParse(body);
-  if (parsed.success && parsed.data.error.message.trim() !== '') {
-    return new ApiError(response.status, parsed.data.error.message, parsed.data.error.code);
-  }
-  return new ApiError(response.status, `Request failed (${String(response.status)})`);
+  return errorFromBody(response.status, body);
 }
 
 /**
