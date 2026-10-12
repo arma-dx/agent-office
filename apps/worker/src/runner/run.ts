@@ -39,9 +39,14 @@ import {
   type UnitForRouting,
 } from './prompt.ts';
 import {
+  ASK_REQUESTER,
+  ASK_RULES_HEADING,
+  ASK_TOOL,
+  ASK_TOOL_COORDINATOR,
   HANDLED_TOOLS,
   ROUTE_TASK,
   SUBMIT_FOR_APPROVAL,
+  askRequesterInput,
   inputProblems,
   modelTool,
   routeTaskInput,
@@ -70,6 +75,14 @@ import {
  * call and again before every further one. When the founder raises the limit or
  * takes it away, the work it held starts again by itself (11 October decision 1): the refusal
  * and the stop are therefore written behind the lock a restart takes, as for a stopped agent.
+ *
+ * An agent may ask the requester a question (CLAUDE.md "İnsana sor"; 12 October decisions 3 and
+ * 4). The asking tool is the runner's own: it is on no card and in no catalog, is offered by the
+ * runner while the database says the agent may still ask on the request and the card version
+ * carries the rules that say when not to, and is handled before the gate of catalog tools. A
+ * question ends the run in the transaction that stores it; the request then waits for the
+ * answer, no job is sent, and the answer's own job opens the next run, which is given every
+ * answered question of the request as data (rule 7). Nothing of this reaches the approval desk.
  */
 
 export type RunOutcome =
@@ -96,6 +109,9 @@ export type RunOutcome =
   | 'submitted'
   | 'no_routing'
   | 'no_submission'
+  // The agent asked the requester a question and ended; the request waits for the answer, and
+  // the answer's own job starts the next run.
+  | 'asked'
   | 'limit_reached'
   | 'stopped'
   | 'failed';
@@ -139,23 +155,59 @@ const ENDED_WITHOUT_RESULT = {
 } as const;
 
 /**
+ * The summary of a run that ended with a question: code's own sentence, read by everybody. It
+ * says what the run did and not that the request waits: the sentence stays in the journey of the
+ * request after the answer, and what the request waits for is said by its stage.
+ */
+const ASKED = {
+  coordinator: 'Koordinasyon merkezi talep sahibine bir soru sordu ve çalışmasını bitirdi.',
+  agent: 'Ajan talep sahibine bir soru sordu ve çalışmasını bitirdi.',
+} as const;
+
+/**
  * Sent once when a turn ends in text although no result was stored: a tool cannot be forced on a
  * run that thinks, and the provider's own guidance is to check that the call was made and ask again.
  * The runner's own words, in a block of their own that no data block can imitate (dataBlock
  * escapes every "<").
  *
- * Two texts, because the two kinds of run end differently. A unit agent that cannot do the work
- * says so in prose and does not call its tool. The coordinator never ends in prose: "no unit fits"
- * is an answer of its tool too (an empty unit), so its reminder asks for the tool and nothing else.
+ * Two kinds of text, because the two kinds of run end differently. A unit agent that cannot do the
+ * work says so in prose and does not call its tool. The coordinator never ends in prose: "no unit
+ * fits" is an answer of its tool too (an empty unit), so its reminder asks for a tool and nothing
+ * else. Each kind has a text for a run that may still ask the requester and one for a run that
+ * may not.
  */
 const notice = (body: string): string => `<runner_notice>\n${body}\n</runner_notice>`;
+const COORDINATOR_REMINDER_START =
+  'Çalışman bitiş aracı çağrılmadan sona erdi; yazdığın metin kaydedilmedi. Yönlendirme kararın yalnızca `route_task` aracıyla kaydedilir; şimdi bitiş aracını çağır. Talep hiçbir birime oturmuyorsa ya da hangi birimin işi olduğu anlaşılmıyorsa aracı yine çağır: unit_code ve agent_code boş metin ("") olsun, nedenini reason alanına yaz.';
+const NO_PROSE = 'Düz metinle yanıt verme.';
+// Which of the four is sent depends on the run: a coordinator or a unit agent, and whether the
+// run may still ask the requester (a text that held a question reached nobody either).
 const REMINDER = {
-  coordinator: notice(
-    'Çalışman bitiş aracı çağrılmadan sona erdi; yazdığın metin kaydedilmedi. Yönlendirme kararın yalnızca `route_task` aracıyla kaydedilir; şimdi bitiş aracını çağır. Talep hiçbir birime oturmuyorsa ya da hangi birimin işi olduğu anlaşılmıyorsa aracı yine çağır: unit_code ve agent_code boş metin ("") olsun, nedenini reason alanına yaz. Düz metinle yanıt verme.',
+  coordinator: notice(`${COORDINATOR_REMINDER_START} ${NO_PROSE}`),
+  // Reached only where the coordinator's profile thinks and nothing is forced.
+  coordinatorMayAsk: notice(
+    `${COORDINATOR_REMINDER_START} İşin hangi birimin işi olduğu talep sahibinin kısa bir yanıtıyla belli olacaksa \`route_task\` yerine \`${ASK_REQUESTER}\` aracını çağırabilirsin. ${NO_PROSE}`,
   ),
   agent: notice(
-    'Çalışman bitiş aracı çağrılmadan sona erdi; yazdığın metin kaydedilmedi. Sonuç yalnızca bitiş aracınla kaydedilir. Sonucu sunacaksan şimdi bitiş aracını çağır. İşi yapamıyorsan aracı çağırma; nedenini bir iki cümleyle yeniden yaz.',
+    'Çalışman bitiş aracı çağrılmadan sona erdi; yazdığın metin kaydedilmedi. Sonuç yalnızca bitiş aracınla kaydedilir. Sonucu sunacaksan şimdi bitiş aracını çağır. İşi yapamıyorsan aracı çağırma; nedenini bir iki cümleyle yeniden yaz. Bu talepte talep sahibine soru soramazsın; metnindeki bir soru kimseye ulaşmaz.',
   ),
+  agentMayAsk: notice(
+    `Çalışman bir araç çağrılmadan sona erdi; yazdığın metin kaydedilmedi ve kimseye ulaşmadı. Sonuç yalnızca bitiş aracınla kaydedilir; sonucu sunacaksan şimdi bitiş aracını çağır. Metninde talep sahibine bir soru varsa o da ulaşmadı: soru yalnızca \`${ASK_REQUESTER}\` aracıyla sorulur; iş o bilgi olmadan yapılamıyorsa şimdi o aracı çağır. İşi yapamıyorsan hiçbir aracı çağırma; nedenini bir iki cümleyle yeniden yaz.`,
+  ),
+} as const;
+
+/**
+ * What the model is told when it names the asking tool although the run may not ask (the agent
+ * has used its questions on the request, the database said so behind the runner, or the card
+ * version is from before the question texts): what to do instead, so that the run goes on
+ * (12 October decision 3: "yanıt yetmezse yeniden sormaz"). Fixed sentences, like every refusal;
+ * they name no reason, because "you may not ask in this run" is true of every case.
+ */
+const QUESTION_LIMIT = {
+  agent:
+    'Bu çalışmada talep sahibine soru soramazsın. Elindeki bilgiyle çalış ve sonucu bitiş aracınla sun; iş bu bilgiyle yapılamıyorsa hiçbir aracı çağırma, nedenini bir iki cümleyle yaz',
+  coordinator:
+    'Bu çalışmada talep sahibine soru soramazsın. `route_task` aracını çağır: işin sahibi olan birim belliyse yönlendir; hâlâ belli değilse unit_code ve agent_code boş metin ("") olsun, nedenini reason alanına yaz',
 } as const;
 
 /**
@@ -494,11 +546,18 @@ export async function runAgentJob(
       const tool = modelTool(name);
       return tool ? [tool] : [];
     });
+  // The asking tool is offered only to a card version whose common rules carry the section that
+  // says when an agent asks and when it does not. A version stored before the question texts
+  // existed (a database on which the definitions were not synced after this step) runs as
+  // before, without the tool: the path must be narrow in the running system, not only in the
+  // repository's files.
+  const rulesSayWhenToAsk = version.stored.rules.body.includes(ASK_RULES_HEADING);
   // How the model is called and what it costs: the profile the card version holds.
   const profile: ModelProfile = version.stored.model;
-  // The coordinator answers through its closing tool and nothing else: left to choose, the small
-  // model it runs on ended about every second run in prose, and such a request falls to the
-  // founder while its requester learns nothing. Only where the profile sends no thinking.
+  // The coordinator answers through a tool and nothing else: left to choose, the small model it
+  // runs on ended about every second run in prose, and such a request falls to the founder
+  // while its requester learns nothing. Only where the profile sends no thinking. Which tool:
+  // its closing tool, or, while it may ask, one of the two (the tool choice of each call below).
   const forcedTool =
     coordinator &&
     profile.thinking !== 'adaptive' &&
@@ -519,6 +578,11 @@ export async function runAgentJob(
         data: PromptData;
         previousApprovalId: string | null;
         carried: CarriedMarks;
+        // The run may ask the requester: the asking tool is among the tools it is given.
+        mayAsk: boolean;
+        // The tools the model is given: the card's handled tools and, when the run may ask, the
+        // runner's asking tool after them.
+        given: ModelTool[];
       };
   // Runs of this agent that were still open for a step that has since been replaced.
   const superseded: string[] = [];
@@ -577,6 +641,11 @@ export async function runAgentJob(
     if (!task.ai_allowed) return { kind: 'refused', outcome: 'ai_not_allowed' };
     if (task.status === 'done' || task.status === 'cancelled') {
       return { kind: 'refused', outcome: 'request_closed' };
+    }
+    // The request waits for the answer to an agent's question: nothing was called for. The
+    // answer's own job comes with the answer. Nothing to do, like a duplicate.
+    if (task.status === 'awaiting_reply') {
+      return { kind: 'refused', outcome: 'duplicate_job' };
     }
     // The job names the requester: who asked. In whose name the run goes is the gate's answer,
     // which may be the founder (decision 45); a job that names anybody else as the requester is
@@ -749,6 +818,19 @@ export async function runAgentJob(
       }
     }
 
+    // How many questions this agent may still ask on this request (12 October decisions 3 and
+    // 4): the database's number, in the name and the project the gate resolved. With none left
+    // the asking tool is not offered at all. Anything but a positive number reads as none.
+    const left = await client.query<{ left: number | null }>(
+      'select office.questions_left($1) as left',
+      [job.taskId],
+    );
+    const mayAsk = (left.rows[0]?.left ?? 0) > 0 && rulesSayWhenToAsk;
+    // The coordinator's copy of the tool carries its own, narrower description.
+    const given: ModelTool[] = mayAsk
+      ? [...offered, coordinator ? ASK_TOOL_COORDINATOR : ASK_TOOL]
+      : offered;
+
     const inserted = await client.query<{ id: string; routing_id: string | null }>(
       `insert into office.runs
          (company_id, task_id, agent_code, card_version_id, trigger_type, model, input)
@@ -760,9 +842,10 @@ export async function runAgentJob(
         version.id,
         coordinator ? 'request' : 'handoff',
         version.model,
-        // Ids, the tool list and the limits; the request text stays on the request.
+        // Ids, the tool list and the limits; the request text stays on the request. The tools
+        // are what the run is given, with or without the asking tool.
         JSON.stringify({
-          tools: offered.map((tool) => tool.name),
+          tools: given.map((tool) => tool.name),
           limits: card.limits,
           attempt: revision ? 'revision' : 'first',
         }),
@@ -812,12 +895,32 @@ export async function runAgentJob(
       await audit(client, 'run_failed', { runId, recordType: 'task', recordId: job.taskId });
       return { kind: 'closed', outcome: closeWith, runId };
     }
+    // What was asked on this request and answered so far, by this agent or another (rule 7:
+    // data). The database gives them to the run's own running run and to nobody else; the id is
+    // the one this transaction just wrote, never anything a model or a job named.
+    const asked = await client.query<{
+      agent_code: string;
+      question: string;
+      answer: string;
+      answered_in_place: boolean;
+    }>('select agent_code, question, answer, answered_in_place from office.run_questions($1)', [
+      runId,
+    ]);
+    if (asked.rows.length > 0) {
+      // How many answers the run was given: a number with the run, never a text (rule 5).
+      await client.query('update office.runs set input = input || $2::jsonb where id = $1', [
+        runId,
+        JSON.stringify({ answers: asked.rows.length }),
+      ]);
+    }
     return {
       kind: 'open',
       runId,
       stepId,
       previousApprovalId,
       carried,
+      mayAsk,
+      given,
       data: {
         facts: {
           company: task.company_name,
@@ -834,6 +937,19 @@ export async function runAgentJob(
           ...(task.due_date !== null ? { dueDate: task.due_date } : {}),
         },
         request: { title: task.title, text: task.description ?? '' },
+        ...(asked.rows.length > 0
+          ? {
+              questions: asked.rows.map((row) => ({
+                askedBy: row.agent_code,
+                own: row.agent_code === job.agentCode,
+                question: row.question,
+                answer: row.answer,
+                answeredBy: row.answered_in_place
+                  ? ('founder_for_requester' as const)
+                  : ('requester' as const),
+              })),
+            }
+          : {}),
         ...(units ? { units } : {}),
         ...(!coordinator && task.step_corrected
           ? { routing: { correctedByPerson: true as const, note: task.step_note } }
@@ -935,7 +1051,13 @@ export async function runAgentJob(
   const system = systemText(
     version.stored,
     offered.map((tool) => tool.name),
+    opened.mayAsk,
   );
+  // Whether the run may still ask the requester. The tools and the instructions of the run say
+  // what it was opened with and do not change (the provider's cache key stays); this is set to
+  // false when the database refuses a question for the limit, and the tool choice and the
+  // reminder read it from then on.
+  let mayAsk = opened.mayAsk;
   const messages: ModelTurn[] = [
     { role: 'user', content: [{ type: 'text', text: dataText(opened.data) }] },
   ];
@@ -1061,8 +1183,110 @@ export async function runAgentJob(
 
   type Executed = { result: ToolResult; end: null } | { result: null; end: RunResult };
 
+  /**
+   * A question to the requester ("insana sor"). One short transaction: the question (the
+   * database checks whose turn it is, the limit and the request, puts the request to "Yanıt
+   * bekliyor" and writes its audit row), the count, and the end of this run. No job is sent:
+   * the answer calls for the next run. The call leaves no row in tool_calls (the name is not a
+   * catalog tool); the question row and its audit row carry the run.
+   *
+   * What reaches the database of the model's input is the text of the question and nothing
+   * else: the request is the job's and the run is the one this job opened.
+   */
+  const ask = async (block: ToolUse): Promise<Executed> => {
+    const instead = coordinator ? QUESTION_LIMIT.coordinator : QUESTION_LIMIT.agent;
+    if (!mayAsk) {
+      // Not offered in this run: the agent has used its questions on this request, or its card
+      // version is from before the question texts. The run goes on: decision 3 says what the
+      // agent does instead of asking again, and both ways need the run.
+      return {
+        result: await refused(block, 'blocked', 'question_limit_reached', [instead]),
+        end: null,
+      };
+    }
+    const input = askRequesterInput.safeParse(block.input);
+    if (!input.success) {
+      return {
+        result: await refused(block, 'failed', 'invalid_input', inputProblems(input.error)),
+        end: null,
+      };
+    }
+    try {
+      await agentStep(deps.pool, context, async (client) => {
+        const question = await client.query<{ id: string }>(
+          'select office.ask_question($1, $2, $3) as id',
+          [job.taskId, runId, input.data.question],
+        );
+        const closed = await client.query(
+          `update office.runs set tool_call_count = tool_call_count + 1, status = 'completed',
+             finished_at = now(), summary = $2, output = $3
+           where id = $1 and status = 'running'`,
+          [
+            runId,
+            coordinator ? ASKED.coordinator : ASKED.agent,
+            // The id, never the text: the run is read by people who may not read the question.
+            JSON.stringify({
+              outcome: 'asked',
+              question_id: question.rows[0]?.id ?? null,
+              model_calls: modelCalls,
+              model_sends: modelSends,
+              request_ids: requestIds,
+            }),
+          ],
+        );
+        if ((closed.rowCount ?? 0) === 0) {
+          // The run is hidden from this context or was closed from elsewhere in this instant:
+          // a question without the end of its run must not stay. Rolled back with this step.
+          throw new Error('The run that asked could not be closed');
+        }
+        await audit(client, 'run_completed', { runId, recordType: 'task', recordId: job.taskId });
+      });
+    } catch (error) {
+      const state = sqlState(error);
+      if (state === '54000') {
+        // The database's count is the truth: this run asks no more. A coordinator whose choice
+        // is forced among its two tools is forced to its closing tool from its next call on.
+        mayAsk = false;
+        return {
+          result: await refused(block, 'failed', 'question_limit_reached', [instead]),
+          end: null,
+        };
+      }
+      if (state === '22023') {
+        return { result: await refused(block, 'failed', 'invalid_input'), end: null };
+      }
+      if (state === '23514' || state === '42501' || state === 'P0002') {
+        // No question was stored. If this context no longer sees its own run, agents may no
+        // longer work in the run's project (rule 12: the database stopped the run) or its
+        // person is no longer the one the database resolves for the request (8 October
+        // decision 45): the handler at the end of the loop tells the two apart, and hands the
+        // run over in the second case, so that the work is called for again in the name
+        // resolved now. Closing the run from here would change no row and leave it open.
+        const seen = await agentStep(deps.pool, context, (client) =>
+          client.query('select 1 from office.runs where id = $1', [runId]),
+        );
+        if (seen.rows.length === 0) throw error;
+        // The request was closed or routed elsewhere meanwhile, or the run was closed from
+        // elsewhere: the run ends here, as for a result the request can no longer take.
+        await refused(block, 'failed', 'request_changed');
+        return {
+          result: null,
+          end: await finish('stopped', 'stopped', { errorCode: 'request_changed' }),
+        };
+      }
+      throw error;
+    }
+    deps.log('run_finished', { run: runId, status: 'completed', outcome: 'asked', code: null });
+    return { result: null, end: { outcome: 'asked', runId, modelCalls } };
+  };
+
   const execute = async (block: ToolUse): Promise<Executed> => {
     toolCalls += 1;
+    if (block.name === ASK_REQUESTER) {
+      // The runner's own path: never a catalog tool, never through the gate (rule 4 is not
+      // touched: a question releases nothing and reaches nobody but the requester).
+      return ask(block);
+    }
     const decision = gateToolCall(
       { level: card.authority.level, tools: card.tools },
       catalog.get(block.name),
@@ -1319,14 +1543,18 @@ export async function runAgentJob(
         model: version.model,
         max_tokens: profile.max_tokens,
         system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
-        tools: offered,
-        // At most one tool call per turn. The coordinator's closing tool is the tool choice itself
-        // where its profile sends no thinking; a forced tool cannot be combined with thinking, so
-        // for every other run "end with your tool" is an instruction and the choice stays "auto".
+        tools: opened.given,
+        // At most one tool call per turn. The coordinator answers through a tool and nothing
+        // else where its profile sends no thinking: with the asking tool beside its closing
+        // tool the choice is forced among the two ("any"); with the closing tool alone it is
+        // that tool, as before. A forced choice cannot be combined with thinking, so for every
+        // other run "end with your tool" is an instruction and the choice stays "auto".
         tool_choice:
           forcedTool === null
             ? { type: 'auto', disable_parallel_tool_use: true }
-            : { type: 'tool', name: forcedTool, disable_parallel_tool_use: true },
+            : mayAsk
+              ? { type: 'any', disable_parallel_tool_use: true }
+              : { type: 'tool', name: forcedTool, disable_parallel_tool_use: true },
         messages,
         ...(profile.thinking === 'adaptive' ? { thinking: { type: 'adaptive' as const } } : {}),
         ...(profile.effort === null ? {} : { output_config: { effort: profile.effort } }),
@@ -1538,7 +1766,16 @@ export async function runAgentJob(
             messages.push({
               role: 'user',
               content: [
-                { type: 'text', text: coordinator ? REMINDER.coordinator : REMINDER.agent },
+                {
+                  type: 'text',
+                  text: coordinator
+                    ? mayAsk
+                      ? REMINDER.coordinatorMayAsk
+                      : REMINDER.coordinator
+                    : mayAsk
+                      ? REMINDER.agentMayAsk
+                      : REMINDER.agent,
+                },
               ],
             });
             break;

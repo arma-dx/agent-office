@@ -5,7 +5,9 @@
 # external_effect sınıfındaki her çağrı Onay Masası'na düşer.
 # Y1 kartların internal_write çağrıları onaya düşer. İstisnalar: kendi görevinin durum geçişlerini çalıştırıcı yapar;
 # Y1'in write_note çağrısı notu draft durumunda açar, not onaydan sonra paylaşılır. Görev açma Y1'de suggest_task ile öneri olarak gelir.
-# Ajanın soruları ve "kurucuya bildirir" türündeki eskalasyonları katalogdaki bir araçla değil, çalıştırıcının "insana sor" yoluyla gider; bu yol onaya düşmez.
+# Ajanın talep sahibine sorusu katalogdaki bir araçla değil, çalıştırıcının kendi aracıyla gider (`ask_requester`, "insana sor" yolu); bu yol onaya düşmez.
+# `ask_requester` adı bu katalogda ve kartların `tools` listesinde yer alamaz: çalıştırıcı aracı, soru hakkı kalan talep çalışmasına kendisi verir.
+# "Kurucuya bildirir" türündeki eskalasyonlar da "insana sor" yolundan gidecek; henüz kurulmadı.
 # Araçlardan onay isteyen durumlar, sınıfı ne olursa olsun (ör. draft sınıfındaki write_station_candidates), "approval_rule" alanında yazılıdır.
 # Her çalışma tek bir şirket adına koşar. Bütün araçlar çalışmanın bağlamıyla (şirket, kullanıcı, ajan ve varsa proje) ve kartındaki izinle sınırlıdır.
 # Proje bağlamı olmayan ajan çalışması proje kapsamlı satır görmez. AI izni olmayan müşteriye bağlı bütün kayıtlar ajan çalışmalarına kapalıdır.

@@ -16,6 +16,7 @@ import {
   projectAiSpendingLimitDetails,
   requestDetailSchema,
   requestListSchema,
+  todaySchema,
   type ApprovalDesk,
   type RequestDetail,
 } from '@agent-office/shared';
@@ -1490,6 +1491,228 @@ describe.skipIf(noDatabase)('a request from the first line to "done"', () => {
       agent: 'SOS-2',
     });
     expect(await detail(founder, id)).toMatchObject({ stage: 'unit_approval', waitingForMe: true });
+    expect(await workerQueue.fetch(AGENT_RUN_QUEUE)).toEqual([]);
+    expect(errors).toEqual([]);
+    await post(founder, `/api/requests/${id}/close`, { reason: 'Deneme bitti.' });
+  });
+
+  // An agent's question (12 October decisions 3 and 4): the runner's own path, the request page
+  // and Bugün, the requester's answer through the API, and the same agent's next run.
+  const QUESTION = 'Cuma günkü etkinlik için şunlar gerekli:\n1. Etkinliğin adı\n2. Yeri ve saati';
+  const ANSWER = 'Ürün lansmanı, 7 Kasım Cuma 14.00, Maslak ofis.';
+
+  /** The requests that expect something of the person on Bugün. */
+  async function expectedOf(session: string): Promise<string[]> {
+    const today = todaySchema.parse((await get(session, '/api/today')).json());
+    return today.expected.map((request) => request.id);
+  }
+
+  /** The jobs of a request that wait on the queue, as they were sent. */
+  const queuedFor = (id: string) =>
+    admin<{ data: unknown }>(
+      `select data from pgboss.job
+       where name = $1 and data ->> 'taskId' = $2 and state = 'created'`,
+      [AGENT_RUN_QUEUE, id],
+    );
+
+  /** The names of the tools the model was given in the first call of a run. */
+  const toolsOf = (model: ScriptedModel): string[] =>
+    (model.requests[0]?.tools ?? []).flatMap((tool) => ('name' in tool ? [tool.name] : []));
+
+  it('a request with a question, end to end', async () => {
+    await settle();
+    const id = randomUUID();
+    const created = await post(employee, '/api/requests', {
+      id,
+      text: 'Cuma günkü etkinliğimizi duyuran bir gönderi yaz.',
+    });
+    expect(created.statusCode, created.body).toBe(201);
+    expect(await work(new ScriptedModel([toolUse('route_task', ROUTE_TO_SOS)]))).toEqual({
+      outcome: 'routed',
+      agent: 'KOR-1',
+    });
+
+    // The unit agent cannot write without the event: it asks, and its run ends.
+    const asking = new ScriptedModel([toolUse('ask_requester', { question: QUESTION })]);
+    expect(await work(asking)).toEqual({ outcome: 'asked', agent: 'SOS-2' });
+    // Nothing was put on the queue, and nothing reached the approval desk.
+    expect(await workerQueue.fetch(AGENT_RUN_QUEUE)).toEqual([]);
+    for (const session of [founder, employee]) {
+      expect(await waitingFor(session, id)).toEqual({ approval: false, acceptance: false });
+    }
+
+    // The requester reads the question on the request's page and has the box to answer it; the
+    // request is on their Bugün list and on nobody else's.
+    const mine = await detail(employee, id);
+    expect(mine).toMatchObject({
+      status: 'awaiting_reply',
+      stage: 'awaiting_reply',
+      waitingForMe: true,
+      approval: null,
+      question: {
+        agent: { code: 'SOS-2' },
+        text: QUESTION,
+        mayAnswer: true,
+        inPlaceOfRequester: false,
+      },
+    });
+    const questionId = mine.question?.id ?? '';
+    expect(journeyOf(mine)).toEqual([
+      'run:completed',
+      'routing:',
+      'run:completed',
+      'question:open',
+    ]);
+    expect(await expectedOf(employee)).toContain(id);
+    expect(await expectedOf(founder)).not.toContain(id);
+    // The approver of the request (the founder: nobody is appointed for the unit) reads the
+    // question and cannot answer it while the requester can.
+    expect(await detail(founder, id)).toMatchObject({
+      stage: 'awaiting_reply',
+      waitingForMe: false,
+      question: { id: questionId, text: QUESTION, mayAnswer: false },
+    });
+    const byFounder = await post(founder, `/api/requests/${id}/questions/${questionId}/answer`, {
+      answer: 'Kurucunun yanıtı.',
+    });
+    expect([byFounder.statusCode, errorCode(byFounder)]).toEqual([403, 'answer_not_allowed']);
+    expect(await queuedFor(id)).toEqual([]);
+
+    // The requester answers: the request is in progress again, and the job of the agent that
+    // asked is on the queue, with ids only (rule 10).
+    const answered = await post(employee, `/api/requests/${id}/questions/${questionId}/answer`, {
+      answer: ANSWER,
+    });
+    expect(answered.statusCode, answered.body).toBe(200);
+    expect(requestDetailSchema.parse(answered.json())).toMatchObject({
+      status: 'in_progress',
+      stage: 'working',
+      turn: { kind: 'agent', code: 'SOS-2' },
+      waitingForMe: false,
+      question: null,
+    });
+    expect(await queuedFor(id)).toEqual([
+      { data: { companyId: ids.arma, userId: ids.employee, taskId: id, agentCode: 'SOS-2' } },
+    ]);
+    expect(await expectedOf(employee)).not.toContain(id);
+
+    // The same agent runs again and is given the question and the answer as marked data; it
+    // has asked once on this request and is not given the asking tool again.
+    const writing = new ScriptedModel([toolUse('submit_for_approval', RESULT)]);
+    expect(await work(writing)).toEqual({ outcome: 'submitted', agent: 'SOS-2' });
+    const data = dataOf(writing);
+    expect(data).toContain('<questions_and_answers>');
+    expect(data).toContain('Maslak ofis.');
+    expect(data).toContain('answeredBy\\":\\"requester');
+    expect(toolsOf(writing)).toEqual(['submit_for_approval']);
+    expect(toolsOf(asking)).toEqual(['submit_for_approval', 'ask_requester']);
+
+    // From here the request goes the way of every request: the approver, then the requester.
+    const waiting = await detail(founder, id);
+    expect(waiting).toMatchObject({ stage: 'unit_approval', waitingForMe: true, question: null });
+    await approve(waiting.approval?.id ?? '', 'A');
+    const accepted = await post(employee, `/api/requests/${id}/acceptance`, {
+      decision: 'approved',
+    });
+    const done = requestDetailSchema.parse(accepted.json());
+    expect(done).toMatchObject({ status: 'done', stage: 'done', question: null });
+    expect(journeyOf(done)).toEqual([
+      'run:completed',
+      'routing:',
+      'run:completed',
+      'question:answered',
+      'run:completed',
+      'approval:approved',
+      'acceptance:approved',
+    ]);
+    // Every status was written by the flow; "Yanıt bekliyor" once, between two "in progress".
+    const statuses = await admin<{ event: string }>(
+      `select event from office.audit_log
+       where record_type = 'task' and record_id = $1 and event like 'task_status_%' order by id`,
+      [id],
+    );
+    expect(statuses.map((row) => row.event)).toEqual([
+      'task_status_in_progress',
+      'task_status_awaiting_reply',
+      'task_status_in_progress',
+      'task_status_awaiting_approval',
+      'task_status_done',
+    ]);
+    expect((await runsOf(id)).map((run) => [run.agent_code, run.status, run.user_id])).toEqual([
+      ['KOR-1', 'completed', ids.employee],
+      ['SOS-2', 'completed', ids.employee],
+      ['SOS-2', 'completed', ids.employee],
+    ]);
+    expect(await workerQueue.fetch(AGENT_RUN_QUEUE)).toEqual([]);
+    expect(errors).toEqual([]);
+  });
+
+  it('the answer while the agent is stopped: the opening’s restart runs the agent with the answer', async () => {
+    await settle();
+    const id = randomUUID();
+    const created = await post(employee, '/api/requests', {
+      id,
+      text: 'Cuma günkü etkinliğimizi duyuran bir gönderi yaz.',
+    });
+    expect(created.statusCode, created.body).toBe(201);
+    expect(await work(new ScriptedModel([toolUse('route_task', ROUTE_TO_SOS)]))).toEqual({
+      outcome: 'routed',
+      agent: 'KOR-1',
+    });
+    expect(
+      await work(new ScriptedModel([toolUse('ask_requester', { question: QUESTION })])),
+    ).toEqual({ outcome: 'asked', agent: 'SOS-2' });
+    const questionId = (await detail(employee, id)).question?.id ?? '';
+    try {
+      // The founder stops the agent while the request waits for the answer. A request that
+      // waits for an answer is not waiting work: it still reads "Yanıt bekliyor".
+      await switchUnitAgent('stopped');
+      expect(await detail(employee, id)).toMatchObject({
+        stage: 'awaiting_reply',
+        waitingForMe: true,
+      });
+      // The answer is stored whatever holds the work; no job is sent for a stopped agent.
+      const answered = await post(employee, `/api/requests/${id}/questions/${questionId}/answer`, {
+        answer: ANSWER,
+      });
+      expect(answered.statusCode, answered.body).toBe(200);
+      for (const session of [founder, employee]) {
+        expect(await detail(session, id)).toMatchObject({
+          status: 'in_progress',
+          stage: 'fell_to_person',
+          cause: 'agent_stopped',
+          turn: { kind: 'founder' },
+          waitingForMe: session === founder,
+          question: null,
+        });
+      }
+      expect(await queuedFor(id)).toEqual([]);
+      // The founder opens the agent: the answered request is started by that very act.
+      expect(await switchUnitAgent('enabled')).toBe(1);
+    } finally {
+      await switchUnitAgent('enabled');
+    }
+    expect(await queuedFor(id)).toEqual([
+      { data: { companyId: ids.arma, userId: ids.employee, taskId: id, agentCode: 'SOS-2' } },
+    ]);
+    expect(await detail(founder, id)).toMatchObject({
+      stage: 'working',
+      cause: null,
+      turn: { kind: 'agent', code: 'SOS-2' },
+    });
+    // The worker takes the job like any other; the run is given the answer.
+    const writing = new ScriptedModel([toolUse('submit_for_approval', RESULT)]);
+    expect(await work(writing)).toEqual({ outcome: 'submitted', agent: 'SOS-2' });
+    expect(dataOf(writing)).toContain('Maslak ofis.');
+    expect(await detail(founder, id)).toMatchObject({ stage: 'unit_approval', waitingForMe: true });
+    expect(journeyOf(await detail(founder, id))).toEqual([
+      'run:completed',
+      'routing:',
+      'run:completed',
+      'question:answered',
+      'run:completed',
+      'approval:pending',
+    ]);
     expect(await workerQueue.fetch(AGENT_RUN_QUEUE)).toEqual([]);
     expect(errors).toEqual([]);
     await post(founder, `/api/requests/${id}/close`, { reason: 'Deneme bitti.' });

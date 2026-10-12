@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { gateToolCall, type CatalogTool } from '../src/runner/gate.ts';
+import { ASK_REQUESTER } from '../src/runner/tools.ts';
 
 // The gate is pure and every tool call passes it: this table is the Y1 rule, the external effect
 // rule and the "only the card's tools" rule as code (rule 4; CLAUDE.md, "Y1 kapısı").
@@ -60,5 +61,22 @@ describe('the gate of a tool call', () => {
       kind: 'refuse',
       code: 'tool_not_in_catalog',
     });
+  });
+
+  it('the gate knows nothing of the asking tool', () => {
+    // A question to the requester is the runner's own path (CLAUDE.md "İnsana sor"): it does not
+    // lead through this gate, and nothing a card or a catalog holds can open it here. The name
+    // has no catalog row (the card schema and the database refuse one), so the gate, asked
+    // about it, answers as for any name it does not know, at every level and whatever the
+    // card lists.
+    for (const level of ['Y0', 'Y1', 'Y2', 'Y3'] as const) {
+      expect(gateToolCall({ level, tools: all }, undefined, ASK_REQUESTER)).toEqual({
+        kind: 'refuse',
+        code: 'tool_not_in_catalog',
+      });
+      expect(
+        gateToolCall({ level, tools: [...all, ASK_REQUESTER] }, undefined, ASK_REQUESTER),
+      ).toEqual({ kind: 'refuse', code: 'tool_not_in_catalog' });
+    }
   });
 });

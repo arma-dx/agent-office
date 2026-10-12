@@ -128,6 +128,43 @@ export function answering(
   });
 }
 
+/**
+ * A pool that remembers what one kind of statement was sent with: every statement whose text
+ * contains `marker` is noted with its values, and everything goes to the pool unchanged. For
+ * what the runner names when it asks the database.
+ */
+export function recording(pool: pg.Pool, marker: string): { pool: pg.Pool; sent: unknown[][] } {
+  const sent: unknown[][] = [];
+  const through = (target: object, property: string | symbol): unknown => {
+    const value: unknown = Reflect.get(target, property, target);
+    return typeof value === 'function' ? (value as AnyFunction).bind(target) : value;
+  };
+  const wrap = (client: pg.PoolClient): pg.PoolClient =>
+    new Proxy(client, {
+      get(target, property) {
+        if (property !== 'query') return through(target, property);
+        return (...args: unknown[]): unknown => {
+          if (typeof args[0] === 'string' && args[0].includes(marker)) {
+            sent.push(Array.isArray(args[1]) ? [...(args[1] as unknown[])] : []);
+          }
+          return (target.query as AnyFunction).apply(target, args);
+        };
+      },
+    });
+  return {
+    sent,
+    pool: new Proxy(pool, {
+      get(target, property) {
+        if (property !== 'connect') return through(target, property);
+        return async (...args: unknown[]): Promise<unknown> =>
+          args.length > 0
+            ? (target.connect as AnyFunction).apply(target, args)
+            : wrap(await target.connect());
+      },
+    }),
+  };
+}
+
 /** One-off query with the privileged role, to prepare or to verify the state. */
 export async function admin<T extends pg.QueryResultRow = Record<string, unknown>>(
   sql: string,

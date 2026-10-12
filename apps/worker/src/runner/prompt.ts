@@ -1,4 +1,5 @@
 import type { StoredCard } from '@agent-office/shared';
+import { ASK_REQUESTER, ASK_RULES_HEADING } from './tools.ts';
 
 /**
  * Prompt assembly (rule 7: external content is data, not instructions).
@@ -7,14 +8,19 @@ import type { StoredCard } from '@agent-office/shared';
  *   system   INSTRUCTIONS only, from the card version: the common rules, the card rendered field
  *            by field with the runner's caveat about what is offered in this version, the text of
  *            its skills. Nothing a person typed and nothing a tool returned is ever put here, so
- *            two runs of one card version send the same bytes (which is also what lets the
- *            provider cache it).
+ *            two runs of one card version that are given the same tools send the same bytes (a
+ *            run that may ask and a run that may not differ in one sentence and one tool), which
+ *            is also what lets the provider cache it.
  *   tools    the runner's own definitions (tools.ts).
- *   user     DATA only, in marked blocks: what was asked, the facts of the run, and for the
- *            coordinator the units and agents of the company.
+ *   user     DATA only, in marked blocks: what was asked, the facts of the run, what the
+ *            requester answered to an agent's question on this request, and for the coordinator
+ *            the units and agents of the company.
  *
  * The request text is data although a colleague typed it: it can hold pasted outside text, and
  * the requester orders work but does not set the agent's rules.
+ *
+ * The answer to an agent's question is data although the requester typed it for the agent, like
+ * the request text: it can hold pasted outside text, and it orders nothing.
  *
  * Comments on a request are for people (8 October decision 13). Nothing here takes one: no block,
  * no fact, no tool result. The database holds the same line: the worker's role is shown no
@@ -30,30 +36,50 @@ function list(title: string, items: readonly string[]): string {
 /**
  * What the runner really offers, said once after the card. The card is rendered as it is written,
  * and it describes the agent as it will be: tools the runner has no handler for yet, and ways of
- * working that need them (asking a question, opening a sub-task, leaving a task suggestion,
- * sending a message). Without this caveat the prompt would promise abilities the run does not
- * have. Built from the tools that are offered; the sentence about the four ways must be shortened
- * when a handler for one of them arrives.
+ * working that need them (opening a sub-task, leaving a task suggestion, sending a message).
+ * Without this caveat the prompt would promise abilities the run does not have. Built from the
+ * tools that are offered; the sentence about the three ways must be shortened when a handler for
+ * one of them arrives.
+ *
+ * A question to the requester is the runner's own tool and is named here when the run is given
+ * it; a run that is not given it is told that it cannot ask, because the card still speaks of
+ * asking. The sentence names no reason: a run may not ask because its agent has used its
+ * questions on the request, or because its card version is from before the question texts.
  */
-function offeredCaveat(cardTools: readonly string[], offered: readonly string[]): string {
+function offeredCaveat(
+  cardTools: readonly string[],
+  offered: readonly string[],
+  mayAsk: boolean,
+): string {
   const code = (names: readonly string[]): string => names.map((name) => `\`${name}\``).join(', ');
   const missing = cardTools.filter((name) => !offered.includes(name));
+  const given = mayAsk ? [...offered, ASK_REQUESTER] : offered;
   const have =
-    offered.length === 0
+    given.length === 0
       ? 'Bu çalışmada elinde hiçbir araç yok.'
-      : `Bu çalışmada elinde yalnızca şu ${offered.length === 1 ? 'araç' : 'araçlar'} var: ${code(offered)}.`;
+      : `Bu çalışmada elinde yalnızca şu ${given.length === 1 ? 'araç' : 'araçlar'} var: ${code(given)}.`;
   const lack =
     missing.length === 0
       ? ''
       : ` Kartında adı geçen öteki araçlar (${code(missing)}) henüz açık değil.`;
-  return `\n\n## Bu sürümde elindekiler\n\n${have}${lack} Soru soramaz, alt görev açamaz, görev önerisi bırakamaz, bildirim ya da mesaj gönderemezsin; kartının bunlardan söz eden satırları henüz yürürlükte değil.`;
+  // The heading as the common rules print it, without its marks.
+  const heading = ASK_RULES_HEADING.replace(/^#+\s*/, '');
+  const asking = mayAsk
+    ? `Talep sahibine \`${ASK_REQUESTER}\` aracıyla soru sorabilirsin; ne zaman soracağın ve ne zaman sormayacağın ortak kurallarda, "${heading}" başlığında yazıyor; yöntemin daha dar bir kural koyuyorsa o geçerlidir.`
+    : 'Bu çalışmada talep sahibine soru soramazsın.';
+  return `\n\n## Bu sürümde elindekiler\n\n${have}${lack} ${asking} Alt görev açamaz, görev önerisi bırakamaz, bildirim ya da mesaj gönderemezsin; kartının bunlardan söz eden satırları henüz yürürlükte değil.`;
 }
 
 /**
- * The instruction part: the same text for every run of a card version. `offered` are the names of
- * the tools the model is given with it (the card's tools the runner has a handler for).
+ * The instruction part: the same text for every run of a card version that is given the same
+ * tools. `offered` are the names of the card's tools the model is given with it (the ones the
+ * runner has a handler for); `mayAsk` says whether the runner's asking tool is given beside them.
  */
-export function systemText(stored: StoredCard, offered: readonly string[]): string {
+export function systemText(
+  stored: StoredCard,
+  offered: readonly string[],
+  mayAsk: boolean,
+): string {
   const { card } = stored;
   const head = `# Görev kartın: ${card.code} ${card.name}\n\n${card.purpose}`;
   const limits = `\n\n## Sınırlar\n\nBu çalışmada en çok ${String(card.limits.tool_calls)} araç çağrısı yapabilirsin ve çalışma en çok ${String(card.limits.duration_minutes)} dakika sürebilir.`;
@@ -71,7 +97,7 @@ export function systemText(stored: StoredCard, offered: readonly string[]): stri
       list('Yapmayacakların', card.prohibitions) +
       sources +
       limits +
-      offeredCaveat(card.tools, offered),
+      offeredCaveat(card.tools, offered, mayAsk),
     skills,
   ]
     .filter((part) => part !== '')
@@ -114,9 +140,26 @@ export interface Revision {
   previousOutput: unknown;
 }
 
+/** One answered question of the request, as a run is given it. */
+export interface AskedAndAnswered {
+  // The code of the agent that asked.
+  askedBy: string;
+  // This run's own agent asked it.
+  own: boolean;
+  question: string;
+  answer: string;
+  // Who wrote the answer: the requester, or the founder in the place of a requester who cannot
+  // read the request any more. Never a name.
+  answeredBy: 'requester' | 'founder_for_requester';
+}
+
 export interface PromptData {
   facts: RunFacts;
   request: { title: string; text: string };
+  // The answered questions of the request, oldest first: the run's own and those another agent
+  // asked on the same request (today: the coordinator's). Data like the request text: an answer
+  // sets no rule and approves nothing.
+  questions?: AskedAndAnswered[];
   // The coordinator only.
   units?: UnitForRouting[];
   // A unit agent only, when a person corrected the routing to it: that person's note, as data.
@@ -128,6 +171,9 @@ export interface PromptData {
 /** The data part: the first user message. */
 export function dataText(data: PromptData): string {
   const blocks = [dataBlock('run_facts', data.facts), dataBlock('request', data.request)];
+  if (data.questions && data.questions.length > 0) {
+    blocks.push(dataBlock('questions_and_answers', data.questions));
+  }
   if (data.units) {
     blocks.push(dataBlock('units_and_agents', data.units));
   }

@@ -47,7 +47,10 @@ approval_points:
   - Kendisi onay gerektiren iş yapmaz; atadığı ajanların dışa etkili işleri kendi kartlarındaki onay noktalarına tabidir
 
 escalation:
-  - Şirket ya da birim net değilse talep sahibine tek bir soru sorar
+  # 12 Ekim, karar 4: koordinasyon merkezi de talep sahibine sorabilir. Kaç kez sorabileceğini
+  # sistem sınırlar; sayı kurucu onayı bekliyor (docs/SONRA.md, S-a).
+  - İşin hangi birimin işi olduğu talep metninden anlaşılmıyorsa ve kısa bir yanıt bunu belirleyecekse talep sahibine sorar
+  - Eksik, belirsiz ya da koşullu bilgi için sormaz; işin birimi belliyse yönlendirir
   # 8 Ekim, karar 2: birimde açık ajan yoksa talep kurucuya düşmez, talep sahibine geri çevrilir.
   - Yönlendirdiği birimde işi alabilecek açık ajan yoksa ajanı boş bırakır; talep, nedeni yazılarak talep sahibine geri çevrilir ve kapanır
   - Aynı iş iki kez geri dönerse kurucuya atar

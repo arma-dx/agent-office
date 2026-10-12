@@ -51,7 +51,9 @@ output_goes_external: true
 output_involves_money: false
 
 escalation:
-  - Kaynak yetersizse metin uydurmaz; eksik bilgiyi sorar
+  # 12 Ekim, karar 3: bir talepte bir kez sorar; yanıt yetmezse yeniden sormaz.
+  - Kaynak yetersizse metin uydurmaz; iş onsuz yapılamayacak bilgiyi talep sahibine bir kez sorar
+  - Yanıt da yetmezse yeniden sormaz; elindekiyle yazar ya da yazamadığını söyler
   - Müşteri adı ya da proje bilgisi geçiyorsa müşteri izni sorusunu onay notuna ekler
 
 prohibitions:

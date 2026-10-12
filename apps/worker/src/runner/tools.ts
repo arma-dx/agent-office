@@ -16,10 +16,31 @@ import type { ModelTool } from '../model/client.ts';
  * of. The catalog's sentence (agents/tools.yaml) is the text for people: it names what the tool
  * will do one day (sources, a change diff) and the decisions it comes from, and the model is not
  * given it.
+ *
+ * One tool is on no card and in no catalog: the runner's own question to the requester
+ * (ASK_REQUESTER, below). It is defined here beside the others and kept apart from them.
  */
 
 export const ROUTE_TASK = 'route_task';
 export const SUBMIT_FOR_APPROVAL = 'submit_for_approval';
+
+/**
+ * The runner's own tool (CLAUDE.md "İnsana sor"): one question to the requester of the request
+ * the run is on. It is not a tool of the catalog and never on a card (packages/shared:
+ * RUNNER_PATH_TOOLS); the runner offers it by itself while the database says the agent may
+ * still ask, and handles it before the gate of catalog tools. The input has one field: the
+ * addressee, the request and the step are never the model's to write.
+ */
+export const ASK_REQUESTER = 'ask_requester';
+
+/**
+ * The heading of the section of the common rules that says when an agent asks and when it does
+ * not (agents/common-rules.md). The asking tool is offered only to a card version whose rules
+ * carry it: a version stored before the question texts existed runs as before, without the tool.
+ * The runner's caveat names the same heading (prompt.ts); a test holds this constant and the
+ * file together.
+ */
+export const ASK_RULES_HEADING = '## Talep sahibine soru';
 
 /**
  * Text a model wrote that is about to be stored. PostgreSQL holds neither the NUL character nor a
@@ -43,6 +64,9 @@ export const LIMITS = {
   optionText: 5000,
   hashtag: 60,
   hashtags: 15,
+  // The database's own limit of a question (office.task_questions) and REQUEST_QUESTION_MAX of
+  // the shared contract: one number in three places, held together by a test.
+  question: 2000,
 } as const;
 
 export const routeTaskInput = z
@@ -87,6 +111,9 @@ export const submitForApprovalInput = z
   );
 export type SubmitForApprovalInput = z.output<typeof submitForApprovalInput>;
 
+export const askRequesterInput = z.strictObject({ question: text(LIMITS.question) });
+export type AskRequesterInput = z.output<typeof askRequesterInput>;
+
 /**
  * What was wrong with a refused input, for the model: the field and the limit it broke, as fixed
  * sentences made from the schema's own paths and numbers. Nothing of the input's text is repeated
@@ -127,13 +154,13 @@ const DEFINITIONS: Record<string, ModelTool> = {
   [ROUTE_TASK]: {
     name: ROUTE_TASK,
     description:
-      'Talebi bir birime ve o birimin açık bir ajanına yönlendirir; birimin onaylayıcısını sen değil sistem belirler. Yalnızca bu çalışmanın kendi talebinde çalışır. Birimde işi alabilecek açık ajan yoksa ajan boş bırakılır; talep o zaman nedeni yazılarak talep sahibine geri çevrilir ve kapanır. Talep hiçbir birime oturmuyorsa ya da kimin işi olduğu anlaşılmıyorsa birim de ajan da boş bırakılır; talep o zaman yönlendirilmez ve kurucuya düşer. Çalışmayı bitiren araçtır; bir kez çağrılır.',
+      'Talebi bir birime ve o birimin açık bir ajanına yönlendirir; birimin onaylayıcısını sen değil sistem belirler. Yalnızca bu çalışmanın kendi talebinde çalışır. Birimde işi alabilecek açık ajan yoksa ajan boş bırakılır; talep o zaman nedeni yazılarak talep sahibine geri çevrilir ve kapanır. Talep hiçbir birime oturmuyorsa, ya da kimin işi olduğu anlaşılmıyor ve talep sahibine soramıyorsan birim de ajan da boş bırakılır; talep o zaman yönlendirilmez ve kurucuya düşer. Çalışmayı bitiren araçtır; bir kez çağrılır.',
     strict: true,
     input_schema: {
       type: 'object',
       properties: {
         unit_code: field(
-          'Talebin gideceği birimin kodu; units_and_agents bloğundaki kodlardan biri. Talep hiçbir birime oturmuyorsa ya da kimin işi olduğu anlaşılmıyorsa boş metin (""): talep o zaman yönlendirilmez ve kurucuya düşer.',
+          'Talebin gideceği birimin kodu; units_and_agents bloğundaki kodlardan biri. Talep hiçbir birime oturmuyorsa, ya da kimin işi olduğu anlaşılmıyor ve talep sahibine soramıyorsan boş metin (""): talep o zaman yönlendirilmez ve kurucuya düşer.',
         ),
         agent_code: field(
           'O birimin işi yapabilecek açık ajanının kodu. Birimde uygun açık ajan yoksa boş metin (""): talep o zaman, birimde işi alabilecek açık ajan olmadığı yazılarak talep sahibine geri çevrilir ve kapanır. unit_code boşsa bu alan da boş metin olmalı.',
@@ -210,6 +237,38 @@ const DEFINITIONS: Record<string, ModelTool> = {
       additionalProperties: false,
     },
   },
+};
+
+/**
+ * The asking tool as the model is given it. Kept out of DEFINITIONS: that map is the card's tools
+ * the runner has a handler for, and this tool is on no card.
+ */
+export const ASK_TOOL: ModelTool = {
+  name: ASK_REQUESTER,
+  description:
+    'Talep sahibine tek bir soru yazar ve çalışmayı bitirir: talep "Yanıt bekliyor" olur, talep sahibi yanıtlayınca aynı iş için yeniden çalıştırılırsın ve yanıt sana veri olarak verilir. Soru onaydan geçmez; talep sahibi onu yazdığın gibi okur. Yalnızca iş, talepte bulunmayan ve ancak talep sahibinin verebileceği bir bilgi olmadan yapılamıyorsa kullan. Koşullu istek ("varsa ekle"), tercih, üslup, onay ya da teyit için kullanma. Bir çalışmada bir kez çağrılır.',
+  strict: true,
+  input_schema: {
+    type: 'object',
+    properties: {
+      question: field(
+        `Talep sahibine sorulacak soru (en çok ${String(LIMITS.question)} karakter). Birden çok eksik varsa hepsini bu tek soruda, numaralı maddelerle yaz. Yalnızca soru: sonuç taslağı, gerekçe, başka bir kişinin adı ya da talepte geçmeyen bilgi yazma.`,
+      ),
+    },
+    required: ['question'],
+    additionalProperties: false,
+  },
+};
+
+/**
+ * The same tool as the coordinator is given it: when a coordinator asks is narrower (only when
+ * the request does not say what is wanted, so that the unit cannot be told). With its choice
+ * forced among two tools, the description of each is what the small model decides by.
+ */
+export const ASK_TOOL_COORDINATOR: ModelTool = {
+  ...ASK_TOOL,
+  description:
+    'Talep sahibine tek bir soru yazar ve çalışmayı bitirir: talep "Yanıt bekliyor" olur, talep sahibi yanıtlayınca aynı talep için yeniden çalıştırılırsın ve yanıt sana veri olarak verilir. Soru onaydan geçmez; talep sahibi onu yazdığın gibi okur. Yalnızca tek bir durumda kullan: talepte ne istendiği ya da çıktının nerede kullanılacağı yazmadığı için işin hangi birimin işi olduğu anlaşılmıyor ve talep sahibinin kısa bir yanıtı bunu belirleyecek. İşin birimi belliyse kullanma, `route_task` aracını çağır: işin yapılması için eksik, belirsiz ya da koşullu ("varsa ekle") bilgiyi sen sormazsın, işi alan ajan sorar. Bir çalışmada bir kez çağrılır.',
 };
 
 /** The names of the tools the runner has a handler for. */
