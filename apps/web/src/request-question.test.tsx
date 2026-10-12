@@ -823,6 +823,9 @@ describe('an agent’s question on the page of its request', () => {
       // Said once to a screen reader; the notice of the first answer does not stand under it.
       expect(arrivals()).toEqual([ARRIVED]);
       expect(screen.queryByText(SENT_AGENT)).toBeNull();
+      // The notice had the focus and is gone: the focus is on the new card's heading, not at the
+      // top of the page, and not in the box (nothing is typed into by itself).
+      expect(within(card()).getByRole('heading', { name: HEADING })).toHaveFocus();
       // A clean box: neither the first answer nor a problem of the first question.
       expect(box()).toHaveValue('');
       expect(within(card()).queryByRole('alert')).toBeNull();
@@ -838,6 +841,33 @@ describe('an agent’s question on the page of its request', () => {
       // The second question is settled: nothing is said as news any more.
       expect(arrivals()).toEqual([]);
       expect(api.unexpected).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a second question does not take the focus from a person who went elsewhere after the first answer', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      const { api } = await openPage(waiting());
+      api.handle(POST, () => json(answered()));
+      await user.type(box(), 'İzmir.');
+      await user.click(within(card()).getByRole('button', { name: 'Yanıtı gönder' }));
+      const sent = await screen.findByText(SENT_AGENT);
+      expect(sent.closest('[tabindex="-1"]')).toHaveFocus();
+      // The person goes on to the comment box; then the next question arrives.
+      const comments = screen.getByRole('textbox', { name: 'Yorum yaz' });
+      await user.click(comments);
+      await user.keyboard('Bir de');
+      api.handle(GET, () =>
+        json(waiting({ question: openQuestion({ id: SECOND_ID, text: 'Hangi tarihte?' }) })),
+      );
+      await vi.advanceTimersByTimeAsync(5_100);
+      expect(await within(card()).findByText('Hangi tarihte?')).toBeVisible();
+      expect(comments).toHaveFocus();
+      await user.keyboard(' sorum var');
+      expect(comments).toHaveValue('Bir de sorum var');
     } finally {
       vi.useRealTimers();
     }

@@ -175,6 +175,20 @@ export function RequestQuestion({ request }: { request: RequestDetail }) {
     const active = document.activeElement;
     if (active === null || active === document.body) sentNotice.current?.focus();
   }, [sentShown]);
+  // The notice is replaced by the card of the next question (the coordinator's second, or the unit
+  // agent's after the coordinator's) while it has the focus it was given: the focus goes to the
+  // card's heading, not to the top of the page. Not into the box, and the page is not scrolled:
+  // the person may be reading further down. A notice that is removed tells nobody, so whether
+  // the focus was last on it is kept here, as `focusInForm` does for the form.
+  const focusOnNotice = useRef(false);
+  const heading = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    if (!reading || !focusOnNotice.current) return;
+    focusOnNotice.current = false;
+    if (document.activeElement === null || document.activeElement === document.body) {
+      heading.current?.focus({ preventScroll: true });
+    }
+  }, [reading, questionId]);
   // The same for "Taslağı at", which removes the box and itself.
   const discardedShown = discarded ? discardedFor : null;
   useEffect(() => {
@@ -221,7 +235,12 @@ export function RequestQuestion({ request }: { request: RequestDetail }) {
           aria-labelledby={`${id}-heading`}
           className="flex flex-col gap-3 rounded-lg border border-line bg-surface p-4"
         >
-          <h3 id={`${id}-heading`} className="text-[0.9375rem] font-semibold">
+          <h3
+            id={`${id}-heading`}
+            ref={heading}
+            tabIndex={-1}
+            className="text-[0.9375rem] font-semibold"
+          >
             {QUESTION_HEADING}
           </h3>
           {reading ? (
@@ -370,7 +389,17 @@ export function RequestQuestion({ request }: { request: RequestDetail }) {
           ) : null}
         </section>
       ) : showSent ? (
-        <div ref={sentNotice} tabIndex={-1}>
+        <div
+          ref={sentNotice}
+          tabIndex={-1}
+          onFocus={() => {
+            focusOnNotice.current = true;
+          }}
+          onBlur={(event) => {
+            // Only a focus that went to another control is one that left.
+            if (event.relatedTarget instanceof Node) focusOnNotice.current = false;
+          }}
+        >
           <InlineBanner tone="info" compact role="status">
             {answerSentAs(request, heldCause)}
           </InlineBanner>
