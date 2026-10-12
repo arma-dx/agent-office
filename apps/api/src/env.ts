@@ -1,3 +1,4 @@
+import { isAbsolute } from 'node:path';
 import { z } from 'zod';
 import { APP_NAME } from '@agent-office/shared';
 import { baseEnvSchema, parseEnv } from '@agent-office/shared/env';
@@ -38,6 +39,15 @@ const domain = z
   .transform((value) => value.toLowerCase())
   .pipe(z.string().regex(/^[a-z0-9-]+(\.[a-z0-9-]+)+$/, { message: 'Must be a domain name' }));
 
+const httpsOrigin = z.string().refine(
+  (value) => {
+    if (!URL.canParse(value)) return false;
+    const url = new URL(value);
+    return url.protocol === 'https:' && url.origin === value;
+  },
+  { message: 'Must be an https origin without a path' },
+);
+
 // trustProxy gets only addresses; `true` would trust every X-Forwarded-For value.
 const proxyAddress = z.union([z.ipv4(), z.ipv6(), z.cidrv4(), z.cidrv6()]);
 
@@ -67,6 +77,18 @@ export const apiEnvSchema = baseEnvSchema
     // production, where the API always runs behind them; without it every person would share the
     // proxy's address, and its rate limit counters.
     TRUST_PROXY: optional(commaList(proxyAddress)),
+    // The file storage of the project files (8 October decision 20). Either a folder of this
+    // machine (local development only), or Supabase Storage: the project's address, a secret key
+    // and the bucket, set together. With none of them the file storage is "not set up": the
+    // Dosyalar tab says so and nothing can be added, opened or deleted.
+    FILE_STORAGE_DIR: optional(
+      z.string().refine((value) => isAbsolute(value), { message: 'Must be an absolute path' }),
+    ),
+    SUPABASE_URL: optional(httpsOrigin),
+    SUPABASE_SECRET_KEY: optional(z.string().trim().min(20)),
+    SUPABASE_STORAGE_BUCKET: optional(
+      z.string().regex(/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/, { message: 'Must be a bucket name' }),
+    ),
   })
   .superRefine((env, ctx) => {
     // The redirect URI is not a secret and may be filled in ahead of the client values; on its
@@ -92,7 +114,30 @@ export const apiEnvSchema = baseEnvSchema
         message: `Must be PANEL_ORIGIN followed by ${GOOGLE_CALLBACK_PATH}`,
       });
     }
+    const supabase = [env.SUPABASE_URL, env.SUPABASE_SECRET_KEY, env.SUPABASE_STORAGE_BUCKET];
+    const supabaseSet = supabase.filter((value) => value !== undefined).length;
+    if (supabaseSet !== 0 && supabaseSet !== supabase.length) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['SUPABASE_URL'],
+        message: 'SUPABASE_URL, SUPABASE_SECRET_KEY and SUPABASE_STORAGE_BUCKET are set together',
+      });
+    }
+    if (env.FILE_STORAGE_DIR !== undefined && supabaseSet !== 0) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['FILE_STORAGE_DIR'],
+        message: 'Set either FILE_STORAGE_DIR or the Supabase storage values, not both',
+      });
+    }
     if (env.NODE_ENV === 'production') {
+      if (env.FILE_STORAGE_DIR !== undefined) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['FILE_STORAGE_DIR'],
+          message: 'Must be empty in production; files are kept in Supabase Storage',
+        });
+      }
       if (!env.AUTH_REQUIRE_AMR) {
         ctx.addIssue({
           code: 'custom',
@@ -132,6 +177,10 @@ export interface GoogleSettings {
   clientSecret: string;
   redirectUri: string;
 }
+
+/** Where the project files lie: a folder of this machine, or a bucket of Supabase Storage. */
+export type FileStorageSettings =
+  { kind: 'disk'; dir: string } | { kind: 'supabase'; url: string; key: string; bucket: string };
 
 /**
  * The WebAuthn relying party of the passkeys: the panel's host is the RP ID (one per environment:
@@ -182,4 +231,24 @@ export function serverConfig(env: ApiEnv): ServerConfig {
       origin: env.PANEL_ORIGIN,
     },
   };
+}
+
+/**
+ * The file storage an environment is set up with; null when it has none. Kept out of ServerConfig
+ * on purpose: the config travels to every route, and the secret key of the storage belongs to the
+ * file module alone (rule 9). Only main.ts and the check script call this, to build the storage.
+ */
+export function fileStorageSettings(env: ApiEnv): FileStorageSettings | null {
+  return env.FILE_STORAGE_DIR !== undefined
+    ? { kind: 'disk', dir: env.FILE_STORAGE_DIR }
+    : env.SUPABASE_URL !== undefined &&
+        env.SUPABASE_SECRET_KEY !== undefined &&
+        env.SUPABASE_STORAGE_BUCKET !== undefined
+      ? {
+          kind: 'supabase',
+          url: env.SUPABASE_URL,
+          key: env.SUPABASE_SECRET_KEY,
+          bucket: env.SUPABASE_STORAGE_BUCKET,
+        }
+      : null;
 }

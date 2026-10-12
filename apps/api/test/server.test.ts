@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from 'vitest';
-import { loadApiEnv, serverConfig } from '../src/env.ts';
+import { fileStorageSettings, loadApiEnv, serverConfig } from '../src/env.ts';
 import { isSecretKey } from '../src/log.ts';
 import { buildServer } from '../src/server.ts';
 
@@ -204,6 +204,69 @@ describe('loadApiEnv', () => {
     }
     expect(envError({ ...REQUIRED, COMPANY_EMAIL_DOMAINS: 'not a domain' })).toContain(
       'COMPANY_EMAIL_DOMAINS',
+    );
+  });
+
+  it('takes a folder or the three Supabase values as the file storage, never both', () => {
+    expect(fileStorageSettings(loadApiEnv(REQUIRED))).toBeNull();
+    expect(
+      fileStorageSettings(loadApiEnv({ ...REQUIRED, FILE_STORAGE_DIR: '/var/tmp/office-files' })),
+    ).toEqual({ kind: 'disk', dir: '/var/tmp/office-files' });
+    const supabase = {
+      SUPABASE_URL: 'https://abcdefghijklmnopqrst.supabase.co',
+      // Put together here so that no line of the repository holds the shape of a secret key.
+      SUPABASE_SECRET_KEY: `sb_secret_${'SECRET-placeholder'.repeat(2)}`,
+      SUPABASE_STORAGE_BUCKET: 'office-files',
+    };
+    expect(fileStorageSettings(loadApiEnv({ ...REQUIRED, ...supabase }))).toEqual({
+      kind: 'supabase',
+      url: supabase.SUPABASE_URL,
+      key: supabase.SUPABASE_SECRET_KEY,
+      bucket: 'office-files',
+    });
+    expect(
+      fileStorageSettings(
+        loadApiEnv({ ...REQUIRED, ...supabase, NODE_ENV: 'production', TRUST_PROXY: '10.0.0.1' }),
+      )?.kind,
+    ).toBe('supabase');
+    // The config every route gets holds nothing of the storage: not its key, not its address.
+    const config = serverConfig(loadApiEnv({ ...REQUIRED, ...supabase }));
+    expect(JSON.stringify(config)).not.toContain('SECRET-placeholder');
+    expect(JSON.stringify(config)).not.toContain('supabase.co');
+    expect(envError({ ...REQUIRED, FILE_STORAGE_DIR: 'files' })).toContain('FILE_STORAGE_DIR');
+    expect(envError({ ...REQUIRED, ...supabase, FILE_STORAGE_DIR: '/var/tmp/x' })).toContain(
+      'FILE_STORAGE_DIR',
+    );
+    expect(
+      envError({
+        ...REQUIRED,
+        NODE_ENV: 'production',
+        TRUST_PROXY: '10.0.0.1',
+        FILE_STORAGE_DIR: '/var/tmp/x',
+      }),
+    ).toContain('FILE_STORAGE_DIR');
+    for (const missing of Object.keys(supabase)) {
+      const partial = Object.fromEntries(
+        Object.entries({ ...REQUIRED, ...supabase }).filter(([name]) => name !== missing),
+      );
+      const message = envError(partial);
+      expect(message, missing).toContain('SUPABASE_URL');
+      expect(message, missing).not.toContain('SECRET-placeholder');
+    }
+    for (const url of [
+      'http://x.supabase.co',
+      'https://x.supabase.co/',
+      'https://x.supabase.co/storage/v1',
+    ]) {
+      expect(envError({ ...REQUIRED, ...supabase, SUPABASE_URL: url })).toContain('SUPABASE_URL');
+    }
+    for (const bucket of ['Office', 'a', 'office files', 'office/files', '../x']) {
+      expect(envError({ ...REQUIRED, ...supabase, SUPABASE_STORAGE_BUCKET: bucket })).toContain(
+        'SUPABASE_STORAGE_BUCKET',
+      );
+    }
+    expect(envError({ ...REQUIRED, ...supabase, SUPABASE_SECRET_KEY: 'short' })).toContain(
+      'SUPABASE_SECRET_KEY',
     );
   });
 });
