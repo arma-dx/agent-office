@@ -11,6 +11,8 @@ import {
   createFileStorage,
   type FileStorage,
 } from '../src/files/storage.ts';
+import { ByteBudget, ProjectFileStore, uploadDeadlineMs } from '../src/files/store.ts';
+import { UploadTickets } from '../src/files/ticket.ts';
 
 const COMPANY = '00000000-0000-4000-8000-000000000001';
 const KEY = `${COMPANY}/projects/00000000-0000-4000-8000-000000000031/00000000-0000-4000-8000-000000000999`;
@@ -237,5 +239,104 @@ describe('the settings of an environment', () => {
         bucket: 'office-files',
       }),
     ).toBeInstanceOf(SupabaseFileStorage);
+  });
+});
+
+describe('the store and the budget', () => {
+  it('gives no bytes for a record it did not read itself', async () => {
+    const store = new ProjectFileStore(new MemoryFileStorage());
+    const row = {
+      id: 'x',
+      project_id: 'p',
+      name: 'a.txt',
+      mime_type: 'text/plain',
+      size_bytes: 1,
+      sha256: 'a',
+      storage_path: KEY,
+      created_at: new Date(),
+      created_by_user_id: null,
+      deletable: false,
+    };
+    await expect(store.content(row)).rejects.toThrow('not read through find');
+    expect(new ProjectFileStore(null).available).toBe(false);
+  });
+
+  it('counts the bytes that are on their way', () => {
+    const budget = new ByteBudget(10);
+    expect(budget.reserve(6)).toBe(true);
+    expect(budget.reserve(5)).toBe(false);
+    expect(budget.reserve(4)).toBe(true);
+    budget.release(6);
+    expect(budget.reserved).toBe(4);
+    budget.release(100);
+    expect(budget.reserved).toBe(0);
+  });
+
+  it('gives the body of an upload half a minute and the time of 64 KB a second', () => {
+    expect(uploadDeadlineMs(1)).toBe(31_000);
+    expect(uploadDeadlineMs(64 * 1024)).toBe(31_000);
+    expect(uploadDeadlineMs(1024 * 1024)).toBe(46_000);
+    expect(uploadDeadlineMs(25 * 1024 * 1024)).toBe(430_000);
+  });
+});
+
+describe('the upload ticket', () => {
+  const SECRET = 's'.repeat(48);
+  const claim = {
+    sessionKeyHash: Buffer.alloc(32, 7),
+    companyId: '00000000-0000-4000-8000-000000000001',
+    projectId: '00000000-0000-4000-8000-000000000031',
+    fileId: '00000000-0000-4000-8000-000000000131',
+    sizeBytes: 1200,
+  };
+  const at = (ms: number) => () => ms;
+  const T0 = 1_791_500_000_000;
+
+  it('is good for exactly the upload it was given for, for a minute', () => {
+    const tickets = new UploadTickets(SECRET, at(T0));
+    const { ticket, expiresAt } = tickets.issue(claim);
+    expect(ticket).toMatch(/^\d{10}\.[A-Za-z0-9_-]{43}$/);
+    expect(expiresAt.getTime()).toBe(T0 + 60_000);
+    expect(tickets.verify(ticket, claim)).toBe(true);
+    // The ids are compared whatever their case.
+    expect(tickets.verify(ticket, { ...claim, fileId: claim.fileId.toUpperCase() })).toBe(true);
+    const others = {
+      session: { ...claim, sessionKeyHash: Buffer.alloc(32, 8) },
+      company: { ...claim, companyId: '00000000-0000-4000-8000-000000000002' },
+      project: { ...claim, projectId: '00000000-0000-4000-8000-000000000032' },
+      file: { ...claim, fileId: '00000000-0000-4000-8000-000000000132' },
+      size: { ...claim, sizeBytes: 1201 },
+    };
+    for (const [what, other] of Object.entries(others)) {
+      expect(tickets.verify(ticket, other), what).toBe(false);
+    }
+    expect(new UploadTickets(SECRET, at(T0 + 59_000)).verify(ticket, claim)).toBe(true);
+    expect(new UploadTickets(SECRET, at(T0 + 60_000)).verify(ticket, claim)).toBe(false);
+    // A ticket that ends later than a ticket of this moment could: not one of ours.
+    expect(new UploadTickets(SECRET, at(T0 - 2_000)).verify(ticket, claim)).toBe(false);
+    expect(new UploadTickets('t'.repeat(48), at(T0)).verify(ticket, claim)).toBe(false);
+  });
+
+  it('takes nothing that is not a ticket, and signs nothing that is not an upload', () => {
+    const tickets = new UploadTickets(SECRET, at(T0));
+    const { ticket } = tickets.issue(claim);
+    const [expires = '', mac = ''] = ticket.split('.');
+    for (const bad of [
+      undefined,
+      '',
+      ['a', 'b'],
+      mac,
+      `${expires}.`,
+      `${expires}.${mac}x`,
+      `${expires}.${mac.slice(0, -1)}`,
+      `${String(Number(expires) + 1)}.${mac}`,
+      `${expires}.${'A'.repeat(43)}`,
+      ` ${ticket}`,
+    ]) {
+      expect(tickets.verify(bad, claim), JSON.stringify(bad)).toBe(false);
+    }
+    expect(() => tickets.issue({ ...claim, projectId: '../x' })).toThrow('three ids');
+    expect(() => tickets.issue({ ...claim, sizeBytes: 1.5 })).toThrow('three ids');
+    expect(tickets.verify(ticket, { ...claim, companyId: 'x\ny' })).toBe(false);
   });
 });

@@ -175,6 +175,29 @@ export default defineConfig([
   },
 
   {
+    // Rule 9: the file storage (and the key it holds) is reached only from the file module itself;
+    // every route goes through ProjectFileStore (files/store.ts), which reads the record under the
+    // caller's row policies first. main.ts builds the storage once, from the environment.
+    name: 'agent-office/api-file-storage',
+    files: ['apps/api/src/**/*.ts'],
+    ignores: ['apps/api/src/files/**', 'apps/api/src/main.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              regex: '(^|/)files/storage(\\.ts)?$',
+              message:
+                'Only apps/api/src/files and main.ts import the file storage (CLAUDE.md rule 9). Use ProjectFileStore from files/store.ts.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+
+  {
     name: 'agent-office/tests',
     files: ['**/*.test.{ts,tsx}', '**/test/**/*.{ts,tsx}'],
     rules: {

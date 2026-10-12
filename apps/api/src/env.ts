@@ -60,7 +60,8 @@ export const apiEnvSchema = baseEnvSchema
     DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }),
     // Where the panel is served; the API answers under PANEL_ORIGIN/api.
     PANEL_ORIGIN: panelOrigin,
-    // Signs the short-lived login cookie (state, nonce and PKCE verifier of a Google sign-in).
+    // Signs the short-lived login cookie (state, nonce and PKCE verifier of a Google sign-in); the
+    // key of the upload tickets of project files is derived from it.
     COOKIE_SECRET: z.string().min(32),
     // The three Google values come together; without them Google sign-in is "not configured".
     GOOGLE_CLIENT_ID: optional(z.string().trim().min(1)),

@@ -1,8 +1,10 @@
 import { agentRunSender, createPool, createQueue, ensureAgentRunQueues } from '@agent-office/db';
 import { GoogleAuthProvider } from './auth/google.ts';
 import { assertRestrictedRole } from './db.ts';
-import { loadApiEnv, serverConfig } from './env.ts';
+import { fileStorageSettings, loadApiEnv, serverConfig } from './env.ts';
 import { loggableError } from './errors.ts';
+import { createFileStorage } from './files/storage.ts';
+import { ProjectFileStore } from './files/store.ts';
 import { buildServer } from './server.ts';
 
 const env = loadApiEnv(process.env);
@@ -23,9 +25,19 @@ const queue = createQueue(
   'sender',
 );
 
+// Built here, once, from the environment: the storage's key goes to the file module and nowhere
+// else (not into the config the routes get).
+const fileStorage = createFileStorage(fileStorageSettings(env));
+
 const app = buildServer({
   logLevel: env.LOG_LEVEL,
-  services: { config, pool, authProvider: google, jobs: agentRunSender(queue) },
+  services: {
+    config,
+    pool,
+    authProvider: google,
+    jobs: agentRunSender(queue),
+    files: new ProjectFileStore(fileStorage),
+  },
 });
 
 if (google) {
@@ -35,6 +47,9 @@ if (google) {
   });
 } else {
   app.log.warn('Google sign-in is not configured');
+}
+if (fileStorage === null) {
+  app.log.warn('File storage is not set up; project files cannot be added or opened');
 }
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {

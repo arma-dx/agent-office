@@ -14,6 +14,8 @@ import {
 } from '../src/auth/provider.ts';
 import type { Pool } from '../src/db.ts';
 import { loadApiEnv, serverConfig, type ServerConfig } from '../src/env.ts';
+import { MemoryFileStorage } from '../src/files/storage.ts';
+import { ProjectFileStore } from '../src/files/store.ts';
 import type { RateLimits } from '../src/security.ts';
 import { buildServer } from '../src/server.ts';
 import type { Account } from './fixtures.ts';
@@ -121,6 +123,8 @@ export interface TestServer {
   google: FakeGoogle;
   config: ServerConfig;
   jobs: RecordingJobs;
+  // The file storage of the tests: in memory, can be told to fail.
+  storage: MemoryFileStorage;
   close(): Promise<void>;
 }
 
@@ -132,12 +136,20 @@ export function createTestServer(
     logStream?: { write: (line: string) => void };
     // The flow test of the worker passes a sender of the real queue.
     jobs?: AgentRunSender;
+    // false: a server whose environment has no file storage.
+    fileStorage?: boolean;
+    uploadBufferBytes?: number;
+    downloadBufferBytes?: number;
+    uploadDeadlineMs?: (declaredBytes: number) => number;
+    // The storage of this server; the default is a new one in memory.
+    storage?: MemoryFileStorage;
   } = {},
 ): TestServer {
   const pool: Pool = createPool(connectionString('app'), 'agent-office-api-test', () => {});
   const google = new FakeGoogle();
   const jobs = new RecordingJobs();
   const config = options.config ?? testConfig();
+  const storage = options.storage ?? new MemoryFileStorage();
   const app = buildServer({
     ...(options.logStream ? { logStream: options.logStream } : { logger: false }),
     services: {
@@ -146,6 +158,16 @@ export function createTestServer(
       authProvider: options.provider === undefined ? google : options.provider,
       rateLimits: options.rateLimits ?? RELAXED_LIMITS,
       jobs: options.jobs ?? jobs,
+      files: new ProjectFileStore(options.fileStorage === false ? null : storage),
+      ...(options.uploadBufferBytes !== undefined
+        ? { uploadBufferBytes: options.uploadBufferBytes }
+        : {}),
+      ...(options.downloadBufferBytes !== undefined
+        ? { downloadBufferBytes: options.downloadBufferBytes }
+        : {}),
+      ...(options.uploadDeadlineMs !== undefined
+        ? { uploadDeadlineMs: options.uploadDeadlineMs }
+        : {}),
     },
   });
   return {
@@ -153,6 +175,7 @@ export function createTestServer(
     google,
     config,
     jobs,
+    storage,
     close: async () => {
       await app.close();
       await pool.end();
