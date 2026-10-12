@@ -580,6 +580,7 @@ Sınır yükseltilince bekleyen işlerin başlaması (11 Ekim karar 1):
 
 ## 0.4a adım 4 ile eklenen adlar: ajanın soru sorması (karşılığı olan eski Türkçe ad yok)
 
+- Çalıştırıcı anahtarı: `COORDINATOR_ASKS` (koordinasyon merkezine soru aracı verilir mi; 12 Ekim ölçümünden sonra kapalı) ve testlerin kullandığı `RunnerDeps.coordinatorAsks`
 - "Soru" (ajanın talep sahibine sorusu) → tablo `task_questions`; alanlar `routing_id` (soran ajanın adımı; koordinasyon merkezinin sorusunda boş), `agent_code`, `run_id`, `requester_user_id` (sorunun muhatabı), `question`, `status`, `answer`, `answered_by_user_id`, `answered_at`, `closed_at`
 - Soru durumları: `open` (yanıt bekliyor), `answered` (yanıtlandı), `closed` (yanıtlanmadan kapandı: talep yeniden yönlendirildi, iptal edildi, durduruldu ya da reddedildi)
 - "Yanıt bekliyor" → görev durumu `awaiting_reply` (2 Ekim'den beri vardı; ilk kez yazılıyor); talep aşaması `awaiting_reply`; yanıtlayacak kişi için "Yanıtınız bekleniyor"

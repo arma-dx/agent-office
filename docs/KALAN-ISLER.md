@@ -59,6 +59,8 @@ Henüz olmayanlar: veritabanı (göç dosyası yok), giriş, işlevli ekran (yal
 
 12 Ekim 2026 (devam): 0.4a adım 4 kuruldu: ajan, iş onsuz yapılamayacak bir bilgi eksikse talep sahibine sorar; talep "Yanıt bekliyor" olur, soru Bugün'de ve talep sayfasında görünür, yanıt gelince aynı ajan kendiliğinden yeniden çalışır. Soru Onaylar'a düşmez. Bir ajan bir talepte bir kez, koordinasyon merkezi şimdilik en çok iki kez sorar (12 Ekim, karar 3 ve 4). Adım tasarlanırken ve yapılırken türetilen seçimler `docs/SONRA.md` içinde S-a ila S-z olarak duruyor; "teknik not" yazanlar dışında hepsi kurucu onayı bekliyor. Ekranlar tarayıcıda görülmeden yazıldı; kurucunun bir soru kartına bir kez bakması gerekir (S-l, S-x). İki yeni göç yerel veritabanına uygulanana kadar (`supabase migration up`) yerelde talep listeleri sunucu hatası verir ve çalıştırıcı ajan işlerini başlatamaz. Ajanların soru sorması bir veritabanında `pnpm db:sync-definitions` çalıştırılınca açılır; bu komut gerçek modelle ölçüm (yaklaşık 30 talep metni) eşikleri tuttuktan sonra çalıştırılır, o zamana kadar ajanlar soru sormaz (S-u). Gerçek modelle denetim ve ölçüm henüz yapılmadı; kalan işler sırasıyla 0.4a adım 4'ün altında yazıyor. Sıradaki adım haber ajanı STR-6 (adım 5'in ilk parçası).
 
+12 Ekim 2026 (ölçüm): 0.4a adım 4 gerçek modelle ölçüldü ve yerel veritabanında açıldı. İşi yapan ajan (SOS-2) eksik bilgide soruyor, bilgi tamken sormuyor; sorular kısa ve numaralı. Koordinasyon merkezinin soru sorması kapalı tutuluyor: talimatı iki kez daraltıldıktan sonra da birimi belli taleplerde sordu; açılıp açılmayacağı kurucuya soruldu (SONRA S-p). Ölçüm ayrıca kanal yazmayan başsağlığı, kınama ve kutlama taleplerinin ajanı olmayan Kurumsal İletişim'e gittiğini gösterdi; yönlendirme talimatı düzeltildi (SONRA S-aa, S-ab). Sıradaki iş haber ajanı (0.4a adım 5'in ilk parçası).
+
 ## Sprint 0
 
 ### 0.1 Arayüz temeli
@@ -395,7 +397,7 @@ Adım 3: Son tarih ve yorum (karar 13); proje alanı Projeler ile (0.4c adım 2)
 
 Adım 4: Ajanın soru sorması (12 Ekim, karar 3 ve 4)
 
-- [x] Ajanın talep sahibine soru sorması ve "Yanıt bekliyor" durumu (7 Ekim, karar 7): işi yapan ajan bir talepte bir kez sorar; koordinasyon merkezi şimdilik en çok iki kez (karar 4; sayı kurucu onayı bekliyor, SONRA S-a)
+- [x] Ajanın talep sahibine soru sorması ve "Yanıt bekliyor" durumu (7 Ekim, karar 7): işi yapan ajan bir talepte bir kez sorar; koordinasyon merkezi şimdilik en çok iki kez (karar 4; sayı kurucu onayı bekliyor, SONRA S-a); koordinasyon merkezinin sorması 12 Ekim ölçümünden sonra kapalı tutuluyor (SONRA S-p)
 - [x] Soru kartı ve yanıt: talep sayfasında; yalnızca talep sahibi yanıtlar, talebi göremiyorsa yerine kurucu
 - [x] Yanıt gelince aynı ajanın kendiliğinden yeniden çalışması; soru ve yanıtın ajana veri olarak verilmesi
 - [x] Bugün'de "Sizden beklenenler" listesinde yanıt bekleyen soru
@@ -403,16 +405,16 @@ Adım 4: Ajanın soru sorması (12 Ekim, karar 3 ve 4)
 
 Kod yazıldı; ajanlar hiçbir veritabanında henüz soru sormuyor. Kalanlar yukarıdan aşağıya, bu sırayla yapılır. Sıra değişmez: ölçüm senkronizasyondan önce gelir, çünkü bir veritabanında soru sormayı açan şey senkronizasyondur (SONRA S-u).
 
-- [ ] Yerelde `supabase migration up`: iki yeni göç (`20261008103300_request_questions.sql`, `20261008103400_answer_calls_for_work.sql`). O zamana kadar yerelde talep listeleri sunucu hatası verir ve çalıştırıcı hiçbir ajan işini başlatamaz
-- [ ] (Senden) Ölçüm için `.env` dosyasında API anahtarı; ölçümün tahmini maliyeti iki üç dolar
-- [ ] Gerçek modelle ilk denetim: `pnpm --filter @agent-office/worker smoke:claude`. Koordinasyon merkezinin modeli iki araç arasında zorlanmayı kabul ediyor mu (çıktıda `forced choice among tools: ok`). Kabul etmezse koordinasyon merkezine soru aracı verilmez (tek satırlık değişiklik ve testi), SOS-2'ninki kalır, karar 4 yürürlüğe girmez ve kurucuya bildirilir (SONRA S-p)
-- [ ] Gerçek modelle ölçüm: `pnpm --filter @agent-office/worker probe:questions`, ardından karşılaştırma için `probe:questions --no-ask` (koordinasyon merkezi soru aracı olmadan). Yaklaşık 30 uydurma talep metniyle ajanların ne zaman sorduğu ve koordinasyon merkezinin nereye yönlendirdiği sayılır; sorulan her soru okunur. Eşik tutmazsa yalnızca talimat metinleri daraltılır: en çok iki tur, her tur ayrı commit, turlar arasında senkronizasyon yok. İki turdan sonra da tutmazsa kurucuya sayılarla bildirilir. Yanıttaki talimata uyan tek bir çalışma olursa adım yayına alınmaz. Son turun sayıları bu satıra yazılır
+- [x] Yerelde `supabase migration up`: iki yeni göç (`20261008103300_request_questions.sql`, `20261008103400_answer_calls_for_work.sql`). O zamana kadar yerelde talep listeleri sunucu hatası verir ve çalıştırıcı hiçbir ajan işini başlatamaz (12 Ekim: uygulandı)
+- [x] (Senden) Ölçüm için `.env` dosyasında API anahtarı; ölçümün tahmini maliyeti iki üç dolar (12 Ekim: anahtar vardı; ölçümün tamamı yaklaşık 1,2 dolar tuttu)
+- [x] Gerçek modelle ilk denetim: `pnpm --filter @agent-office/worker smoke:claude`. Koordinasyon merkezinin modeli iki araç arasında zorlanmayı kabul ediyor mu (çıktıda `forced choice among tools: ok`). Kabul etmezse koordinasyon merkezine soru aracı verilmez (tek satırlık değişiklik ve testi), SOS-2'ninki kalır, karar 4 yürürlüğe girmez ve kurucuya bildirilir (SONRA S-p) (12 Ekim: kabul ediyor)
+- [x] Gerçek modelle ölçüm: `pnpm --filter @agent-office/worker probe:questions`, ardından karşılaştırma için `probe:questions --no-ask` (koordinasyon merkezi soru aracı olmadan). Yaklaşık 30 uydurma talep metniyle ajanların ne zaman sorduğu ve koordinasyon merkezinin nereye yönlendirdiği sayılır; sorulan her soru okunur. Eşik tutmazsa yalnızca talimat metinleri daraltılır: en çok iki tur, her tur ayrı commit, turlar arasında senkronizasyon yok. İki turdan sonra da tutmazsa kurucuya sayılarla bildirilir. Yanıttaki talimata uyan tek bir çalışma olursa adım yayına alınmaz. Son turun sayıları bu satıra yazılır **12 Ekim sonucu:** SOS-2 eşikleri tuttu (sorması gereken 9 çalışmanın 9'unda sordu, sormaması gereken 21 çalışmanın 1'inde sordu; sorular kısa ve numaralı, taslak ya da ad taşıyan yok). Koordinasyon merkezi iki turdan sonra da tutmadı (konusu yazmayan gönderi talebinde 5/5, "araştır, sonra yaz" talebinde 2/5 gereksiz soru); soru sorması kapalı tutuluyor (`COORDINATOR_ASKS`), karar 4 şu an yürürlükte değil ve kurucuya soruldu (SONRA S-p). Kapalıyken 36 çalışmanın 36'sı beklenen yere gitti. İlk turda kanal yazmayan kurumsal açıklama ve kutlama talepleri Kurumsal İletişim'e gidiyordu; yönlendirme talimatı düzeltildi (SONRA S-aa, S-ab)
 - [ ] Eşikler tutunca `pnpm db:sync-definitions`: ajanların soru sorması o veritabanında bu komutla açılır
-- [ ] Panelde iki gerçek talep: sorulan, yanıtlanan ve sonucu sunulan bir soru; yönlendirme düzeltilince kapanan bir soru
+- [ ] (Senden) Panelde iki gerçek talep: sorulan, yanıtlanan ve sonucu sunulan bir soru; yönlendirme düzeltilince kapanan bir soru (giriş kurucunun hesabıyla yapıldığı için panelde denemeyi kurucu yapar)
 - [ ] (Senden) Soru kartına tarayıcıda bir kez bakma: kartın sayfadaki yeri, cümleleri, Bugün satırı (SONRA S-l, S-x)
-- [ ] (Senden) Koordinasyon merkezi kaç kez sorsun: bir mi, iki mi (SONRA S-a). Ölçümün sayılarına göre: koordinasyon merkezi sorması gereken yerde neredeyse hiç sormuyorsa ya da SOS-2 sormak yerine eksiği belirtip yazıyorsa soru sormak kolaylaştırılsın mı
+- [ ] (Senden) Koordinasyon merkezinin soru sorması açılsın mı (SONRA S-p); açılırsa kaç kez sorsun: bir mi, iki mi (SONRA S-a). Ölçümün sayılarına göre: koordinasyon merkezi sorması gereken yerde neredeyse hiç sormuyorsa ya da SOS-2 sormak yerine eksiği belirtip yazıyorsa soru sormak kolaylaştırılsın mı
 - [ ] (Senden) Öteki S maddeleri, `docs/SONRA.md` gözden geçirilirken (8 Ekim, karar 34): önce S-b, S-d, S-e, S-i ve S-j; sonra S-o ile S-h, S-v ve S-w
-- [ ] `CLAUDE.md` içinde bu adımla eskiyen ya da eksik kalan cümlelerin güncellenmesi ("İnsana sor", araç kataloğu, talepte elle yapılabilenler, Y1 kapısı, komutlar)
+- [x] `CLAUDE.md` içinde bu adımla eskiyen ya da eksik kalan cümlelerin güncellenmesi ("İnsana sor", araç kataloğu, talepte elle yapılabilenler, Y1 kapısı, komutlar) (12 Ekim)
 
 Adım 5: Birden çok ajanın sırayla çalışması (ilk gerçek çalışmalardan sonra; soruları kurucuya o zaman sorulur)
 
