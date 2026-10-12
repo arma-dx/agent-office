@@ -61,6 +61,8 @@ Henüz olmayanlar: veritabanı (göç dosyası yok), giriş, işlevli ekran (yal
 
 12 Ekim 2026 (ölçüm): 0.4a adım 4 gerçek modelle ölçüldü ve yerel veritabanında açıldı. İşi yapan ajan (SOS-2) eksik bilgide soruyor, bilgi tamken sormuyor; sorular kısa ve numaralı. Koordinasyon merkezinin soru sorması kapalı tutuluyor: talimatı iki kez daraltıldıktan sonra da birimi belli taleplerde sordu; açılıp açılmayacağı kurucuya soruldu (SONRA S-p). Ölçüm ayrıca kanal yazmayan başsağlığı, kınama ve kutlama taleplerinin ajanı olmayan Kurumsal İletişim'e gittiğini gösterdi; yönlendirme talimatı düzeltildi (SONRA S-aa, S-ab). Sıradaki iş haber ajanı (0.4a adım 5'in ilk parçası).
 
+12 Ekim 2026 (devam): Projeler'in beşinci adımı kuruldu (0.4c adım 5): GitHub bağlantısı (8 Ekim, karar 19 ve 22; 12 Ekim, karar 12-17). Arma DX ve Pillika ayrı GitHub kuruluşları olarak, her biri kendi uygulamasıyla ve kendi anahtarıyla bağlanır; panel bir şirketin anahtarını öteki şirket için hiç kullanmaz. Hesap menüsünde kurucu için "Bağlantılar" sayfası var: sayfa o şirketin uygulamasının durumunu söyler (ayarlı değil, kurulmamış, bağlanamaz, kurulu, bağlı), kurucu passkey ile bağlar ve onayla bağlantıyı keser. Bağlı şirkette "Yeni proje" penceresinde isteğe bağlı "GitHub deposu" alanı çıkar; depoyu sonradan projenin sahibi, yöneticileri ve kurucu, proje sayfasının "GitHub" sekmesinden bağlar, değiştirir ve kaldırır. "GitHub" sekmesi ("Dosyalar"dan hemen sonra) projenin her üyesine bağlı deponun son 20 kod değişikliğini, açık değişiklik isteklerini ve açık iş kayıtlarını, yazanların GitHub kullanıcı adlarıyla gösterir; sayfa açıkken beş dakikada bir kendiliğinden yenilenir. Bağlantı yalnızca okur; GitHub'dan bildirim gelmez; tarayıcı GitHub'a hiç bağlanmaz, yalnızca kişinin tıkladığı bağlantı oraya gider. Hiçbir şey veritabanına, iz kaydına (yalnızca numaralar) ya da modele yazılmaz. Müşterisi yapay zekâya da kodla otomatik işlemeye de izin vermeyen projeye depo bağlanmaz ve sekmesi okumaz (kural 12). Hepsi sahte bir GitHub ile kuruldu ve sınandı: gerçek GitHub'la ilk deneme, kurucu iki uygulamayı oluşturup kurduktan sonra yapılır; adımları `docs/github-kurulum.md` içinde, sırası aşağıda 0.4c adım 5'te. Türetilen seçimler `docs/SONRA.md` içinde P5-a ila P5-ai; hepsi kurucu onayı bekliyor. Ekranlar tarayıcıda görülmeden yazıldı. İki yeni göç (`20261008103500`, `20261008103600`) yerel veritabanına uygulanana kadar (`supabase migration up`) yerelde proje listesi ve proje sayfası sunucu hatası verir. Sıradaki adım: ajanların proje dosyalarını okuması (0.4c adım 6).
+
 ## Sprint 0
 
 ### 0.1 Arayüz temeli
@@ -434,7 +436,7 @@ Bu işten çıkarılanlar:
 
 ### 0.4c Projeler
 
-8 Ekim, karar 11 ve 14-22. Projeler "İş" grubunda ayrı bir bölümdür (karar 14). Çalışanlar da proje açar ve üye ekler; yapay zekâ iznini yalnızca kurucu, passkey ile açar (karar 15 ve 22). Türetilen yorumlar ve varsayımlar `docs/SONRA.md` içinde P-a ila P-u. Adım 1 tasarlanırken ve yapılırken türetilenler aynı dosyada P1-a ila P1-z. Projede sahip, yönetici ve üye ayrımı 8 Ekim karar 44 ile geldi; ondan türetilenler P1b-a ila P1b-m. Adım 2 (8 Ekim, karar 45-49) tasarlanırken ve yapılırken türetilenler P2-a ila P2-af. Adım 3 (karar 17; 11 Ekim karar 1; 12 Ekim karar 1 ve 2) tasarlanırken ve yapılırken türetilenler P3-a ila P3-ab. Adım 4 (karar 20 ve 21; 11 Ekim karar 2-4) tasarlanırken ve yapılırken türetilenler P4-a ila P4-w.
+8 Ekim, karar 11 ve 14-22. Projeler "İş" grubunda ayrı bir bölümdür (karar 14). Çalışanlar da proje açar ve üye ekler; yapay zekâ iznini yalnızca kurucu, passkey ile açar (karar 15 ve 22). Türetilen yorumlar ve varsayımlar `docs/SONRA.md` içinde P-a ila P-u. Adım 1 tasarlanırken ve yapılırken türetilenler aynı dosyada P1-a ila P1-z. Projede sahip, yönetici ve üye ayrımı 8 Ekim karar 44 ile geldi; ondan türetilenler P1b-a ila P1b-m. Adım 2 (8 Ekim, karar 45-49) tasarlanırken ve yapılırken türetilenler P2-a ila P2-af. Adım 3 (karar 17; 11 Ekim karar 1; 12 Ekim karar 1 ve 2) tasarlanırken ve yapılırken türetilenler P3-a ila P3-ab. Adım 4 (karar 20 ve 21; 11 Ekim karar 2-4) tasarlanırken ve yapılırken türetilenler P4-a ila P4-w. Adım 5 (karar 19 ve 22; 12 Ekim karar 12-17) tasarlanırken ve yapılırken türetilenler P5-a ila P5-ai.
 
 Adım 1: en küçük Projeler
 
@@ -474,11 +476,26 @@ Adım 4: proje dosyaları (karar 20)
 - [ ] `20261008103100_project_files.sql` göçünün yerel veritabanına ve test ortamına uygulanması (uygulanana kadar "Dosyalar" sekmesi sunucu hatası verir); yerelde dosya eklemek için `.env` içinde `FILE_STORAGE_DIR`
 - [ ] (Senden) "Dosyalar" sekmesine tarayıcıda bir kez bakmak: bir dosya eklemek, indirmek, silmek; 25 MB'lık ve biraz daha büyük bir dosya; çubuk ilerlerken "Yüklemeyi durdur" (yüklemeyi durdurur); "Kaydediliyor" yazarken aynı düğme basılamaz, dosya eklenir ve listeden silinir (SONRA P4-i, P4-w)
 
-Adım 5: GitHub bağlantısı (karar 19 ve 22)
+Adım 5: GitHub bağlantısı (karar 19 ve 22; 12 Ekim, karar 12-17)
 
-- [ ] (Senden) GitHub kuruluşunun adı ve orada uygulama kurma hakkı olan hesap
-- [ ] Kurum ayarlarından GitHub'ı şirkete bir kez bağlama (passkey ile)
-- [ ] Projede o kurumun depolarından birini seçme; proje sayfasında GitHub sekmesi
+Kod kuruldu ve sahte bir GitHub ile sınandı. Gerçek bağlantı için kurucunun yapacakları sırayla aşağıda; ayrıntıları `docs/github-kurulum.md`.
+
+- [ ] (Senden) 1. İki kuruluşun GitHub'daki adı (adres çubuğunda `github.com/` sonrasında yazan ad, harfi harfine; gizli değil) ve iki kuruluşta da "owner" olduğunun doğrulanması (uygulamayı kuruluşa yalnızca owner kurabilir)
+- [ ] (Senden) 2. Her kuruluşta bir GitHub uygulaması oluşturmak (önce Arma DX, sonra Pillika; yerel ortam için): yalnızca o kuruluşa kurulabilir, dört okuma izni (Metadata, Contents, Pull requests, Issues), webhook ve OAuth kapalı; alan alan `docs/github-kurulum.md` bölüm 3
+- [ ] (Senden) 3. Her uygulamanın anahtarını (`.pem`) indirmek ve Client ID değerini not almak (bölüm 4). Anahtar sohbete ve depoya girmez
+- [ ] (Senden) 4. Her uygulamayı kendi kuruluşuna "All repositories" ile kurmak (bölüm 5). Bir müşterinin deposu panelde hiç görünmeyecekse "Only select repositories" seçilip o depo dışarıda bırakılır
+- [ ] (Senden) 5. Sekiz değeri kendi bilgisayarındaki `.env` dosyasına yazmak (`GITHUB_APP_1_*` Arma DX, `GITHUB_APP_2_*` Pillika; bölüm 6) ve `pnpm dev`'i yeniden başlatmak
+- [ ] `20261008103500_github_connection.sql` ve `20261008103600_project_repositories.sql` göçlerinin yerel veritabanına ve test ortamına uygulanması (uygulanana kadar proje listesi ve proje sayfası sunucu hatası verir)
+- [ ] (Senden) 6. Panelde bağlamak: önce Arma DX seçiliyken hesap menüsünden Ayarlar, Bağlantılar, "GitHub'ı bağla", passkey; sonra Pillika seçiliyken aynısı (bölüm 7)
+- [ ] (Senden) 7. Ekranlara tarayıcıda bir kez bakmak: Bağlantılar sayfası; "Yeni proje" penceresinde "GitHub deposu" alanı; bir projenin "GitHub" sekmesi, "Depoyu değiştir" ve "Depoyu kaldır" (ekranlar tarayıcıda görülmeden yazıldı; SONRA P5-h, P5-ab ila P5-ai)
+- [ ] Gerçek GitHub ile ilk deneme (kurucunun 1-6. adımlarından sonra): kuruluşa sonradan eklenen deponun listeye kendiliğinden girip girmediği, boş depoda "Son kod değişiklikleri" listesinin ne yazdığı, GitHub'ın yerel adresleri kabul edip etmediği ve dönüşte `state` değerini verip vermediği; sonuçlar `docs/github-kurulum.md` bölüm 11'e yazılır (SONRA P5-t ve "Doğrulanmadı" maddeleri)
+- [ ] (Senden) 8. Test sunucusu kurulduğunda (0.7) 2-6. adımların o ortam için bir kez daha yapılması: adlarda "test", adreslerde `https://office-test.armadx.com`; anahtar orada `.env` dosyasına değil sunucunun gizli ayarlarına girilir (SONRA P5-k: her ortam için ayrı uygulama çifti, kurucu onayı bekliyor)
+- [x] Veritabanı: şirketin GitHub bağlantısı (`integrations` tablosunda şirket başına tek satır; anahtar ya da token saklanmaz; bir kuruluş ve bir kurulum tek şirkete bağlanır; bağlamak passkey ister ve yalnızca veritabanı işleviyle yazılır) ve projenin deposu (`project_repositories`: proje başına tek depo, yalnızca kendi şirketinin bağlantısından; kural 12 denetimi); şirket ayrımı testleri kısıtlı rollerle
+- [x] API'de GitHub modülü (`apps/api/src/github`): şirket başına ayrı uygulama, anahtar ve önbellek; yalnızca okur (yazan yöntemi yok); ortamda iki yuva (`GITHUB_APP_1_*`, `GITHUB_APP_2_*`); uygulama beklenen kuruluşa ait değilse, yazma izni taşıyorsa ya da durdurulmuşsa bağlanılmaz (SONRA P5-p, P5-q, P5-r, P5-aa)
+- [x] Kurum ayarlarından GitHub'ı şirkete bir kez bağlama (passkey ile): hesap menüsünde kurucu için "Bağlantılar" sayfası; kurulmamışsa GitHub'ın kurulum sayfasına bağlantı ve dönüş sayfası (`/github/setup`; dönüş hiçbir şeyi değiştirmez); bağlantıyı kesmek onay sorar, passkey istemez (SONRA P5-c, P5-z, P5-ab ila P5-ad)
+- [x] Projede o kurumun depolarından birini seçme: "Yeni proje" penceresinde isteğe bağlı "GitHub deposu" alanı (şirket bağlıyken; her deponun yalnızca adı, SONRA P5-u, P5-w); sonradan sahip, yöneticiler ve kurucu "GitHub" sekmesinden bağlar, değiştirir ve kaldırır (12 Ekim, karar 17; passkey istemez, SONRA P5-l)
+- [x] Proje sayfasında "GitHub" sekmesi: son 20 kod değişikliği, açık değişiklik istekleri, açık iş kayıtları; yazanların GitHub kullanıcı adları (12 Ekim, karar 16); beş dakikada bir yenilenir; müşteri izni kapalıysa okumaz (kural 12; SONRA P5-b, P5-n, P5-v, P5-ae ila P5-ai)
+- [x] İz kaydı: bağlama, bağlantıyı kesme, projeye depo ekleme ve çıkarma (yalnızca numaralar; ad yazılmaz)
 
 Adım 6: ajanların proje dosyalarını okuması (karar 21)
 
@@ -495,6 +512,7 @@ Adım 7: ajanların kod yazıp değişiklik isteği açması (karar 18 ve 23-30)
 - [ ] Onay Masası'nda fark kartı: dosya dosya eski ve yeni satırlar, test sonucu, risk notu, harcama, hedef depo ve dal
 - [ ] "Onaylananı onaydan sonra uygula" altyapısı: onaylanan farkın birebir aynısını sistemin yeni bir dala yazması ve değişiklik isteğini açması (karar 24)
 - [ ] GitHub uygulamasına iki yazma hakkının eklenmesi (kod ve değişiklik isteği); kısa ömürlü, yalnızca o depo için anahtar
+- [ ] (Karar: P5-i) Yazma izni verilmeden önce uygulama anahtarının nerede duracağı: adım 5 her uygulamanın anahtarını API'nin ortamına koydu ("GitHub" sekmesini API sunar); K-b yazma anahtarının yalnızca worker ortamında durmasını ister. Seçenekler SONRA P5-i'de
 - [ ] Ajanın yapamayacakları: birleştirme, yayın, ana dal, ayarlar ve şifreler için araç yok; ana dalı kilitli olmayan depo ajana kapalı (karar 25)
 - [ ] Değişiklik başına süre ve harcama tavanı: 30 dakika ve 5 dolar ile başlar (karar 28)
 - [ ] Yol 2 (yayın ortamından sonra): şirketin AWS hesabında şifresiz, interneti kapalı ayrı makine; testlerin orada çalıştırılması (karar 23 ve 29)
@@ -930,7 +948,7 @@ Rapora göre Ofis Yönetimi ve Denetim birimi (kalite, maliyet, iyileştirme) pi
 - [ ] (Rapor) Teklif sonucu: verildi, kazanıldı, kaybedildi; teklif kazanma oranı buradan
 - [ ] Projeler sekmesi: proje, bütçe, kilometre taşları (Karar: M48)
 - [ ] Proje üyelerinin yönetimi
-- [ ] Projeye Drive klasörü ve GitHub deposu bağlama (Karar: M10, M47)
+- [ ] Projeye Drive klasörü ve GitHub deposu bağlama (Karar: M10, M47) (GitHub deposu bağlama 0.4c adım 5 ile kuruldu; Drive klasörü açık)
 - [ ] `read_customer` ve proje okuma araçları
 - [ ] Testler: görünürlük ve AI izni
 
@@ -963,7 +981,7 @@ Rapora göre Ofis Yönetimi ve Denetim birimi (kalite, maliyet, iyileştirme) pi
 
 ### 2.4 Proje Takip Ajanı (A-PRJ-2)
 
-- [ ] GitHub bağlantısı: yalnızca seçili depoları okuyan uygulama (Karar: M47)
+- [x] GitHub bağlantısı: şirketin kuruluşundaki bütün depoları gören, yalnızca okuyan uygulama (12 Ekim, karar 15; 0.4c adım 5 ile kuruldu; gerçek GitHub ile ilk deneme kurucunun uygulamaları kurmasını bekliyor)
 - [ ] `read_github` aracı
 - [ ] Haftalık durum raporu; proje başına ayrı çalışma
 - [ ] İç rapor: durum, tamamlananlar, gelecek hafta, riskler, bütçe
