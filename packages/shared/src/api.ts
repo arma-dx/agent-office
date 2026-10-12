@@ -133,6 +133,29 @@ export const apiErrorCodeSchema = z.enum([
   'uploads_busy',
   'downloads_busy',
   'upload_ticket_invalid',
+  // The GitHub connection of a company and the repository of a project (8 October decisions 19
+  // and 22; 12 October decisions 12 to 17).
+  // This environment has no GitHub app for the company.
+  'github_not_configured',
+  // The company's app is not installed on its GitHub organisation.
+  'github_not_installed',
+  // The app or its installation is not what the connection needs (its owner, a permission).
+  'github_installation_invalid',
+  // The company was connected to another GitHub organisation before.
+  'github_other_organization',
+  // The organisation or the installation is the connection of another company.
+  'github_organization_taken',
+  // The connection changed between the read and the act; the page is read again.
+  'github_connection_changed',
+  'github_not_connected',
+  // The repository is not among the ones the company's installation reaches.
+  'github_repository_not_available',
+  // The customer of the project allows neither AI nor automated processing (rule 12).
+  'github_not_allowed',
+  // The repository of a project is changed by its owner, its managers and the founder.
+  'project_repository_not_allowed',
+  // A write needed GitHub and could not ask it.
+  'github_unavailable',
 ]);
 export type ApiErrorCode = z.output<typeof apiErrorCodeSchema>;
 
@@ -216,9 +239,10 @@ export type InvitationFields = z.output<typeof invitationFieldsSchema>;
 /*
  * Approvals that involve money, leave the company or change a source of truth note, membership
  * changes, passkey changes, a founder's reset of a person's passkeys, opening a task or a note to
- * an external person, opening the AI permission of a project or of a customer (8 October
- * decision 22), and raising or removing the AI spending limit of a project (8 October decision
- * 17) need a re-verification with a passkey (WebAuthn). The panel asks for a
+ * an external person, opening the AI permission of a project or of a customer and connecting
+ * the GitHub organisation of a company (8 October decision 22), and raising or removing the AI
+ * spending limit of a project (8 October decision 17) need a re-verification with a passkey
+ * (WebAuthn). The panel asks for a
  * challenge (POST /api/step-up/options), lets the browser sign it (startAuthentication of
  * @simplewebauthn/browser) and sends the result as `stepUp` in the body of the action it confirms.
  * The API recomputes what was confirmed from the action's own request and refuses anything else.
@@ -285,6 +309,8 @@ export const stepUpPurposeSchema = z.enum([
   'customer_ai_permission',
   // 8 October decision 17: raising or removing the AI spending limit of a project.
   'project_ai_spending_limit',
+  // 8 October decision 22: connecting the GitHub organisation of a company.
+  'github_connection',
 ]);
 export type StepUpPurpose = z.output<typeof stepUpPurposeSchema>;
 
@@ -298,6 +324,7 @@ const COMPANY_STEP_UP_PURPOSES: readonly StepUpPurpose[] = [
   'project_ai_permission',
   'customer_ai_permission',
   'project_ai_spending_limit',
+  'github_connection',
 ];
 
 const STEP_UP_DETAIL_LIMIT = 20;
@@ -439,6 +466,30 @@ export function projectAiSpendingLimitDetails(
   return { action: 'set_limit', limitUsd: limitUsd === null ? null : normalizeUsdLimit(limitUsd) };
 }
 
+/** GitHub's numeric ids travel as numbers; they are far below 2^53. */
+export const githubIdSchema = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
+
+/**
+ * What a github_connection re-verification confirms beyond the company (the subject): the GitHub
+ * organisation and the installation the Bağlantılar page showed. The API builds the same from
+ * what GitHub answers at that moment, so a signature made for another organisation or another
+ * installation does not connect. Build it with githubConnectionDetails.
+ */
+export const githubConnectionDetailsSchema = z.strictObject({
+  action: z.literal('connect'),
+  organization: z.string().min(1).max(39),
+  installationId: githubIdSchema,
+});
+export type GithubConnectionDetails = z.output<typeof githubConnectionDetailsSchema>;
+
+/** The details of connecting GitHub, for POST /api/step-up/options; the API builds the same. */
+export function githubConnectionDetails(
+  organization: string,
+  installationId: number,
+): GithubConnectionDetails {
+  return { action: 'connect', organization, installationId };
+}
+
 /**
  * What a customer_ai_permission re-verification confirms beyond the customer (the subject): the
  * permissions exactly as the request carries them. "create": a customer added with a new project
@@ -502,6 +553,9 @@ export function customerPermissionDetails(
  *   project_ai_spending_limit  companyId, subjectId (the project), details
  *                           (projectAiSpendingLimitDetails: the new limit, or null to remove it);
  *                           then PUT /api/projects/:projectId/ai-spending-limit
+ *   github_connection       companyId, subjectId (the company itself), details
+ *                           (githubConnectionDetails: the organisation and the installation the
+ *                           page showed); then POST /api/github/connection
  * 409 no_passkey when the person has no passkey.
  */
 export const stepUpOptionsRequestSchema = z
@@ -575,6 +629,15 @@ export const stepUpOptionsRequestSchema = z
         path: ['details'],
         message: 'Must be a spending limit change',
       });
+    }
+    if (body.purpose === 'github_connection') {
+      if (!githubConnectionDetailsSchema.safeParse(body.details).success) {
+        ctx.addIssue({ code: 'custom', path: ['details'], message: 'Must connect GitHub' });
+      }
+      // The subject of a connection is the company it is made for.
+      if (body.subjectId !== body.companyId) {
+        ctx.addIssue({ code: 'custom', path: ['subjectId'], message: 'Must be the company' });
+      }
     }
     if (
       (body.purpose === 'passkey_add' ||

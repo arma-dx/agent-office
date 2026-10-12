@@ -9,4 +9,5 @@ export * from './office.ts';
 export * from './projects.ts';
 export * from './project-sections.ts';
 export * from './files.ts';
+export * from './github.ts';
 export * from './models.ts';
