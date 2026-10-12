@@ -210,11 +210,13 @@ export function registerProjectFileRoutes(app: FastifyInstance, deps: RouteDeps)
   const uploads = new ByteBudget(deps.uploadBufferBytes ?? UPLOAD_BUFFER_BYTES);
   const downloads = new ByteBudget(deps.downloadBufferBytes ?? DOWNLOAD_BUFFER_BYTES);
   const deadlineMs = deps.uploadDeadlineMs ?? uploadDeadlineMs;
+  const downloadDeadline = deps.downloadDeadlineMs ?? uploadDeadlineMs;
   const tickets = new UploadTickets(config.cookieSecret);
   // An upload whose bytes are counted in the budget, and the timer that ends it if they stop.
   const pending = new WeakMap<FastifyRequest, { bytes: number; timer: NodeJS.Timeout }>();
-  // A download whose bytes are counted in the budget.
-  const leaving = new WeakMap<FastifyRequest, number>();
+  // A download whose bytes are counted in the budget, and, once they were handed to the answer,
+  // the timer that ends it if nobody reads them.
+  const leaving = new WeakMap<FastifyRequest, { bytes: number; timer: NodeJS.Timeout | null }>();
 
   /**
    * Runs before a byte of the body is read (the body is buffered before the handler, and so
@@ -310,10 +312,11 @@ export function registerProjectFileRoutes(app: FastifyInstance, deps: RouteDeps)
   }
 
   function releaseDownload(request: FastifyRequest): void {
-    const bytes = leaving.get(request);
-    if (bytes !== undefined) {
+    const download = leaving.get(request);
+    if (download !== undefined) {
       leaving.delete(request);
-      downloads.release(bytes);
+      if (download.timer) clearTimeout(download.timer);
+      downloads.release(download.bytes);
     }
   }
 
@@ -375,6 +378,9 @@ export function registerProjectFileRoutes(app: FastifyInstance, deps: RouteDeps)
    * browser would show (application/octet-stream, nosniff) and carries a policy under which a
    * page could do nothing. The record is read in the request's transaction, under the row
    * policies; the storage is asked afterwards, and what it gives is checked against the record.
+   * The answer has a deadline, the one of an upload of the same size: a client that stopped
+   * reading (a laptop that fell asleep, a connection held open) does not keep its place in the
+   * download budget; the connection is closed and the bytes are given back.
    */
   app.get(
     '/api/projects/:projectId/files/:fileId/content',
@@ -409,7 +415,11 @@ export function registerProjectFileRoutes(app: FastifyInstance, deps: RouteDeps)
       if (!downloads.reserve(row.size_bytes)) {
         throw downloadsBusy();
       }
-      leaving.set(request, row.size_bytes);
+      const download: { bytes: number; timer: NodeJS.Timeout | null } = {
+        bytes: row.size_bytes,
+        timer: null,
+      };
+      leaving.set(request, download);
       reply.raw.once('close', () => {
         releaseDownload(request);
       });
@@ -428,6 +438,16 @@ export function registerProjectFileRoutes(app: FastifyInstance, deps: RouteDeps)
       }
       if (content === null) {
         throw contentMissing();
+      }
+      // An answer that ended before this line (the connection closed while the storage was
+      // asked) has given its bytes back already: it gets no timer.
+      if (leaving.get(request) === download) {
+        download.timer = setTimeout(() => {
+          // Nobody read the answer in its time: the place is given back, the connection closed.
+          releaseDownload(request);
+          reply.raw.destroy();
+        }, downloadDeadline(row.size_bytes));
+        download.timer.unref();
       }
       return reply
         .header('content-type', 'application/octet-stream')

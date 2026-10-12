@@ -156,7 +156,8 @@ export class ByteBudget {
  * How long the body of an upload may take to arrive after its headers: 30 seconds and the time
  * its declared length takes at 64 KB a second (about seven minutes for 25 MB). After that the
  * connection is closed and the reserved bytes are given back, so a connection that went silent
- * (a laptop that fell asleep, a stranger who sends nothing) does not keep a place.
+ * (a laptop that fell asleep, a stranger who sends nothing) does not keep a place. The answer of a
+ * download has the same time to be read, counted from the moment its bytes are handed over.
  */
 export function uploadDeadlineMs(declaredBytes: number): number {
   return 30_000 + Math.ceil(declaredBytes / (64 * 1024)) * 1000;

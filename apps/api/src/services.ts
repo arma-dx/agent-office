@@ -23,6 +23,8 @@ export interface ServerServices {
   downloadBufferBytes?: number;
   // How long the body of an upload may take to arrive; the default is uploadDeadlineMs.
   uploadDeadlineMs?: (declaredBytes: number) => number;
+  // How long the answer of a download may take to be read; the default is uploadDeadlineMs too.
+  downloadDeadlineMs?: (sizeBytes: number) => number;
 }
 
 export interface RouteDeps extends ServerServices {

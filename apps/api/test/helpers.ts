@@ -141,6 +141,7 @@ export function createTestServer(
     uploadBufferBytes?: number;
     downloadBufferBytes?: number;
     uploadDeadlineMs?: (declaredBytes: number) => number;
+    downloadDeadlineMs?: (sizeBytes: number) => number;
     // The storage of this server; the default is a new one in memory.
     storage?: MemoryFileStorage;
   } = {},
@@ -167,6 +168,9 @@ export function createTestServer(
         : {}),
       ...(options.uploadDeadlineMs !== undefined
         ? { uploadDeadlineMs: options.uploadDeadlineMs }
+        : {}),
+      ...(options.downloadDeadlineMs !== undefined
+        ? { downloadDeadlineMs: options.downloadDeadlineMs }
         : {}),
     },
   });

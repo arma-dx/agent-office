@@ -720,11 +720,15 @@ describe.skipIf(noDatabase)('project files', () => {
   function rawRequest(
     target: TestServer,
     head: string,
+    // false: nothing of the answer is read until `read` is called, as a client that stopped
+    // reading would.
+    reading = true,
   ): Promise<{
     write: (bytes: Buffer) => void;
     answer: () => string;
     closed: () => boolean;
     end: () => void;
+    read: () => void;
   }> {
     const port = (target.app.server.address() as AddressInfo).port;
     return new Promise((resolve) => {
@@ -741,9 +745,15 @@ describe.skipIf(noDatabase)('project files', () => {
           end: () => {
             socket.destroy();
           },
+          read,
         });
       });
-      socket.on('data', (chunk) => (got += chunk.toString('latin1')));
+      const read = (): void => {
+        if (socket.listenerCount('data') === 0) {
+          socket.on('data', (chunk) => (got += chunk.toString('latin1')));
+        }
+      };
+      if (reading) read();
       socket.on('close', () => (closed = true));
       socket.on('error', () => undefined);
     });
@@ -1130,6 +1140,57 @@ describe.skipIf(noDatabase)('project files', () => {
       expect(next.statusCode, next.body).toBe(200);
       expect(next.rawPayload.equals(SAMPLES.pdf)).toBe(true);
     } finally {
+      await live.close();
+    }
+  });
+
+  it('a download that nobody reads is cut off, and its bytes are given back', async () => {
+    // A file the buffers of a connection cannot swallow: the answer cannot be handed over whole.
+    const content = Buffer.alloc(12 * 1024 * 1024, 0x61);
+    const storage = new GatedStorage();
+    const live = createTestServer({
+      storage,
+      downloadBufferBytes: content.length,
+      downloadDeadlineMs: () => 1000,
+    });
+    await live.app.listen({ port: 0, host: '127.0.0.1' });
+    try {
+      const session = await sessionOf(live, accounts.employee);
+      const sent = await upload(session, 'buyuk.txt', content, { server: live });
+      expect(sent.statusCode, sent.body).toBe(201);
+      const file = projectFileSchema.parse(sent.json());
+      const url = `/api/projects/${project}/files/${file.id}/content`;
+      const get = () => send(live, session, 'GET', url, { company: ids.arma });
+      storage.hold('get');
+      const stuck = await rawRequest(
+        live,
+        rawHead('GET', url, [`cookie: ${SESSION_COOKIE}=${session}`]),
+        false,
+      );
+      await until(() => storage.waiting === 1);
+      expect(storage.waiting).toBe(1);
+      storage.release();
+      // The bytes were handed to the answer and nobody reads them: they are still counted.
+      const busy = await get();
+      expect(busy.statusCode).toBe(503);
+      expect(errorCode(busy)).toBe('downloads_busy');
+      // The deadline passes: the place is given back although the client never read a byte.
+      let next = await get();
+      const end = Date.now() + 5000;
+      while (next.statusCode === 503 && Date.now() < end) {
+        await new Promise((r) => setTimeout(r, 100));
+        next = await get();
+      }
+      expect(next.statusCode, next.body).toBe(200);
+      expect(next.rawPayload.equals(content)).toBe(true);
+      // The server closed the connection: what the client can still read is not the whole file.
+      stuck.read();
+      await until(() => stuck.closed());
+      expect(stuck.closed()).toBe(true);
+      expect(statusOf(stuck.answer())).toBe(200);
+      expect(stuck.answer().length).toBeLessThan(content.length);
+    } finally {
+      storage.release();
       await live.close();
     }
   });
